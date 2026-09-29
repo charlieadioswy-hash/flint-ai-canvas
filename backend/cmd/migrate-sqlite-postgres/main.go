@@ -166,6 +166,11 @@ func migrateTable[T any](name string) tableMigration {
 				return 0, err
 			}
 			if copyRows && len(sourceRows) > 0 {
+				// MigrateSchema 建表时可能预置行（如 id_sequences 序列种子），
+				// 与真实运行过的源库主键冲突；全量迁移以源库为基准，复制前先清空目标表。
+				if err := target.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(new(T)).Error; err != nil {
+					return 0, err
+				}
 				if err := target.CreateInBatches(&sourceRows, 100).Error; err != nil {
 					return 0, err
 				}
