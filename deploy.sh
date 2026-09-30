@@ -25,6 +25,8 @@ case "$ACTION" in
     log "当前版本: $(git log --oneline -1)"
     log "重建生产镜像（约需数分钟）..."
     docker compose --env-file .env -f docker-compose.deploy.yml -f docker-compose.build.yml build
+    log "重建 yingce-agent 镜像（build 上下文为仓库根目录）..."
+    docker build -t open-ai-canvas-yingce-agent:server -f yingce-agent/Dockerfile .
     log "重启服务栈..."
     docker compose --env-file .env $COMPOSE_FILES up -d --remove-orphans
     ;;
