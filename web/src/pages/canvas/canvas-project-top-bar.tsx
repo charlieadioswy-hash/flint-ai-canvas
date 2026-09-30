@@ -240,7 +240,7 @@ export function CanvasTopBar({
                             <Button type="text" className="canvas-topbar-action !hidden !h-10 !w-10 !min-w-10 !rounded-xl !p-0 lg:!inline-flex" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="媒体性能模式" />
                         </Dropdown>
                     </CanvasTopBarTooltip>
-                    {user && creditsEnabled ? (
+                    {/* {user && creditsEnabled ? (
                         <CanvasTopBarTooltip label="打开积分中心">
                             <button
                                 type="button"
@@ -253,7 +253,7 @@ export function CanvasTopBar({
                                 <span>{availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 3 })}</span>
                             </button>
                         </CanvasTopBarTooltip>
-                    ) : null}
+                    ) : null} */}
                     <CanvasTopBarTooltip label="进入专注模式（Shift + Ctrl/Cmd + F）">
                         <Button type="text" className="canvas-topbar-action !h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text }} icon={<Focus className="size-4" />} onClick={onEnterFocusMode} aria-label="进入专注模式" />
                     </CanvasTopBarTooltip>
