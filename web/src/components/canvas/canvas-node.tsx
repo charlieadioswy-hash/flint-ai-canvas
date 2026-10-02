@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, Star, Trash2, Type, UserRound, Video, WandSparkles } from "lucide-react";
+import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, ShieldCheck, Star, Trash2, Type, UserRound, Video, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
 import { canvasConnectionTilt } from "@/lib/canvas/canvas-connection-tilt";
+import { currentImageModerationSummary, imageModerationPresentation, imageModerationTone } from "@/lib/canvas/image-moderation";
 import { storyboardMinNodeHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -60,6 +61,7 @@ type CanvasNodeProps = {
     onOpenTaskDetails?: (node: CanvasNodeData) => void;
     onOpenVersions?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
+    onOpenImageModeration?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
     onOpenDirector?: (node: CanvasNodeData) => void;
@@ -109,6 +111,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenTaskDetails,
     onOpenVersions,
     onViewImage,
+    onOpenImageModeration,
     onOpenTextEditor,
     onOpenDirector,
     onOpenDrawing,
@@ -120,7 +123,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title);
-    const { download: downloadNode, duplicate: duplicateNode, deleteNode } = useCanvasNodeActions();
+    const { download: downloadNode, duplicate: duplicateNode, deleteNode, openImageModeration } = useCanvasNodeActions();
     const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content || data.metadata?.storageKey);
@@ -129,9 +132,13 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasMediaContent = hasImageContent || hasVideoContent || hasAudioContent;
     const producedModelStored = data.metadata?.producedModel;
     const showProducedModel = showImageInfo && hasMediaContent && Boolean(producedModelStored);
+    const moderationReport = currentImageModerationSummary(data);
+    const hasModerationReport = Boolean(data.metadata?.imageModeration || data.metadata?.sharedImageModeration);
+    const moderationState = !moderationReport && hasModerationReport ? { label: "需要重新检测", tone: "warning" as const } : imageModerationPresentation(moderationReport);
+    const moderationAction = onOpenImageModeration || openImageModeration;
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
-    const showStatusTrack = Boolean(resourceLabel || data.metadata?.locked || isBatchRoot || (isBatchChild && !readOnly) || (hasMediaContent && !readOnly));
+    const showStatusTrack = Boolean(resourceLabel || data.metadata?.locked || isBatchRoot || (isBatchChild && !readOnly) || (hasMediaContent && !readOnly) || (hasImageContent && hasModerationReport));
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const effectiveRenderLOD: CanvasNodeRenderLOD = renderLOD === "full" || hovered || isEditingContent || isEditingTitle || mediaActive ? "full" : renderLOD;
     const showChrome = effectiveRenderLOD === "full";
@@ -446,6 +453,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 ) : null}
                 {showChrome && showStatusTrack ? (
                     <div className={`absolute right-3 top-3 z-[var(--node-z-overlay)] flex min-w-0 items-center justify-end gap-1 ${data.metadata?.versionLabel ? "max-w-[calc(100%-104px)]" : "max-w-[calc(100%-24px)]"}`}>
+                        {hasImageContent && hasModerationReport ? <button type="button" className="flex max-w-full items-center gap-1 rounded-[var(--r-full)] border px-2 py-1 text-[var(--node-badge-fs)] backdrop-blur-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: imageModerationTone(moderationState.tone) }} title="查看图片内容检测报告" aria-label={`${moderationState.label}，查看图片内容检测报告`} disabled={!moderationAction} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); moderationAction?.(data); }}><ShieldCheck className="size-3 shrink-0" /><span className="truncate">{moderationState.label}</span></button> : null}
                         {resourceLabel && data.type !== CanvasNodeType.Image ? <ResourceLabelBadge reference={resourceLabel} theme={theme} /> : null}
                         {hasMediaContent && !readOnly ? <ResourceStorageBadge storageKey={data.metadata?.storageKey} active={isActive} theme={theme} /> : null}
                         {isBatchRoot ? <BatchToggleBadge count={batchCount} expanded={batchExpanded} theme={theme} onToggle={() => onToggleBatch?.(data.id)} /> : null}

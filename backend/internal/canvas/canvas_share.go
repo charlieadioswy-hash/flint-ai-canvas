@@ -280,12 +280,18 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 		}
 		publicMetadata[key] = scrubPublicCanvasValue(value)
 	}
-	if resourceID := assets.ResourceID(kernel.StringValue(metadata["storageKey"])); resourceID != "" {
+	resourceID := assets.ResourceID(kernel.StringValue(metadata["storageKey"]))
+	if resourceID == "" {
+		resourceID = assets.ResourceID(kernel.StringValue(metadata["content"]))
+	}
+	if resourceID != "" {
 		allowedResources[resourceID] = true
 		publicMetadata["content"] = sharedCanvasResourceURL(token, resourceID)
-	} else if resourceID := assets.ResourceID(kernel.StringValue(metadata["content"])); resourceID != "" {
-		allowedResources[resourceID] = true
-		publicMetadata["content"] = sharedCanvasResourceURL(token, resourceID)
+		if kernel.StringValue(node["type"]) == "image" {
+			if report := publicCanvasImageModeration(metadata, resourceID); report != nil {
+				publicMetadata["sharedImageModeration"] = report
+			}
+		}
 	} else if nodeType := kernel.StringValue(node["type"]); nodeType == "image" || nodeType == "video" || nodeType == "audio" {
 		delete(publicMetadata, "content")
 	}

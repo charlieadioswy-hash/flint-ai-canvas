@@ -139,6 +139,15 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 	for _, lease := range leases {
 		snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "Agent 待执行引用", ID: lease.OwnerID, Title: "已准备的生成输入", ResourceID: lease.ResourceID})
 	}
+	if r.db.Migrator().HasTable(&model.ImageModerationCheck{}) {
+		var checks []model.ImageModerationCheck
+		if err := r.db.Where("user_id = ? AND resource_id IN ? AND status IN ?", userID, resourceIDs, []string{"queued", "running"}).Find(&checks).Error; err != nil {
+			return snapshot, err
+		}
+		for _, check := range checks {
+			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "图片内容检测", ID: check.ID, Title: "检测尚未完成", ResourceID: check.ResourceID})
+		}
+	}
 
 	var toolRecords []model.Tool
 	if err := r.db.Where("owner_id = ?", userID).Find(&toolRecords).Error; err != nil {
@@ -406,7 +415,13 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 }
 
 func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, deleteReferencedResources bool) error {
+	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if moderationProtection {
+			if err := New(tx).RequireNoImageModerationReferences(resourceIDs); err != nil {
+				return err
+			}
+		}
 		var ownedAssets []model.Asset
 		query := tx.Where("user_id = ? AND id IN ?", userID, assetIDs).Order("id")
 		if r.Dialect() == "postgres" {

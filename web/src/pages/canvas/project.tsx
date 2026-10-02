@@ -149,6 +149,8 @@ import { useCanvasSelectionController } from "./use-canvas-selection-controller"
 import { useCanvasShortDrama } from "./use-canvas-short-drama";
 import { useCanvasStoryboard } from "./use-canvas-storyboard";
 import { useCanvasUpload } from "./use-canvas-upload";
+import { useCanvasImageModeration } from "./use-canvas-image-moderation";
+import { ImageModerationDrawer } from "./components/image-moderation-drawer";
 import { useCanvasTimelineAssetInsert } from "./use-canvas-timeline-asset-insert";
 import { useCanvasViewportController } from "./use-canvas-viewport-controller";
 import {
@@ -249,6 +251,7 @@ function InfiniteCanvasPage() {
     const [mediaPerformanceMode, setMediaPerformanceMode] = useState<CanvasMediaPerformanceMode>(readCanvasMediaPerformanceMode);
     const [hideNodeConnections, setHideNodeConnections] = useState(readCanvasHideNodeConnections);
     const [projectLoaded, setProjectLoaded] = useState(false);
+    const imageModeration = useCanvasImageModeration({ projectId, projectLoaded, nodes, nodesRef, setNodes });
     const workspaceMode: CanvasWorkspaceMode = "professional";
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [shareModalOpen, setShareModalOpen] = useState(false);
@@ -1552,9 +1555,10 @@ function InfiniteCanvasPage() {
             updateNode: updateNodeFromContent,
             updateMediaNode: updateMediaNodeFromContent,
             openArtCritique,
+            openImageModeration: imageModeration.open,
             addPanoramaCaptureNode,
         }),
-        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent],
+        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, duplicateNodeFromContent, imageModeration.open, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent],
     );
     const { dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasOperationHistory({
         projectId,
@@ -2947,6 +2951,7 @@ function InfiniteCanvasPage() {
                             onGenerateImage={generateImageFromTextNode}
                             onUpload={(node) => handleUploadRequest(node.id)}
                             onDownload={downloadNodeImage}
+                            onImageModeration={imageModeration.open}
                             onSaveAsset={(node) => void saveNodeAsset(node)}
                             onAnnotate={(node) => setAnnotationNodeId(node.id)}
                             onAnnotationEdit={openAnnotationEditNode}
@@ -3266,6 +3271,7 @@ function InfiniteCanvasPage() {
                             }}
                         />
 
+                        <ImageModerationDrawer open={Boolean(imageModeration.selectedNode)} imageTitle={imageModeration.selectedNode?.title || "图片"} report={imageModeration.report} stale={imageModeration.stale} busy={imageModeration.busy} submitting={imageModeration.submitting} available={imageModeration.available} error={imageModeration.error} canCheck={imageModeration.canCheck} onClose={imageModeration.close} onRecheck={imageModeration.recheck} onRefresh={imageModeration.refresh} />
                         <CanvasProjectMediaDialogs
                             cropNode={cropNode}
                             annotationNode={annotationNode}

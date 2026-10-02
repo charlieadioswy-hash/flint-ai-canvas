@@ -19,11 +19,11 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前结构版本为 42。版本 42 `cloud_agent_pi_sessions` 新增 `cloud_agent_pi_sessions` 表，按运行 ID 保存 Pi 原生 JSONL 会话快照、用户 ID、乐观并发 revision 和更新时间；会话正文由 Agent runtime 管理，Go 只将其作为不透明快照读写，不替代有界控制检查点、事件日志或任务记录。版本 41 `resource_thumbnail` 为 `resources` 增加缩略图元数据。版本 40 `builtin_skill_tombstones` 新增内置技能删除记录，管理员删除平台技能后，后续启动同步不会重新创建该技能；版本 39 `skill_library_categories` 新增 `skill_library_categories` 表，并为 `user_skill_states` 增加 `library_category_id`，保存个人技能库分类及每个用户对技能的归类；分类不改变 `skills.tag` 的技能广场共享分类。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
+当前结构版本为 44。版本 44 `image_content_moderation` 新增图片合规检测的 Provider、配置版本、生效策略、检测批次、检测项目及全局日调用计数六张表，详情见本页“图片合规检测”。版本 42 `cloud_agent_pi_sessions` 新增 `cloud_agent_pi_sessions` 表，按运行 ID 保存 Pi 原生 JSONL 会话快照、用户 ID、乐观并发 revision 和更新时间；会话正文由 Agent runtime 管理，Go 只将其作为不透明快照读写，不替代有界控制检查点、事件日志或任务记录。版本 41 `resource_thumbnail` 为 `resources` 增加缩略图元数据。版本 40 `builtin_skill_tombstones` 新增内置技能删除记录，管理员删除平台技能后，后续启动同步不会重新创建该技能；版本 39 `skill_library_categories` 新增 `skill_library_categories` 表，并为 `user_skill_states` 增加 `library_category_id`，保存个人技能库分类及每个用户对技能的归类；分类不改变 `skills.tag` 的技能广场共享分类。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
 
 版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持版本 42，回退需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持版本 44，回退需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 ### 生成成功后的作品保存恢复
 
@@ -293,3 +293,24 @@ Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`�
 - 启动幂等装载 87 个预设（风格 45、运镜 33、九宫格 9），不下载第三方媒体。显式 ID 与用户工具冲突时启动报错，不覆盖用户数据；PostgreSQL 同步自增序列。
 - 工具预览纳入资源引用检查；自定义预览必须是当前用户已上传完成的资源。公开工具暂不接受私人预览资源。
 - SQLite → PostgreSQL 迁移包含上述两表。首次启动前备份测试数据；回退旧代码不能视为数据库降级，应使用备份恢复，不手工重写迁移记录。
+
+## 图片合规检测
+
+迁移 44 `image_content_moderation` 增加以下六张表，不修改既有图片生成任务或积分订单结构。已有设置密钥负责检测凭据加密，部署和备份须保留对应密钥；密钥不可用时拒绝解密和执行，不使用空凭据兜底。
+
+| 表 | 关键字段 | 约束与用途 |
+| --- | --- | --- |
+| `image_moderation_providers` | `id`、`name`、`type`、`enabled`、`archived`、`latest_config_id`、时间字段 | 管理平台实例及最新已保存版本；平台类型创建后固定，归档不删除历史 |
+| `image_moderation_configs` | `id`、`provider_id`、`version`、`type`、`region`、`services_json`、`timeout_seconds`、`max_calls_per_day`、`min_interval_seconds`、`access_key_id_encrypted`、`access_key_secret_encrypted`、`created_by`、`created_at` | 只追加版本；`(provider_id, version)` 唯一；凭据字段不序列化给客户端 |
+| `image_moderation_policies` | `id`、`active_provider_id`、`active_config_id`、`revision`、`updated_at` | 固定 ID `image-content` 的单例生效指针，revision CAS 保证并发切换；空指针表示停用 |
+| `image_moderation_checks` | `id`、`user_id`、`resource_id`、`content_version`、`resource_version`、`provider_id`、`config_id`、`active_key`、`status`、`overall_risk`、`risk_tags_json`、`summary`、租约及时间字段 | 用户级批次和统一报告；`content_version` 为原始字节 SHA-256，`resource_version` 为资源身份哈希；绑定创建时配置 |
+| `image_moderation_items` | `id`、`check_id`、`service`、`status`、`risk_level`、`risk_tags_json`、`request_id`、`error_code`、开始/结束及时间字段 | 每批次每服务一项，`(check_id, service)` 唯一；仅存归一化结果及安全错误码，不保存原始云端响应或凭据 |
+| `image_moderation_daily_usages` | `day`、`calls`、`updated_at` | UTC 日期为主键的平台全局调用计数；更换 Provider 不清零 |
+
+`image_moderation_checks.active_key` 是用户、资源、内容哈希及配置版本组合的哈希，具有唯一索引。非终态保留该值，避免并发创建重复在途批次；结束时置为 `NULL`，允许用户之后明确复检。最新报告按 `created_at DESC, id DESC` 读取，失败报告同样参与排序。
+
+批次状态为 `queued`、`running`、`completed`、`partial`、`failed`；单项状态为 `queued`、`running`、`completed`、`failed`。Worker 领取任务时设置 `lease_owner` 与 `lease_expires_at`。回收过期租约时，原 `running` 项目记为 `execution_uncertain`，不重新调用平台；原 `queued` 项目仍可执行。
+
+每项开始时在同一事务中检查租约、增加全局当日预算、将单项标记为 `running` 并延长批次租约。预算不足时剩余项目失败，报告必须说明检测未完成。管理员保存、生效、停用和归档操作与既有 `admin_audit_events` 在同一事务提交，审计只记录配置 ID、版本、平台类型及服务标识等非敏感摘要。
+
+资源删除链路将 `queued`、`running` 批次视为引用，终态报告不永久阻止资源删除。报告只保留资源 ID、哈希、配置引用与结果，不额外持久化原始图片。

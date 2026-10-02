@@ -194,6 +194,9 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 		if errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) {
 			return BadAuthRequest("素材仍被画布历史版本引用，已保留文件")
 		}
+		if errors.Is(err, repository.ErrImageModerationReferenced) {
+			return NewAppError(409, "图片内容检测正在执行，请等待完成后再删除素材")
+		}
 		return fmt.Errorf("素材记录删除失败，请重试：%w", err)
 	}
 	if len(deletionJobs) > 0 {

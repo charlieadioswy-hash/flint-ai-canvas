@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/moderation"
 	"infinite-canvas/backend/internal/payment"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
@@ -88,11 +89,12 @@ type Service struct {
 	disablePiRuntime bool
 	// legacyCloudAgentRootTask is enabled only by tests that exercise the pre-Pi
 	// model-worker path. Runtime availability must not change root task semantics.
-	legacyCloudAgentRootTask bool
-	approvedMediaMu          sync.Mutex
-	approvedMediaWg          sync.WaitGroup
-	approvedMediaWaiters     map[string]context.CancelFunc
-	approvedMediaClosed      bool
+	legacyCloudAgentRootTask       bool
+	approvedMediaMu                sync.Mutex
+	approvedMediaWg                sync.WaitGroup
+	approvedMediaWaiters           map[string]context.CancelFunc
+	approvedMediaClosed            bool
+	imageModerationProviderFactory func(string) (moderation.Provider, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -168,6 +170,7 @@ func (s *Service) StartWorker() {
 	}
 	s.taskWorker().start(ctx)
 	s.startResourceDeletionWorker(ctx)
+	s.startImageModerationWorker(ctx)
 	s.startSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
 	go s.syncAgentSessionLimit()

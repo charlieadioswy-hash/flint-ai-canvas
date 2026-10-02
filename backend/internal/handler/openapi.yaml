@@ -27,6 +27,169 @@ tags:
   - name: admin
   - name: skills
 paths:
+  /admin/image-moderation:
+    get:
+      tags: [admin]
+      summary: 图片检测 Provider、最新配置版本和唯一生效策略
+      description: 仅管理员可读。返回凭据是否已配置，不返回密钥或密文。保存新配置不会自动生效。
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState, content: {application/json: {schema: {allOf: [{$ref: "#/components/schemas/Envelope"}, {type: object, properties: {data: {$ref: "#/components/schemas/ImageModerationAdminState"}}}]}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers:
+    post:
+      tags: [admin]
+      summary: 创建图片检测 Provider 和首个不可变配置版本
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ImageModerationProviderRequest"}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationProviderView}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    put:
+      tags: [admin]
+      summary: 追加 Provider 配置版本
+      description: 平台类型不可更改。留空凭据沿用上一版本。生效中的旧配置和在途报告均不被覆盖；须另行激活新版本。生效 Provider 须先停用才可禁用或归档。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ImageModerationProviderRequest"}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationProviderView}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [admin]
+      summary: 归档非生效图片检测 Provider
+      description: 保留配置版本和历史报告，不删除审计记录。
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}/activate:
+    post:
+      tags: [admin]
+      summary: 原子切换唯一生效 Provider 和配置版本
+      description: expectedRevision 防止多人同时操作覆盖生效策略；只允许激活未归档且启用 Provider 的最新配置版本。只做本地配置校验，不调用检测平台。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configId, expectedRevision]
+              properties:
+                configId: {type: string}
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/disable:
+    post:
+      tags: [admin]
+      summary: 停用图片检测服务
+      description: 不再受理新报告；在途检测继续使用受理时的配置版本。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}/validate:
+    post:
+      tags: [admin]
+      summary: 本地校验图片检测配置
+      description: 仅检查配置字段、凭据可解密和已支持平台能力，不调用上游，不验证密钥有效性或服务开通情况，不产生检测费用。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configId]
+              properties:
+                configId: {type: string}
+      responses:
+        "200": {description: 标准信封 data 为 valid=true、message}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /image-moderation/availability:
+    get:
+      tags: [resources]
+      summary: 获取当前图片检测是否可用
+      description: 标准信封 data 为 available 布尔值；不返回平台、规则和密钥。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+  /resources/{id}/moderation-checks:
+    post:
+      tags: [resources]
+      summary: 手动提交当前用户的原图内容检测
+      description: 只提交资源 ID，不接受用户选择平台或检测项目。图片须已保存且不超过 20 MiB、长边 16384 像素和总像素 2.5 亿；先本地解析原图，非法图片不提交平台。固定受理配置版本和原图 SHA-256；在途同用户、资源、内容版本、配置版本的重复请求复用报告。每项调用前预占全平台 UTC 日预算，无自动重试、无积分扣费、无生成后自动检测。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport，初始 queued 或复用报告, content: {application/json: {schema: {allOf: [{$ref: "#/components/schemas/Envelope"}, {type: object, properties: {data: {$ref: "#/components/schemas/ImageModerationReport"}}}]}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /resources/{id}/moderation-checks/latest:
+    get:
+      tags: [resources]
+      summary: 读取当前用户该图片的最新受理报告
+      description: 无报告返回 data=null；最新失败不会被旧的无风险报告覆盖。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport 或 null}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /moderation-checks/{checkId}:
+    get:
+      tags: [resources]
+      summary: 读取当前用户的统一图片检测报告
+      description: 汇总当前批次各项检测的最高风险与去重标签。部分失败且其余无风险时返回 partial/unknown；所有失败返回 failed/unknown。平台、检测清单、配置、原始响应及凭据不进入用户报告。历史批次风险不累加。
+      parameters:
+        - {in: path, name: checkId, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /admin/settings/appearance/live2d:
     post:
       tags: [admin]
@@ -1325,6 +1488,76 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    ImageModerationProviderRequest:
+      type: object
+      required: [name, type, enabled, region, services, timeoutSeconds, maxCallsPerDay, minIntervalSeconds]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        type: {type: string, enum: [aliyun]}
+        enabled: {type: boolean}
+        region: {type: string, enum: [cn-shanghai, cn-beijing]}
+        services: {type: array, minItems: 1, uniqueItems: true, items: {type: string, enum: [aigcCheck, aigcViolationDetection]}}
+        timeoutSeconds: {type: integer, minimum: 5, maximum: 120, default: 30}
+        maxCallsPerDay: {type: integer, minimum: 1, maximum: 100000, default: 100}
+        minIntervalSeconds: {type: integer, minimum: 1, maximum: 3600, default: 10}
+        accessKeyId: {type: string, writeOnly: true, description: 新建须同时填 ID 和 Secret；编辑须同时填写或同时留空沿用旧版本}
+        accessKeySecret: {type: string, writeOnly: true, description: 新建须同时填 ID 和 Secret；编辑须同时填写或同时留空沿用旧版本}
+    ImageModerationProviderView:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string}
+        enabled: {type: boolean}
+        archived: {type: boolean}
+        configId: {type: string}
+        version: {type: integer}
+        region: {type: string}
+        services: {type: array, items: {type: string}}
+        timeoutSeconds: {type: integer}
+        maxCallsPerDay: {type: integer}
+        minIntervalSeconds: {type: integer}
+        accessKeyIdConfigured: {type: boolean}
+        accessKeySecretConfigured: {type: boolean}
+    ImageModerationAdminState:
+      type: object
+      properties:
+        providers: {type: array, items: {$ref: "#/components/schemas/ImageModerationProviderView"}}
+        activeProviderId: {type: string}
+        activeConfigId: {type: string}
+        policyRevision: {type: integer, format: int64}
+        providerTypes:
+          type: array
+          items:
+            type: object
+            properties:
+              type: {type: string}
+              label: {type: string}
+              services: {type: array, items: {type: object, properties: {code: {type: string}, label: {type: string}}}}
+              regions: {type: array, items: {type: object, properties: {value: {type: string}, label: {type: string}}}}
+    ImageModerationReport:
+      type: object
+      required: [checkId, resourceId, contentVersion, status, overallRisk, riskTags, summary, createdAt, isCurrent]
+      properties:
+        checkId: {type: string}
+        resourceId: {type: string}
+        contentVersion: {type: string, description: 当前批次受理原图的 SHA-256 摘要}
+        status: {type: string, enum: [queued, running, completed, partial, failed]}
+        overallRisk: {type: string, enum: [none, low, medium, high, unknown]}
+        riskTags:
+          type: array
+          items:
+            type: object
+            required: [code, label, level]
+            properties:
+              code: {type: string}
+              label: {type: string}
+              level: {type: string, enum: [low, medium, high]}
+        summary: {type: string}
+        createdAt: {type: string, format: date-time}
+        completedAt: {type: string, format: date-time}
+        isCurrent: {type: boolean, description: 同一资源版本、当前生效配置版本，且为该资源最新受理报告}
+        reused: {type: boolean, description: 仅在复用在途批次时返回 true}
     ToolMutation:
       type: object
       required: [type, label, prompt]

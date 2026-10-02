@@ -1,9 +1,10 @@
-import { AudioLines, Captions, Clapperboard, Download, FolderPlus, Images, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, Trash2, Unlock, Upload, UserRound, Video, WandSparkles } from "lucide-react";
+import { AudioLines, Captions, Clapperboard, Download, FolderPlus, Images, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, ShieldCheck, Trash2, Unlock, Upload, UserRound, Video, WandSparkles } from "lucide-react";
 
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { registerToolbarTools, type ToolContext, type ToolDefinition } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType } from "@/types/canvas";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
+import { currentImageModerationSummary, isImageModerationPending } from "@/lib/canvas/image-moderation";
 
 // 节点状态判定辅助函数——从 ToolContext 派生
 function isImage(ctx: ToolContext) { return ctx.node?.type === CanvasNodeType.Image; }
@@ -30,6 +31,19 @@ function canRetry(ctx: ToolContext) {
 }
 
 export const nodeHoverToolbarTools: ToolDefinition[] = [
+    {
+        id: "image-moderation",
+        toolbar: "node-hover",
+        category: "node-state",
+        label: "检测图片内容风险，查看统一检测报告",
+        displayLabel: (ctx) => ctx.node && isImageModerationPending(currentImageModerationSummary(ctx.node)) ? "检测中" : "合规检测",
+        icon: (ctx) => ctx.node && isImageModerationPending(currentImageModerationSummary(ctx.node)) ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" /> : <ShieldCheck className="size-3.5" />,
+        defaultVisible: true,
+        defaultOrder: 1,
+        nodeToolbar: { group: "primary", order: 0 },
+        applicable: (ctx) => hasImage(ctx) && Boolean(ctx.nodeMetadata?.content || ctx.nodeMetadata?.storageKey),
+        run: (ctx) => ctx.handlers.onNodeImageModeration(ctx.node!),
+    },
     // 基础工具组
     {
         id: "info",

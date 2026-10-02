@@ -82,6 +82,7 @@ export type ToolbarHandlers = {
     onNodeGenerateImage: (node: CanvasNodeData) => void;
     onNodeUpload: (node: CanvasNodeData) => void;
     onNodeDownload: (node: CanvasNodeData) => void;
+    onNodeImageModeration: (node: CanvasNodeData) => void;
     onNodeSaveAsset: (node: CanvasNodeData) => void;
     onNodeMaskEdit: (node: CanvasNodeData) => void;
     onNodeImageEdit: (node: CanvasNodeData) => void;

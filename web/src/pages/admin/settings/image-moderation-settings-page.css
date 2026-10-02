@@ -1,0 +1,227 @@
+[data-admin-root] .admin-moderation-settings {
+    --moderation-settings-gap: calc(var(--admin-space) * 2);
+    --moderation-summary-width: 344px;
+    gap: var(--moderation-settings-gap);
+}
+
+[data-admin-root] .admin-moderation-command-bar,
+[data-admin-root] .admin-moderation-editor-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--moderation-settings-gap);
+    padding: calc(var(--admin-space) * 1.5) 0;
+    border-bottom: 1px solid var(--admin-border);
+}
+
+[data-admin-root] .admin-moderation-command-state,
+[data-admin-root] .admin-moderation-command-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--admin-space);
+    min-width: 0;
+}
+
+[data-admin-root] .admin-moderation-command-actions {
+    flex-shrink: 0;
+}
+
+[data-admin-root] .admin-moderation-command-state > span:not(.admin-status-badge),
+[data-admin-root] .admin-moderation-muted {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+[data-admin-root] .admin-moderation-workbench,
+[data-admin-root] .admin-moderation-main,
+[data-admin-root] .admin-moderation-main > form {
+    display: grid;
+    gap: var(--moderation-settings-gap);
+    min-width: 0;
+}
+
+[data-admin-root] .admin-moderation-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--admin-space);
+    padding: var(--admin-space);
+    background: var(--admin-surface);
+    border: 1px solid var(--admin-border);
+    border-radius: var(--admin-radius-lg);
+    min-width: 0;
+}
+
+[data-admin-root] .admin-moderation-summary .admin-stat-tile-value {
+    font-size: 16px;
+    overflow-wrap: anywhere;
+}
+
+[data-admin-root] .admin-moderation-section {
+    display: grid;
+    grid-template-columns: 264px minmax(0, 1fr);
+    border: 1px solid var(--admin-border);
+}
+
+[data-admin-root] .admin-moderation-section .admin-settings-section-summary {
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    border-right: 1px solid var(--admin-divider);
+    padding: var(--moderation-settings-gap);
+}
+
+[data-admin-root] .admin-moderation-section .admin-settings-section-status {
+    margin-left: calc(var(--admin-space) * 5.5);
+}
+
+[data-admin-root] .admin-moderation-section .admin-settings-section-content {
+    padding: var(--moderation-settings-gap);
+}
+
+[data-admin-root] .admin-moderation-provider-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--admin-space);
+}
+
+[data-admin-root] .admin-moderation-provider {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--admin-space);
+    width: 100%;
+    padding: var(--admin-space) calc(var(--admin-space) * 1.5);
+    text-align: left;
+    border: 1px solid var(--admin-border);
+    border-radius: var(--admin-radius);
+    background: var(--admin-surface);
+    color: var(--admin-text);
+    transition: background var(--admin-motion), border-color var(--admin-motion);
+}
+
+[data-admin-root] .admin-moderation-provider:hover {
+    background: var(--admin-row-hover);
+}
+
+[data-admin-root] .admin-moderation-provider.is-selected {
+    background: var(--admin-nav-active);
+    border-color: var(--admin-border-strong);
+}
+
+[data-admin-root] .admin-moderation-provider:focus-visible {
+    outline: 2px solid var(--admin-focus);
+    outline-offset: 2px;
+}
+
+[data-admin-root] .admin-moderation-provider:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+[data-admin-root] .admin-moderation-provider-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+[data-admin-root] .admin-moderation-provider-detail {
+    flex: 1;
+    color: var(--admin-text-muted);
+    font-size: 12px;
+}
+
+[data-admin-root] .admin-moderation-editor-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--admin-space);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+[data-admin-root] .admin-moderation-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--admin-space) var(--moderation-settings-gap);
+}
+
+[data-admin-root] .admin-moderation-form-grid .ant-form-item,
+[data-admin-root] .admin-moderation-service-field {
+    margin-bottom: var(--admin-space);
+}
+
+[data-admin-root] .admin-moderation-form-grid .ant-input-number-group-wrapper,
+[data-admin-root] .admin-moderation-form-grid .ant-input-number {
+    width: 100%;
+}
+
+[data-admin-root] .admin-moderation-enable-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--admin-space);
+}
+
+[data-admin-root] .admin-moderation-service-choices {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--moderation-settings-gap);
+}
+
+[data-admin-root] .admin-moderation-empty {
+    margin: 0;
+    color: var(--admin-text-muted);
+}
+
+@media (min-width: 1600px) {
+    [data-admin-root] .admin-moderation-workbench {
+        grid-template-columns: minmax(0, 1fr) var(--moderation-summary-width);
+        align-items: start;
+    }
+
+    [data-admin-root] .admin-moderation-main {
+        grid-area: 1 / 1;
+    }
+
+    [data-admin-root] .admin-moderation-summary {
+        grid-area: 1 / 2;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        position: sticky;
+        top: var(--moderation-settings-gap);
+    }
+}
+
+@media (max-width: 1099px) {
+    [data-admin-root] .admin-moderation-command-bar,
+    [data-admin-root] .admin-moderation-editor-actions {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    [data-admin-root] .admin-moderation-section {
+        grid-template-columns: 1fr;
+    }
+
+    [data-admin-root] .admin-moderation-section .admin-settings-section-summary {
+        border-right: 0;
+        border-bottom: 1px solid var(--admin-divider);
+    }
+}
+
+@media (max-width: 600px) {
+    [data-admin-root] .admin-moderation-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    [data-admin-root] .admin-moderation-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-admin-root] .admin-moderation-provider {
+        transition: none;
+    }
+}

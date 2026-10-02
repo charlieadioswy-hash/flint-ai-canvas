@@ -26,10 +26,15 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/newapi-channel-2.mdx
 !docs/content/docs/backend/video-token-billing.mdx
 !docs/content/docs/backend/creative-agent-runtime.mdx
+!docs/content/docs/backend/image-moderation.mdx
 # Keep the creative Agent design versioned without unignoring generated docs.
 !docs/content/docs/overview/
 docs/content/docs/overview/*
 !docs/content/docs/overview/creative-agent-design.mdx
+!docs/content/docs/progress/
+docs/content/docs/progress/*
+!docs/content/docs/progress/todo.mdx
+!docs/content/docs/progress/pending-test.mdx
 .env*
 !.env.example
 data/
@@ -76,3 +81,4 @@ backend/tmp_*
 # Keep the runtime in source control; its optional debug map is not deployed.
 /web/public/live2d/live2dcubismcore.min.js.map
 .zocde/
+.codegraph

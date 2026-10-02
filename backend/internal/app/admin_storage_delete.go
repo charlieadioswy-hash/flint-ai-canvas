@@ -159,6 +159,9 @@ func (s *Service) DeleteAdminResources(actor *model.User, req AdminResourceDelet
 		audits = append(audits, *event)
 	}
 	if err := s.repo.DeleteAdminResources(deletable, deletionJobs, audits); err != nil {
+		if errors.Is(err, repository.ErrImageModerationReferenced) {
+			return nil, NewAppError(409, "图片内容检测正在执行，请等待完成后再删除资源")
+		}
 		if errors.Is(err, repository.ErrAdminResourceDeleteChanged) || errors.Is(err, repository.ErrAdminResourceStillReferenced) || errors.Is(err, repository.ErrCanvasHistoryResourceReferenced) {
 			return nil, BadAuthRequest("资源状态或引用已变化，请刷新后重试")
 		}

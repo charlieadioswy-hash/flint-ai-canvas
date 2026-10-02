@@ -13,6 +13,36 @@ description: 信封、错误码与 OpenAPI
 
 模型 HTTP 失败及经过 Provider 错误转换的业务失败，在通用提示后追加经过过滤的 `；上游：具体原因`，供任务错误和画布卡片展示内容安全、提示词、尺寸等可操作信息。只读取上游 `error` / `message` / `msg` / `detail` 消息字段，不回传整个 JSON；消息中的 HTTP(S) URL 隐藏，包含余额、账务、凭据、请求诊断或 HTML 的消息不追加原文，保留通用分类提示。后台响应拦截规则仍对最终用户文案生效；不会修改历史任务错误或改变重试、退款策略。
 
+## 图片合规检测
+
+以下路径均带 `/api` 前缀，采用本页统一信封；用户接口要求登录，管理接口另在 service 校验管理员权限。画布只使用统一报告，不提交平台、检测项目或凭据。
+
+| 方法与路径 | 请求与返回 |
+| --- | --- |
+| `GET /image-moderation/availability` | 返回 `{ available: boolean }`，仅说明是否配置生效服务，不请求检测平台 |
+| `POST /resources/:id/moderation-checks` | 请求体 `{}`；只接受属于当前用户的已保存原图，返回批次报告。只有此接口创建手动检测批次 |
+| `GET /resources/:id/moderation-checks/latest` | 返回当前用户该资源最新创建批次的报告，无报告时返回 `null`；失败和执行中批次同样参与“最新”选择 |
+| `GET /moderation-checks/:checkId` | 读取属于当前用户的指定报告，不触发检测 |
+| `GET /admin/image-moderation` | 返回 `providers`、`activeProviderId`、`activeConfigId`、`policyRevision` 和后端支持的 `providerTypes` |
+| `POST /admin/image-moderation/providers` | 保存新 Provider 及版本 1，返回最新配置视图，不自动生效 |
+| `PUT /admin/image-moderation/providers/:id` | 追加配置版本，平台类型不可改变；保存不切换原生效版本 |
+| `POST /admin/image-moderation/providers/:id/activate` | 请求 `{ configId, expectedRevision }`，配置须属于该 Provider 且为最新版本，切换唯一生效指针并返回管理状态 |
+| `POST /admin/image-moderation/disable` | 请求 `{ expectedRevision }`，停用新的检测，返回管理状态；在途批次继续旧配置 |
+| `DELETE /admin/image-moderation/providers/:id` | 归档非生效 Provider，保留历史配置和报告，返回管理状态 |
+| `POST /admin/image-moderation/providers/:id/validate` | 请求 `{ configId }`，只做本地配置校验，返回 `{ valid: true, message }`；不验证远程服务开通或凭据有效性 |
+
+保存 Provider 请求字段为 `name`、`type`、`enabled`、`region`、`services`、`timeoutSeconds`、`maxCallsPerDay`、`minIntervalSeconds`，以及 `accessKeyId`、`accessKeySecret`。超时须为 5–120 秒，每日调用上限须为 1–100000 次，用户新批次最小间隔须为 1–3600 秒，不使用缺省额度兜底。首次保存须同时提供两项凭据；编辑时两项同时留空沿用原凭据，只提供一项拒绝保存。读取只返回 `accessKeyIdConfigured` 和 `accessKeySecretConfigured`，不返回密钥。
+
+当前 `type` 仅支持 `aliyun`，地域为 `cn-shanghai`、`cn-beijing`，服务为 `aigcCheck`、`aigcViolationDetection`。管理员勾选的每个服务在一次手动批次中执行一次，多个服务分别占用平台全局 UTC 日调用预算；切换 Provider 不清零。保存、校验、设为生效及所有 GET 都不发起检测平台调用。
+
+统一报告字段为 `checkId`、`resourceId`、`contentVersion`、`status`、`overallRisk`、`riskTags`、`summary`、`createdAt`、可选 `completedAt`、`isCurrent` 和可选 `reused`。`status` 为 `queued|running|completed|partial|failed`，`overallRisk` 为 `none|low|medium|high|unknown`，风险标签为 `{ code, label, level }`。只有全部项目成功且无风险时才能返回 `completed + none`；部分失败且其余无风险返回 `partial + unknown`，部分失败且已知有风险保留最高等级并说明未完整。
+
+相同用户、原图内容和配置版本的在途批次复用并标记 `reused: true`；完成后的明确复检创建新批次，各次报告独立，不合并历史结果。最新批次失败时不返回旧无风险结果。`isCurrent` 校验资源身份、最新批次及当前生效配置；切换配置、停用或替换图片后旧结果过期。
+
+`GET /public/canvas-shares/:token` 的图片节点可包含 `metadata.sharedImageModeration: { sourceIdentity, report }`。`sourceIdentity` 为与分享图片匹配的 `resource:<id>`，`report` 仅包含 `status`、`overallRisk`、`riskTags`、`summary`、`createdAt`、可选 `completedAt` 和 `isCurrent`。这是保存的报告快照，分享读取不查询私有报告、不更新过期状态、不创建检测；原图不匹配或摘要格式无效时不返回该字段。报告中的资源引用不增加分享资源的访问范围。
+
+管理生效版本 CAS 冲突返回 409，未配置服务返回 503，新批次间隔超限按统一限流错误返回。入队后每日预算不足或平台失败会体现在报告终态；失败报告不是 HTTP 传输成功所代表的无风险结果。SDK 不自动重试，前端创建请求结果不确定时仅查询最新报告，不自动重发 POST。详细实现与恢复合同见[图片合规检测](/docs/backend/image-moderation)。
+
 ## 资源访问与 OSS/CDN 分发
 
 资源展示、播放、下载、复制地址和模型输入统一消费资源访问合同，不在客户端通过 `direct=1`、`proxy=1` 或存储厂商规则选择出口。

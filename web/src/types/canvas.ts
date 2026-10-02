@@ -8,6 +8,7 @@ import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
 import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
+import type { CanvasImageModerationState, CanvasSharedImageModerationState } from "@/lib/canvas/image-moderation";
 
 export type Position = {
     x: number;
@@ -320,6 +321,9 @@ export type CanvasNodeMetadata = {
     primaryImageId?: string;
     imageBatchExpanded?: boolean;
     storageKey?: string;
+    /** 手动图片检测的安全摘要；原图身份变化后旧报告只作为历史记录。 */
+    imageModeration?: CanvasImageModerationState;
+    sharedImageModeration?: CanvasSharedImageModerationState;
     mimeType?: string;
     bytes?: number;
     durationMs?: number;

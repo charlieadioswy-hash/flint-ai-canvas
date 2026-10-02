@@ -24,7 +24,13 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 	for _, resource := range resources {
 		resourceIDs = append(resourceIDs, resource.ID)
 	}
+	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if moderationProtection {
+			if err := New(tx).RequireNoImageModerationReferences(resourceIDs); err != nil {
+				return err
+			}
+		}
 		var current []model.Resource
 		query := tx.Where("id IN ?", resourceIDs)
 		if r.Dialect() == "postgres" {

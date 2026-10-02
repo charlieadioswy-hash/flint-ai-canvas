@@ -1,0 +1,41 @@
+{
+  "project": {
+    "id": "project-1",
+    "title": "公开画布",
+    "createdAt": null,
+    "updatedAt": null,
+    "backgroundMode": null,
+    "showImageInfo": null,
+    "viewport": null,
+    "connections": [],
+    "chatSessions": [],
+    "activeChatId": null,
+    "directorScenes": [],
+    "nodes": [
+      {
+        "id": "node-1",
+        "type": "image",
+        "title": "镜头",
+        "position": { "x": 0, "y": 0 },
+        "width": 640,
+        "height": 480,
+        "parentId": null,
+        "metadata": {
+          "content": "/api/public/canvas-shares/share-token/resources/resource_123/file",
+          "sharedImageModeration": {
+            "sourceIdentity": "resource:resource_123",
+            "report": {
+              "status": "partial",
+              "overallRisk": "high",
+              "riskTags": [{ "code": "violence", "label": "暴力风险", "level": "high" }],
+              "summary": "检测到内容风险，部分检测未完成",
+              "createdAt": "2026-10-01T00:00:00Z",
+              "completedAt": "2026-10-01T00:00:10Z",
+              "isCurrent": true
+            }
+          }
+        }
+      }
+    ]
+  }
+}
