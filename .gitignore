@@ -21,6 +21,7 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/task-runtime-stability.mdx
 !docs/content/docs/backend/agent-prompt-policy.mdx
 !docs/content/docs/backend/canvas-agent-appearance.mdx
+!docs/content/docs/backend/update-announcements.mdx
 !docs/content/docs/backend/http-api.mdx
 !docs/content/docs/backend/code-map.mdx
 !docs/content/docs/backend/newapi-channel-2.mdx
@@ -82,3 +83,5 @@ backend/tmp_*
 /web/public/live2d/live2dcubismcore.min.js.map
 .zocde/
 .codegraph
+# 本地交接材料，不入库
+PROJECT_STATE.md
