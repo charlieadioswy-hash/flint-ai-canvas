@@ -21,6 +21,7 @@ export const addNodeMenuCommands: AddNodeMenuCommand[] = [
     nodeCommand(CanvasNodeType.Image, { defaultOrder: 50, run: (ctx) => ctx.handlers.onAddImage() }),
     { id: "project-character", label: "角色卡", icon: <UserRound />, section: "node", defaultOrder: 55, run: (ctx) => ctx.handlers.onOpenProjectCharacters() },
     nodeCommand(CanvasNodeType.Video, { defaultOrder: 60, run: (ctx) => ctx.handlers.onAddVideo() }),
+    nodeCommand(CanvasNodeType.Model3D, { defaultOrder: 63, run: (ctx) => ctx.handlers.onAddExtensionNode(CanvasNodeType.Model3D) }),
     nodeCommand(CanvasNodeType.BatchTable, { defaultOrder: 66, run: (ctx) => ctx.handlers.onAddExtensionNode(CanvasNodeType.BatchTable) }),
     nodeCommand(CanvasNodeType.MediaConversion, { badge: "本地", defaultOrder: 65, run: (ctx) => ctx.handlers.onAddExtensionNode(CanvasNodeType.MediaConversion) }),
     // 导演台落在节点分区，但它开的是导演工作台、不是某种画布节点，故不走注册表。

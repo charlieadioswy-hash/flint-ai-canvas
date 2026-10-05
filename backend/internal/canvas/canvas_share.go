@@ -280,6 +280,9 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 		}
 		publicMetadata[key] = scrubPublicCanvasValue(value)
 	}
+	if format := kernel.StringValue(metadata["model3dFormat"]); format == "glb" || format == "fbx" {
+		publicMetadata["model3dFormat"] = format
+	}
 	resourceID := assets.ResourceID(kernel.StringValue(metadata["storageKey"]))
 	if resourceID == "" {
 		resourceID = assets.ResourceID(kernel.StringValue(metadata["content"]))
@@ -292,7 +295,7 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 				publicMetadata["sharedImageModeration"] = report
 			}
 		}
-	} else if nodeType := kernel.StringValue(node["type"]); nodeType == "image" || nodeType == "video" || nodeType == "audio" {
+	} else if nodeType := kernel.StringValue(node["type"]); nodeType == "image" || nodeType == "video" || nodeType == "audio" || nodeType == "model3d" || nodeType == "model" {
 		delete(publicMetadata, "content")
 	}
 	delete(publicMetadata, "storageKey")

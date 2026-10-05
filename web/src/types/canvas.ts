@@ -9,6 +9,7 @@ import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timelin
 import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasImageModerationState, CanvasSharedImageModerationState } from "@/lib/canvas/image-moderation";
+import type { CanvasModel3DState } from "@/lib/canvas/model3d";
 
 export type Position = {
     x: number;
@@ -39,6 +40,7 @@ export enum CanvasNodeType {
     Chart = "chart",
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
+    Model3D = "model3d",
     BatchTable = "batch-table",
 }
 
@@ -436,6 +438,8 @@ export type CanvasNodeMetadata = {
     /** 调色节点的参数；缺省视为未调色。 */
     colorGrade?: CanvasColorGrade;
     mediaConversion?: MediaConversionNodeState;
+    model3d?: CanvasModel3DState;
+    model3dFormat?: "glb" | "fbx";
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
     storyboard?: StoryboardData;

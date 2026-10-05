@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/model3d"
 	"infinite-canvas/backend/internal/moderation"
 	"infinite-canvas/backend/internal/payment"
 	"infinite-canvas/backend/internal/platform"
@@ -95,6 +96,7 @@ type Service struct {
 	approvedMediaWaiters           map[string]context.CancelFunc
 	approvedMediaClosed            bool
 	imageModerationProviderFactory func(string) (moderation.Provider, error)
+	model3DProviderFactory         func() model3d.Provider
 }
 
 const taskWorkerConcurrency = 3

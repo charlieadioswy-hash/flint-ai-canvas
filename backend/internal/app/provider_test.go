@@ -542,8 +542,104 @@ func TestCanonicalAgentBodiesPreserveAssistantToolCalls(t *testing.T) {
 		t.Fatalf("responses input = %#v", responseInput)
 	}
 	functionCall, _ := responseInput[2].(map[string]interface{})
-	if functionCall["type"] != "function_call" || functionCall["name"] != "canvas_get_state" || functionCall["id"] != "fc-5" || functionCall["item_reference"] != "fc-5" {
+	if functionCall["type"] != "function_call" || functionCall["name"] != "canvas_get_state" || functionCall["id"] != "fc-5" || functionCall["call_id"] != "call-5" {
 		t.Fatalf("responses function call = %#v", functionCall)
+	}
+	if _, exists := functionCall["item_reference"]; exists {
+		t.Fatalf("responses function call contains a non-protocol field: %#v", functionCall)
+	}
+}
+
+func TestRunAgentToolTaskResponsesReplaysFunctionCallsWithoutInternalFields(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	for _, history := range []struct {
+		name string
+		call map[string]interface{}
+	}{
+		{"assistant_tool_calls", map[string]interface{}{
+			"role": "assistant", "content": "", "tool_calls": []map[string]interface{}{{
+				"id": "call-5", "item_id": "fc-5",
+				"function": map[string]interface{}{"name": "canvas_get_state", "arguments": `{}`},
+			}},
+		}},
+		{"function_call_item", map[string]interface{}{
+			"type": "function_call", "id": "fc-5", "call_id": "call-5", "name": "canvas_get_state", "arguments": `{}`,
+		}},
+	} {
+		t.Run(history.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/responses") {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				var body struct {
+					Input []json.RawMessage `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode request: %v", err)
+					http.Error(w, "invalid JSON", http.StatusBadRequest)
+					return
+				}
+				calls, outputs := 0, 0
+				for _, raw := range body.Input {
+					var kind struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(raw, &kind); err != nil {
+						t.Errorf("decode input item: %v", err)
+						continue
+					}
+					switch kind.Type {
+					case "function_call":
+						calls++
+						// A strict upstream rejects internal aliases, even when the call IDs are valid.
+						var call struct {
+							Type      string `json:"type"`
+							ID        string `json:"id"`
+							CallID    string `json:"call_id"`
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}
+						decoder := json.NewDecoder(bytes.NewReader(raw))
+						decoder.DisallowUnknownFields()
+						if err := decoder.Decode(&call); err != nil {
+							t.Errorf("invalid Responses function call: %v", err)
+							http.Error(w, "unknown function_call field", http.StatusBadRequest)
+							return
+						}
+						if call.ID != "fc-5" || call.CallID != "call-5" || call.Name != "canvas_get_state" || call.Arguments != `{}` {
+							t.Errorf("tool call identity changed: %#v", call)
+						}
+					case "function_call_output":
+						outputs++
+						var output map[string]interface{}
+						if err := json.Unmarshal(raw, &output); err != nil || output["call_id"] != "call-5" || output["output"] != `{"nodes":[]}` {
+							t.Errorf("tool output lost its pairing: %s", raw)
+						}
+					}
+				}
+				if calls != 1 || outputs != 1 {
+					t.Errorf("tool history incomplete: calls=%d outputs=%d", calls, outputs)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"完成"}]}]}`))
+			}))
+			defer server.Close()
+			result, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+				Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "test-model", InterfaceType: string(model.ChannelInterfaceOpenAIResponse)},
+				AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+					ToolChoice: "auto",
+					Messages: []map[string]interface{}{
+						{"role": "user", "content": "读取画布"}, history.call,
+						{"role": "tool", "tool_call_id": "call-5", "content": `{"nodes":[]}`},
+					},
+				}},
+			})
+			if err != nil || result["text"] != "完成" || requests != 1 {
+				t.Fatalf("Responses continuation: result=%#v err=%v requests=%d", result, err, requests)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, BookOpenCheck, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, ShieldCheck, Star, Trash2, Type, UserRound, Video, WandSparkles } from "lucide-react";
+import { AlertCircle, BookOpenCheck, Box, CheckCircle2, ChevronRight, Clapperboard, Copy, Download, Image as ImageIcon, Lock, Maximize2, Music2, Pencil, RefreshCw, ScanSearch, Settings2, ShieldCheck, Star, Trash2, Type, UserRound, Video, WandSparkles } from "lucide-react";
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 
@@ -391,6 +391,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         node={data}
                         theme={theme}
                         renderLOD={effectiveRenderLOD}
+                        readOnly={readOnly}
                         isEditingContent={isEditingContent}
                         textareaRef={textareaRef}
                         isBatchRoot={isBatchRoot}
@@ -731,6 +732,7 @@ function nodeTypeIcon(node: CanvasNodeData) {
     if (node.metadata?.workflowKind === "character") return UserRound;
     const type = node.type;
     if (type === CanvasNodeType.Image) return ImageIcon;
+    if (type === CanvasNodeType.Model3D) return Box;
     if (type === CanvasNodeType.Video) return Video;
     if (type === CanvasNodeType.Audio) return Music2;
     if (type === CanvasNodeType.Drawing) return Pencil;

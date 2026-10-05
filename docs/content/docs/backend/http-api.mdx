@@ -240,6 +240,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - 审批拒绝是独立终态 `rejected`，表示本次操作未执行；不会生成 `tool_failed`、继续调用模型、写入画布、提交生成任务或扣费。拒绝后的草稿按既有草稿策略保留，用户可在下一轮说明修改方向。
 - 创建和追加消息可选择 `reasoningMode`，默认 `off`；`auto`/`deep` 为服务端行为策略与模型推理配置的选择，不等于允许暴露内部思维链。供应商能力由后端校验；声明式 Agent 渠道不支持时明确报错。推理可能增加耗时和费用。
 - Cloud Agent 与首页创造的规划请求使用自动工具选择。OpenAI Chat Completion 兼容协议会把显式 `auto` 归一化为省略 `tool_choice`，沿用协议默认的自动选择语义；显式开启思考模式时还会在首个上游请求前移除 `required` 或指定函数对象。非思考模式仍保留艺术点评、提示词优化等结构化任务的强制函数选择。若上游隐式开启思考而本地未声明，仍按 `required` → `auto` → 省略字段做兼容重试。
+- Responses 工具历史在出站时将工具条目身份写入 `function_call.id`，调用与结果通过 `call_id` 配对；兼容规范 `function_call` 条目和 assistant 的 `tool_calls` 两种内部来源，不向 `function_call` 写入 `item_reference` 属性。`item_reference` 是另一种独立输入条目类型，不能作为函数调用字段。参考 [OpenAI 工具调用文档](https://developers.openai.com/api/docs/guides/function-calling)。
 - `GET /agent/profile?scope=user|project|canvas&projectId=...&canvasId=...` 按作用域读取生效的用户 → 项目 → 画布偏好；`PATCH /agent/profile` 用 `{ scope, projectId?, canvasId?, content, revision }` 更新单层（首次 revision 为 0，冲突返回 409）。读取返回各层独立数字 revision，以及合并文档的 `revision`/`hash`；新轮次携带合并 `profileRevision`，发生变化拒绝创建，已运行轮次仍用提交时固定的快照。system prompt 只包含层级、revision、hash 和长度清单，正文保存在运行快照中；本轮快照有层时才提供 `agent_profile_read`，只读清单中存在的层。没有偏好层时工具清单不含该工具。偏好仅是非授权数据，不能扩展工具、节点或预算，不能绕过审批；最多 12000 字符/层。
 - 系统行为策略与媒体默认策略是版本化、编译进后端发布物的资源，修改它们仍需发布后端，不是后台热更新；工具、校验、扣费和审批在代码侧强制执行。系统行为策略当前版本为 10：`canvasSummary` 被定义为节点目录，模型不得把它当成完整画布。画布节点能力由服务端 registry 定义，工具 schema、创建、连线与画布目录读取共同消费；新生成模式还必须接入媒体任务适配器，不能仅凭 md 或注册节点启用收费操作。
 - 已安装且属于当前用户的技能在创建时只保存版本、哈希和文本文件路径，不预存全部正文，也不按所有选中技能正文合计 128KB 拒绝创建。`skill_read_file` 按需读取 `SKILL.md` 或必要引用，支持字符偏移 `offset`（默认 0），每页最多 12000 字符，返回 `hasMore` / `nextOffset`。读取时重新验证用户权限、启用状态和版本；技能更新后拒绝混读，需新开一轮。技能是不可信数据，不能创造工具、改变权限或覆盖系统规则。
@@ -408,3 +409,31 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 | DELETE | `/api/tools/:id` | 仅删除自己的用户工具，不能删除内置或他人工具 |
 
 生成提示词工具引用格式为 `@[tool:type:ID:label:icon]`，label 使用 URI 编码。名称和图标只用于展示，不作为授权依据。服务端在任务入队及执行前检查用户可见性、启用状态、工具类型和生成模式；无效、越权、嵌套工具或数据库错误必须失败，不能把未解析 token 发送给模型。风格和九宫格仅用于图片，运镜和特效仅用于视频。入队校验不冻结工具快照：排队期间删除工具将导致执行失败。
+## 3D 模型生成 API
+
+以下路径以 `/api` 为前缀，使用标准业务信封；用户接口要求登录，管理接口要求管理员。
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| GET | `/model3d/capabilities` | 返回生效配置开放的模型、模式、默认模型、输入限制和 `policyRevision`；不返回密钥 |
+| POST | `/model3d/tasks` | 创建文本、单图或多视图生成任务，按用户与 `requestId` 幂等 |
+| GET | `/model3d/tasks/:id` | 读取本人任务与平台模型资源结果 |
+| GET | `/model3d/requests/:requestId` | 按本人请求编号只读恢复任务；未找到返回 `null`，不会触发生成 |
+| POST | `/model3d/tasks/:id/recover` | 恢复已有上游任务的结果回存，不能重发付费生成 |
+| GET | `/admin/model3d` | 服务商配置、支持能力、当前生效版本与策略修订 |
+| POST / PUT | `/admin/model3d/providers` / `/admin/model3d/providers/:id` | 新建服务商或保存不可变的新配置版本 |
+| POST | `/admin/model3d/providers/:id/activate` | 以 `{ configId, expectedRevision }` 切换生效版本 |
+| POST | `/admin/model3d/disable` | 以 `{ expectedRevision }` 停止接收新任务，在途任务继续原配置 |
+| DELETE | `/admin/model3d/providers/:id` | 归档非生效服务商，保留历史配置及生成结果 |
+
+创建体包含 `requestId`、`sourceFingerprint`、`canvasId`、`nodeId`、`mode`、`parameters` 和 `expectedPolicyRevision`。`mode=text` 使用 `prompt`；`image` 使用 `imageResourceId`；`multiview` 使用 `views: { front, left?, back?, right? }`，正面必填且共 2–4 张。所有输入图片必须是当前用户就绪资源。模型参数为强类型合同，模型不支持的字段、非法组合与超限输入在付费提交前拒绝。
+
+`parameters.texture` 与 `parameters.pbr` 必须显式传布尔值；缺失或 `null` 返回 400，`false` 是有效值。关闭贴图必须同时关闭 PBR。`delight` 仅允许在开启贴图且 `textureVersion=v3.5-20260815` 时传入，省略时由该版本默认开启。`exportUv` 省略时默认开启；UV 与导出朝向也适用于 H2.5。`textureQuality=fast` 同样要求贴图 3.5。关闭贴图或切换模式时，前端清理不适用参数，后端独立校验。
+
+任务投影包含 `status`（`queued/running/succeeded/failed/cancelled`）、`stage`、`progress`、`submissionOutcome`、`canRetryStorage`、上下文及可选 `result/error`。`result` 包含素材和资源 ID、存储键、URL、文件名、MIME、字节数、实际 `format: glb|fbx`。上游临时链接和密钥不会返回给画布。
+
+Tripo 适配器要求成功响应含显式整数 `code=0` 和非空 `data`，分别读取上传的 `file_token`、创建的 `task_id`、查询的 `status/progress/output.model_url`。非 2xx 也解析有效数字错误码，使用 HTTP 状态和上游错误码生成安全诊断；不透传上游 `message/suggestion` 等原始文本。预览图、实际积分与供应商时间字段目前不参与任务结果投影。
+
+`submissionOutcome=unknown` 表示上游创建是否收到尚不能确定，不能自动再发生成请求。已绑定上游 ID 时只查询原任务；浏览器创建响应丢失时按 requestId 查询。相同 requestId 但请求内容不同返回冲突。普通任务的通用重试不能用于重新提交 3D 生成。
+
+服务商保存体为 `name/type/enabled/defaultModel/allowedModels/allowedModes/timeoutSeconds/maxTasksPerDay/apiKey?`；首次必须提供密钥，后续留空保留。保存与激活只校验配置，不调用生成接口。详细设计见 `docs/design/model3d-generation.mdx`。

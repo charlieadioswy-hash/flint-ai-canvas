@@ -107,7 +107,7 @@ func validatePublicResourceBaseURL(raw string) (*url.URL, error) {
 func normalizeResourceKind(kind string, mimeType string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
-	case "image", "video", "audio", "file":
+	case "image", "video", "audio", "file", "model":
 		return kind
 	}
 	if strings.HasPrefix(mimeType, "image/") {
@@ -118,6 +118,9 @@ func normalizeResourceKind(kind string, mimeType string) string {
 	}
 	if strings.HasPrefix(mimeType, "audio/") {
 		return "audio"
+	}
+	if strings.HasPrefix(mimeType, "model/") {
+		return "model"
 	}
 	return "file"
 }

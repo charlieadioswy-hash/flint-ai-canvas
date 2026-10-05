@@ -75,6 +75,11 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     metadata.directorPreviewNodeId = remapOwnedNodeId(node.metadata?.directorPreviewNodeId, idMap);
     metadata.directorDepthNodeId = remapOwnedNodeId(node.metadata?.directorDepthNodeId, idMap);
     metadata.directorNormalNodeId = remapOwnedNodeId(node.metadata?.directorNormalNodeId, idMap);
+    if (node.metadata?.model3d) {
+        const state = node.metadata.model3d;
+        const remapImage = (image: typeof state.draft.image) => image ? { ...image, sourceNodeId: remapReferenceId(image.sourceNodeId, idMap) } : undefined;
+        metadata.model3d = { ...state, run: undefined, draft: { ...state.draft, parameters: { ...state.draft.parameters }, image: remapImage(state.draft.image), views: Object.fromEntries(Object.entries(state.draft.views).map(([view, image]) => [view, remapImage(image)])) }, result: state.result ? { ...state.result } : undefined };
+    }
 
     const characterViewNodeIds = node.metadata?.characterViewNodeIds;
     const copiedCharacterViewNodeIds = characterViewNodeIds ? {

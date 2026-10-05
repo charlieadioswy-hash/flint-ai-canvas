@@ -1,0 +1,59 @@
+[data-admin-root] .admin-model3d-settings {
+    display: grid;
+    gap: calc(var(--admin-space) * 2);
+}
+
+[data-admin-root] .admin-model3d-toolbar,
+[data-admin-root] .admin-model3d-actions,
+[data-admin-root] .admin-model3d-choices,
+[data-admin-root] .admin-model3d-provider {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--admin-space);
+}
+
+[data-admin-root] .admin-model3d-toolbar {
+    justify-content: space-between;
+    padding-block: var(--admin-space);
+    border-bottom: 1px solid var(--admin-border);
+}
+
+[data-admin-root] .admin-model3d-stats,
+[data-admin-root] .admin-model3d-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: calc(var(--admin-space) * 2);
+}
+
+[data-admin-root] .admin-model3d-providers {
+    display: grid;
+    gap: var(--admin-space);
+}
+
+[data-admin-root] .admin-model3d-provider {
+    width: 100%;
+    padding: calc(var(--admin-space) * 1.5);
+    background: var(--admin-surface);
+    color: var(--admin-text);
+    border: 1px solid var(--admin-border);
+    border-radius: var(--admin-radius);
+    text-align: left;
+}
+
+[data-admin-root] .admin-model3d-provider[aria-pressed="true"] {
+    background: var(--admin-nav-active);
+    border-color: var(--admin-border-strong);
+}
+
+[data-admin-root] .admin-model3d-provider:hover { background: var(--admin-row-hover); }
+[data-admin-root] .admin-model3d-provider:focus-visible { outline: 2px solid var(--admin-focus); outline-offset: 2px; }
+[data-admin-root] .admin-model3d-provider:disabled { opacity: .65; cursor: wait; }
+[data-admin-root] .admin-model3d-provider strong { flex: 1; overflow-wrap: anywhere; }
+[data-admin-root] .admin-model3d-muted { color: var(--admin-text-muted); font-size: 12px; line-height: 1.6; }
+[data-admin-root] .admin-model3d-fields .ant-input-number { width: 100%; }
+[data-admin-root] .admin-model3d-fields .ant-form-item { margin-bottom: var(--admin-space); }
+
+@media (max-width: 640px) {
+    [data-admin-root] .admin-model3d-fields { grid-template-columns: 1fr; }
+}

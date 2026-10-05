@@ -3,6 +3,7 @@ import { getNodeAcceptedInputKinds, getNodeGenerationMode, getNodeInputKind, get
 import { readNodeGenerationSpec, resolveGenerationSelection } from "@/lib/canvas/generation-contract";
 import type { AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
+import { readModel3DState } from "@/lib/canvas/model3d";
 
 type ConnectionCandidate = Pick<CanvasConnection, "fromNodeId" | "toNodeId">;
 type CanvasConnectionPolicyOptions = {
@@ -13,6 +14,15 @@ type CanvasConnectionPolicyOptions = {
 export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[], connections: CanvasConnection[], candidate: ConnectionCandidate, options: CanvasConnectionPolicyOptions = {}) {
     const target = nodes.find((node) => node.id === candidate.toNodeId);
     if (!target) return "找不到连线目标节点";
+    if (target.type === CanvasNodeType.Model3D) {
+        const source = nodes.find((node) => node.id === candidate.fromNodeId);
+        const mode = readModel3DState(target).draft.mode;
+        if (mode === "text") return source?.type === CanvasNodeType.Text || source?.type === CanvasNodeType.Markdown ? "" : "文本模式只接受文字节点，请先切换单图或多视图模式。";
+        if (source?.type !== CanvasNodeType.Image) return "单图或多视图模式只接受图片节点。";
+        const count = new Set([...connections, candidate].filter((connection) => connection.toNodeId === target.id).map((connection) => connection.fromNodeId)).size;
+        if (count > (mode === "image" ? 1 : 4)) return mode === "image" ? "单图模式最多连接一张图片。" : "多视图模式最多连接四张图片，请明确分配视角。";
+        return "";
+    }
     const acceptedInputKinds = getNodeAcceptedInputKinds(target.type);
     if (acceptedInputKinds.length) {
         const source = nodes.find((node) => node.id === candidate.fromNodeId);

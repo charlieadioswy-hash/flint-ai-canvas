@@ -1,0 +1,158 @@
+# 3D 生成节点：Tripo API 与交互调研
+
+> 范围：文本、单图、多视图生成 3D 模型及原生模型文件下载；首期供应商为 Tripo。
+> 性质：官方协议研究、配置建议与验收依据，不表示真实 API 已验收。
+> 边界：不包含模型导入、分割、重新贴图、重拓扑、绑骨或动画工作流。
+
+## 1. 接入结论
+
+首期直接采用 Tripo v3 REST 合同，默认固定 `v3.1-20260211`。ComfyUI 可作为模式选择、视图端口和结果组织的参考，其 Python 生成流程仍主要使用 V2，不能直接复制为 V3 请求。新旧 API 的密钥通用，但 V3 已将通用任务端点拆为按能力命名的端点，模型字段为 `model`，请求体无需 `type`。[官方迁移指南](https://developers.tripo3d.ai/zh/docs/migration-v2-to-v3)、[SDK 支持矩阵](https://developers.tripo3d.ai/zh/docs/sdk)
+
+本节之后明确区分官方事实、实施建议和待实测项。价格是文档估算，示例响应中的 `credits_consumed: 100` 不是实际报价。
+
+## 2. 三种生成模式与上传合同
+
+全局 Base URL 为 `https://openapi.tripo3d.ai/v3`，使用 `Authorization: Bearer {api_key}`。生成请求编码为 JSON；图片上传使用 `multipart/form-data`，由客户端生成 boundary。[认证](https://developers.tripo3d.ai/zh/docs/authentication)、[文件上传](https://developers.tripo3d.ai/zh/docs/files)
+
+| 操作 | 路径 | 关键输入 | 成功创建结果 |
+| --- | --- | --- | --- |
+| 图片上传 | `POST /files` | 二进制字段 `file` | `data.file_token` |
+| 文本生成 | `POST /generation/text-to-model` | `prompt`、`model` | `data.task_id` |
+| 单图生成 | `POST /generation/image-to-model` | `input`、`model` | `data.task_id` |
+| 多视图生成 | `POST /generation/multiview-to-model` | `inputs`、`model` | `data.task_id` |
+| 查询任务 | `GET /tasks/{task_id}` | 任务 ID | `data` 为状态与结果 |
+
+成功信封是 `{ code: 0, data: ... }`；必须同时检查 HTTP 状态和业务 `code`。`task_id`、`file_token` 应作为不透明字符串保存，不按示例中的 `task_` / `file_` 前缀校验。
+
+- 文本：`prompt` 最多 1024 字符；可选 `negative_prompt` 最多 255 字符，支持几何种子 `model_seed` 和内部参考图种子 `image_seed`。[文本接口](https://developers.tripo3d.ai/zh/docs/generation-text-to-model/standard)
+- 单图：`input` 可为上传 token、公开图片直链或 Tripo 图像生成任务 ID。生成页列 PNG、JPEG、WebP，最大 20 MB，推荐至少 256 × 256；上传页仅列 JPEG、PNG。首期上传按 JPEG/PNG 处理，WebP 需转换或单独核验。[单图接口](https://developers.tripo3d.ai/zh/docs/generation-image-to-model/standard)
+- 多视图：正面必填，总计 2–4 张同一物体图片；应保持光照与外观一致。推荐 `inputs` 使用视图键对象数组，顺序无关，每项只有一个 `front` / `left` / `back` / `right`。旧位置数组必须固定四项，依次为正、左、后、右，空视图填空字符串。另支持单元素任务引用数组，但不能与图片写法混用。[多视图接口](https://developers.tripo3d.ai/zh/docs/generation-multiview-to-model/standard)
+
+```json
+{
+  "model": "v3.1-20260211",
+  "inputs": [
+    { "front": "uploaded-front-token" },
+    { "back": "uploaded-back-token" }
+  ],
+  "texture": false,
+  "pbr": false
+}
+```
+
+这是多视图请求结构示意，token 需要替换为真实上传结果。应用应先完成全部图片上传，再创建一次生成任务；任一上传失败时不提交不完整的多视图任务。
+
+## 3. 模型与参数约束
+
+H 系列接口列出 `v3.1-20260211`、`v3.0-20250812`、`v2.5-20250123`；概念页还列出 `tripo-v3.1` 等别名。建议固定日期版本。P 系列三种输入均支持 `P1-20260311` 与 `P2-20260801`，后者标记为 preview；首期默认 H3.1 可减少组合验证范围。[H 文本接口](https://developers.tripo3d.ai/zh/docs/generation-text-to-model/standard)、[模型版本](https://developers.tripo3d.ai/en/docs/models-and-versions)、[P 文本接口](https://developers.tripo3d.ai/zh/docs/generation-text-to-model/p)
+
+| 参数 | 官方约束与默认值 | 首期配置建议 |
+| --- | --- | --- |
+| `texture` / `pbr` | 均默认 `true`；`pbr=true` 强制开启贴图 | 关闭贴图时同时关闭 PBR |
+| `face_limit` | 省略为自适应；H3.1 标准上限 150 万、超清 200 万；H3.0 为 100 万 / 200 万；H2.5 为 50 万 | 空值表示自适应，不发送 `0` 或 ComfyUI 的 `-1` |
+| `geometry_quality` | `standard` / `detailed`；H3.0+ 有效 | 默认标准；切换时更新费用提示 |
+| `texture_quality` | `standard` / `detailed` / `extreme`；`fast` 需指定新贴图版本 | 默认标准，贴图关闭时隐藏相关配置 |
+| `texture_version` | H3.x 默认为 `v3.0-20250812`；`fast` 需要 `v3.5-20260815` | 选快速贴图时显式指定 3.5，切换旧版本后阻止无效组合 |
+| `delight` | 默认开启，仅贴图 `v3.5-20260815` 生效，旧版本忽略 | 仅开启贴图并选择 3.5 时显示；离开此组合清除字段 |
+| `quad` | H 系列开启后强制输出 FBX；不传面数时默认 1 万，上限 15 万 | 作为高级选项并明确输出格式变化 |
+| `smart_low_poly` | 三角面 500–20000、四边面 500–10000 | 与普通面数范围分开校验 |
+| `auto_size` | 默认关闭；开启后以米调整现实尺寸 | 高级选项 |
+| `compress` | V3 使用字符串 `geometry` | 不沿用 ComfyUI 布尔值 |
+| `export_uv` / `export_orientation` | UV 默认开启；导出朝向默认 `+x` | H2.5 仍展示；开关显示与省略字段的默认行为一致 |
+| `model_seed` / `texture_seed` | 可选整数；未指定时随机 | 高级选项；不把固定种子当请求幂等 |
+
+上表共同参数依据[单图 H 接口](https://developers.tripo3d.ai/zh/docs/generation-image-to-model/standard)。单图还支持 `enable_image_autofix`；单图和多视图支持 `texture_alignment=original_image/geometry`、`orientation=default/align_image`，后者仅在贴图开启时生效。[多视图 H 接口](https://developers.tripo3d.ai/zh/docs/generation-multiview-to-model/standard)
+
+P1 面数为 50–20000；P2 三角面为 48–50000，四边面为 48–25000。P 系列仅 P2 支持四边面，不应套用 H 系列所有高级参数。[单图 P 接口](https://developers.tripo3d.ai/zh/docs/generation-image-to-model/p)、[多视图 P 接口](https://developers.tripo3d.ai/zh/docs/generation-multiview-to-model/p)
+
+普通 H 模式的面数下限、种子上下限没有查到明确公开合同。`generate_parts` 有额外参数冲突，并超出首期范围，不纳入界面。
+
+## 4. 异步状态、结果与重复提交
+
+任务状态按 `queued`、`running`、`success`、`failed`、`cancelled`、`banned`、`expired` 处理。`progress` 为 0–100；成功结果在 `output.model_url`，预览在 `output.rendered_image_url`；失败可带 `error_code`、`error_message`。任务查询页未列出 `banned/expired`，生命周期页和官方 SDK 已列出，不能无限等待这两个状态。[任务查询](https://developers.tripo3d.ai/zh/docs/task-query)、[生命周期](https://developers.tripo3d.ai/zh/docs/task-lifecycle)
+
+官方建议每 1–2 秒查询，可采用 2 秒；建议轮询超时例如 5 分钟，超时后保留任务并提示稍后查看。客户端停止等待不代表供应商已取消任务。未确认独立取消端点，不应承诺停止等待会退费。
+
+V3 快速入门说明模型下载 URL 在 5 分钟后过期。成功后应立即保存到应用资源存储；签名下载请求不附加供应商 Authorization。链接失效时重新查询原任务获取链接，不能重新生成模型。原生结果通常为 GLB；H 四边面模式为 FBX。[快速入门](https://developers.tripo3d.ai/zh/docs/quick-start)、[SDK 下载说明](https://developers.tripo3d.ai/zh/docs/sdk)
+
+未查到创建任务支持幂等键、相同输入去重或重复请求免计费的承诺。建议本地任务创建只提交一次；取得上游 ID 后立即持久化，后续恢复仅查询。网络超时或响应丢失属于结果不明，不自动再次 POST。查询与下载可有限重试，用户主动重新生成才创建新任务。
+
+限流按 API Key，生成并发按账户和类别。H 默认并发 10、P 默认 5；限流专题区分 HTTP 429 / `1007` 和并发满 HTTP 429 / `2000`，错误处理页则将 `2000` 概括为速率限制，因此不据单页推导完整错误码表。查询重试优先遵循 `Retry-After` 或 `X-RateLimit-Reset`；生成 POST 不自动重试。400/401/403 直接拒绝；本期安全诊断保留 HTTP 状态与数字上游错误码，不透传原始错误描述、修复建议或请求追踪字段，日志不能保存密钥或签名 URL。[限流](https://developers.tripo3d.ai/zh/docs/rate-limits)、[错误处理](https://developers.tripo3d.ai/zh/docs/error-handling)
+
+## 5. 行业交互参考与配置设计
+
+| 维度 | Tripo V3 | Meshy | 对影策的建议 |
+| --- | --- | --- | --- |
+| 文本流程 | 一次提交可选几何、贴图、PBR | 文本 preview 生成几何，再 refine 上贴图 | 首期保持一个生成命令，未来以供应商能力描述分阶段任务 |
+| 多视图 | 2–4 张，正面必填，显式视图键 | 1–4 张；当前 7.1 首图为正面，其余顺序不限 | 数据保存图片角色，不仅保存数组次序 |
+| 参数组织 | 几何、贴图、面数、种子 | 几何分辨率、贴图分辨率、拓扑、格式分别配置 | 常用区保留输入、模型、贴图、质量、面数；种子放高级区 |
+| 文件下载 | 原生结果；其他格式经独立转换任务 | 按目标格式返回多个模型 URL | 首期下载原生结果，不默认追加付费格式转换 |
+
+来源：[Meshy 文本](https://docs.meshy.ai/en/api/text-to-3d)、[Meshy 多图](https://docs.meshy.ai/en/api/multi-image-to-3d)、[Meshy 单图](https://docs.meshy.ai/en/api/image-to-3d)。这些是交互与合同参考，不代表首期接入 Meshy。
+
+官方 ComfyUI 将三种模式放在同一个 Generate 节点，图片有正、左、后、右端口；下载文件输出与供应商任务上下文输出分开，预览是下游节点。影策可借鉴模式与端口组织，在节点中显示预览、进度和下载入口。ComfyUI 的 `MODEL_INFO` 会携带 API Key，影策不能将该结构写入可持久化、可分享的画布。[ComfyUI 节点](https://developers.tripo3d.ai/zh/docs/comfyui-nodes)
+
+建议供应商配置描述协议版本、Base URL、认证、模型 ID、支持模式、图片数量/角色、参数范围和默认值；节点保存所选模型与参数，结果保存产出模型、供应商任务 ID 和本地资源 ID。更改参数不能自动提交新任务。凭据通过已有受控渠道配置解析，不能成为节点、任务正文、URL或日志字段。
+
+## 6. 文档漂移与实施注意
+
+| 差异 | 已观察事实 | 处理方式 |
+| --- | --- | --- |
+| 上传格式 | 上传页仅 JPEG/PNG，生成页另列 WebP | 首期严格上传类型或转换，WebP 单列实测 |
+| 任务 ID | 文档既有 `task_` 示例也有 UUID | 按不透明字符串保存 |
+| 模型别名 | 概念页使用别名，接口页使用日期版本 | 固定接口页版本 |
+| 下载有效期 | 新 V3 快速入门为 5 分钟，旧 FAQ 为 60 秒 | 及时落库，不依赖临时 URL 长期可用 |
+| 返回示例 | 单图、多视图示例仍有 `type=text_to_model`，费用示例普遍为 100 | 不据示例推导类型校验和报价 |
+| Go SDK 输入 | 当前源码调用 V3 路径但仍序列化 `file/files/original_task_id` | 采用当前文档的 `input/inputs`，独立核验请求 |
+| SDK 重试 | Go SDK 所有 method 共用网络/5xx 重试，默认额外 2 次 | 不将 SDK 行为当幂等保证；若使用，显式关闭创建重试 |
+
+SDK 事实来自[生成源码](https://raw.githubusercontent.com/VAST-AI-Research/tripo-go-sdk/main/generation.go)、[HTTP 重试源码](https://raw.githubusercontent.com/VAST-AI-Research/tripo-go-sdk/main/http.go)、[客户端配置](https://raw.githubusercontent.com/VAST-AI-Research/tripo-go-sdk/main/client.go)。Go SDK 禁用自动重试的配置值是 `Retries: -1`。旧下载说明见[旧版 FAQ](https://docs.tripo3d.ai/other/support-faq.html)。
+
+尚未确认：实际响应的全部可选输出、模型下载 MIME、token/任务保留时间、服务端创建幂等、取消接口、普通 H 面数与 seed 数值边界，以及 P 系列最终收费档位。没有公开合同的能力不对用户作保证。
+
+### 本轮请求与返回复核
+
+用户要求暂缓真实 API 验证，本轮仅访问公开文档并运行离线测试，不读取密钥，不查询余额，不执行上传或生成。当前核对范围是上表三个 H 生成接口、普通文件上传、任务查询及错误信封。
+
+| 合同边界 | 实现选择与复核结果 |
+| --- | --- |
+| 请求字段 | 三模式端点及 snake_case 映射一致；单图使用上传 token，多图使用具名视图对象数组；不发送旧 SDK 的 `file/files` |
+| 贴图与 PBR | 官方均默认开启；应用 API 有意要求两项显式布尔值，缺失/null 拒绝，纯几何显式传 `false,false` |
+| 可选参数 | 省略保留上游默认；修正 UV/去光照的默认显示、去光照版本依赖及 H2.5 的 UV/导出朝向入口；种子不擅加非负限制 |
+| 成功信封 | HTTP 成功且存在整数 `code=0`、非空 `data` 才解析；缺失/null/字符串 code 不按成功处理 |
+| 上传与创建 | 读取 `data.file_token` / `data.task_id` 并校验有效字符串；创建响应不明时保留未知状态，不重发 POST |
+| 查询与产物 | 消费 `data.status/progress/error_code/output.model_url`；支持生命周期列出的全部终态；成功但无模型 URL 不能进入本地成功态 |
+| 可选返回 | `rendered_image_url`、`credits_consumed`、供应商时间字段暂不进入应用投影；允许其出现，不依赖示例费用或类型字符串 |
+| 错误信封 | 非 2xx 也提取数字 `code`；无有效 JSON 时保留 HTTP 诊断；上游原始文本不进入用户结果 |
+
+返回字段依据[上传合同](https://developers.tripo3d.ai/zh/docs/files)、[查询合同](https://developers.tripo3d.ai/zh/docs/task-query)与[错误合同](https://developers.tripo3d.ai/zh/docs/error-handling)。多视图“纯几何”示例只写 `texture=false`，与同页 `pbr` 默认开启并强制贴图的说明有歧义；应用继续显式关闭两项，以参数说明为准。[多视图合同](https://developers.tripo3d.ai/zh/docs/generation-multiview-to-model/standard)
+
+本轮确认的是文档合同与代码映射；供应商真实产物、额度扣费和线上返回差异仍留待真实验收，不能由离线样例推定通过。
+
+## 7. 费用预算与验收矩阵
+
+H 系列当前文档价为每积分 0.01 美元。文本纯几何 10 / 标准贴图 20 积分，单图和多视图分别为 20 / 30。高清贴图加 10，8K 加 20，超清几何加 20，四边面加 5，智能低模加 10，分部件加 20。格式转换另计基础 5 / 高级 10，不是下载按钮的默认行为。[定价](https://developers.tripo3d.ai/zh/pricing)、[转换](https://developers.tripo3d.ai/zh/docs/models-convert)
+
+创建时冻结积分，成功才扣除；失败或取消解冻。未发现对网络结果不明的 POST 一律免计费的保证。[任务计费](https://developers.tripo3d.ai/zh/docs/task-lifecycle)
+
+| 验收层 | 场景 | 通过条件 | 预计供应商费用 |
+| --- | --- | --- | --- |
+| 离线协议 | 三模式请求、前视图缺失、超长提示词、贴图/PBR、参数范围 | 输入不合法在提交前拒绝；三个端点和字段正确 | 0 |
+| 离线恢复 | queued/running/终态、429、响应丢失、刷新继续 | 无重复创建；超时保留任务 ID；终态停止查询 | 0 |
+| 离线资源 | GLB/FBX 响应、缺失 URL、过期链接、下载失败、用户隔离 | 校验实际格式；落库失败不伪装完成；不转发凭据 | 0 |
+| 真实文本 | H3.1、标准几何、贴图和 PBR 均关闭、无附加项 | 成功下载可解析模型，记录实际消耗 | 10 积分 |
+| 真实单图 | 同上，上传一张合规图片 | 上传、创建、恢复、下载完整链路 | 20 积分 |
+| 真实多视图 | 同上，正面和另一个真实视角 | 角色对应正确，成功下载模型 | 20 积分 |
+| 可选贴图 | 一条标准贴图单图任务 | 模型贴图与 PBR 可读取，费用符合配置 | 30 积分 |
+
+三个最小真实生成预计共 50 积分（0.50 美元）；加一条标准贴图单图共 80 积分（0.80 美元）。以上只是预算，真实验收必须记录请求参数、任务 ID、最终状态、实际积分和模型解析结果。本次研究未执行上传或生成。
+
+## 8. 仓库离线素材检查
+
+| 仓库文件 | 已检查内容 | 可复用范围 |
+| --- | --- | --- |
+| `web/public/canvas/models/director-repro-triangle.gltf` | 手写离线 glTF 2.0；单三角形、材质和内嵌 buffer，无外部 URL | 下载、存储、模型解析的最小 fixture；需要 GLB 时可由测试生成二进制封装 |
+| `web/public/canvas/models/facecap.glb` | 332808 字节；4 个 mesh、4 个动画；要求 meshopt 与 BasisU 解码 | 既有应用本地加载回归；仓库未查到独立来源说明，不将其新增为公开样例 |
+| `web/public/welcome/charge/einar.webp` / `character-final.webp` | 有 Blender 开放电影来源与署名记录；近景、服装、光照和构图不一致 | 可检查图片读取；不能代替一致物体的多视图验收 |
+
+素材来源记录见 `web/public/welcome/credits.html` 与 `docs/design/story-creation-homepage.md`。已检查仓库跟踪文件及非忽略资源，未找到 FBX fixture 或已标注正、左、后、右的一致多视图素材。真实多视图验收需要另备有使用权的同一物体视图；建议自制简单非对称几何体并固定相机、材质和光照，避免把两张相似图片误当多视图。离线模拟仅能证明协议和存储流程，不能证明供应商生成质量。

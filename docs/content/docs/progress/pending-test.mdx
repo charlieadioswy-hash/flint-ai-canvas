@@ -2947,3 +2947,26 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - SDK 关闭重试与多个项目复用一次原图上传已有离线 Mock 覆盖；真实业务链路仍需检查用户响应、日志及审计不包含 AK/SK、临时凭据或签名地址。当前未对多服务额外发起真实调用。
 
 相关离线覆盖入口：`backend/internal/moderation/moderation_test.go`、`backend/internal/app/image_moderation_test.go`、`backend/internal/database/image_moderation_test.go`、`backend/internal/handler/image_moderation_test.go`、`web/test/canvas-image-moderation.test.ts`、`web/test/canvas-image-moderation-lifecycle.test.ts` 与 `web/test/image-moderation-settings-form.test.ts`。测试是否通过以当次命令输出为准；本清单不预先声明真实场景通过。
+## 3D 模型生成验收
+
+代码与离线链路已实现，真实供应商效果尚未验收。调研和设计见 `docs/design/model3d-api-research.mdx` 与 `docs/design/model3d-generation.mdx`。
+
+- 已验证：后端 `go test ./...` 全量通过；最后资源检查点与通用任务摘要调整后，3D/app/handler/canvas/database 专项再次通过。覆盖三模式协议、权限与归属、持久幂等、未知提交不重发、已知任务恢复、下载及素材登记恢复、资源引用、分享投影、迁移 45。
+- 前一轮已验证：前端生产构建（含 TypeScript）、`bun run lint` 和 36 项集中测试（267 个断言）通过。集中命令覆盖 `canvas-model3d.test.ts`、`canvas-model3d-lifecycle.test.ts`、`canvas-model3d-preview.test.ts`、`model3d-settings-form.test.ts`、`canvas-connection-create-menu.test.ts`。包含真实提交 payload 的参数清理、动态面数范围、状态恢复、跨账号/画布隔离，以及 GLB、Meshopt 压缩 GLB、FBX 离线解析和资源释放。
+- 已验证：真实后台首次加载、密钥不回显、保存新版本与手动激活分离、明暗主题；停用后显示未启用，可恢复原生效版本；保存备用配置后归档，原生效配置保持不变。并发版本冲突有后端测试覆盖。
+- 已验证：手工生成的离线 GLB 经真实资源/素材/画布接口保存，在节点和放大预览中显示，可用方向键旋转并重置。参数面板位于视口内，退出旋转后可重新编辑；实际下载文件与原始 GLB 的 SHA-256 一致。此模型只是自制测试素材，不能证明 Tripo 生成质量。
+- 已验证：真实分享路由隐藏参数、生成和下载按钮，保留模型预览；无登录 Cookie 的 HTTP 请求可读取分享模型，私有 `model3d` 草稿与任务字段不在分享响应中。
+- 已验证：真实前端单图上传、正面/背面槽位选择、缺少正面或第二视角时阻止生成、刷新后保持绑定；文本输入和明暗主题正常。768 × 700 与 390 × 844 视口内参数面板及生成按钮可达，面板内部滚动。临时视口与主题设置在测试后恢复。
+- 本轮合同复核通过：三模式端点、具名多视图参数、上传 token、创建 task ID、查询状态和模型 URL 与当前官方文档一致；修正 `delight` 的版本条件、UV/去光照默认显示、H2.5 导出参数入口、必传贴图/PBR 布尔值及错误信封解析。详细对照和官方来源见调研文档“本轮请求与返回复核”。
+- 本轮离线验证通过：`go test ./internal/model3d ./internal/handler ./internal/app -run 'Test(Tripo|Model3D|ModelFile|ModelDownload)' -count=1`；覆盖 126 个去光照参数组合、36 个布尔输入边界，以及官方响应样例、异常信封、安全错误码与不重复提交。前端 6 个专项文件共 41 项测试、326 个断言通过（增加 `canvas-model3d-parameter-panel.test.ts`）；生产构建含 TypeScript 通过，OpenAPI 解析与相关枚举/默认值检查通过。
+- 本轮真实页面检查通过：UV 初始开启；贴图 3.5 下去光照初始开启，可显式关闭，切换旧版本后隐藏；关闭贴图后不再保留这些纹理选项。仅操作本地测试画布草稿，未点击生成，结束后恢复原贴图开关。
+- 待验证：真实生成期间的刷新恢复、供应商产物的几何/贴图质量和真实四边面 FBX；离线文件不能代替这些供应商效果。
+- 真实 API 暂缓：按用户要求，本轮只复核官方请求/返回文档并离线回归，不再读取密钥或查询余额，也不上传和生成；付费生成调用数仍为 0。恢复真实验收时按文本/单图/多视图各一次纯几何的最小方案执行，记录任务、模型解析与实际消耗；不自动追加格式转换或重复付费任务。
+
+## Responses 工具历史与 Dola Pool 参数修复
+
+- 已修复：Responses 出站 `function_call` 保留 `id` 与 `call_id`，移除非法 `item_reference` 属性；兼容直接函数调用条目和 assistant `tool_calls` 两种内部历史格式。
+- 已修复：Dola Pool 仅从已校验请求映射模型、提示词、时长、比例、尺寸与参考图片，不再合并 `providerOptions` 中的任意正文。插件源码、接口说明和分发包同步为 `1.0.1`，避免扩展参数改变准入与计费依据。
+- 本轮离线验证通过：Responses 历史规范化、校验、流式条目身份及实际工具执行专项；严格的本地模拟接口覆盖两种历史格式及工具结果配对。Dola Pool 参数映射、缺少时长拒绝、两种扩展正文与两种生成模式的覆盖拦截，以及官方插件包自包含专项通过；新增覆盖测试在旧包上复现失败，修复后通过。
+- 生效方式：部署包含 `1.0.1` 的官方插件包并重启后端，启动流程会更新已安装的官方插件且保留原启用状态；仅替换磁盘文件不会刷新已运行进程，无需管理员手动导入。
+- 待验收：部署后的 Responses 多轮工具调用与 Dola Pool 实际视频任务。按用户要求，本轮未调用真实供应商 API，也未修改运行中的插件安装。

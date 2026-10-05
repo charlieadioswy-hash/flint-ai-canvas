@@ -318,3 +318,18 @@ Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`�
 每项开始时在同一事务中检查租约、增加全局当日预算、将单项标记为 `running` 并延长批次租约。预算不足时剩余项目失败，报告必须说明检测未完成。管理员保存、生效、停用和归档操作与既有 `admin_audit_events` 在同一事务提交，审计只记录配置 ID、版本、平台类型及服务标识等非敏感摘要。
 
 资源删除链路将 `queued`、`running` 批次视为引用，终态报告不永久阻止资源删除。报告只保留资源 ID、哈希、配置引用与结果，不额外持久化原始图片。
+## 3D 模型生成
+
+Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 `canvas_model3d` 类型。
+
+| 表 | 用途 | 关键约束 |
+| --- | --- | --- |
+| `model3d_providers` | 服务商实例、启用/归档状态和最新配置指针 | 当前类型为 `tripo3d`；归档不删除历史版本 |
+| `model3d_configs` | 不可变配置版本、开放模型/模式、默认模型、超时、任务预算和加密 API Key | `(provider_id, version)` 唯一；在途任务固定 `config_id` |
+| `model3d_policies` | 唯一生效服务商/配置和策略修订 | 按 `revision` 比较并交换，防止并发管理员覆盖 |
+| `model3d_submissions` | 任务受理幂等、请求摘要、付费提交状态及恢复检查点 | `task_id` 主键，`(user_id, request_id)` 唯一；上传 token 与模型下载检查点加密 |
+| `model3d_daily_usages` | 全平台 UTC 日新任务计数 | `day` 主键；切换服务商不重置预算 |
+
+`tasks.provider_request_id` 保存已知 Tripo 任务编号。提交状态在付费 POST 前持久化；创建结果不确定时不能重新提交。已知上游编号的恢复只查询原任务，回存失败只恢复同一模型下载。
+
+输入图片在任务 JSON 中使用规范的 `referenceImages[].resourceId` 引用，参与资源删除保护。成功输出使用平台 `Resource.Kind=model` 和既有 `Asset.Kind=model`，保存真实 MIME、扩展名、文件字节数；画布通过 `assetId` 与 `storageKey` 绑定模型。供应商临时地址不作为永久资源地址。

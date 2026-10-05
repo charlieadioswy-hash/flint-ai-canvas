@@ -417,6 +417,9 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, deleteReferencedResources bool) error {
 	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := New(tx).RequireNoModel3DReferences(resourceIDs); err != nil {
+			return err
+		}
 		if moderationProtection {
 			if err := New(tx).RequireNoImageModerationReferences(resourceIDs); err != nil {
 				return err

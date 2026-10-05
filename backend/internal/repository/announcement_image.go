@@ -49,6 +49,11 @@ func (r *Repository) CreateAnnouncementWithImage(announcement *model.Announcemen
 func (r *Repository) UpdateAnnouncementWithImage(announcement *model.Announcement, draftUserID string, newDraftResourceID string, oldResource *model.Resource, deletionJob *model.ResourceDeletionJob) error {
 	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if oldResource != nil {
+			if err := New(tx).RequireNoModel3DReferences([]string{oldResource.ID}); err != nil {
+				return err
+			}
+		}
 		if oldResource != nil && moderationProtection {
 			if err := New(tx).RequireNoImageModerationReferences([]string{oldResource.ID}); err != nil {
 				return err
@@ -117,6 +122,9 @@ func (r *Repository) DiscardAnnouncementImageDraft(userID string, resource *mode
 			if err := New(tx).RequireNoImageModerationReferences([]string{resource.ID}); err != nil {
 				return err
 			}
+		}
+		if err := New(tx).RequireNoModel3DReferences([]string{resource.ID}); err != nil {
+			return err
 		}
 		var draft model.AnnouncementImageDraft
 		if err := tx.First(&draft, "resource_id = ? AND user_id = ?", resource.ID, userID).Error; err != nil {

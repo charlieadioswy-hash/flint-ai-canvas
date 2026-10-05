@@ -150,6 +150,10 @@ import { useCanvasShortDrama } from "./use-canvas-short-drama";
 import { useCanvasStoryboard } from "./use-canvas-storyboard";
 import { useCanvasUpload } from "./use-canvas-upload";
 import { useCanvasImageModeration } from "./use-canvas-image-moderation";
+import { useCanvasModel3D } from "./use-canvas-model3d";
+import { CanvasModel3DContext } from "@/components/canvas/canvas-model3d-context";
+import { Model3DParameterPanel } from "@/components/canvas/nodes/model3d-parameter-panel";
+import { readModel3DState } from "@/lib/canvas/model3d";
 import { ImageModerationDrawer } from "./components/image-moderation-drawer";
 import { useCanvasTimelineAssetInsert } from "./use-canvas-timeline-asset-insert";
 import { useCanvasViewportController } from "./use-canvas-viewport-controller";
@@ -253,6 +257,12 @@ function InfiniteCanvasPage() {
     const [hideNodeConnections, setHideNodeConnections] = useState(readCanvasHideNodeConnections);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const imageModeration = useCanvasImageModeration({ projectId, projectLoaded, nodes, nodesRef, setNodes });
+    const model3d = useCanvasModel3D({ projectId, projectLoaded, nodes, nodesRef, connectionsRef, setNodes });
+    const selectedModel3DNode = selectedNodeIds.size === 1 ? nodes.find((node) => selectedNodeIds.has(node.id) && node.type === CanvasNodeType.Model3D) : undefined;
+    const [model3dPanelOpen, setModel3DPanelOpen] = useState(true);
+    useEffect(() => { setModel3DPanelOpen(true); }, [selectedModel3DNode?.id]);
+    const openModel3DParameters = useCallback((nodeId: string) => { setSelectedNodeIds(new Set([nodeId])); setModel3DPanelOpen(true); }, []);
+    const model3dContext = useMemo(() => ({ nodes, capabilities: model3d.capabilities, inputNodes: model3d.inputNodes, generate: model3d.generate, refreshTask: model3d.refreshTask, openParameters: openModel3DParameters }), [nodes, model3d.capabilities, model3d.inputNodes, model3d.generate, model3d.refreshTask, openModel3DParameters]);
     const workspaceMode: CanvasWorkspaceMode = "professional";
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [shareModalOpen, setShareModalOpen] = useState(false);
@@ -2649,6 +2659,7 @@ function InfiniteCanvasPage() {
                                     onFileDragOver={handleFileDragOver}
                                 >
                                     <CanvasNodeActionContext.Provider value={canvasNodeActions}>
+                                        <CanvasModel3DContext.Provider value={model3dContext}>
                                         <CanvasNodeGraphContext.Provider value={nodeGraphContext}>
                                             <CanvasProjectWorldLayers
                                                 connectionApproach={connectionApproach}
@@ -2725,6 +2736,7 @@ function InfiniteCanvasPage() {
                                                 onStartBatchConnection={startBatchConnection}
                                             />
                                         </CanvasNodeGraphContext.Provider>
+                                        </CanvasModel3DContext.Provider>
                                     </CanvasNodeActionContext.Provider>
                                 </InfiniteCanvas>
 
@@ -2810,6 +2822,14 @@ function InfiniteCanvasPage() {
                             </div>
                         </div>
 
+                        {selectedModel3DNode && model3dPanelOpen && !selectionBox && !isCanvasNodeMoving ? (
+                            <CanvasNodePanelOverlay node={selectedModel3DNode} viewport={viewport} containerRef={containerRef} panelWidth={420} panelHeight={700} allowOverflow constrainToViewport>
+                                <Model3DParameterPanel key={`${projectId}:${selectedModel3DNode.id}`} node={selectedModel3DNode} theme={theme} nodes={nodes} inputNodes={model3d.inputNodes(selectedModel3DNode.id)} capabilities={model3d.capabilities} capabilityError={model3d.capabilityError}
+                                    onChange={(update) => setNodes((current) => current.map((node) => node.id === selectedModel3DNode.id ? { ...node, metadata: { ...node.metadata, model3d: { ...readModel3DState(node), draft: update(readModel3DState(node).draft) } } } : node))}
+                                    onGenerate={() => void model3d.generate(selectedModel3DNode.id)} onRefresh={() => void model3d.refreshTask(selectedModel3DNode.id)} onUpload={model3d.uploadImage} onReloadConfig={() => void model3d.reloadCapabilities()} onClose={() => setModel3DPanelOpen(false)} />
+                            </CanvasNodePanelOverlay>
+                        ) : null}
+
                         {angleNode?.metadata?.content ? (
                             <CanvasNodePanelOverlay
                                 node={angleNode}
@@ -2864,6 +2884,7 @@ function InfiniteCanvasPage() {
                         dialogNode.type !== CanvasNodeType.BatchTable &&
                         dialogNode.type !== CanvasNodeType.Drawing &&
                         dialogNode.type !== CanvasNodeType.Panorama &&
+                        dialogNode.type !== CanvasNodeType.Model3D &&
                         !(dialogNode.metadata?.workflowKind === "character" && dialogNode.metadata.characterAssetId) &&
                         !selectionBox &&
                         !isCanvasNodeMoving ? (

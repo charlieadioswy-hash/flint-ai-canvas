@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 44
+const CurrentSchemaVersion int64 = 45
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -147,6 +147,9 @@ var schemaMigrations = []migration{
 	}},
 	{version: 44, name: "image_content_moderation", checksum: "sha256:image-content-moderation-v44-20261001", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.ImageModerationProvider{}, &model.ImageModerationConfig{}, &model.ImageModerationPolicy{}, &model.ImageModerationCheck{}, &model.ImageModerationItem{}, &model.ImageModerationDailyUsage{})
+	}},
+	{version: 45, name: "canvas_model3d", checksum: "sha256:canvas-model3d-v45-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.Model3DProvider{}, &model.Model3DConfig{}, &model.Model3DPolicy{}, &model.Model3DSubmission{}, &model.Model3DDailyUsage{})
 	}},
 }
 

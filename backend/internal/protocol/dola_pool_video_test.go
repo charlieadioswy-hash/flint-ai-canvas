@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -72,11 +73,80 @@ func TestOfficialDolaPoolVideoProfile(t *testing.T) {
 
 func TestOfficialDolaPoolRequiresExplicitDuration(t *testing.T) {
 	adapter := officialPackageAdapter(t, "dola-pool.yingce-plugin", "dola-pool")
-	_, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
-		Model:  "seedance-2.5",
-		Prompt: "A cat chasing butterflies in a meadow",
-	}})
-	if err == nil {
-		t.Fatal("Dola-pool accepted a request without an explicit duration")
+	for _, optionKey := range []string{"none", "body", "extra_body"} {
+		t.Run(optionKey, func(t *testing.T) {
+			request := GenerationRequest{
+				Model:  "seedance-2.5",
+				Prompt: "A cat chasing butterflies in a meadow",
+			}
+			if optionKey != "none" {
+				request.ProviderOptions = map[string]map[string]any{"dola-pool": {optionKey: map[string]any{"duration": 30}}}
+			}
+			_, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+			if err == nil {
+				t.Fatal("Dola-pool accepted a request without an explicit duration")
+			}
+		})
+	}
+}
+
+func TestOfficialDolaPoolProviderOptionsCannotChangeAdmittedRequest(t *testing.T) {
+	adapter := officialPackageAdapter(t, "dola-pool.yingce-plugin", "dola-pool")
+	for _, optionKey := range []string{"body", "extra_body"} {
+		for _, withReferences := range []bool{false, true} {
+			name := optionKey + "/text-to-video"
+			if withReferences {
+				name = optionKey + "/reference-to-video"
+			}
+			t.Run(name, func(t *testing.T) {
+				request := GenerationRequest{
+					Capability: CapabilityVideo,
+					Model:      "seedance-2.5",
+					Prompt:     "A cat chasing butterflies in a meadow",
+					Duration:   5,
+				}
+				if withReferences {
+					request.AspectRatio = "720x1280"
+					request.Images = []MediaReference{{URL: "https://assets.example/character.png", Kind: "image"}}
+				}
+				baseline, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.ProviderOptions = map[string]map[string]any{"dola-pool": {optionKey: map[string]any{
+					"model":            "seedance-2.0",
+					"prompt":           "Unadmitted prompt",
+					"duration":         30,
+					"seconds":          30,
+					"duration_seconds": 30,
+					"ratio":            "1:1",
+					"size":             "1024x1024",
+					"resolution":       "1080p",
+					"quality":          "high",
+					"generate_audio":   true,
+					"watermark":        true,
+					"reference_images": []any{"https://assets.example/unadmitted.png"},
+					"image_url":        "https://assets.example/unadmitted.png",
+					"image":            "https://assets.example/unadmitted.png",
+					"input_image":      "https://assets.example/unadmitted.png",
+					"input_images":     []any{"https://assets.example/unadmitted.png"},
+					"reference_videos": []any{"https://assets.example/unadmitted.mp4"},
+					"reference_audios": []any{"https://assets.example/unadmitted.mp3"},
+					"content":          []any{map[string]any{"type": "image_url", "image_url": "https://assets.example/unadmitted.png"}},
+					"mode":             "video-to-video",
+					"operation":        "extend",
+					"count":            8,
+					"n":                8,
+					"unknown_option":   "must not be forwarded",
+				}}}
+				create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: request})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, want := manifestTestBody(t, create), manifestTestBody(t, baseline); !reflect.DeepEqual(got, want) {
+					t.Fatalf("Dola-pool %s changed admitted fields: got %#v, want %#v", optionKey, got, want)
+				}
+			})
+		}
 	}
 }

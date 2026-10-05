@@ -180,6 +180,9 @@ func (r *Repository) ClaimFailedResourceUpload(userID string, id string) (bool, 
 func (r *Repository) DeleteResource(userID string, id string) error {
 	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := New(tx).RequireNoModel3DReferences([]string{id}); err != nil {
+			return err
+		}
 		if moderationProtection {
 			if err := New(tx).RequireNoImageModerationReferences([]string{id}); err != nil {
 				return err

@@ -120,6 +120,12 @@ func detectUploadedMimeType(file io.ReadSeeker, fileName string, declared string
 	buffer := make([]byte, 512)
 	read, _ := file.Read(buffer)
 	_, _ = file.Seek(0, io.SeekStart)
+	if strings.EqualFold(filepath.Ext(fileName), ".glb") && read >= 4 && string(buffer[:4]) == "glTF" {
+		return "model/gltf-binary"
+	}
+	if strings.EqualFold(filepath.Ext(fileName), ".fbx") {
+		return "application/octet-stream"
+	}
 	if detected := http.DetectContentType(buffer[:read]); detected != "" && detected != "application/octet-stream" {
 		return strings.TrimSpace(strings.Split(detected, ";")[0])
 	}

@@ -197,6 +197,9 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 		if errors.Is(err, repository.ErrImageModerationReferenced) {
 			return NewAppError(409, "图片内容检测正在执行，请等待完成后再删除素材")
 		}
+		if errors.Is(err, repository.ErrModel3DReferenced) {
+			return model3DError(err)
+		}
 		return fmt.Errorf("素材记录删除失败，请重试：%w", err)
 	}
 	if len(deletionJobs) > 0 {
