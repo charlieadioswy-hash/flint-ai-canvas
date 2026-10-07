@@ -458,7 +458,9 @@ Tripo 适配器要求成功响应含显式整数 `code=0` 和非空 `data`，分
 
 `submissionOutcome=unknown` 表示上游创建是否收到尚不能确定，不能自动再发生成请求。已绑定上游 ID 时只查询原任务；浏览器创建响应丢失时按 requestId 查询。相同 requestId 但请求内容不同返回冲突。普通任务的通用重试不能用于重新提交 3D 生成。
 
-服务商保存体为 `name/type/enabled/defaultModel/allowedModels/allowedModes/timeoutSeconds/maxTasksPerDay/apiKey?`；首次必须提供密钥，后续留空保留。保存与激活只校验配置，不调用生成接口。详细设计见 `docs/design/model3d-generation.mdx`。
+服务商保存体为 `name/type/baseUrl/enabled/defaultModel/allowedModels/allowedModes/timeoutSeconds/maxTasksPerDay/apiKey?`；`baseUrl` 必填，配置视图使用相同字段回显。后台新建表单预填国外地址 `https://openapi.tripo3d.ai/v3`，国内可填 `https://openapi.tripo3d.com/v3`。支持合法 HTTPS 主机，路径必须为 `/v3`，不得含账号、查询参数或片段；保存仅清理首尾空白及末尾斜杠，保留主机大小写与显式端口。地址进入不可变版本，上传、创建和轮询均使用任务配置快照。每次请求发送前校验 DNS 和出站安全策略，包括代理分支；画布能力与创建请求不暴露或接受地址。
+
+首次必须提供密钥，后续留空保留。保存与激活仅进行本地配置校验，不调用云端接口。迁移 49 为历史版本显式保存国外地址，运行时不提供缺省地址回退。详细设计见 `docs/design/model3d-generation.mdx`。
 
 ## 平台技能策展
 

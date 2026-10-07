@@ -2,11 +2,31 @@ import type { Model3DAdminState, Model3DProviderInput, Model3DProviderView } fro
 
 export type Model3DProviderDraft = Model3DProviderInput & { apiKey: string };
 
+export const TRIPO_API_BASE_URLS = {
+    domestic: "https://openapi.tripo3d.com/v3",
+    international: "https://openapi.tripo3d.ai/v3",
+} as const;
+
+export function validateModel3DBaseUrl(value: string): string {
+    const address = value.trim();
+    const message = "API 地址须为以 /v3 结尾的完整 HTTPS 地址，不包含用户名、密码、查询参数或片段";
+    if (!/^https:\/\/[^/?#]+\/v3\/*$/i.test(address) || /[\u0000-\u0020\u007f\\?#]/.test(address)) return message;
+    try {
+        const url = new URL(address);
+        if (url.protocol !== "https:" || !url.hostname || url.username || url.password || address.split("/")[2]?.includes("@")
+            || url.pathname.replace(/\/+$/, "") !== "/v3") return message;
+        return "";
+    } catch {
+        return message;
+    }
+}
+
 export function model3DProviderDraft(provider: Model3DProviderView | null, state: Model3DAdminState): Model3DProviderDraft {
     const type = state.providerTypes.find((item) => item.type === provider?.type) || state.providerTypes[0];
     return {
         name: provider?.name || "",
         type: provider?.type || type?.type || "",
+        baseUrl: provider ? provider.baseUrl : TRIPO_API_BASE_URLS.international,
         enabled: provider?.enabled ?? true,
         defaultModel: provider?.defaultModel || type?.modelVersions[0]?.id || "",
         allowedModels: provider ? [...provider.allowedModels] : type?.modelVersions.map((item) => item.id) || [],
@@ -20,6 +40,7 @@ export function model3DProviderDraft(provider: Model3DProviderView | null, state
 export function model3DProviderInput(draft: Model3DProviderDraft): Model3DProviderInput {
     return {
         name: draft.name.trim(), type: draft.type, enabled: draft.enabled,
+        baseUrl: draft.baseUrl.trim().replace(/\/+$/, ""),
         defaultModel: draft.defaultModel,
         allowedModels: [...new Set(draft.allowedModels)].sort(),
         allowedModes: [...new Set(draft.allowedModes)].sort(),
@@ -37,6 +58,8 @@ export function validateModel3DProviderDraft(draft: Model3DProviderDraft, provid
     const type = state.providerTypes.find((item) => item.type === input.type);
     if (!input.name || Array.from(input.name).length > 120) return "服务商名称需为 1–120 个字符";
     if (!type || (provider && input.type !== provider.type)) return "请选择支持的服务商类型；已有配置不可更换类型";
+    const addressError = validateModel3DBaseUrl(input.baseUrl);
+    if (addressError) return addressError;
     if (!input.allowedModels.length || input.allowedModels.some((id) => !type.modelVersions.some((model) => model.id === id))) return "请至少开放一个支持的模型版本";
     if (!input.allowedModels.includes(input.defaultModel)) return "默认模型必须在开放的模型版本中";
     if (!input.allowedModes.length || input.allowedModes.some((mode) => !type.modes.includes(mode))) return "请至少开放一种支持的生成模式";
@@ -56,6 +79,7 @@ export function model3DProviderResponseMatches(provider: Model3DProviderView, in
     return Boolean(provider?.id && provider.configId && provider.apiKeyConfigured && !provider.archived)
         && (!previous || (provider.id === previous.id && provider.configId !== previous.configId && provider.version > previous.version))
         && provider.name === input.name && provider.type === input.type && provider.enabled === input.enabled
+        && provider.baseUrl === input.baseUrl
         && provider.defaultModel === input.defaultModel
         && JSON.stringify([...provider.allowedModels].sort()) === JSON.stringify([...input.allowedModels].sort())
         && JSON.stringify([...provider.allowedModes].sort()) === JSON.stringify([...input.allowedModes].sort())
@@ -74,6 +98,7 @@ export function isModel3DAdminState(value: unknown): value is Model3DAdminState 
         if (!row || typeof row.id !== "string" || !row.id || ids.has(row.id)
             || typeof row.configId !== "string" || !row.configId || !Number.isInteger(row.version) || row.version < 1
             || typeof row.name !== "string" || !row.name || typeof row.type !== "string"
+            || typeof row.baseUrl !== "string" || Boolean(validateModel3DBaseUrl(row.baseUrl))
             || typeof row.enabled !== "boolean" || typeof row.archived !== "boolean" || typeof row.apiKeyConfigured !== "boolean"
             || typeof row.defaultModel !== "string" || !Array.isArray(row.allowedModels) || !row.allowedModels.includes(row.defaultModel)
             || !row.allowedModels.every((model) => typeof model === "string" && Boolean(model))

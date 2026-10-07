@@ -2980,6 +2980,9 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 
 代码与离线链路已实现，真实供应商效果尚未验收。调研和设计见 `docs/design/model3d-api-research.mdx` 与 `docs/design/model3d-generation.mdx`。
 
+- 上传失败诊断已修复并通过离线专项：PNG/JPEG 文件 part MIME、DNS/TLS/超时/连接/出站限制分类、HTTP 与数字上游错误码、未知错误兜底、敏感描述过滤，以及失败提示进入任务记录后不调用生成接口。部署后的真实节点已显示认证失败的 HTTP 401 和数字错误码 2，提交记录确认未创建上游生成任务；其他真实失败类型仍待验收。
+- 后台 API 地址已纳入不可变配置版本：保存体与视图均为必填 `baseUrl`，新建表单预填国外地址，支持切换国内地址；画布没有地址入口。后端专项已验证 schema 49 显式回填历史地址并保留配置、任务、策略及迁移记录，任务继续使用原地址快照，上传/创建/轮询统一拼接且代理前拦截私网目标，DNS/SSRF 预校验失败提示安全入库。模型域、应用、数据库、handler 专项及 OpenAPI 解析通过；前端表单 10 项、52 条断言及生产构建通过。实际 PostgreSQL 48→49 正式迁移和 verify 通过，旧配置地址已回填且密钥保持已配置；真实后台已显示国内地址新版本生效。
+
 - 已验证：后端 `go test ./...` 全量通过；最后资源检查点与通用任务摘要调整后，3D/app/handler/canvas/database 专项再次通过。覆盖三模式协议、权限与归属、持久幂等、未知提交不重发、已知任务恢复、下载及素材登记恢复、资源引用、分享投影、迁移 45。
 - 前一轮已验证：前端生产构建（含 TypeScript）、`bun run lint` 和 36 项集中测试（267 个断言）通过。集中命令覆盖 `canvas-model3d.test.ts`、`canvas-model3d-lifecycle.test.ts`、`canvas-model3d-preview.test.ts`、`model3d-settings-form.test.ts`、`canvas-connection-create-menu.test.ts`。包含真实提交 payload 的参数清理、动态面数范围、状态恢复、跨账号/画布隔离，以及 GLB、Meshopt 压缩 GLB、FBX 离线解析和资源释放。
 - 已验证：真实后台首次加载、密钥不回显、保存新版本与手动激活分离、明暗主题；停用后显示未启用，可恢复原生效版本；保存备用配置后归档，原生效配置保持不变。并发版本冲突有后端测试覆盖。

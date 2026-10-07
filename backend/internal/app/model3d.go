@@ -25,6 +25,7 @@ type Model3DParameters = model3d.Parameters
 type Model3DProviderRequest struct {
 	Name           string   `json:"name"`
 	Type           string   `json:"type"`
+	BaseURL        string   `json:"baseUrl"`
 	Enabled        bool     `json:"enabled"`
 	DefaultModel   string   `json:"defaultModel"`
 	AllowedModels  []string `json:"allowedModels"`
@@ -37,6 +38,7 @@ type Model3DProviderView struct {
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
 	Type             string   `json:"type"`
+	BaseURL          string   `json:"baseUrl"`
 	Enabled          bool     `json:"enabled"`
 	Archived         bool     `json:"archived"`
 	ConfigID         string   `json:"configId"`
@@ -168,11 +170,11 @@ func model3DView(provider model.Model3DProvider, config model.Model3DConfig) Mod
 	models, modes := []string{}, []string{}
 	_ = json.Unmarshal([]byte(config.AllowedModelsJSON), &models)
 	_ = json.Unmarshal([]byte(config.AllowedModesJSON), &modes)
-	return Model3DProviderView{ID: provider.ID, Name: provider.Name, Type: provider.Type, Enabled: provider.Enabled, Archived: provider.Archived, ConfigID: config.ID, Version: config.Version, DefaultModel: config.DefaultModel, AllowedModels: models, AllowedModes: modes, TimeoutSeconds: config.TimeoutSeconds, MaxTasksPerDay: config.MaxTasksPerDay, APIKeyConfigured: config.APIKeyEncrypted != ""}
+	return Model3DProviderView{ID: provider.ID, Name: provider.Name, Type: provider.Type, BaseURL: config.BaseURL, Enabled: provider.Enabled, Archived: provider.Archived, ConfigID: config.ID, Version: config.Version, DefaultModel: config.DefaultModel, AllowedModels: models, AllowedModes: modes, TimeoutSeconds: config.TimeoutSeconds, MaxTasksPerDay: config.MaxTasksPerDay, APIKeyConfigured: config.APIKeyEncrypted != ""}
 }
 
 func (s *Service) model3DDomainConfig(record *model.Model3DConfig) (model3d.Config, error) {
-	config := model3d.Config{Type: record.Type, DefaultModel: record.DefaultModel, TimeoutSeconds: record.TimeoutSeconds, MaxTasksPerDay: record.MaxTasksPerDay}
+	config := model3d.Config{Type: record.Type, BaseURL: record.BaseURL, DefaultModel: record.DefaultModel, TimeoutSeconds: record.TimeoutSeconds, MaxTasksPerDay: record.MaxTasksPerDay}
 	if err := json.Unmarshal([]byte(record.AllowedModelsJSON), &config.AllowedModels); err != nil {
 		return config, err
 	}
@@ -216,10 +218,14 @@ func (s *Service) SaveModel3DProvider(actor *model.User, id string, req Model3DP
 	if req.Name == "" || utf8.RuneCountInString(req.Name) > 120 {
 		return nil, BadAuthRequest("Provider 名称须为 1–120 字")
 	}
+	baseURL, err := model3d.NormalizeBaseURL(req.BaseURL)
+	if err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
 	provider := model.Model3DProvider{ID: id, Name: req.Name, Type: req.Type, Enabled: req.Enabled}
 	previous := ""
 	version := 1
-	config := model3d.Config{Type: req.Type, APIKey: strings.TrimSpace(req.APIKey), DefaultModel: req.DefaultModel, AllowedModels: req.AllowedModels, AllowedModes: req.AllowedModes, TimeoutSeconds: req.TimeoutSeconds, MaxTasksPerDay: req.MaxTasksPerDay}
+	config := model3d.Config{Type: req.Type, BaseURL: baseURL, APIKey: strings.TrimSpace(req.APIKey), DefaultModel: req.DefaultModel, AllowedModels: req.AllowedModels, AllowedModes: req.AllowedModes, TimeoutSeconds: req.TimeoutSeconds, MaxTasksPerDay: req.MaxTasksPerDay}
 	if id != "" {
 		current, err := s.repo.Model3DProvider(id)
 		if err != nil {
@@ -253,7 +259,7 @@ func (s *Service) SaveModel3DProvider(actor *model.User, id string, req Model3DP
 	}
 	modelsJSON, _ := json.Marshal(config.AllowedModels)
 	modesJSON, _ := json.Marshal(config.AllowedModes)
-	record := model.Model3DConfig{ID: newID(), ProviderID: provider.ID, Version: version, Type: config.Type, DefaultModel: config.DefaultModel, AllowedModelsJSON: string(modelsJSON), AllowedModesJSON: string(modesJSON), TimeoutSeconds: config.TimeoutSeconds, MaxTasksPerDay: config.MaxTasksPerDay, APIKeyEncrypted: encrypted, CreatedBy: actor.ID}
+	record := model.Model3DConfig{ID: newID(), ProviderID: provider.ID, Version: version, Type: config.Type, BaseURL: config.BaseURL, DefaultModel: config.DefaultModel, AllowedModelsJSON: string(modelsJSON), AllowedModesJSON: string(modesJSON), TimeoutSeconds: config.TimeoutSeconds, MaxTasksPerDay: config.MaxTasksPerDay, APIKeyEncrypted: encrypted, CreatedBy: actor.ID}
 	provider.LatestConfigID = record.ID
 	audit, err := newAdminAuditEvent(actor, "model3d.configure", "model3d_provider", provider.ID, "保存 3D 生成配置", map[string]any{"configId": record.ID, "version": record.Version, "enabled": provider.Enabled})
 	if err != nil {

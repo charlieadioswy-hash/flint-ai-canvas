@@ -90,7 +90,7 @@ paths:
     get:
       tags: [admin]
       summary: 获取 3D 服务商配置与生效策略
-      description: 仅管理员。返回 providers、providerTypes、activeProviderId、activeConfigId、policyRevision；凭据仅返回 apiKeyConfigured。
+      description: 仅管理员。返回 providers（Model3DProviderView 数组，包含 baseUrl）、providerTypes、activeProviderId、activeConfigId、policyRevision；凭据仅返回 apiKeyConfigured。
       responses:
         "200": {$ref: "#/components/responses/Envelope"}
         "401": {$ref: "#/components/responses/Error"}
@@ -105,7 +105,16 @@ paths:
           application/json:
             schema: {$ref: "#/components/schemas/Model3DProviderRequest"}
       responses:
-        "200": {description: 标准信封 data 为服务商配置视图，不含 API Key}
+        "200":
+          description: 标准信封 data 为服务商配置视图，不含 API Key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  data: {$ref: "#/components/schemas/Model3DProviderView"}
+                  msg: {type: string}
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
@@ -122,7 +131,16 @@ paths:
           application/json:
             schema: {$ref: "#/components/schemas/Model3DProviderRequest"}
       responses:
-        "200": {description: 标准信封 data 为服务商配置视图}
+        "200":
+          description: 标准信封 data 为服务商配置视图
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  data: {$ref: "#/components/schemas/Model3DProviderView"}
+                  msg: {type: string}
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
@@ -1643,10 +1661,16 @@ components:
   schemas:
     Model3DProviderRequest:
       type: object
-      required: [name, type, enabled, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay]
+      required: [name, type, baseUrl, enabled, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay]
       properties:
         name: {type: string, minLength: 1, maxLength: 120}
         type: {type: string, enum: [tripo3d]}
+        baseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          example: https://openapi.tripo3d.ai/v3
+          description: 必填的 HTTPS API 地址，路径为 /v3；不能包含账号、查询参数或片段。保存只移除首尾空白与末尾斜杠，保留主机大小写和显式端口。国内可用 https://openapi.tripo3d.com/v3；运行时按配置快照调用并检查出站安全策略，无缺省回退。
         enabled: {type: boolean}
         defaultModel: {type: string}
         allowedModels: {type: array, minItems: 1, items: {type: string}}
@@ -1654,6 +1678,24 @@ components:
         timeoutSeconds: {type: integer, minimum: 10, maximum: 120}
         maxTasksPerDay: {type: integer, minimum: 1, maximum: 100000}
         apiKey: {type: string, writeOnly: true, description: 首次必填，后续留空保留已有密钥}
+    Model3DProviderView:
+      type: object
+      required: [id, name, type, baseUrl, enabled, archived, configId, version, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay, apiKeyConfigured]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [tripo3d]}
+        baseUrl: {type: string, format: uri, description: 此不可变配置版本保存的 API 地址}
+        enabled: {type: boolean}
+        archived: {type: boolean}
+        configId: {type: string}
+        version: {type: integer}
+        defaultModel: {type: string}
+        allowedModels: {type: array, items: {type: string}}
+        allowedModes: {type: array, items: {type: string, enum: [text, image, multiview]}}
+        timeoutSeconds: {type: integer}
+        maxTasksPerDay: {type: integer}
+        apiKeyConfigured: {type: boolean}
     Model3DParameters:
       type: object
       additionalProperties: false

@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -17,7 +19,7 @@ import (
 	"infinite-canvas/backend/internal/outbound"
 )
 
-const tripoBaseURL = "https://openapi.tripo3d.ai/v3"
+var errTripoRedirect = errors.New("Tripo API redirects are not allowed")
 
 type tripoProvider struct {
 	client         *http.Client
@@ -26,7 +28,7 @@ type tripoProvider struct {
 
 func NewProvider() Provider {
 	client := outbound.OutboundHTTPClient(120 * time.Second)
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("Tripo API redirects are not allowed") }
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return errTripoRedirect }
 	return &tripoProvider{client: client, downloadClient: newDownloadClient()}
 }
 
@@ -43,9 +45,18 @@ func newDownloadClient() *http.Client {
 }
 
 func (p *tripoProvider) request(ctx context.Context, config Config, method, path, contentType string, body io.Reader, output any) error {
-	req, err := http.NewRequestWithContext(ctx, method, tripoBaseURL+path, body)
+	baseURL, err := NormalizeBaseURL(config.BaseURL)
 	if err != nil {
-		return &Error{"provider_request_invalid", "3D 平台请求无效", true}
+		return &Error{Code: "provider_request_invalid", Message: "3D 平台 API 地址无效", Definite: true}
+	}
+	// A proxy can resolve the target itself; validate it before any credential
+	// or body reaches the transport, as well as the direct dialer's checks.
+	if _, err := outbound.ValidateCustomRelayURL(baseURL + path); err != nil {
+		return &Error{Code: "provider_request_invalid", Message: "3D 平台 API 地址不可访问", Definite: true, TransportKind: classifyTransportError(err)}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
+	if err != nil {
+		return &Error{Code: "provider_request_invalid", Message: "3D 平台请求无效", Definite: true}
 	}
 	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	if contentType != "" {
@@ -54,7 +65,7 @@ func (p *tripoProvider) request(ctx context.Context, config Config, method, path
 	outbound.ApplyDefaultOutboundHeaders(req)
 	response, err := p.client.Do(req)
 	if err != nil {
-		return &Error{"provider_request_uncertain", "3D 平台请求结果未确认", false}
+		return &Error{Code: "provider_request_uncertain", Message: "3D 平台请求结果未确认", TransportKind: classifyTransportError(err)}
 	}
 	defer response.Body.Close()
 	var envelope struct {
@@ -66,13 +77,18 @@ func (p *tripoProvider) request(ctx context.Context, config Config, method, path
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		definite := Contains([]string{"400", "401", "403", "404", "405", "413", "415", "422", "429"}, fmt.Sprint(response.StatusCode))
 		message := fmt.Sprintf("3D 平台拒绝请求（HTTP %d）", response.StatusCode)
+		var providerCode *int64
 		if validEnvelope {
+			providerCode = envelope.Code
 			message = fmt.Sprintf("3D 平台拒绝请求（HTTP %d，上游错误码 %d）", response.StatusCode, *envelope.Code)
 		}
-		return &Error{"provider_request_rejected", message, definite}
+		return &Error{Code: "provider_request_rejected", Message: message, Definite: definite, HTTPStatus: response.StatusCode, ProviderCode: providerCode}
 	}
 	if !validEnvelope {
-		return &Error{"provider_response_invalid", "3D 平台响应无效", false}
+		if err != nil {
+			return &Error{Code: "provider_request_uncertain", Message: "3D 平台响应读取失败", TransportKind: classifyTransportError(err)}
+		}
+		return &Error{Code: "provider_response_invalid", Message: "3D 平台响应无效"}
 	}
 	if code := *envelope.Code; code != 0 {
 		definite := code >= 1000 && code <= 1007
@@ -80,18 +96,24 @@ func (p *tripoProvider) request(ctx context.Context, config Config, method, path
 		case 2000, 2002, 2003, 2004, 2008, 2010, 2015, 2018:
 			definite = true
 		}
-		return &Error{"provider_request_rejected", fmt.Sprintf("3D 平台拒绝请求（%d）", code), definite}
+		return &Error{Code: "provider_request_rejected", Message: fmt.Sprintf("3D 平台拒绝请求（%d）", code), Definite: definite, HTTPStatus: response.StatusCode, ProviderCode: envelope.Code}
 	}
 	if len(envelope.Data) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Data), []byte("null")) || json.Unmarshal(envelope.Data, output) != nil {
-		return &Error{"provider_response_invalid", "3D 平台响应无效", false}
+		return &Error{Code: "provider_response_invalid", Message: "3D 平台响应无效"}
 	}
 	return nil
 }
 
 func (p *tripoProvider) Upload(ctx context.Context, config Config, image Image) (string, error) {
+	if !Contains([]string{"image/png", "image/jpeg"}, image.ContentType) {
+		return "", &Error{Code: "provider_upload_mime_invalid", Message: "参考图须为 PNG 或 JPEG", Definite: true}
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", image.FileName)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": image.FileName}))
+	header.Set("Content-Type", image.ContentType)
+	part, err := writer.CreatePart(header)
 	if err != nil {
 		return "", err
 	}
@@ -108,7 +130,7 @@ func (p *tripoProvider) Upload(ctx context.Context, config Config, image Image) 
 		return "", err
 	}
 	if strings.TrimSpace(result.FileToken) == "" || len(result.FileToken) > 4096 {
-		return "", &Error{"provider_response_invalid", "图片上传未返回有效凭证", true}
+		return "", &Error{Code: "provider_response_invalid", Message: "图片上传未返回有效凭证", Definite: true}
 	}
 	return result.FileToken, nil
 }
@@ -157,7 +179,7 @@ func (p *tripoProvider) Submit(ctx context.Context, config Config, request Reque
 	path, payload := generationPayload(request, tokens)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return "", &Error{"provider_request_invalid", "3D 平台请求无效", true}
+		return "", &Error{Code: "provider_request_invalid", Message: "3D 平台请求无效", Definite: true}
 	}
 	var result struct {
 		TaskID string `json:"task_id"`
@@ -166,7 +188,7 @@ func (p *tripoProvider) Submit(ctx context.Context, config Config, request Reque
 		return "", err
 	}
 	if strings.TrimSpace(result.TaskID) == "" || len(result.TaskID) > 160 {
-		return "", &Error{"provider_response_invalid", "3D 平台未返回任务标识", false}
+		return "", &Error{Code: "provider_response_invalid", Message: "3D 平台未返回任务标识"}
 	}
 	return result.TaskID, nil
 }
@@ -194,10 +216,10 @@ func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad
 		}
 	}
 	if state.Status == "success" && state.Artifact.URL == "" {
-		return state, &Error{"provider_output_missing", "3D 平台未返回模型文件", false}
+		return state, &Error{Code: "provider_output_missing", Message: "3D 平台未返回模型文件"}
 	}
 	if !Contains([]string{"queued", "running", "success", "failed", "cancelled", "banned", "expired"}, state.Status) {
-		return state, &Error{"provider_response_invalid", "3D 平台任务状态无效", false}
+		return state, &Error{Code: "provider_response_invalid", Message: "3D 平台任务状态无效"}
 	}
 	return state, nil
 }
@@ -205,7 +227,7 @@ func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad
 func (p *tripoProvider) Download(ctx context.Context, artifact Artifact) ([]byte, error) {
 	parsed, err := outbound.ValidateOutboundURL(artifact.URL)
 	if err != nil || parsed.Scheme != "https" {
-		return nil, &Error{"provider_output_invalid", "模型下载地址无效", true}
+		return nil, &Error{Code: "provider_output_invalid", Message: "模型下载地址无效", Definite: true}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -219,18 +241,18 @@ func (p *tripoProvider) Download(ctx context.Context, artifact Artifact) ([]byte
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return nil, &Error{"model_download_failed", "模型文件下载失败，可恢复原任务", false}
+		return nil, &Error{Code: "model_download_failed", Message: "模型文件下载失败，可恢复原任务"}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK || response.ContentLength > MaxOutputBytes {
-		return nil, &Error{"model_download_failed", "模型文件下载失败或超过大小限制", false}
+		return nil, &Error{Code: "model_download_failed", Message: "模型文件下载失败或超过大小限制"}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, MaxOutputBytes+1))
 	if err != nil || len(data) == 0 || int64(len(data)) > MaxOutputBytes {
-		return nil, &Error{"model_download_failed", "模型文件下载失败或超过大小限制", false}
+		return nil, &Error{Code: "model_download_failed", Message: "模型文件下载失败或超过大小限制"}
 	}
 	if err := ValidateFile(data, artifact.Format); err != nil {
-		return nil, &Error{"model_output_invalid", "模型文件格式或外部依赖无效", true}
+		return nil, &Error{Code: "model_output_invalid", Message: "模型文件格式或外部依赖无效", Definite: true}
 	}
 	return data, nil
 }

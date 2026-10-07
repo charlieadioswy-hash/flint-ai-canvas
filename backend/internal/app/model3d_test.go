@@ -21,6 +21,7 @@ type model3DMock struct {
 	uploads     []string
 	polls       []string
 	configs     []model3d.Config
+	uploadErr   error
 	submitErr   error
 	downloadErr error
 	state       model3d.State
@@ -29,7 +30,7 @@ type model3DMock struct {
 
 func (m *model3DMock) Upload(_ context.Context, _ model3d.Config, image model3d.Image) (string, error) {
 	m.uploads = append(m.uploads, image.View)
-	return "token-" + image.View, nil
+	return "token-" + image.View, m.uploadErr
 }
 func (m *model3DMock) Submit(_ context.Context, c model3d.Config, _ model3d.Request, _ map[string]string) (string, error) {
 	m.submits++
@@ -80,7 +81,7 @@ func setupModel3DTest(t *testing.T) (*Service, *gorm.DB, *model3DMock, *model.Us
 	return svc, db, mock, admin
 }
 func model3DTestProvider() Model3DProviderRequest {
-	return Model3DProviderRequest{Name: "Tripo", Type: "tripo3d", Enabled: true, DefaultModel: "v3.1-20260211", AllowedModels: []string{"v3.1-20260211", "v3.0-20250812", "v2.5-20250123"}, AllowedModes: []string{"text", "image", "multiview"}, TimeoutSeconds: 30, MaxTasksPerDay: 100, APIKey: "mock-secret-key"}
+	return Model3DProviderRequest{Name: "Tripo", Type: "tripo3d", BaseURL: model3d.DefaultBaseURL, Enabled: true, DefaultModel: "v3.1-20260211", AllowedModels: []string{"v3.1-20260211", "v3.0-20250812", "v2.5-20250123"}, AllowedModes: []string{"text", "image", "multiview"}, TimeoutSeconds: 30, MaxTasksPerDay: 100, APIKey: "mock-secret-key"}
 }
 func enableModel3DTest(t *testing.T, s *Service, admin *model.User) *Model3DProviderView {
 	t.Helper()
@@ -217,6 +218,7 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 	view := createModel3DTest(t, s, model3DTextRequest())
 	req := model3DTestProvider()
 	req.APIKey = "new-secret-key"
+	req.BaseURL = "https://openapi.tripo3d.com/v3"
 	next, err := s.SaveModel3DProvider(admin, provider.ID, req)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +234,7 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 	if view.Status != model.TaskStatusSucceeded || view.Result == nil || view.Result.Format != "glb" || view.Result.MimeType != "model/gltf-binary" || view.Result.URL != resourceFileURL(view.Result.ResourceID) {
 		t.Fatalf("bad result: %+v", view)
 	}
-	if mock.submits != 1 || len(mock.configs) != 1 || mock.configs[0].APIKey != "mock-secret-key" {
+	if mock.submits != 1 || len(mock.configs) != 1 || mock.configs[0].APIKey != "mock-secret-key" || mock.configs[0].BaseURL != model3d.DefaultBaseURL || next.BaseURL != req.BaseURL {
 		t.Fatal("worker did not use immutable config")
 	}
 	asset, err := s.repo.AssetForUser("3d-user", view.Result.AssetID)
@@ -247,6 +249,41 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 	submission, _ := s.repo.Model3DSubmission(view.ID)
 	if strings.Contains(task.ResultJSON, "artifact.invalid") || strings.Contains(task.InputJSON, "mock-secret") || submission.DeliveryEncrypted != "" || submission.TokensEncrypted != "" {
 		t.Fatal("ephemeral credentials escaped terminal cleanup")
+	}
+}
+
+func TestModel3DProviderBaseURLIsRequiredNormalizedAndVersioned(t *testing.T) {
+	s, db, _, admin := setupModel3DTest(t)
+	for _, value := range []string{"", "http://example.com/v3", "https://user:secret@example.com/v3", "https://example.com/v3?token=secret", "https://example.com/v2"} {
+		req := model3DTestProvider()
+		req.BaseURL = value
+		if _, err := s.SaveModel3DProvider(admin, "", req); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("unsafe or missing API URL was accepted or exposed: %v", err)
+		}
+	}
+	var count int64
+	if err := db.Model(&model.Model3DConfig{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("rejected input persisted config: %d %v", count, err)
+	}
+	first := enableModel3DTest(t, s, admin)
+	req := model3DTestProvider()
+	req.BaseURL = "  https://OPENAPI.tripo3d.com:443/v3///  "
+	req.APIKey = ""
+	next, err := s.SaveModel3DProvider(admin, first.ID, req)
+	if err != nil || next.BaseURL != "https://OPENAPI.tripo3d.com:443/v3" || next.ConfigID == first.ConfigID {
+		t.Fatalf("normalized config view: %+v %v", next, err)
+	}
+	old, err := s.repo.Model3DConfig(first.ConfigID)
+	if err != nil || old.BaseURL != model3d.DefaultBaseURL {
+		t.Fatalf("old endpoint mutated: %+v %v", old, err)
+	}
+	active, _, err := s.repo.ActiveModel3DConfig()
+	if err != nil || active.ID != first.ConfigID || active.BaseURL != model3d.DefaultBaseURL {
+		t.Fatalf("draft changed active endpoint: %+v %v", active, err)
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil || !strings.Contains(string(encoded), `"baseUrl":"https://OPENAPI.tripo3d.com:443/v3"`) || strings.Contains(string(encoded), "base_url") {
+		t.Fatalf("wrong public field: %s %v", encoded, err)
 	}
 }
 
@@ -309,6 +346,52 @@ func TestModel3DStorageRecoveryPollsOriginalWithoutPost(t *testing.T) {
 	}
 	if mock.submits != 1 || len(mock.polls) != 2 || mock.polls[0] != mock.polls[1] {
 		t.Fatal("storage recovery created new provider task")
+	}
+}
+
+func TestModel3DUploadFailurePersistsOnlySafeDiagnostics(t *testing.T) {
+	providerCode := int64(2010)
+	for _, test := range []struct {
+		name string
+		err  error
+		text string
+	}{
+		{"dns", &model3d.Error{Code: "provider_request_uncertain", TransportKind: "dns", Message: "secret-api-key https://secret.invalid"}, "DNS"},
+		{"preflight dns", &model3d.Error{Code: "provider_request_invalid", Definite: true, TransportKind: "dns", Message: "secret-api-key https://secret.invalid"}, "DNS"},
+		{"preflight ssrf", &model3d.Error{Code: "provider_request_invalid", Definite: true, TransportKind: "outbound_blocked", Message: "secret-api-key https://secret.invalid"}, "出站安全策略阻止连接"},
+		{"provider rejection", &model3d.Error{Code: "provider_request_rejected", HTTPStatus: 403, ProviderCode: &providerCode, Message: "secret-file_token"}, "HTTP 403，上游错误码 2010"},
+		{"unknown", errors.New("secret-api-key https://secret.invalid/?file_token=secret-token"), "参考图片上传失败，尚未创建生成任务"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, db, mock, admin := setupModel3DTest(t)
+			enableModel3DTest(t, s, admin)
+			front := addImageModerationResource(t, s, "3d-user", "front-resource")
+			back := addImageModerationResource(t, s, "3d-user", "back-resource")
+			req := model3DTextRequest()
+			req.Mode, req.Prompt = "multiview", ""
+			req.Views = &Model3DViews{Front: front.ID, Back: back.ID}
+			mock.uploadErr = test.err
+			view := createModel3DTest(t, s, req)
+			processModel3DTest(t, s)
+			failed, err := s.Model3DTask("3d-user", view.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failed.Status != model.TaskStatusFailed || failed.Error == nil || failed.Error.Code != "model_upload_failed" || !strings.Contains(failed.Error.Message, test.text) || !strings.Contains(failed.Error.Message, "尚未创建生成任务") || strings.Contains(failed.Error.Message, "secret") {
+				t.Fatalf("unsafe or missing task diagnostic: %+v", failed)
+			}
+			var stored model.Task
+			if err := db.First(&stored, "id = ?", view.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			submission, err := s.repo.Model3DSubmission(view.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Error != failed.Error.Message || stored.ProviderRequestID != "" || submission.State != "rejected" || submission.TokensEncrypted != "" || mock.submits != 0 || len(mock.polls) != 0 || len(mock.uploads) != 1 {
+				t.Fatal("upload failure lost its safe message or dispatched generation")
+			}
+		})
 	}
 }
 

@@ -30,7 +30,12 @@ func mergedMigrationFixture(t *testing.T, upstream bool, lastVersion int64) *gor
 			continue
 		}
 		if upstream && item.version == 45 {
-			item = schemaMigrations[len(schemaMigrations)-1]
+			for _, candidate := range schemaMigrations {
+				if candidate.version == 48 {
+					item = candidate
+					break
+				}
+			}
 			item.version = 45
 		}
 		if err := item.apply(db); err != nil {
@@ -89,7 +94,7 @@ func TestMergedMigrationsPreserveBothVersion45Lineages(t *testing.T) {
 					t.Fatal(err)
 				}
 				status, err := ReadSchemaStatus(db)
-				if err != nil || !status.Ready || status.Current != 48 {
+				if err != nil || !status.Ready || status.Current != CurrentSchemaVersion {
 					t.Fatalf("migration status: %+v %v", status, err)
 				}
 			}

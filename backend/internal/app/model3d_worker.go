@@ -91,7 +91,7 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 			token, uploadErr := provider.Upload(call, config, image)
 			cancel()
 			if uploadErr != nil {
-				return fail("model_upload_failed", "参考图片上传失败，尚未创建生成任务", "rejected")
+				return fail("model_upload_failed", model3d.UploadFailureMessage(uploadErr), "rejected")
 			}
 			tokens[image.View] = token
 			plain, _ := json.Marshal(tokens)

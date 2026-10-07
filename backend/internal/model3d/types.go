@@ -54,6 +54,7 @@ type Parameters struct {
 
 type Config struct {
 	Type           string
+	BaseURL        string
 	APIKey         string
 	DefaultModel   string
 	AllowedModels  []string
@@ -74,6 +75,9 @@ func Contains(values []string, value string) bool {
 func ValidateConfig(config Config) error {
 	if config.Type != ProviderTripo {
 		return errors.New("仅支持 Tripo3D")
+	}
+	if _, err := NormalizeBaseURL(config.BaseURL); err != nil {
+		return err
 	}
 	if strings.TrimSpace(config.APIKey) == "" || len(config.APIKey) > 4096 || strings.ContainsAny(config.APIKey, "\r\n") {
 		return errors.New("须填写有效 API Key")
@@ -226,9 +230,12 @@ type Provider interface {
 }
 
 type Error struct {
-	Code     string
-	Message  string
-	Definite bool
+	Code          string
+	Message       string
+	Definite      bool
+	HTTPStatus    int
+	ProviderCode  *int64
+	TransportKind string
 }
 
 func (e *Error) Error() string { return e.Message }

@@ -7,7 +7,7 @@ import { activateModel3DProvider, archiveModel3DProvider, disableModel3D, getMod
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminStatTile, AdminStatusBadge, SettingsSectionCard } from "../components/admin-ui";
 import { Callout, Checkbox, Select, Switch } from "../ui/controls";
-import { isModel3DAdminState, model3DProviderDraft, model3DProviderDraftChanged, model3DProviderInput, model3DProviderResponseMatches, model3DProviderStatus, validateModel3DProviderDraft, type Model3DProviderDraft } from "./model3d-settings-form";
+import { isModel3DAdminState, model3DProviderDraft, model3DProviderDraftChanged, model3DProviderInput, model3DProviderResponseMatches, model3DProviderStatus, TRIPO_API_BASE_URLS, validateModel3DBaseUrl, validateModel3DProviderDraft, type Model3DProviderDraft } from "./model3d-settings-form";
 import "./model3d-settings-page.css";
 
 const modeLabels: Record<string, string> = { text: "文本生成", image: "单图生成", multiview: "多视图生成" };
@@ -174,7 +174,7 @@ export default function Model3DSettingsPage() {
             <div className="admin-model3d-stats"><AdminStatTile label="生效服务商" value={active?.name || "未启用"} /><AdminStatTile label="生效配置" value={active ? active.configId === state.activeConfigId ? `v${active.version}` : "旧版本生效" : "—"} /></div>
             <SettingsSectionCard icon={<Box className="size-4" />} title="生成服务商" description="可保存多套配置，同一时刻仅一个版本生效。">
                 <div className="admin-model3d-providers">
-                    {visible.map((provider) => <button key={provider.id} type="button" className="admin-model3d-provider" aria-pressed={selectedId === provider.id} disabled={busy} onClick={() => discardThen(() => select(state, provider))}><strong>{provider.name}</strong><span className="admin-model3d-muted">{state.providerTypes.find((item) => item.type === provider.type)?.label || provider.type} · v{provider.version}</span><AdminStatusBadge {...model3DProviderStatus(provider, state)} /></button>)}
+                    {visible.map((provider) => <button key={provider.id} type="button" className="admin-model3d-provider" aria-pressed={selectedId === provider.id} disabled={busy} onClick={() => discardThen(() => select(state, provider))}><div className="admin-model3d-provider-summary"><strong>{provider.name}</strong><span className="admin-model3d-muted">{provider.baseUrl}</span></div><span className="admin-model3d-muted">{state.providerTypes.find((item) => item.type === provider.type)?.label || provider.type} · v{provider.version}</span><AdminStatusBadge {...model3DProviderStatus(provider, state)} /></button>)}
                     {!visible.length ? <p className="admin-model3d-muted">尚未配置服务商。新增配置并保存，再设为生效。</p> : null}
                     <div><Button icon={<Plus className="size-4" />} disabled={locked || !state.providerTypes.length} onClick={() => discardThen(() => select(state, null))}>新增服务商配置</Button></div>
                 </div>
@@ -191,13 +191,21 @@ export default function Model3DSettingsPage() {
                 <div className="admin-model3d-settings">
                     <div className="admin-model3d-actions"><strong>{selected ? `编辑 ${selected.name}` : "新增服务商配置"}</strong><AdminStatusBadge {...(selected ? model3DProviderStatus(selected, state) : { label: "未保存" })} />{dirty ? <span className="admin-model3d-muted">有未保存修改</span> : null}</div>
                     {selected?.id === state.activeProviderId && selected.configId !== state.activeConfigId ? <Callout tone="warning">当前编辑的是新版本，生成任务仍使用原生效配置。设为生效后才会切换。</Callout> : null}
-                    <SettingsSectionCard icon={<KeyRound className="size-4" />} title="连接配置" description="API Key 加密保存在后端，不会发送到画布或分享链接。">
+                    <SettingsSectionCard icon={<KeyRound className="size-4" />} title="连接配置" description="API 地址随配置版本保存；API Key 加密保存在后端，不会发送到画布或分享链接。">
                         <div className="admin-model3d-fields">
                             <Form.Item name="name" label="配置名称" rules={[{ required: true, whitespace: true, message: "请填写配置名称" }]}><Input placeholder="例如：Tripo3D 主账号" maxLength={120} autoComplete="off" /></Form.Item>
                             <Form.Item name="type" label="服务商" rules={[{ required: true, message: "请选择服务商" }]}><Select ariaLabel="3D 生成服务商" disabled={locked || Boolean(selected)} options={state.providerTypes.map((type) => ({ value: type.type, label: type.label }))} /></Form.Item>
                             <Form.Item name="apiKey" label={selected?.apiKeyConfigured ? "API Key（已配置）" : "API Key"} extra={selected?.apiKeyConfigured ? "留空保留已有密钥；填写后保存为新配置版本。" : "填写服务商 API Key，保存后不回显。"}><Input.Password autoComplete="new-password" placeholder={selected?.apiKeyConfigured ? "留空保留原凭据" : "输入 API Key"} /></Form.Item>
                             <Form.Item name="enabled" label="允许设为生效" valuePropName="checked" extra={selected?.id === state.activeProviderId ? "停用当前服务请使用上方“停用新任务”。" : undefined}><Switch disabled={locked || selected?.id === state.activeProviderId} aria-label="允许此配置设为生效" /></Form.Item>
                         </div>
+                        <Form.Item name="baseUrl" label="API 地址" rules={[{ required: true, whitespace: true, message: "请填写 API 地址" }, { validator: (_, value: string) => {
+                            const invalid = validateModel3DBaseUrl(value || "");
+                            return invalid ? Promise.reject(new Error(invalid)) : Promise.resolve();
+                        } }]} extra={<div className="admin-model3d-actions"><span>快捷填写：</span>{[{ label: "国内地址", value: TRIPO_API_BASE_URLS.domestic }, { label: "国外地址", value: TRIPO_API_BASE_URLS.international }].map((address) => <Button key={address.value} size="small" disabled={locked} onClick={() => {
+                            form.setFieldValue("baseUrl", address.value);
+                            setDirty(model3DProviderDraftChanged(form.getFieldsValue(), selected, state));
+                            void form.validateFields(["baseUrl"]).catch(() => undefined);
+                        }}>{address.label}</Button>)}<span>修改后保存新版本，再设为生效。</span></div>}><Input placeholder={TRIPO_API_BASE_URLS.international} autoComplete="off" spellCheck={false} /></Form.Item>
                     </SettingsSectionCard>
                     <SettingsSectionCard icon={<Box className="size-4" />} title="开放能力" description="用户可以在节点中选择开放的模型与模式，并调整生成参数。">
                         <Form.Item name="allowedModels" label="开放模型" rules={[{ required: true, type: "array", min: 1, message: "至少开放一个模型" }]}><Choices disabled={locked} label="开放模型版本" options={providerType?.modelVersions.map((model) => ({ value: model.id, label: model.label })) || []} /></Form.Item>

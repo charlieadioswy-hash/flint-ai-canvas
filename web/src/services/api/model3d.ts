@@ -88,6 +88,7 @@ export type Model3DTaskView = {
 export type Model3DProviderInput = {
     name: string;
     type: string;
+    baseUrl: string;
     enabled: boolean;
     defaultModel: string;
     allowedModels: string[];

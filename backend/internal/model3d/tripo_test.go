@@ -14,6 +14,8 @@ import (
 
 type tripoRoundTrip func(*http.Request) (*http.Response, error)
 
+const tripoTestBaseURL = "https://8.8.8.8/v3"
+
 func (f tripoRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func tripoResponse(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}
@@ -23,7 +25,7 @@ func TestTripoV3PayloadUsesLabelledViewsAndSingleSubmit(t *testing.T) {
 	count := 0
 	provider := &tripoProvider{client: &http.Client{Transport: tripoRoundTrip(func(r *http.Request) (*http.Response, error) {
 		count++
-		if r.URL.String() != tripoBaseURL+"/generation/multiview-to-model" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer test-key" {
+		if r.URL.String() != tripoTestBaseURL+"/generation/multiview-to-model" || r.Method != "POST" || r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Fatalf("bad request: %v", r)
 		}
 		var payload map[string]json.RawMessage
@@ -38,7 +40,7 @@ func TestTripoV3PayloadUsesLabelledViewsAndSingleSubmit(t *testing.T) {
 		}
 		return tripoResponse(200, `{"code":0,"data":{"task_id":"uuid-without-prefix"}}`), nil
 	})}}
-	id, err := provider.Submit(context.Background(), Config{APIKey: "test-key"}, Request{Mode: "multiview", Parameters: Parameters{Model: "v3.1-20260211", Texture: true, PBR: true}}, map[string]string{"right": "right-token", "front": "front-token"})
+	id, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL, APIKey: "test-key"}, Request{Mode: "multiview", Parameters: Parameters{Model: "v3.1-20260211", Texture: true, PBR: true}}, map[string]string{"right": "right-token", "front": "front-token"})
 	if err != nil || id != "uuid-without-prefix" || count != 1 {
 		t.Fatalf("submit: %v %q calls %d", err, id, count)
 	}
@@ -55,7 +57,7 @@ func TestTripoOfficialCreateResponse(t *testing.T) {
 				}
 				return tripoResponse(http.StatusOK, `{"code":0,"data":{"task_id":"task_abc123"}}`), nil
 			})}}
-			id, err := provider.Submit(context.Background(), Config{}, Request{Mode: mode, Prompt: "toy truck", Parameters: Parameters{Model: "v3.1-20260211", Texture: true}}, map[string]string{"single": "file_abc123", "front": "file_abc123"})
+			id, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL}, Request{Mode: mode, Prompt: "toy truck", Parameters: Parameters{Model: "v3.1-20260211", Texture: true}}, map[string]string{"single": "file_abc123", "front": "file_abc123"})
 			if err != nil || id != "task_abc123" || calls != 1 {
 				t.Fatalf("creation response: id=%q err=%v calls=%d", id, err, calls)
 			}
@@ -87,7 +89,7 @@ func TestTripoSuccessEnvelopeRequiresExplicitIntegerCodeAndData(t *testing.T) {
 				calls++
 				return tripoResponse(http.StatusOK, test.body), nil
 			})}}
-			id, err := provider.Submit(context.Background(), Config{}, Request{Mode: "text"}, nil)
+			id, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL}, Request{Mode: "text"}, nil)
 			var failure *Error
 			if !errors.As(err, &failure) || failure.Code != "provider_response_invalid" || failure.Definite || id != "" || calls != 1 {
 				t.Fatalf("invalid response accepted or replayed: id=%q err=%v calls=%d", id, err, calls)
@@ -124,7 +126,7 @@ func TestTripoErrorEnvelopeKeepsOnlySafeNumericCode(t *testing.T) {
 				calls++
 				return tripoResponse(test.status, test.body), nil
 			})}}
-			id, err := provider.Submit(context.Background(), Config{APIKey: "secret-api-key"}, Request{Mode: "text"}, nil)
+			id, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL, APIKey: "secret-api-key"}, Request{Mode: "text"}, nil)
 			var failure *Error
 			if !errors.As(err, &failure) || failure.Code != "provider_request_rejected" || failure.Definite != test.definite || failure.Message != test.message || id != "" || calls != 1 {
 				t.Fatalf("unexpected rejection: id=%q err=%v calls=%d", id, err, calls)
@@ -144,7 +146,7 @@ func TestTripoPaidPostDoesNotRetryAndTimeoutIsUncertain(t *testing.T) {
 				count++
 				return tripoResponse(status, `{"code":1000}`), nil
 			})}}
-			_, err := provider.Submit(context.Background(), Config{}, Request{Mode: "text"}, nil)
+			_, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL}, Request{Mode: "text"}, nil)
 			var value *Error
 			if !errors.As(err, &value) || value.Definite || count != 1 {
 				t.Fatalf("unsafe replay classification %v count%d", err, count)
@@ -153,7 +155,7 @@ func TestTripoPaidPostDoesNotRetryAndTimeoutIsUncertain(t *testing.T) {
 	}
 	count := 0
 	provider := &tripoProvider{client: &http.Client{Transport: tripoRoundTrip(func(*http.Request) (*http.Response, error) { count++; return nil, errors.New("connection lost secret") })}}
-	_, err := provider.Submit(context.Background(), Config{APIKey: "private-key"}, Request{Mode: "text"}, nil)
+	_, err := provider.Submit(context.Background(), Config{BaseURL: tripoTestBaseURL, APIKey: "private-key"}, Request{Mode: "text"}, nil)
 	var failure *Error
 	if !errors.As(err, &failure) || failure.Definite || failure.Code != "provider_request_uncertain" || count != 1 || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "private-key") {
 		t.Fatal("retry or secret exposure")
@@ -177,7 +179,7 @@ func TestTripoUploadMultipartAndPollFormat(t *testing.T) {
 			}
 			defer file.Close()
 			data, _ := io.ReadAll(file)
-			if header.Filename != "reference.png" || string(data) != "png" {
+			if header.Filename != "reference.png" || header.Header.Get("Content-Type") != "image/png" || string(data) != "png" {
 				t.Fatal("wrong multipart field")
 			}
 			return tripoResponse(200, `{"code":0,"data":{"file_token":"file_abc123"}}`), nil
@@ -187,11 +189,11 @@ func TestTripoUploadMultipartAndPollFormat(t *testing.T) {
 		}
 		return tripoResponse(200, `{"code":0,"data":{"task_id":"opaque-id","type":"image_to_model","status":"success","progress":100,"output":{"model_url":"https://public.invalid/model","rendered_image_url":"https://public.invalid/preview.png"},"credits_consumed":20.00,"created_at":"2026-04-28T12:00:00Z","completed_at":"2026-04-28T12:01:30Z"}}`), nil
 	})}}
-	token, err := provider.Upload(context.Background(), Config{}, Image{FileName: "reference.png", Data: []byte("png")})
+	token, err := provider.Upload(context.Background(), Config{BaseURL: tripoTestBaseURL}, Image{FileName: "reference.png", ContentType: "image/png", Data: []byte("png")})
 	if err != nil || token != "file_abc123" || calls != 1 {
 		t.Fatal(err)
 	}
-	state, err := provider.Poll(context.Background(), Config{}, "opaque-id", true)
+	state, err := provider.Poll(context.Background(), Config{BaseURL: tripoTestBaseURL}, "opaque-id", true)
 	if err != nil || state.Artifact.Format != "fbx" || state.Artifact.URL != "https://public.invalid/model" || state.Status != "success" || state.Progress != 100 || calls != 2 {
 		t.Fatalf("quad must preserve FBX: %v %+v", err, state)
 	}

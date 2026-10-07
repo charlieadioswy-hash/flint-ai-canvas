@@ -21,6 +21,7 @@ type Model3DConfig struct {
 	ProviderID        string `gorm:"size:36;uniqueIndex:idx_model3d_config_version,priority:1"`
 	Version           int    `gorm:"uniqueIndex:idx_model3d_config_version,priority:2"`
 	Type              string `gorm:"size:40"`
+	BaseURL           string `gorm:"size:2048"`
 	DefaultModel      string `gorm:"size:80"`
 	AllowedModelsJSON string `gorm:"type:text"`
 	AllowedModesJSON  string `gorm:"type:text"`
