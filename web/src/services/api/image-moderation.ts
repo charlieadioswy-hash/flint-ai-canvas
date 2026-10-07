@@ -82,9 +82,7 @@ export function getModerationAdminState(signal?: AbortSignal) {
 }
 
 export function saveModerationProvider(input: ModerationProviderInput, providerId?: string) {
-    return providerId
-        ? http.put<ModerationProviderView>(`/admin/image-moderation/providers/${encodeURIComponent(providerId)}`, input)
-        : http.post<ModerationProviderView>("/admin/image-moderation/providers", input);
+    return providerId ? http.put<ModerationProviderView>(`/admin/image-moderation/providers/${encodeURIComponent(providerId)}`, input) : http.post<ModerationProviderView>("/admin/image-moderation/providers", input);
 }
 
 export function activateModerationProvider(providerId: string, configId: string, expectedRevision: number) {

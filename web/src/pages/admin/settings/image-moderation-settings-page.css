@@ -99,7 +99,9 @@
     border-radius: var(--admin-radius);
     background: var(--admin-surface);
     color: var(--admin-text);
-    transition: background var(--admin-motion), border-color var(--admin-motion);
+    transition:
+        background var(--admin-motion),
+        border-color var(--admin-motion);
 }
 
 [data-admin-root] .admin-moderation-provider:hover {

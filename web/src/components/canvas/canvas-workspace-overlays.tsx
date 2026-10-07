@@ -143,7 +143,11 @@ export function CanvasNodePanelOverlay({
             panel.style.width = `${nextWidth}px`;
             if (constrainToViewport) panel.style.setProperty("--canvas-node-panel-max-height", `${Math.max(120, viewportSize.height - 84)}px`);
             const nodeElement = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`);
-            const position = constrainToViewport ? getConstrainedNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panel.getBoundingClientRect().height || panelHeight, liveDragOffset) : nodeElement ? getAttachedNodePanelPosition(nodeElement, container, nextWidth) : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
+            const position = constrainToViewport
+                ? getConstrainedNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panel.getBoundingClientRect().height || panelHeight, liveDragOffset)
+                : nodeElement
+                  ? getAttachedNodePanelPosition(nodeElement, container, nextWidth)
+                  : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
             panel.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
         };
         update(viewport);
@@ -203,11 +207,31 @@ export function CanvasConnectionCreateMenu({
     containerRef: RefObject<HTMLDivElement | null>;
     canCreateDrawing: boolean;
     getDisabledReason: (
-        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion | CanvasNodeType.Model3D,
+        type:
+            | CanvasNodeType.Image
+            | CanvasNodeType.Text
+            | CanvasNodeType.Script
+            | CanvasNodeType.BatchTable
+            | CanvasNodeType.Video
+            | CanvasNodeType.Audio
+            | CanvasNodeType.Drawing
+            | CanvasNodeType.Config
+            | CanvasNodeType.MediaConversion
+            | CanvasNodeType.Model3D,
         provider?: "runninghub",
     ) => string;
     onCreate: (
-        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion | CanvasNodeType.Model3D,
+        type:
+            | CanvasNodeType.Image
+            | CanvasNodeType.Text
+            | CanvasNodeType.Script
+            | CanvasNodeType.BatchTable
+            | CanvasNodeType.Video
+            | CanvasNodeType.Audio
+            | CanvasNodeType.Drawing
+            | CanvasNodeType.Config
+            | CanvasNodeType.MediaConversion
+            | CanvasNodeType.Model3D,
         provider?: "runninghub",
     ) => void;
     onClose: () => void;

@@ -5,4 +5,6 @@ export function createModel3DGLTFLoader() {
     return new GLTFLoader().setMeshoptDecoder(MeshoptDecoder());
 }
 
-export function createModel3DFBXLoader() { return new FBXLoader(); }
+export function createModel3DFBXLoader() {
+    return new FBXLoader();
+}

@@ -1,6 +1,17 @@
 import { expect, test } from "bun:test";
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "canvas-batch-commit-race" | "canvas-multi-output" | "canvas-copy-generation" | "http-registered-generation" | "http-generation-mismatch" | "http-generation-missing";
+type Scenario =
+    | "image-cleanup"
+    | "scope-cleanup-switch"
+    | "scope-cleanup-late-canvas-reference"
+    | "video-commit-race"
+    | "audio-commit-race"
+    | "canvas-batch-commit-race"
+    | "canvas-multi-output"
+    | "canvas-copy-generation"
+    | "http-registered-generation"
+    | "http-generation-mismatch"
+    | "http-generation-missing";
 
 test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Crypto 仍复用素材并保存", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;
@@ -11,7 +22,8 @@ test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Cr
     expect(result.lockError).toContain("跨页面生成副作用互斥");
     expect(result.materializedId).toBe(assetId);
     expect(result.projectedId).toBe(assetId);
-    for (const node of [result.saved, result.restored, result.replayed]) expect(node).toMatchObject({ id: "front", title: "用户改名", position: { x: 700, y: 100 }, metadata: { assetId, storageKey: "resource:http-image", status: "success", taskId: "task-http-recovery" } });
+    for (const node of [result.saved, result.restored, result.replayed])
+        expect(node).toMatchObject({ id: "front", title: "用户改名", position: { x: 700, y: 100 }, metadata: { assetId, storageKey: "resource:http-image", status: "success", taskId: "task-http-recovery" } });
     expect(result.assets).toHaveLength(1);
     expect(result.assets[0]).toMatchObject({ id: assetId, title: "用户已修改标题", tags: ["精选"] });
     expect(result.requests.filter((request) => request.startsWith("put:/assets/"))).toEqual([]);

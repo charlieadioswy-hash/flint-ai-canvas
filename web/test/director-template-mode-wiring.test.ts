@@ -26,7 +26,7 @@ function slice(source: string, from: string, to: string) {
 
 describe("新建场景必须显式选模板", () => {
     test("createPrevisShot 第一个参数是 templateId，没有默认值", () => {
-        expect(hook).toContain("const createPrevisShot = useCallback((templateId: PrevisTemplateId, position?: Position) => {");
+        expect(hook).toMatch(/const createPrevisShot = useCallback\(\s*\(templateId: PrevisTemplateId, position\?: Position\) => \{/);
         // 有默认模板等于又回到「无条件塞演员」。
         expect(hook).not.toContain("templateId: PrevisTemplateId = ");
     });
@@ -84,7 +84,7 @@ describe("模式接线", () => {
     });
 
     test("时间轴只在 capabilities.timeline 为真时渲染", () => {
-        expect(workbench).toContain("{capabilities.timeline ? <PrevisSequencer");
+        expect(workbench).toMatch(/\{capabilities\.timeline \?\s*\(?\s*<PrevisSequencer\b/);
     });
 
     test("动画模式把 Transform 轨迹接入视口，隐藏演员和零长度轨迹不显示", () => {
@@ -155,8 +155,8 @@ describe("模式接线", () => {
         // 窄屏下检查器改为可开合的侧滑面板，dock 提供开关入口，而不是直接隐藏。
         const workbenchCss = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/canvas-previs-workbench.css"), "utf8");
         expect(workbench).toContain('className={`pv-panel pv-panel--right thin-scrollbar ${inspectorOpen ? "is-open" : ""}`}');
-        expect(workbench).toContain("onToggleInspector={() => compactLayout ? setInspectorOpen((value) => !value) : setInspectorDocked((value) => !value)}");
-        expect(workbenchCss).toContain(".pv-panel--right.is-open { transform: translateX(0); }");
+        expect(workbench).toMatch(/onToggleInspector=\{\(\) => \(?compactLayout \? setInspectorOpen\(\(value\) => !value\) : setInspectorDocked\(\(value\) => !value\)\)?\}/);
+        expect(workbenchCss).toMatch(/\.pv-panel--right\.is-open\s*\{\s*transform: translateX\(0\);\s*\}/);
         expect(workbench).not.toContain("border-l max-lg:hidden");
     });
 
@@ -181,7 +181,7 @@ describe("模式接线", () => {
         // 逐个锁住依赖数组：任一处混入 mode，切模式就会掉草稿或掉历史。
         expect(workbench).toContain("}, [message, modal, open, scene, writeDraft]);");
         expect(workbench).toContain("}, [mirrorDraft, stagedTransaction]);");
-        expect(workbench).toContain("}, [mirrorDraft]);");
+        expect(workbench).toMatch(/\},\s*\[mirrorDraft\],?\s*\);/);
         // 快捷键监听只随 open 装卸，不随 mode 反复重挂。
         expect(workbench).toContain("}, [open]);");
     });

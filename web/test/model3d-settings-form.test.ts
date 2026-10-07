@@ -1,15 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { isModel3DAdminState, model3DProviderDraft, model3DProviderDraftChanged, model3DProviderInput, model3DProviderResponseMatches, model3DProviderStatus, TRIPO_API_BASE_URLS, validateModel3DBaseUrl, validateModel3DProviderDraft } from "../src/pages/admin/settings/model3d-settings-form";
+import {
+    isModel3DAdminState,
+    model3DProviderDraft,
+    model3DProviderDraftChanged,
+    model3DProviderInput,
+    model3DProviderResponseMatches,
+    model3DProviderStatus,
+    TRIPO_API_BASE_URLS,
+    validateModel3DBaseUrl,
+    validateModel3DProviderDraft,
+} from "../src/pages/admin/settings/model3d-settings-form";
 import type { Model3DAdminState, Model3DProviderView } from "../src/services/api/model3d";
 
 const provider: Model3DProviderView = {
-    id: "provider-1", configId: "config-1", version: 1, name: "测试 Tripo", type: "tripo3d", enabled: true, archived: false,
+    id: "provider-1",
+    configId: "config-1",
+    version: 1,
+    name: "测试 Tripo",
+    type: "tripo3d",
+    enabled: true,
+    archived: false,
     baseUrl: TRIPO_API_BASE_URLS.international,
-    defaultModel: "v3.1-20260211", allowedModels: ["v3.1-20260211", "v3.0-20250812"], allowedModes: ["text", "image", "multiview"],
-    timeoutSeconds: 60, maxTasksPerDay: 100, apiKeyConfigured: true,
+    defaultModel: "v3.1-20260211",
+    allowedModels: ["v3.1-20260211", "v3.0-20250812"],
+    allowedModes: ["text", "image", "multiview"],
+    timeoutSeconds: 60,
+    maxTasksPerDay: 100,
+    apiKeyConfigured: true,
 };
 const state: Model3DAdminState = {
-    providers: [provider], activeProviderId: provider.id, activeConfigId: provider.configId, policyRevision: 1,
+    providers: [provider],
+    activeProviderId: provider.id,
+    activeConfigId: provider.configId,
+    policyRevision: 1,
     providerTypes: [{ type: "tripo3d", label: "Tripo3D", modes: ["text", "image", "multiview"], modelVersions: provider.allowedModels.map((id) => ({ id, label: id, supportsAdvanced: true, maxFacesStandard: 1500000, maxFacesDetailed: 2000000 })) }],
 };
 
@@ -39,11 +62,24 @@ describe("3D provider configuration", () => {
 
     test("rejects incomplete addresses, credentials, queries, fragments and other paths", () => {
         const draft = model3DProviderDraft(provider, state);
-        for (const baseUrl of ["", "http://openapi.tripo3d.ai/v3", "openapi.tripo3d.ai/v3", "https:openapi.tripo3d.ai/v3",
-            "https://user:secret@openapi.tripo3d.ai/v3", "https://@openapi.tripo3d.ai/v3", "https://openapi.tripo3d.ai/v3?key=value",
-            "https://openapi.tripo3d.ai/v3?", "https://openapi.tripo3d.ai/v3#", "https://openapi.tripo3d.ai/v2",
-            "https://openapi.tripo3d.ai/v3/generation", "https://openapi.tripo3d.ai/other/../v3", "https:///v3",
-            "https://openapi.tripo3d.ai:99999/v3", "https://openapi.\ntripo3d.ai/v3", "https://openapi.tripo3d.ai\\/v3"]) {
+        for (const baseUrl of [
+            "",
+            "http://openapi.tripo3d.ai/v3",
+            "openapi.tripo3d.ai/v3",
+            "https:openapi.tripo3d.ai/v3",
+            "https://user:secret@openapi.tripo3d.ai/v3",
+            "https://@openapi.tripo3d.ai/v3",
+            "https://openapi.tripo3d.ai/v3?key=value",
+            "https://openapi.tripo3d.ai/v3?",
+            "https://openapi.tripo3d.ai/v3#",
+            "https://openapi.tripo3d.ai/v2",
+            "https://openapi.tripo3d.ai/v3/generation",
+            "https://openapi.tripo3d.ai/other/../v3",
+            "https:///v3",
+            "https://openapi.tripo3d.ai:99999/v3",
+            "https://openapi.\ntripo3d.ai/v3",
+            "https://openapi.tripo3d.ai\\/v3",
+        ]) {
             expect(validateModel3DProviderDraft({ ...draft, baseUrl }, provider, state)).toContain("API 地址");
         }
     });

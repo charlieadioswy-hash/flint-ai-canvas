@@ -54,13 +54,33 @@ describe("manual image moderation entry", () => {
             const source = node();
             let calls = 0;
             const context: ToolContext = {
-                selectedCount: 0, selectedNodeTypes: new Set(), selectedVideoCount: 0, canvasTool: "move", workspaceMode,
-                isProjectLinked: false, canUndo: false, canRedo: false, node: source, nodeMetadata: source.metadata,
-                extractingVideoFrames: false, extractingAudio: false, trimmingVideo: false, mergingVideos: false,
-                addPanelOpen: false, appearancePanelOpen: false, settingsPanelOpen: false,
-                handlers: { onNodeImageModeration: (received: CanvasNodeData) => { expect(received).toBe(source); calls++; } } as ToolbarHandlers,
+                selectedCount: 0,
+                selectedNodeTypes: new Set(),
+                selectedVideoCount: 0,
+                canvasTool: "move",
+                workspaceMode,
+                isProjectLinked: false,
+                canUndo: false,
+                canRedo: false,
+                node: source,
+                nodeMetadata: source.metadata,
+                extractingVideoFrames: false,
+                extractingAudio: false,
+                trimmingVideo: false,
+                mergingVideos: false,
+                addPanelOpen: false,
+                appearancePanelOpen: false,
+                settingsPanelOpen: false,
+                handlers: {
+                    onNodeImageModeration: (received: CanvasNodeData) => {
+                        expect(received).toBe(source);
+                        calls++;
+                    },
+                } as ToolbarHandlers,
             };
-            const primary = resolveToolbarTools("node-hover", context, null).filter((tool) => resolveNodeToolbarPlacement(tool, context).group === "primary").sort((a, b) => resolveNodeToolbarPlacement(a, context).order - resolveNodeToolbarPlacement(b, context).order);
+            const primary = resolveToolbarTools("node-hover", context, null)
+                .filter((tool) => resolveNodeToolbarPlacement(tool, context).group === "primary")
+                .sort((a, b) => resolveNodeToolbarPlacement(a, context).order - resolveNodeToolbarPlacement(b, context).order);
             expect(primary[0].id).toBe("image-moderation");
             expect(calls).toBe(0);
             primary[0].run(context);

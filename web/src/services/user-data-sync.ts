@@ -833,11 +833,12 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
                             const url = resourceFileUrl(resourceId);
                             const displayUrl = result.kind === "image" ? result.data.dataUrl : result.data.url;
                             const coverUrl = result.coverUrl === displayUrl ? (result.kind === "image" ? url : "") : result.coverUrl;
-                            result = result.kind === "image"
-                                ? { ...result, coverUrl, data: { ...result.data, dataUrl: url } }
-                                : result.kind === "video"
-                                  ? { ...result, coverUrl, data: { ...result.data, url } }
-                                  : { ...result, coverUrl, data: { ...result.data, url } };
+                            result =
+                                result.kind === "image"
+                                    ? { ...result, coverUrl, data: { ...result.data, dataUrl: url } }
+                                    : result.kind === "video"
+                                      ? { ...result, coverUrl, data: { ...result.data, url } }
+                                      : { ...result, coverUrl, data: { ...result.data, url } };
                         }
                     }
                     return result;
@@ -878,7 +879,7 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
                 merged = { ...merged, updatedAt: source.updatedAt };
                 mergedAssets.set(source.id, merged);
             }
-            useAssetStore.setState((state) => ({ assets: state.assets.map((item) => item.id === source.id ? merged : item) }));
+            useAssetStore.setState((state) => ({ assets: state.assets.map((item) => (item.id === source.id ? merged : item)) }));
         }
     }
 

@@ -4,7 +4,18 @@ import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope
 
 type InstanceHook = (storeName: string, key: string, value: unknown) => Promise<void> | void;
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "canvas-batch-commit-race" | "canvas-multi-output" | "canvas-copy-generation" | "http-registered-generation" | "http-generation-mismatch" | "http-generation-missing";
+type Scenario =
+    | "image-cleanup"
+    | "scope-cleanup-switch"
+    | "scope-cleanup-late-canvas-reference"
+    | "video-commit-race"
+    | "audio-commit-race"
+    | "canvas-batch-commit-race"
+    | "canvas-multi-output"
+    | "canvas-copy-generation"
+    | "http-registered-generation"
+    | "http-generation-mismatch"
+    | "http-generation-missing";
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
@@ -540,14 +551,21 @@ async function runCanvasCopyGeneration() {
             return stored.state.projects.find((project) => project.id === projectId)!.nodes;
         };
         const initial: import("../../src/types/canvas").CanvasNodeData = {
-            id: "source", type: CanvasNodeType.Image, title: "source", position: { x: 0, y: 0 }, width: 320, height: 240,
+            id: "source",
+            type: CanvasNodeType.Image,
+            title: "source",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 240,
             metadata: { content: "original-image", prompt: "test prompt", status: "success" },
         };
         useCanvasStore.getState().updateProject(projectId, { nodes: [initial] });
         await flushCanvasStorePersistence();
         const sourceEffect = "attach-node:old-task:source:0";
         await persistCanvasGenerationEffect({
-            projectId, effectKey: sourceEffect, previousNodes: [initial],
+            projectId,
+            effectKey: sourceEffect,
+            previousNodes: [initial],
             nodes: [{ ...initial, metadata: { ...initial.metadata, generationEffectKeys: [sourceEffect] } }],
         });
         const source = (await readNodes())[0]!;
@@ -562,8 +580,10 @@ async function runCanvasCopyGeneration() {
         await flushCanvasStorePersistence();
         const copyEffect = "attach-node:new-task:copy:0";
         await persistCanvasGenerationEffect({
-            projectId, effectKey: copyEffect, previousNodes: pendingNodes,
-            nodes: pendingNodes.map((node) => node.id === "copy" ? { ...node, metadata: { ...node.metadata, content: "new-image", status: "success", generationEffectKeys: [copyEffect] } } : node),
+            projectId,
+            effectKey: copyEffect,
+            previousNodes: pendingNodes,
+            nodes: pendingNodes.map((node) => (node.id === "copy" ? { ...node, metadata: { ...node.metadata, content: "new-image", status: "success", generationEffectKeys: [copyEffect] } } : node)),
         });
         await flushCanvasStorePersistence();
         return { beforeGeneration, restored: await readNodes() };
@@ -582,8 +602,16 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     const assetId = "generation_e8a36a9adf905e4dfd72cd164c1f5b412e6464d00dc490e3d988121db742e6e4";
     const storageKey = "resource:http-image";
     const asset = {
-        id: assetId, kind: "image", title: "用户已修改标题", category: "material", tags: ["精选"], status: "confirmed", source: "生成任务",
-        createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z", coverUrl: "/api/resources/http-image/file",
+        id: assetId,
+        kind: "image",
+        title: "用户已修改标题",
+        category: "material",
+        tags: ["精选"],
+        status: "confirmed",
+        source: "生成任务",
+        createdAt: "2026-08-14T00:00:00.000Z",
+        updatedAt: "2026-08-14T00:00:00.000Z",
+        coverUrl: "/api/resources/http-image/file",
         metadata: { taskId: "task-http-recovery", generationEffectKey: "materialize:task-http-recovery:0", outputIndex: 0 },
         data: { dataUrl: "/api/resources/http-image/file", storageKey, width: 640, height: 480, bytes: 100, mimeType: "image/png" },
     };
@@ -595,7 +623,22 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
         let data: unknown;
         if (config.url === "/assets/batch") data = { assets: body.ids.includes(assetId) && variant !== "missing" ? [{ ...asset, data: { ...asset.data, storageKey: variant === "mismatch" ? "resource:other-image" : storageKey } }] : [] };
-        else if (config.url === "/resources/access") data = { items: [{ access: { resourceId: "http-image", requestedVariant: "original", actualVariant: "original", url: "/api/resources/http-image/file", delivery: "platform-local", issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString() } }] };
+        else if (config.url === "/resources/access")
+            data = {
+                items: [
+                    {
+                        access: {
+                            resourceId: "http-image",
+                            requestedVariant: "original",
+                            actualVariant: "original",
+                            url: "/api/resources/http-image/file",
+                            delivery: "platform-local",
+                            issuedAt: new Date().toISOString(),
+                            expiresAt: new Date(Date.now() + 3600000).toISOString(),
+                        },
+                    },
+                ],
+            };
         else if (config.method === "get" && config.url?.startsWith("/canvas-projects/")) data = { project: remoteProject };
         else if (config.method === "put" && config.url?.startsWith("/canvas-projects/")) {
             savedProject = body.project;
@@ -621,7 +664,12 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         useAssetStore.setState({ assets: [] });
         const projectId = useCanvasStore.getState().createProject("HTTP recovery");
         const node: import("../../src/types/canvas").CanvasNodeData = {
-            id: "front", type: CanvasNodeType.Image, title: "用户改名", position: { x: 700, y: 100 }, width: 320, height: 240,
+            id: "front",
+            type: CanvasNodeType.Image,
+            title: "用户改名",
+            position: { x: 700, y: 100 },
+            width: 320,
+            height: 240,
             metadata: { content: "/api/resources/http-image/file", storageKey, taskId: "task-http-recovery", taskStatus: "succeeded", status: "success", generationOutputCount: 1 },
         };
         useCanvasStore.getState().updateProject(projectId, { nodes: [node], revision: 1 });
@@ -629,14 +677,24 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         remoteProject = structuredClone(useCanvasStore.getState().projects.find((project) => project.id === projectId)!);
         await initializeRemoteUserDataSession("http-user");
         const task: import("../../src/services/api/task-center").GenerationTask = {
-            id: "task-http-recovery", projectId, type: "canvas_image", status: "succeeded", prompt: "robot front", attempts: 1, createdAt: "", updatedAt: "",
+            id: "task-http-recovery",
+            projectId,
+            type: "canvas_image",
+            status: "succeeded",
+            prompt: "robot front",
+            attempts: 1,
+            createdAt: "",
+            updatedAt: "",
             resultJson: JSON.stringify({ images: [{ dataUrl: "/api/resources/http-image/file", storageKey, width: 640, height: 480, bytes: 100, mimeType: "image/png" }] }),
         };
         const needsRecovery = shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task);
         if (variant !== "registered") {
             let rejection = "";
-            try { await materializeGenerationTaskAssets(task); }
-            catch (error) { rejection = error instanceof Error ? error.message : String(error); }
+            try {
+                await materializeGenerationTaskAssets(task);
+            } catch (error) {
+                rejection = error instanceof Error ? error.message : String(error);
+            }
             const raw = await applyGenerationTaskResultToNodes([node], task, node.id);
             resetRemoteUserDataSync();
             return { rejection, boundAssetId: raw.node?.metadata?.assetId, requests };
@@ -644,15 +702,30 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         const materialized = await materializeGenerationTaskAssets(task);
         const projected = projectGenerationTaskResult(materialized);
         let lockError = "";
-        try { await consumeGenerationTaskNode(task, node.id, 0, () => { throw new Error("HTTP 无锁环境不应写入 attach effect"); }); }
-        catch (error) { lockError = error instanceof Error ? error.message : String(error); }
+        try {
+            await consumeGenerationTaskNode(task, node.id, 0, () => {
+                throw new Error("HTTP 无锁环境不应写入 attach effect");
+            });
+        } catch (error) {
+            lockError = error instanceof Error ? error.message : String(error);
+        }
         const recovered = await applyGenerationTaskResultToNodes([node], task, node.id);
         useCanvasStore.getState().updateProject(projectId, { nodes: recovered.nodes });
         await saveRemoteUserDataNow(projectId);
         await flushCanvasStorePersistence();
         const restored = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
         const replayed = await applyGenerationTaskResultToNodes(restored.nodes, task, node.id);
-        const result = { needsRecovery, lockError, materializedId: materialized.outputs?.[0]?.materializedAssetId, projectedId: projected.outputs?.[0]?.materializedAssetId, saved: savedProject?.nodes[0], restored: restored.nodes[0], replayed: replayed.nodes[0], assets: useAssetStore.getState().assets, requests };
+        const result = {
+            needsRecovery,
+            lockError,
+            materializedId: materialized.outputs?.[0]?.materializedAssetId,
+            projectedId: projected.outputs?.[0]?.materializedAssetId,
+            saved: savedProject?.nodes[0],
+            restored: restored.nodes[0],
+            replayed: replayed.nodes[0],
+            assets: useAssetStore.getState().assets,
+            requests,
+        };
         resetRemoteUserDataSync();
         return result;
     } finally {
@@ -671,20 +744,20 @@ self.onmessage = async (event: MessageEvent<Scenario>) => {
                 : event.data === "http-generation-missing"
                   ? await runHTTPRegisteredGeneration("missing")
                   : event.data === "http-registered-generation"
-                ? await runHTTPRegisteredGeneration()
-                : event.data === "image-cleanup"
-                ? await runImageCleanup()
-                : event.data === "scope-cleanup-switch"
-                  ? await runScopeCleanupAfterSwitch()
-                  : event.data === "scope-cleanup-late-canvas-reference"
-                    ? await runScopeCleanupAfterLateCanvasReference()
-                    : event.data === "canvas-multi-output"
-                      ? await runCanvasBatchCommitRace(true)
-                      : event.data === "canvas-copy-generation"
-                        ? await runCanvasCopyGeneration()
-                        : event.data === "canvas-batch-commit-race"
-                          ? await runCanvasBatchCommitRace()
-                          : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
+                    ? await runHTTPRegisteredGeneration()
+                    : event.data === "image-cleanup"
+                      ? await runImageCleanup()
+                      : event.data === "scope-cleanup-switch"
+                        ? await runScopeCleanupAfterSwitch()
+                        : event.data === "scope-cleanup-late-canvas-reference"
+                          ? await runScopeCleanupAfterLateCanvasReference()
+                          : event.data === "canvas-multi-output"
+                            ? await runCanvasBatchCommitRace(true)
+                            : event.data === "canvas-copy-generation"
+                              ? await runCanvasCopyGeneration()
+                              : event.data === "canvas-batch-commit-race"
+                                ? await runCanvasBatchCommitRace()
+                                : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
         self.postMessage({ ok: true, result });
     } catch (error) {
         self.postMessage({ ok: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });

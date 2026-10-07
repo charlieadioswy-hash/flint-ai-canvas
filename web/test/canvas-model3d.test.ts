@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
-import { applyModel3DTask, createConnectedModel3DState, createDefaultModel3DState, model3DDownloadName, model3DFaceRange, model3DImageBinding, model3DInputError, model3DParameterError, model3DParametersForModel, model3DSourceFingerprint, normalizeModel3DParameters } from "@/lib/canvas/model3d";
+import {
+    applyModel3DTask,
+    createConnectedModel3DState,
+    createDefaultModel3DState,
+    model3DDownloadName,
+    model3DFaceRange,
+    model3DImageBinding,
+    model3DInputError,
+    model3DParameterError,
+    model3DParametersForModel,
+    model3DSourceFingerprint,
+    normalizeModel3DParameters,
+} from "@/lib/canvas/model3d";
 import { isolateCopiedNodeMetadata } from "@/lib/canvas/canvas-node-copy";
 import { canvasConnectionError } from "@/lib/canvas/canvas-connection-policy";
 import { getConstrainedNodePanelPosition } from "@/components/canvas/canvas-workspace-overlays";
@@ -9,7 +21,19 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { Model3DCapabilities, Model3DTaskView } from "@/services/api/model3d";
 import type { AiConfig } from "@/stores/use-config-store";
 
-const capabilities: Model3DCapabilities = { available: true, providerName: "Tripo", policyRevision: 1, activeConfigVersion: 1, defaultModel: "h3.1", modelVersions: [{ id: "h3.1", label: "H3.1", supportsAdvanced: true, maxFacesStandard: 100000, maxFacesDetailed: 500000 }, { id: "h2.5", label: "H2.5", supportsAdvanced: false, maxFacesStandard: 100000, maxFacesDetailed: 100000 }], modes: ["text", "image", "multiview"], inputLimits: { maxBytes: 10000000, mimeTypes: ["image/png", "image/jpeg"], minViews: 2, maxViews: 4, requiredView: "front" } };
+const capabilities: Model3DCapabilities = {
+    available: true,
+    providerName: "Tripo",
+    policyRevision: 1,
+    activeConfigVersion: 1,
+    defaultModel: "h3.1",
+    modelVersions: [
+        { id: "h3.1", label: "H3.1", supportsAdvanced: true, maxFacesStandard: 100000, maxFacesDetailed: 500000 },
+        { id: "h2.5", label: "H2.5", supportsAdvanced: false, maxFacesStandard: 100000, maxFacesDetailed: 100000 },
+    ],
+    modes: ["text", "image", "multiview"],
+    inputLimits: { maxBytes: 10000000, mimeTypes: ["image/png", "image/jpeg"], minViews: 2, maxViews: 4, requiredView: "front" },
+};
 const image = (id: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, width: 320, height: 240, position: { x: 0, y: 0 }, metadata: { storageKey: `resource:${id}`, content: `/api/resources/${id}/file` } });
 const makeNode = (): CanvasNodeData => ({ id: "model", type: CanvasNodeType.Model3D, title: "3D", width: 520, height: 420, position: { x: 380, y: 160 }, metadata: { model3d: createDefaultModel3DState("h3.1") } });
 
@@ -71,18 +95,30 @@ test("H2.5 drops version-specific options without losing common parameters", () 
 test("mode changes remove inapplicable parameters including explicit false image autofix", () => {
     const original = { model: "h3.1", texture: true, pbr: true, negativePrompt: "noise", imageSeed: 5, enableImageAutofix: false, textureAlignment: "original_image" as const, orientation: "align_image" as const };
     const text = normalizeModel3DParameters("text", original, capabilities);
-    expect(text.negativePrompt).toBe("noise"); expect(text.imageSeed).toBe(5);
-    expect(text).not.toHaveProperty("enableImageAutofix"); expect(text).not.toHaveProperty("textureAlignment"); expect(text).not.toHaveProperty("orientation");
+    expect(text.negativePrompt).toBe("noise");
+    expect(text.imageSeed).toBe(5);
+    expect(text).not.toHaveProperty("enableImageAutofix");
+    expect(text).not.toHaveProperty("textureAlignment");
+    expect(text).not.toHaveProperty("orientation");
     const single = normalizeModel3DParameters("image", original, capabilities);
-    expect(single.enableImageAutofix).toBe(false); expect(single.textureAlignment).toBe("original_image");
-    expect(single).not.toHaveProperty("negativePrompt"); expect(single).not.toHaveProperty("imageSeed");
+    expect(single.enableImageAutofix).toBe(false);
+    expect(single.textureAlignment).toBe("original_image");
+    expect(single).not.toHaveProperty("negativePrompt");
+    expect(single).not.toHaveProperty("imageSeed");
     const multi = normalizeModel3DParameters("multiview", original, capabilities);
-    expect(multi).not.toHaveProperty("enableImageAutofix"); expect(multi).not.toHaveProperty("negativePrompt"); expect(multi).not.toHaveProperty("imageSeed");
-    expect(original.enableImageAutofix).toBe(false); expect(original.negativePrompt).toBe("noise");
+    expect(multi).not.toHaveProperty("enableImageAutofix");
+    expect(multi).not.toHaveProperty("negativePrompt");
+    expect(multi).not.toHaveProperty("imageSeed");
+    expect(original.enableImageAutofix).toBe(false);
+    expect(original.negativePrompt).toBe("noise");
 });
 
 test("disabling texture removes all prohibited texture options without changing geometry", () => {
-    const normalized = normalizeModel3DParameters("image", { model: "h3.1", texture: false, pbr: true, textureQuality: "detailed", textureVersion: "v3.0-20250812", textureSeed: 10, textureAlignment: "original_image", orientation: "align_image", geometryQuality: "detailed", modelSeed: 20, delight: true }, capabilities);
+    const normalized = normalizeModel3DParameters(
+        "image",
+        { model: "h3.1", texture: false, pbr: true, textureQuality: "detailed", textureVersion: "v3.0-20250812", textureSeed: 10, textureAlignment: "original_image", orientation: "align_image", geometryQuality: "detailed", modelSeed: 20, delight: true },
+        capabilities,
+    );
     expect(normalized).toEqual({ model: "h3.1", texture: false, pbr: false, geometryQuality: "detailed", modelSeed: 20 });
 });
 
@@ -92,7 +128,8 @@ test("delight remains explicit only for enabled texture 3.5 and clearing it rest
     for (const textureVersion of [undefined, "v2.5-20250123", "v3.0-20250812"]) expect(normalizeModel3DParameters("text", { ...base, textureVersion }, capabilities)).not.toHaveProperty("delight");
     expect(normalizeModel3DParameters("text", { ...base, texture: false, textureVersion: "v3.5-20260815" }, capabilities)).not.toHaveProperty("delight");
     const fresh = normalizeModel3DParameters("text", { ...createDefaultModel3DState("h3.1").draft.parameters, textureVersion: "v3.5-20260815" }, capabilities);
-    expect(fresh).not.toHaveProperty("delight"); expect(fresh).not.toHaveProperty("exportUv");
+    expect(fresh).not.toHaveProperty("delight");
+    expect(fresh).not.toHaveProperty("exportUv");
 });
 
 test("random seeds accept signed safe integers and reject fractional or unrepresentable values", () => {
@@ -106,8 +143,11 @@ test("random seeds accept signed safe integers and reject fractional or unrepres
 test("face limits match ordinary, detailed, quad and low-poly backend ranges", () => {
     const base = { model: "h3.1", texture: true, pbr: true };
     for (const [options, minimum, maximum] of [
-        [{}, 1, 100000], [{ geometryQuality: "detailed" }, 1, 500000], [{ quad: true }, 1, 150000],
-        [{ smartLowPoly: true }, 500, 20000], [{ quad: true, smartLowPoly: true }, 500, 10000],
+        [{}, 1, 100000],
+        [{ geometryQuality: "detailed" }, 1, 500000],
+        [{ quad: true }, 1, 150000],
+        [{ smartLowPoly: true }, 500, 20000],
+        [{ quad: true, smartLowPoly: true }, 500, 10000],
     ] as const) {
         const parameters = { ...base, ...options };
         expect(model3DFaceRange(parameters, capabilities)).toEqual({ min: minimum, max: maximum });
@@ -115,7 +155,8 @@ test("face limits match ordinary, detailed, quad and low-poly backend ranges", (
         for (const faceLimit of [minimum - 1, maximum + 1, minimum + 0.5]) expect(model3DParameterError("text", { ...parameters, faceLimit }, capabilities)).toContain("面数");
     }
     const draft = createDefaultModel3DState("h3.1").draft;
-    draft.prompt = "truck"; draft.parameters = { ...base, faceLimit: 30000, smartLowPoly: true };
+    draft.prompt = "truck";
+    draft.parameters = { ...base, faceLimit: 30000, smartLowPoly: true };
     expect(model3DInputError(draft, [], [], capabilities)).toContain("20,000");
     draft.parameters = { ...draft.parameters, model: "h2.5" };
     expect(model3DInputError(draft, [], [], capabilities)).toBe("");
@@ -127,7 +168,8 @@ test("text and texture version limits are checked before admission", () => {
     expect(model3DInputError(draft, [], [], capabilities)).toBe("");
     const source = { ...image("prompt"), type: CanvasNodeType.Text, metadata: { content: "more" } };
     expect(model3DInputError(draft, [source], [source], capabilities)).toContain("1024");
-    draft.prompt = "truck"; draft.parameters.negativePrompt = "字".repeat(256);
+    draft.prompt = "truck";
+    draft.parameters.negativePrompt = "字".repeat(256);
     expect(model3DInputError(draft, [], [], capabilities)).toContain("255");
     expect(model3DParameterError("text", { model: "h3.1", texture: true, pbr: true, textureQuality: "fast", textureVersion: "v3.0-20250812" }, capabilities)).toContain("快速贴图");
     expect(model3DParameterError("text", { model: "h3.1", texture: true, pbr: true, textureQuality: "fast", textureVersion: "v3.5-20260815" }, capabilities)).toBe("");
@@ -137,7 +179,19 @@ test("task materialization rejects mismatched canvas, node, fingerprint and newe
     const node = makeNode();
     const state = node.metadata!.model3d!;
     state.run = { requestId: "request", taskId: "task", sourceFingerprint: "fingerprint", status: "running", snapshot: structuredClone(state.draft) };
-    const task: Model3DTaskView = { id: "task", status: "succeeded", stage: "completed", mode: "text", sourceFingerprint: "fingerprint", clientContext: { canvasId: "canvas", nodeId: "model" }, submissionOutcome: "submitted", canRetryStorage: false, createdAt: "", updatedAt: "", result: { assetId: "asset", resourceId: "result", storageKey: "resource:result", url: "/api/resources/result/file", fileName: "model.fbx", format: "fbx", mimeType: "application/octet-stream", bytes: 100 } };
+    const task: Model3DTaskView = {
+        id: "task",
+        status: "succeeded",
+        stage: "completed",
+        mode: "text",
+        sourceFingerprint: "fingerprint",
+        clientContext: { canvasId: "canvas", nodeId: "model" },
+        submissionOutcome: "submitted",
+        canRetryStorage: false,
+        createdAt: "",
+        updatedAt: "",
+        result: { assetId: "asset", resourceId: "result", storageKey: "resource:result", url: "/api/resources/result/file", fileName: "model.fbx", format: "fbx", mimeType: "application/octet-stream", bytes: 100 },
+    };
     expect(applyModel3DTask(node, task, "other")).toBe(node);
     expect(applyModel3DTask(node, { ...task, sourceFingerprint: "other" }, "canvas")).toBe(node);
     expect(applyModel3DTask(node, { ...task, id: "other" }, "canvas")).toBe(node);
@@ -165,7 +219,11 @@ test("download uses actual model extension and removes unsafe filename character
 
 test("3D parameter panel stays inside viewport with a reachable footer on small screens", () => {
     const node = makeNode();
-    for (const size of [{ width: 1280, height: 720 }, { width: 900, height: 600 }, { width: 390, height: 680 }]) {
+    for (const size of [
+        { width: 1280, height: 720 },
+        { width: 900, height: 600 },
+        { width: 390, height: 680 },
+    ]) {
         const width = Math.min(420, size.width - 24);
         const height = Math.min(548, size.height - 84);
         const position = getConstrainedNodePanelPosition(node, { x: 0, y: 0, k: 1 }, size, width, height);

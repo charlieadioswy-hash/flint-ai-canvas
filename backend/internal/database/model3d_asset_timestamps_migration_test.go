@@ -84,12 +84,21 @@ func testModel3DAssetTimestampMigration(t *testing.T, db *gorm.DB) {
 	payload := fmt.Sprintf(`{"id":"model3d_done","kind":"model","title":"用户改名","tags":["精选"],"createdAt":%d,"updatedAt":%d,"data":{"storageKey":"resource:kept-resource","url":"/api/resources/kept-resource/file","bytes":41288008,"mimeType":"model/gltf-binary","fileName":"kept.glb"},"metadata":{"source":"model3d","taskId":"done","canvasId":"canvas","nodeId":"node","largeNumber":9007199254740993}}`, created.UnixMilli(), updated.UnixMilli())
 	assets := []model.Asset{
 		{ID: "model3d_done", UserID: "owner", Kind: "model", Title: "用户改名", FolderID: "folder", PayloadJSON: payload, CreatedAt: created, UpdatedAt: updated},
-		{ID: "model3d_valid", UserID: "another-owner", Kind: "model", PayloadJSON: `{"metadata":{"source":"model3d"},"createdAt":"2026-10-07T16:00:01.123+08:00","updatedAt":"2026-10-07T16:01:01.123+08:00"}`},
+		{ID: "model3d_valid", UserID: "another-owner", Kind: "model", PayloadJSON: `{"metadata":{"source":"model3d"},"createdAt":"2026-10-07T16:00:01.123+08:00","updatedAt":"2026-10-07T16:01:01.123+08:00"}`, CreatedAt: created.Add(456 * time.Nanosecond), UpdatedAt: updated.Add(789 * time.Nanosecond)},
 		{ID: "manual-model", UserID: "owner", Kind: "model", PayloadJSON: `{"metadata":{"source":"manual"},"createdAt":1,"updatedAt":2}`},
 		{ID: "model3d_other-source", UserID: "owner", Kind: "model", PayloadJSON: `{"metadata":{"source":"manual"},"createdAt":1,"updatedAt":2}`},
 	}
 	if err := db.Create(&assets).Error; err != nil {
 		t.Fatal(err)
+	}
+	// Compare persisted instants: PostgreSQL stores microseconds, while fixtures can carry nanoseconds.
+	for index := range assets {
+		var stored model.Asset
+		if err := db.Select("id", "created_at", "updated_at").First(&stored, "id = ?", assets[index].ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		assets[index].CreatedAt = stored.CreatedAt
+		assets[index].UpdatedAt = stored.UpdatedAt
 	}
 	task := model.Task{ID: "done", UserID: "owner", Type: model.TaskTypeCanvasModel3D, Status: model.TaskStatusSucceeded, ProviderRequestID: "upstream-existing", ResultJSON: `{"assetId":"model3d_done","resourceId":"kept-resource","storageKey":"resource:kept-resource"}`, CompletedAt: &updated}
 	submission := model.Model3DSubmission{TaskID: task.ID, UserID: task.UserID, RequestID: "original-request", State: "completed", ConfigID: "original-config"}
@@ -117,7 +126,7 @@ func testModel3DAssetTimestampMigration(t *testing.T, db *gorm.DB) {
 				t.Fatalf("untargeted payload changed: %s", expected.ID)
 			}
 			if actual.UserID != expected.UserID || actual.Title != expected.Title || actual.FolderID != expected.FolderID || !actual.CreatedAt.Equal(expected.CreatedAt) || !actual.UpdatedAt.Equal(expected.UpdatedAt) {
-				t.Fatalf("asset row identity or timestamps changed: %s", expected.ID)
+				t.Fatalf("asset row identity or timestamps changed: %s; createdAt: got %s, want %s; updatedAt: got %s, want %s", expected.ID, actual.CreatedAt.Format(time.RFC3339Nano), expected.CreatedAt.Format(time.RFC3339Nano), actual.UpdatedAt.Format(time.RFC3339Nano), expected.UpdatedAt.Format(time.RFC3339Nano))
 			}
 			if index != 0 {
 				continue
