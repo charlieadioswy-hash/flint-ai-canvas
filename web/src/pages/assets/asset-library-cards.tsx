@@ -187,10 +187,17 @@ export function TextCover({ asset }: { asset: LibraryAsset & { kind: "text" } })
 
 export function ModelCover({ asset }: { asset: LibraryAsset & { kind: "model" } }) {
     return (
-        <div className="assets-cover-model">
-            <Box />
-            <span>{asset.data.fileName}</span>
-        </div>
+        <AssetMediaPreview
+            asset={asset}
+            alt={asset.title}
+            className="assets-cover-media"
+            fallback={
+                <div className="assets-cover-model">
+                    <Box />
+                    <span>{asset.data.fileName}</span>
+                </div>
+            }
+        />
     );
 }
 

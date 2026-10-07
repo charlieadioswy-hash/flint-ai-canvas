@@ -3,17 +3,22 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 import type { Object3D } from "three";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { createModel3DFBXLoader, createModel3DGLTFLoader } from "@/lib/canvas/model3d-preview";
 
-type Props = { storageKey?: string; url: string; format: "glb" | "fbx"; theme: CanvasTheme; expanded?: boolean };
+type Props = { storageKey?: string; url: string; format: "glb" | "gltf" | "fbx"; theme?: CanvasTheme; expanded?: boolean };
 
 /** Mounted only after entering preview; controls render on demand and own their GPU resources. */
 export function Model3DViewer({ storageKey, url, format, theme, expanded = false }: Props) {
     const hostRef = useRef<HTMLDivElement>(null);
     const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void } | null>(null);
-    const identity = `${storageKey || url}:${format}`;
+    const identity = `${getActiveUserScope()}:${storageKey || url}:${format}`;
+    const panel = theme?.node.panel || "var(--background)";
+    const text = theme?.node.text || "var(--foreground)";
+    const muted = theme?.node.muted || "var(--muted-foreground)";
+    const stroke = theme?.node.stroke || "var(--border)";
     const [retry, setRetry] = useState(0);
     const [loadedIdentity, setLoadedIdentity] = useState("");
     const [failure, setFailure] = useState<{ identity: string; message: string } | null>(null);
@@ -136,10 +141,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
 
     const error = failure?.identity === identity ? failure.message : "";
     return (
-        <div className="relative size-full min-h-32" style={{ background: theme.node.panel, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="relative size-full min-h-32" style={{ background: panel, color: text }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
             <div
                 ref={hostRef}
-                className="size-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                className="size-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--control-focus-ring)]"
                 tabIndex={0}
                 aria-label="3D 模型预览，拖拽或使用方向键旋转"
                 style={{ touchAction: "none" }}
@@ -158,32 +163,25 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 }}
             />
             {!error && loadedIdentity !== identity ? (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-xs" style={{ color: theme.node.muted }}>
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-xs" style={{ color: muted }}>
                     <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
                     正在加载模型
                 </div>
             ) : null}
             {error ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center text-xs" style={{ background: theme.node.panel, color: theme.node.muted }}>
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center text-xs" style={{ background: panel, color: muted }}>
                     <span role="alert">{error}</span>
-                    <button type="button" className="rounded-[var(--r-md)] border px-3 py-2" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => setRetry((value) => value + 1)}>
+                    <button type="button" className="rounded-[var(--r-md)] border px-3 py-2" style={{ borderColor: stroke, color: text }} onClick={() => setRetry((value) => value + 1)}>
                         重新加载预览
                     </button>
                 </div>
             ) : null}
             {!error && loadedIdentity === identity ? (
                 <>
-                    <button
-                        type="button"
-                        title="重置视角"
-                        aria-label="重置视角"
-                        className="absolute bottom-2 right-2 rounded-[var(--r-md)] border p-2"
-                        style={{ background: theme.node.panel, borderColor: theme.node.stroke }}
-                        onClick={() => controller.current?.reset()}
-                    >
+                    <button type="button" title="重置视角" aria-label="重置视角" className="absolute bottom-2 right-2 rounded-[var(--r-md)] border p-2" style={{ background: panel, borderColor: stroke }} onClick={() => controller.current?.reset()}>
                         <RotateCcw className="size-3.5" />
                     </button>
-                    <span className="pointer-events-none absolute bottom-3 left-3 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                    <span className="pointer-events-none absolute bottom-3 left-3 text-[var(--fs-tiny)]" style={{ color: muted }}>
                         拖拽旋转 · 方向键 · R 重置{expanded ? " · 滚轮缩放" : ""}
                     </span>
                 </>

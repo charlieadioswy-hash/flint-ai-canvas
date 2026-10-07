@@ -14641,8 +14641,6 @@ html:not(.dark) .creation-history-drawer-root {
 .batch-upload-remove { display: grid; width: 24px; height: 24px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 5px; background: transparent; color: color-mix(in srgb, var(--foreground) 38%, transparent); cursor: pointer; }
 .batch-upload-remove:hover { background: color-mix(in srgb, var(--foreground) 8%, transparent); color: var(--foreground); }
 .asset-archive-preview-note { max-height: 400px; overflow: auto; padding: 26px 24px; color: color-mix(in srgb, var(--foreground) 72%, transparent); font-size: var(--fs-body); line-height: 1.75; white-space: pre-wrap; }
-.asset-archive-preview-model { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 24px; background: color-mix(in srgb, var(--foreground) 3%, transparent); color: color-mix(in srgb, var(--foreground) 42%, transparent); }
-.asset-archive-preview-model > svg { width: 44px; height: 44px; color: color-mix(in srgb, var(--workspace-accent) 55%, var(--foreground)); stroke-width: 1; }
 .asset-archive-audio { padding: 22px 18px; background: color-mix(in srgb, var(--foreground) 3%, transparent); }
 .asset-archive-audio audio { width: 100%; }
 .asset-archive-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--foreground) 9%, transparent); border-radius: var(--r-lg); background: color-mix(in srgb, var(--foreground) 9%, transparent); }

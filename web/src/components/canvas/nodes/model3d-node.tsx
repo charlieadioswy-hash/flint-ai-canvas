@@ -8,7 +8,7 @@ import { downloadBrowserMedia } from "@/services/browser-download";
 import { formatBytes } from "@/lib/image-utils";
 import type { CanvasNodeData } from "@/types/canvas";
 
-const Viewer = lazy(() => import("./model3d-viewer").then((module) => ({ default: module.Model3DViewer })));
+const Viewer = lazy(() => import("@/components/assets/model3d-viewer").then((module) => ({ default: module.Model3DViewer })));
 
 export function Model3DNodeContent({ node, theme, readOnly = false }: { node: CanvasNodeData; theme: CanvasTheme; readOnly?: boolean }) {
     const context = useCanvasModel3DContext();

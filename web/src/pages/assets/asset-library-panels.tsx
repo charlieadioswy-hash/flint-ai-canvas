@@ -1,8 +1,9 @@
 // 素材库的批量操作条、空态、筛选组、详情抽屉与图片放大。
 
 import { Button, Drawer, Tag } from "antd";
-import { Box, CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, Link2, Maximize2, Mic, Plus, RotateCcw, Trash2, ZoomIn, ZoomOut } from "lucide-react";
+import { CheckCheck, Clapperboard, Copy, Download, FileText, FileUp, Link2, Maximize2, Mic, Plus, RotateCcw, Trash2, ZoomIn, ZoomOut } from "lucide-react";
 import { AudioPlayButton, CharacterAssetCover } from "@/components/assets/asset-rich-cover";
+import { ModelAssetPreview } from "@/components/assets/model-asset-preview";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { assetCategoryLabel } from "@/lib/asset-category";
 import { formatBytes } from "@/lib/image-utils";
@@ -252,12 +253,7 @@ export function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Lib
                                     <audio src={asset.data.url} controls />
                                 </div>
                             ) : asset.kind === "model" ? (
-                                <div className="asset-archive-preview-model">
-                                    <Box />
-                                    <span>
-                                        {asset.data.fileName} · {formatBytes(asset.data.bytes)}
-                                    </span>
-                                </div>
+                                <ModelAssetPreview asset={asset} />
                             ) : asset.kind === "video" ? (
                                 <video src={asset.data.url} controls className="asset-archive-preview-media" />
                             ) : (

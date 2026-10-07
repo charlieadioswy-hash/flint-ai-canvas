@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
+import { ModelAssetThumbnail } from "@/components/assets/model-asset-thumbnail";
 import type { Asset } from "@/stores/use-asset-store";
 
 type AssetMediaPreviewProps = {
@@ -12,6 +13,10 @@ type AssetMediaPreviewProps = {
 
 export function AssetMediaPreview({ asset, alt, className = "", fallback = null }: AssetMediaPreviewProps) {
     if (!asset) return fallback;
+
+    if (asset.kind === "model" && (!asset.coverUrl || asset.coverUrl === asset.data.url)) {
+        return <ModelAssetThumbnail asset={asset} alt={alt} className={className} />;
+    }
 
     if (asset.kind === "video" && asset.data.url) {
         const poster = asset.coverUrl && asset.coverUrl !== asset.data.url ? asset.coverUrl : undefined;
