@@ -165,14 +165,16 @@ func migrateTable[T any](name string) tableMigration {
 			if err := validateExplicitStringLengths(source, name, sourceRows); err != nil {
 				return 0, err
 			}
-			if copyRows && len(sourceRows) > 0 {
+			if copyRows {
 				// MigrateSchema 建表时可能预置行（如 id_sequences 序列种子），
 				// 与真实运行过的源库主键冲突；全量迁移以源库为基准，复制前先清空目标表。
 				if err := target.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(new(T)).Error; err != nil {
 					return 0, err
 				}
-				if err := target.CreateInBatches(&sourceRows, 100).Error; err != nil {
-					return 0, err
+				if len(sourceRows) > 0 {
+					if err := target.CreateInBatches(&sourceRows, 100).Error; err != nil {
+						return 0, err
+					}
 				}
 			}
 
@@ -413,12 +415,18 @@ func migrations() []tableMigration {
 		migrateTable[model.UserOSSSetting]("user_oss_settings"),
 		migrateTable[model.StorageLocation]("storage_locations"),
 		migrateTable[model.UserDailyUploadUsage]("user_daily_upload_usages"),
+		migrateTable[model.UploadReservation]("upload_reservations"),
 		migrateTable[model.Skill]("skills"),
 		migrateTable[model.SkillLibraryCategory]("skill_library_categories"),
 		migrateTable[model.SkillVersion]("skill_versions"),
 		migrateTable[model.SkillFile]("skill_files"),
 		migrateTable[model.UserSkillState]("user_skill_states"),
 		migrateTable[model.BuiltinSkillTombstone]("builtin_skill_tombstones"),
+		migrateTable[model.SkillCurationSetting]("skill_curation_settings"),
+		migrateTable[model.SkillCurationCategory]("skill_curation_categories"),
+		migrateTable[model.SkillCurationAssignment]("skill_curation_assignments"),
+		migrateTable[model.SkillCurationRoot]("skill_curation_roots"),
+		migrateTable[model.SkillCurationRootAssignment]("skill_curation_root_assignments"),
 		migrateTable[model.Resource]("resources"),
 		migrateTable[model.Model3DProvider]("model3d_providers"),
 		migrateTable[model.Model3DConfig]("model3d_configs"),

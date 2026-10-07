@@ -177,6 +177,7 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 - 任务入队 `internal/app/task_creation.go` 与生成执行 `internal/app/provider.go` 共用严格 token 解析。
 - 前端 `canvas-tool-presentation.ts` 共享轻量展示配置，`canvas-resource-references.ts` 统一 token；节点提示词与工具面板共用同一持久状态，不复制到 metadata 风格字段。
 - `canvas-workspace-panel.tsx` 提供常驻左侧菜单，按需挂载节点、资产、工具、任务和历史面板；资产面板复用素材分页服务与画布插入合同；主分支项目章节侧栏与工作区互斥。
+
 ## 3D 模型生成链路
 
 - `web/src/components/canvas/nodes/model3d-node.tsx` 与 `pages/canvas/use-canvas-model3d.ts`：三种输入模式、参数、任务恢复与结果应用；`services/api/model3d.ts` 定义专用合同。
@@ -184,3 +185,9 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 - `handler/model3d.go` → `service` 别名 → `app/model3d.go`：鉴权、输入资源归属、策略版本、幂等和任务投影。
 - `app/model3d_worker.go` 复用既有 Task 队列与租约；`internal/model3d` 隔离 Tripo v3 参数、上传、提交和查询协议；`repository/model3d.go` 维护不可变配置与提交记录。
 - 模型输出通过平台 Resource 和 `Asset.Kind=model` 持久化；分享只返回模型结果，不公开输入参数与服务商快照。
+
+## 技能策展
+
+`internal/skills/skill_curation.go` 负责校验，`internal/repository/skill_curation.go` 负责分类持久化与 CAS 审计交易，handler／app bridge 接入原有技能域。
+
+`skill_curation_roots.go` 扩展动态根维护、有效根查询和空表回落；数据库迁移 47 接续 46。

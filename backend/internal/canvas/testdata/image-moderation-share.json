@@ -10,7 +10,7 @@
     "connections": [],
     "chatSessions": [],
     "activeChatId": null,
-    "directorScenes": [],
+    "previsScenes": [],
     "nodes": [
       {
         "id": "node-1",

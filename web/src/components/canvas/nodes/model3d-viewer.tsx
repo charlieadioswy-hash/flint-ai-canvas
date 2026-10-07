@@ -3,7 +3,7 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 import type { Object3D } from "three";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { disposeDirectorObject3D } from "@/lib/canvas/director/director-resources";
+import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { createModel3DFBXLoader, createModel3DGLTFLoader } from "@/lib/canvas/model3d-preview";
 
@@ -84,7 +84,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 controls.dispose();
                 renderer.domElement.removeEventListener("webglcontextlost", lost);
                 controller.current = null;
-                disposeDirectorObject3D(ownedModel);
+                disposePrevisObject3D(ownedModel);
                 ownedModel = undefined;
                 renderer.dispose();
                 renderer.forceContextLoss();
@@ -95,7 +95,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             if (!active) return;
             if (!resolved) throw new Error("模型资源暂时不可用");
             const model = format === "fbx" ? await createModel3DFBXLoader().loadAsync(resolved) : (await createModel3DGLTFLoader().loadAsync(resolved)).scene;
-            if (!active) { disposeDirectorObject3D(model); return; }
+            if (!active) { disposePrevisObject3D(model); return; }
             ownedModel = model;
             model.updateMatrixWorld(true);
             const bounds = new THREE.Box3().setFromObject(model);

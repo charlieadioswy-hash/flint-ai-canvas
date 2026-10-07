@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Box3, Mesh, Vector3 } from "three";
 import { createModel3DFBXLoader, createModel3DGLTFLoader } from "@/lib/canvas/model3d-preview";
-import { disposeDirectorObject3D } from "@/lib/canvas/director/director-resources";
+import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
 
 // Deterministic triangle buffer encoded by meshopt; no network or external texture dependencies.
 const compressedVertices = [160,0,0,1,12,0,0,0,255,1,60,0,0,0,255,125,0,0,1,12,0,0,0,255,1,12,0,0,0,126,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,128,191,0,0,0,0,0,0,0,0];
@@ -25,7 +25,7 @@ test("real GLB loader parses ordinary and meshopt compressed model geometry offl
         const bounds = new Box3().setFromObject(model).getSize(new Vector3());
         expect(bounds.x).toBeCloseTo(2); expect(bounds.y).toBeCloseTo(1);
         let vertices = 0; model.traverse((object) => { if (object instanceof Mesh) vertices += object.geometry.getAttribute("position").count; });
-        expect(vertices).toBe(3); disposeDirectorObject3D(model);
+        expect(vertices).toBe(3); disposePrevisObject3D(model);
     }
 });
 
@@ -59,6 +59,6 @@ test("real FBX loader parses quad-output format and owned geometry/material disp
     expect(bounds.x).toBeCloseTo(2); expect(bounds.y).toBeCloseTo(1);
     let meshes = 0; let geometryDisposals = 0; let materialDisposals = 0;
     model.traverse((object) => { if (object instanceof Mesh) { meshes++; object.geometry.addEventListener("dispose", () => geometryDisposals++); const materials = Array.isArray(object.material) ? object.material : [object.material]; materials.forEach((material) => material.addEventListener("dispose", () => materialDisposals++)); } });
-    expect(meshes).toBe(1); disposeDirectorObject3D(model);
+    expect(meshes).toBe(1); disposePrevisObject3D(model);
     expect(geometryDisposals).toBe(1); expect(materialDisposals).toBe(1);
 });

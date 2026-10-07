@@ -9,6 +9,7 @@ require (
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/aws/aws-sdk-go v1.45.5
 	github.com/casdoor/go-sms-sender v0.25.0
+	github.com/gabriel-vasile/mimetype v1.4.13
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.5.0
 	github.com/qiniu/go-sdk/v7 v7.27.0
@@ -44,7 +45,6 @@ require (
 	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/clbanning/mxj/v2 v2.7.0 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect

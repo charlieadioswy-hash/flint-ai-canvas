@@ -40,7 +40,7 @@ func TestModel3DMigration45UpgradesAndPreservesExistingTasks(t *testing.T) {
 		t.Fatal("durable request identity not unique")
 	}
 	status, err := ReadSchemaStatus(db)
-	if err != nil || !status.Ready || status.Current != 45 {
+	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion {
 		t.Fatalf("migration status: %v %+v", err, status)
 	}
 }
