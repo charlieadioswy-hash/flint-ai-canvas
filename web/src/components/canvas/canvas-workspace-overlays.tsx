@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { Clapperboard, Image as ImageIcon, List, Music2, Pencil, Table2, Video, WandSparkles, Workflow as WorkflowIcon } from "lucide-react";
+import { Box, Clapperboard, Image as ImageIcon, List, Music2, Pencil, Table2, Video, WandSparkles, Workflow as WorkflowIcon } from "lucide-react";
 
 import { useCanvasOverlayLayer } from "@/components/canvas/canvas-overlay-layer";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -106,6 +106,7 @@ export function CanvasNodePanelOverlay({
     dragOffset,
     isDragging = false,
     allowOverflow = false,
+    constrainToViewport = false,
     children,
 }: {
     node: CanvasNodeData;
@@ -116,12 +117,14 @@ export function CanvasNodePanelOverlay({
     dragOffset?: Position | null;
     isDragging?: boolean;
     allowOverflow?: boolean;
+    constrainToViewport?: boolean;
     children: ReactNode;
 }) {
     const panelRef = useRef<HTMLDivElement>(null);
     const { bringToFront, zIndex } = useCanvasOverlayLayer(`node-panel:${node.id}`, "var(--z-modal-overlay)");
-    const initialWidth = resolveNodePanelWidth(node, viewport, panelWidth);
-    const initialPosition = getNodePanelPosition(node, viewport, { width: containerRef.current?.clientWidth || 0, height: containerRef.current?.clientHeight || 0 }, initialWidth, panelHeight, dragOffset);
+    const initialSize = { width: containerRef.current?.clientWidth || 0, height: containerRef.current?.clientHeight || 0 };
+    const initialWidth = constrainToViewport && initialSize.width ? Math.min(resolveNodePanelWidth(node, viewport, panelWidth), initialSize.width - 24) : resolveNodePanelWidth(node, viewport, panelWidth);
+    const initialPosition = constrainToViewport ? getConstrainedNodePanelPosition(node, viewport, initialSize, initialWidth, panelHeight, dragOffset) : getNodePanelPosition(node, viewport, initialSize, initialWidth, panelHeight, dragOffset);
 
     useLayoutEffect(() => {
         bringToFront();
@@ -136,10 +139,11 @@ export function CanvasNodePanelOverlay({
         let viewportSize = { width: container.clientWidth, height: container.clientHeight };
         const update = (nextViewport: ViewportTransform) => {
             liveViewport = nextViewport;
-            const nextWidth = resolveNodePanelWidth(node, nextViewport, panelWidth);
+            const nextWidth = constrainToViewport ? Math.min(resolveNodePanelWidth(node, nextViewport, panelWidth), viewportSize.width - 24) : resolveNodePanelWidth(node, nextViewport, panelWidth);
             panel.style.width = `${nextWidth}px`;
+            if (constrainToViewport) panel.style.setProperty("--canvas-node-panel-max-height", `${Math.max(120, viewportSize.height - 84)}px`);
             const nodeElement = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`);
-            const position = nodeElement ? getAttachedNodePanelPosition(nodeElement, container, nextWidth) : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
+            const position = constrainToViewport ? getConstrainedNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panel.getBoundingClientRect().height || panelHeight, liveDragOffset) : nodeElement ? getAttachedNodePanelPosition(nodeElement, container, nextWidth) : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
             panel.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
         };
         update(viewport);
@@ -148,6 +152,7 @@ export function CanvasNodePanelOverlay({
             update(liveViewport);
         });
         resizeObserver.observe(container);
+        if (constrainToViewport) resizeObserver.observe(panel);
         const unsubscribeViewport = subscribeCanvasGraphicsViewportPreview(container, update);
         const unsubscribeDrag = subscribeCanvasNodeDragPreview(container, (preview) => {
             liveDragOffset = preview?.nodeIds.has(node.id) ? { x: preview.x, y: preview.y } : null;
@@ -158,7 +163,7 @@ export function CanvasNodePanelOverlay({
             unsubscribeViewport();
             unsubscribeDrag();
         };
-    }, [containerRef, dragOffset?.x, dragOffset?.y, isDragging, node.height, node.id, node.position.x, node.position.y, node.width, panelHeight, panelWidth, viewport]);
+    }, [containerRef, constrainToViewport, dragOffset?.x, dragOffset?.y, isDragging, node.height, node.id, node.position.x, node.position.y, node.width, panelHeight, panelWidth, viewport]);
 
     return (
         <div
@@ -198,11 +203,11 @@ export function CanvasConnectionCreateMenu({
     containerRef: RefObject<HTMLDivElement | null>;
     canCreateDrawing: boolean;
     getDisabledReason: (
-        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion,
+        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion | CanvasNodeType.Model3D,
         provider?: "runninghub",
     ) => string;
     onCreate: (
-        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion,
+        type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion | CanvasNodeType.Model3D,
         provider?: "runninghub",
     ) => void;
     onClose: () => void;
@@ -214,7 +219,7 @@ export function CanvasConnectionCreateMenu({
     const lastPointerRef = useRef<Position | null>(null);
     const { bringToFront, zIndex } = useCanvasOverlayLayer("connection-create-menu", "var(--z-modal-overlay)");
     const menuWidth = Math.min(288, viewportSize.width - 24);
-    const menuHeight = canCreateDrawing ? 448 : 404;
+    const menuHeight = canCreateDrawing ? 492 : 448;
     const gap = 12;
     const initialPosition = getConnectionMenuPosition(pending.position, viewport, viewportSize, menuWidth, menuHeight, gap);
 
@@ -361,6 +366,15 @@ export function CanvasConnectionCreateMenu({
                     disabledReason={getDisabledReason(CanvasNodeType.MediaConversion)}
                     onClick={() => onCreate(CanvasNodeType.MediaConversion)}
                 />
+                <ConnectionCreateOption
+                    expanded={activeOption === "3D 模型"}
+                    motionEnabled={!reducedMotion}
+                    icon={<Box className="size-4" />}
+                    title="3D 模型"
+                    description="使用文字、单图或指定视角生成模型"
+                    disabledReason={getDisabledReason(CanvasNodeType.Model3D)}
+                    onClick={() => onCreate(CanvasNodeType.Model3D)}
+                />
             </div>
         </motion.div>
     );
@@ -449,4 +463,15 @@ export function getNodePanelPosition(node: CanvasNodeData, viewport: ViewportTra
         top: nodeBottom + gap,
         placement: "below" as const,
     };
+}
+
+export function getConstrainedNodePanelPosition(node: CanvasNodeData, viewport: ViewportTransform, size: { width: number; height: number }, panelWidth: number, panelHeight: number, dragOffset?: Position | null) {
+    const margin = 12;
+    const topInset = 68;
+    const left = viewport.x + (node.position.x + (dragOffset?.x || 0)) * viewport.k;
+    const right = left + node.width * viewport.k;
+    const top = viewport.y + (node.position.y + (dragOffset?.y || 0)) * viewport.k;
+    const height = Math.min(panelHeight, Math.max(120, size.height - topInset - margin));
+    const desiredLeft = size.width - right >= panelWidth + margin * 2 ? right + margin : left >= panelWidth + margin * 2 ? left - panelWidth - margin : right + margin;
+    return { left: clamp(desiredLeft, margin, Math.max(margin, size.width - panelWidth - margin)), top: clamp(top, topInset, Math.max(topInset, size.height - height - margin)), placement: "beside" as const };
 }

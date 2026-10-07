@@ -5,6 +5,24 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 图片合规检测
+
+| 职责 | 代码入口 |
+| --- | --- |
+| 图片节点手动入口与状态徽章 | `web/src/lib/canvas/tool-registry/definitions/node-hover-tools.tsx`、`web/src/components/canvas/canvas-node-toolbar.tsx`、`canvas-node.tsx`；动作装配在 `pages/canvas/project.tsx` |
+| 提交、查询恢复、轮询及上下文隔离 | `web/src/pages/canvas/use-canvas-image-moderation.ts`；结果适用性规则在 `web/src/lib/canvas/image-moderation.ts` |
+| 用户报告抽屉及只读分享 | `web/src/pages/canvas/components/image-moderation-drawer.tsx`、`web/src/pages/canvas/shared.tsx` |
+| 管理后台 Provider 与配置版本 | `web/src/pages/admin/settings/image-moderation-settings-page.tsx`、`image-moderation-settings-form.ts`；路由为 `/admin/settings/image-moderation` |
+| 前端唯一业务 API 合同 | `web/src/services/api/image-moderation.ts`，通过 `request.ts` 的 `http` 调用 |
+| HTTP 与稳定导入面 | `backend/internal/handler/image_moderation.go`、`backend/internal/service/aliases_image_moderation.go` |
+| 权限、原图读取、凭据加密及报告投影 | `backend/internal/app/image_moderation.go` |
+| 持久 Worker 与项目执行 | `backend/internal/app/image_moderation_worker.go`，由 `app/service.go` 启动，不复用生成计费任务 |
+| 平台协议与结果汇总 | `backend/internal/moderation/moderation.go`、`aliyun.go`；官方 Green/OSS SDK 使用安全出站客户端，统一报告不暴露平台参数 |
+| 配置 CAS、在途去重、租约及日预算 | `backend/internal/repository/image_moderation.go`；资源删除保护接入既有 resource reference/cleanup 链路 |
+| 六表与迁移 | `backend/internal/model/image_moderation.go`、`database/schema.go`、`database/migrations.go` 的迁移 44 |
+
+功能边界见[图片合规检测](/docs/backend/image-moderation)，真实场景验收见[待测试](/docs/progress/pending-test)。
+
 ## 自定义更新公告
 
 - 后台编辑：`web/src/pages/admin/settings/components/update-announcement-editor.tsx`；版本、排序与草稿校验：`web/src/lib/update-announcement.ts`。
@@ -159,3 +177,17 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 - 任务入队 `internal/app/task_creation.go` 与生成执行 `internal/app/provider.go` 共用严格 token 解析。
 - 前端 `canvas-tool-presentation.ts` 共享轻量展示配置，`canvas-resource-references.ts` 统一 token；节点提示词与工具面板共用同一持久状态，不复制到 metadata 风格字段。
 - `canvas-workspace-panel.tsx` 提供常驻左侧菜单，按需挂载节点、资产、工具、任务和历史面板；资产面板复用素材分页服务与画布插入合同；主分支项目章节侧栏与工作区互斥。
+
+## 3D 模型生成链路
+
+- `web/src/components/canvas/nodes/model3d-node.tsx` 与 `pages/canvas/use-canvas-model3d.ts`：三种输入模式、参数、任务恢复与结果应用；`services/api/model3d.ts` 定义专用合同。
+- `web/src/pages/admin/settings/model3d-settings-page.tsx`：服务商、开放能力、配置版本和生效策略管理。
+- `handler/model3d.go` → `service` 别名 → `app/model3d.go`：鉴权、输入资源归属、策略版本、幂等和任务投影。
+- `app/model3d_worker.go` 复用既有 Task 队列与租约；`internal/model3d` 隔离 Tripo v3 参数、上传、提交和查询协议；`repository/model3d.go` 维护不可变配置与提交记录。
+- 模型输出通过平台 Resource 和 `Asset.Kind=model` 持久化；分享只返回模型结果，不公开输入参数与服务商快照。
+
+## 技能策展
+
+`internal/skills/skill_curation.go` 负责校验，`internal/repository/skill_curation.go` 负责分类持久化与 CAS 审计交易，handler／app bridge 接入原有技能域。
+
+`skill_curation_roots.go` 扩展动态根维护、有效根查询和空表回落；数据库迁移 47 接续 46。

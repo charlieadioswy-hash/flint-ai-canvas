@@ -229,7 +229,7 @@ func firstCanvasResourceID(values ...string) string {
 
 func isCanvasMediaKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "image", "video", "audio":
+	case "image", "video", "audio", "model3d", "model":
 		return true
 	default:
 		return false

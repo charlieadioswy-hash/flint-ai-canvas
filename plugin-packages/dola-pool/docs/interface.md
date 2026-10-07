@@ -15,7 +15,9 @@
 
 `aspectRatio` 同时映射到 `ratio` 和 `size`，因此可填写比例（如 `16:9`、`9:16`）或接口接受的像素尺寸（如 `720x1280`）。参考图映射至 `reference_images`，支持公网 HTTPS URL 或 `data:image/...;base64,...`。建议优先使用公网 URL，单图不超过 15 MB、最多 30 张，格式限 JPEG、PNG、WEBP。
 
-额外请求字段可通过 `providerOptions.dola-pool.body` 或 `providerOptions.dola-pool.extra_body` 传入；扩展对象与标准字段合并，扩展对象中的同名字段优先。
+创建请求仅发送 `model`、`prompt`、`duration`、`ratio`、`size` 和 `reference_images`，这些字段统一来自平台已校验的模型、提示词、时长、画幅和参考图。未设置画幅或参考图时，对应字段不发送。
+
+`providerOptions.dola-pool.body` 和 `providerOptions.dola-pool.extra_body` 不再透传；其中的标准字段、别名和未知字段均被忽略，不能覆盖或补入生成参数，避免实际请求与准入及计费参数不一致。目前没有已确认的独立扩展字段；后续仅在确认上游支持并评估准入、计费和模式约束后，逐字段增加允许列表。
 
 ## 轮询与下载
 
@@ -39,7 +41,7 @@ Dola-pool 的任务按 API Key 隔离；创建与查询必须使用同一把 Key
   "apiVersion": "yingce.plugin/v2",
   "id": "dola-pool",
   "name": "Dola-pool Seedance Video",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Dola-pool / 影策",
   "description": "Dola-pool Seedance 视频生成任务协议。",
   "permissions": [
@@ -112,13 +114,6 @@ Dola-pool 的任务按 API Key 隔离；创建与查询必须使用同一把 Key
             "required": false,
             "mapping": "reference_images",
             "description": "参考图片；通过公网 URL 或 data URL 发送。"
-          },
-          {
-            "name": "providerOptions",
-            "type": "object",
-            "required": false,
-            "mapping": "provider-specific fields",
-            "description": "Dola-pool 专属扩展字段。"
           }
         ],
         "validations": [
@@ -139,55 +134,40 @@ Dola-pool 的任务按 API Key 隔离；创建与查询必须使用同一把 Key
           "path": "/v1/videos/generations",
           "contentType": "application/json",
           "body": {
-            "$merge": [
-              {
-                "model": {
-                  "$ref": "request.model"
-                },
-                "prompt": {
-                  "$ref": "request.prompt"
-                },
-                "duration": {
-                  "$ref": "request.duration"
-                },
-                "ratio": {
-                  "$omitEmpty": {
-                    "$ref": "request.aspectRatio"
-                  }
-                },
-                "size": {
-                  "$omitEmpty": {
-                    "$ref": "request.aspectRatio"
-                  }
-                },
-                "reference_images": {
-                  "$omitEmpty": {
-                    "$map": {
-                      "from": {
-                        "$sortByOrder": {
-                          "$ref": "request.images"
-                        }
-                      },
-                      "as": "media",
-                      "in": {
-                        "$ref": "media.value"
-                      }
+            "model": {
+              "$ref": "request.model"
+            },
+            "prompt": {
+              "$ref": "request.prompt"
+            },
+            "duration": {
+              "$ref": "request.duration"
+            },
+            "ratio": {
+              "$omitEmpty": {
+                "$ref": "request.aspectRatio"
+              }
+            },
+            "size": {
+              "$omitEmpty": {
+                "$ref": "request.aspectRatio"
+              }
+            },
+            "reference_images": {
+              "$omitEmpty": {
+                "$map": {
+                  "from": {
+                    "$sortByOrder": {
+                      "$ref": "request.images"
                     }
+                  },
+                  "as": "media",
+                  "in": {
+                    "$ref": "media.value"
                   }
                 }
-              },
-              {
-                "$coalesce": [
-                  {
-                    "$ref": "request.providerOptions.dola-pool.body"
-                  },
-                  {
-                    "$ref": "request.providerOptions.dola-pool.extra_body"
-                  },
-                  {}
-                ]
               }
-            ]
+            }
           }
         },
         "poll": {

@@ -66,4 +66,9 @@ describe("applyGeneratedMediaResultMetadata", () => {
         expect(next.prompt).toBe("新提示词");
         expect(next.status).toBe("success");
     });
+    test("明确提供本次素材身份时采用新绑定，不继承旧资源身份", () => {
+        const next = applyGeneratedMediaResultMetadata(videoNode("asset-old", "video:old"), { content: "/new.mp4", storageKey: "resource:new" }, { assetId: "asset-new" });
+        expect(next.assetId).toBe("asset-new");
+        expect(next.storageKey).toBe("resource:new");
+    });
 });

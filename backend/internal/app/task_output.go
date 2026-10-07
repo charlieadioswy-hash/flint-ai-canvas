@@ -103,6 +103,9 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		errorCode = contentModerationErrorCode
 	}
 	previewURL, previewKind, previewPosterURL := taskMediaPreviewWithPoster(task.ResultJSON, task.Type)
+	if task.Type == model.TaskTypeCanvasModel3D {
+		previewURL, previewKind, previewPosterURL = "", "", ""
+	}
 	return TaskSummary{
 		ID:                        task.ID,
 		ProjectID:                 task.ProjectID,

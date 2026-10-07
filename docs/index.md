@@ -4,6 +4,8 @@
 
 ## 设计沉淀
 
+- [画布 3D 模型生成](design/model3d-generation.mdx)：文本、单图与多视图节点、后台配置、异步任务恢复与模型预览设计；[API 与行业调研](design/model3d-api-research.mdx) 记录官方协议和计费边界。
+
 - [资源访问与 OSS/CDN 分发架构重构](design/resource-delivery-architecture.md)：资源身份、场景授权与分发策略分离，统一访问合同、全入口迁移、旧实现退场及流量/安全验收门槛（核心代码已实施，待真实 OSS/CDN 链路验收）。
 
 - [短信渠道插件与登录注册策略](design/sms-channels-and-auth-policy.md)：阿里云/腾讯云官方 SDK 候选基线、多渠道与模板路由、发送记录、验证码安全、短信和邮箱登录注册组合及分阶段验收（核心代码已实施，待真实 OSS/CDN 链路验收）。
@@ -59,6 +61,7 @@
 - [功能](content/docs/overview/features.mdx)
 - [本地开发](content/docs/backend/local-development.mdx)
 - [HTTP API 合同](content/docs/backend/http-api.mdx)
+- [图片合规检测](content/docs/backend/image-moderation.mdx)：手动节点入口、后台多 Provider 与唯一生效版本、统一报告、调用预算和恢复边界。
 - [后端数据库](content/docs/backend/backend-database.mdx)
 - [代码地图](content/docs/backend/code-map.mdx)
 - [待办](content/docs/progress/todo.mdx)

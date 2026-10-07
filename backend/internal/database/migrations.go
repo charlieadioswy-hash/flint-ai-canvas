@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 43
+const CurrentSchemaVersion int64 = 50
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -29,6 +29,8 @@ const prefixedIDSequenceReconcileChecksum = "sha256:prefixed-id-sequence-reconci
 const skillLibraryCategoriesChecksum = "sha256:skill-library-categories-v39-20260926"
 const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-20260927"
 const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
+const canvasModel3DChecksum = "sha256:canvas-model3d-v45-20261005"
+const uploadReservationsChecksum = "sha256:upload-reservations-v45-20261005"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -145,6 +147,19 @@ var schemaMigrations = []migration{
 	{version: 43, name: "topup_sale_strategies", checksum: "sha256:topup-sale-strategies-v43-20260929", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.TopupProduct{}, &model.PaymentOrder{})
 	}},
+	{version: 44, name: "image_content_moderation", checksum: "sha256:image-content-moderation-v44-20261001", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.ImageModerationProvider{}, &model.ImageModerationConfig{}, &model.ImageModerationPolicy{}, &model.ImageModerationCheck{}, &model.ImageModerationItem{}, &model.ImageModerationDailyUsage{})
+	}},
+	{version: 45, name: "canvas_model3d", checksum: canvasModel3DChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.Model3DProvider{}, &model.Model3DConfig{}, &model.Model3DPolicy{}, &model.Model3DSubmission{}, &model.Model3DDailyUsage{})
+	}},
+	{version: 46, name: "skill_curation", checksum: "sha256:skill-curation-v46-20261005", apply: migrateSkillCuration},
+	{version: 47, name: "skill_curation_roots", checksum: "sha256:skill-curation-roots-v47-20261005", apply: migrateSkillCurationRoots},
+	{version: 48, name: "upload_reservations", checksum: uploadReservationsChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.UploadReservation{})
+	}},
+	{version: 49, name: "model3d_base_url", checksum: "sha256:model3d-base-url-v49-20261007", apply: migrateModel3DBaseURL},
+	{version: 50, name: "model3d_asset_timestamps", checksum: "sha256:model3d-asset-timestamps-v50-20261007", apply: migrateModel3DAssetTimestamps},
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {
@@ -289,28 +304,56 @@ func migrateChannelPresentation(tx *gorm.DB) error {
 }
 
 func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
+	plan := append([]migration(nil), schemaMigrations...)
 	var applied schemaMigration
 	err := db.First(&applied, "version = ?", 6).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return schemaMigrations, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("读取数据库迁移 6：%w", err)
 	}
-	if applied.Name != "asset_library_folders" {
-		return schemaMigrations, nil
+	if err == nil && applied.Name == "asset_library_folders" {
+		legacy := migration{version: 6, name: "asset_library_folders", checksum: assetLibraryFoldersChecksum, apply: migrateSchemaV7}
+		if err := validateMigrationRecord(applied, legacy); err != nil {
+			return nil, err
+		}
+		for index, item := range plan {
+			switch item.version {
+			case 6:
+				plan[index] = legacy
+			case 7:
+				plan[index] = migration{version: 7, name: "resource_playback_variant", checksum: resourcePlaybackChecksum, apply: migrateSchemaV6}
+			}
+		}
 	}
-	legacy := migration{version: 6, name: "asset_library_folders", checksum: assetLibraryFoldersChecksum, apply: migrateSchemaV7}
-	if err := validateMigrationRecord(applied, legacy); err != nil {
-		return nil, err
+	// Both branches shipped v45. Preserve its recorded identity and apply the
+	// other branch's schema at v48, without rewriting deployed migration history.
+	var version45 schemaMigration
+	err = db.First(&version45, "version = ?", 45).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return plan, nil
 	}
-	plan := append([]migration(nil), schemaMigrations...)
-	for index, item := range plan {
-		switch item.version {
-		case 6:
-			plan[index] = legacy
-		case 7:
-			plan[index] = migration{version: 7, name: "resource_playback_variant", checksum: resourcePlaybackChecksum, apply: migrateSchemaV6}
+	if err != nil {
+		return nil, fmt.Errorf("读取数据库迁移 45：%w", err)
+	}
+	if version45.Name == "upload_reservations" {
+		legacy := migration{version: 45, name: "upload_reservations", checksum: uploadReservationsChecksum}
+		if err := validateMigrationRecord(version45, legacy); err != nil {
+			return nil, err
+		}
+		var model3D, uploads migration
+		for _, item := range plan {
+			if item.version == 45 {
+				model3D = item
+			} else if item.version == 48 {
+				uploads = item
+			}
+		}
+		model3D.version, uploads.version = 48, 45
+		for index, item := range plan {
+			if item.version == 45 {
+				plan[index] = uploads
+			} else if item.version == 48 {
+				plan[index] = model3D
+			}
 		}
 	}
 	return plan, nil

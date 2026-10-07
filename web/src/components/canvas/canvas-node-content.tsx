@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { BookOpenCheck, FileText, Image as ImageIcon, Music2, Pencil, Video } from "lucide-react";
+import { BookOpenCheck, Box, FileText, Image as ImageIcon, Music2, Pencil, Video } from "lucide-react";
 
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
 import { CachedResourceImage } from "@/components/cached-resource-image";
@@ -27,6 +27,7 @@ import { PanoramaNodeContent } from "./nodes/panorama-node";
 import { SvgNodeContent } from "./nodes/svg-node";
 import { ArtCritiqueNodeContent } from "./nodes/ai-art-critique-node";
 import { MediaConversionNodeContent } from "./nodes/media-conversion-node";
+import { Model3DNodeContent } from "./nodes/model3d-node";
 import { MEDIA_CONVERSION_NODE_TYPE } from "@/lib/media-conversion/contracts";
 import { AudioNodeContent, EmptyImageContent, ImageNodeContent, VideoNodeContent } from "./canvas-node-media-content";
 import { ErrorContent, LoadingContent, UnknownNodeContent } from "./canvas-node-status-content";
@@ -35,6 +36,7 @@ export type CanvasNodeContentProps = {
     node: CanvasNodeData;
     theme: CanvasTheme;
     renderLOD?: CanvasNodeRenderLOD;
+    readOnly?: boolean;
     isEditingContent: boolean;
     textareaRef: RefObject<HTMLTextAreaElement | null>;
     isBatchRoot: boolean;
@@ -69,13 +71,14 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
         props.node.type === CanvasNodeType.Config ||
         props.node.type === CanvasNodeType.Script ||
         props.node.type === CanvasNodeType.BatchTable ||
-        Boolean(props.node.metadata?.directorSceneId) ||
+        Boolean(props.node.metadata?.previsSceneId) ||
         (props.node.metadata?.workflowKind === "character" && Boolean(props.node.metadata.characterAssetId)) ||
         (props.node.metadata?.workflowKind === "story_input" && !props.isEditingContent) ||
         (props.node.metadata?.workflowKind === "styleboard" && !props.node.metadata.content);
     if (hasCustomContent && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.node.type === ART_CRITIQUE_NODE_TYPE) return <ArtCritiqueNodeContent node={props.node} />;
     if (props.node.type === MEDIA_CONVERSION_NODE_TYPE) return <MediaConversionNodeContent node={props.node} theme={props.theme} />;
+    if (props.node.type === CanvasNodeType.Model3D) return <Model3DNodeContent node={props.node} theme={props.theme} readOnly={props.readOnly} />;
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} onOpenTaskDetails={props.onOpenTaskDetails} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} onReloadResource={props.onReloadResource} />;
@@ -87,7 +90,7 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
 }
 
 function CanvasNodeShellContent({ node, theme }: { node: CanvasNodeData; theme: CanvasTheme }) {
-    const Icon = node.type === CanvasNodeType.Video ? Video : node.type === CanvasNodeType.Audio ? Music2 : node.type === CanvasNodeType.Image ? ImageIcon : FileText;
+    const Icon = node.type === CanvasNodeType.Model3D ? Box : node.type === CanvasNodeType.Video ? Video : node.type === CanvasNodeType.Audio ? Music2 : node.type === CanvasNodeType.Image ? ImageIcon : FileText;
     return (
         <div className="flex size-full flex-col items-center justify-center gap-2 rounded-[var(--node-radius)] px-3 text-center" style={{ background: theme.node.fill, color: theme.node.muted }}>
             <Icon className="size-6 opacity-40" />

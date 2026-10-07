@@ -1,19 +1,20 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
+import { generationAssetId } from "@/lib/generation-asset-id";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError } from "@/services/api/request";
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
-import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
+import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
 import { uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { generationArtifactStorageKey, loadOrStoreGenerationArtifact } from "@/services/generation-artifact-sink";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
 import { getCachedResourceBlob } from "@/services/resource-blob-cache";
-import { saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { loadAssetsForUse, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
@@ -99,9 +100,16 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
     throwIfAborted(options.signal);
     const store = useAssetStore.getState();
     let asset = findCanvasNodeAsset(store.assets, options.node, options.canvasId, options.taskId);
+    if (!asset && options.node.metadata?.assetId) {
+        await loadAssetsForUse([options.node.metadata.assetId]);
+        throwIfAborted(options.signal);
+        asset = findCanvasNodeAsset(useAssetStore.getState().assets, options.node, options.canvasId, options.taskId);
+    }
     const declaredCategory = options.category || declaredCanvasNodeAssetCategory(options.node);
     let created = false;
     if (!asset) {
+        // 受管生成结果必须采用已登记的身份，不能以随机 ID 再建一份。
+        if ((options.taskId || options.node.metadata?.taskId) && options.node.metadata?.storageKey?.startsWith("resource:")) throw new Error("生成素材尚未加载，请重新读取生成结果");
         const input = canvasNodeToAsset(options.node, { canvasId: options.canvasId, source: options.source, taskId: options.taskId });
         if (!input) throw new Error("当前节点没有可保存的素材内容");
         const assetId = store.addAsset(options.category ? { ...input, category: options.category } : input);
@@ -190,6 +198,11 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
                   },
               ]
             : (task.outputs?.map((output) => ({ ...output })) ?? []);
+
+    for (const output of outputs) {
+        const original = task.outputs?.find((item) => item.outputIndex === output.outputIndex && item.mediaType === output.mediaType);
+        if (original && (!output.providerArtifactRef || !original.providerArtifactRef || output.providerArtifactRef === original.providerArtifactRef)) Object.assign(output, { ...original, ...output });
+    }
 
     return {
         ...task,
@@ -306,6 +319,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
         return {
             kind: "image",
             title: "生成图片",
+            category: "material",
             coverUrl: stored.url,
             tags: ["生成"],
             status: "confirmed",
@@ -345,6 +359,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
         return {
             kind: "video",
             title: "生成视频",
+            category: "material",
             coverUrl: canvasVideoAssetPreviewUrl(stored.url),
             tags: ["生成"],
             status: "confirmed",
@@ -388,6 +403,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
     return {
         kind: "audio",
         title: "生成音频",
+        category: "material",
         coverUrl: "",
         tags: ["生成"],
         status: "confirmed",
@@ -446,7 +462,25 @@ function generationTaskMaterializer(task: GenerationTask) {
 }
 
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
-    return generationTaskMaterializer(task).materialize(projectGenerationTaskResult(task), signal);
+    throwIfAborted(signal);
+    const projected = projectGenerationTaskResult(task);
+    const outputs = projected.outputs || [];
+    if (task.status === "succeeded" && outputs.length && outputs.every((output) => output.providerArtifactRef?.startsWith("resource:"))) {
+        const identities = outputs.map((output) => output.materializedAssetId || generationAssetId(materializeEffectKey(task.id, output.outputIndex)));
+        // 后端完成交易已登记的资源只需读取素材；不能再次依赖浏览器 Web Lock / Web Crypto 入库。
+        const assets = await loadAssetsForUse(identities, { allowMissing: true });
+        throwIfAborted(signal);
+        const registered = outputs.map((output, index) => {
+            const asset = assets.find((candidate) => candidate.id === identities[index]);
+            if (!asset) return undefined;
+            if (asset.kind !== output.mediaType || asset.data.storageKey !== output.providerArtifactRef) throw new Error("生成素材与任务资源不一致，请重新读取生成结果");
+            return { ...output, materializedAssetId: asset.id };
+        });
+        if (registered.every((output): output is GenerationTaskOutput & { materializedAssetId: string } => Boolean(output)) && typeof window !== "undefined" && !globalThis.navigator?.locks) {
+            return { ...projected, outputs: registered, resultState: "READY" };
+        }
+    }
+    return generationTaskMaterializer(task).materialize(projected, signal);
 }
 
 export function attachGenerationTaskNode(task: GenerationTask, nodeId: string, outputIndex: number, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["attachNode"]>[3], signal?: AbortSignal) {
@@ -571,7 +605,11 @@ export function generationTaskMaterializedStorageKeys(task: GenerationTask): str
     const assets = useAssetStore.getState().assets;
     return (task.outputs || []).flatMap((output) => {
         const asset = output.materializedAssetId ? assets.find((candidate) => candidate.id === output.materializedAssetId) : undefined;
-        if (!asset || (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio")) return [];
-        return asset.data.storageKey ? [asset.data.storageKey] : [];
+        const storageKey = asset && (asset.kind === "image" || asset.kind === "video" || asset.kind === "audio") ? asset.data.storageKey : "";
+        if (storageKey) return [storageKey];
+        // 物化结果复用时（幂等命中、换标签页、素材尚未同步）本地索引里可能没有这条素材，
+        // 结果自己带着稳定的 resource:<id>；丢掉它会把已经生成成功的结果判成无法读取，
+        // 展示地址随后仍由渲染层按需续签。
+        return output.providerArtifactRef ? [output.providerArtifactRef] : [];
     });
 }

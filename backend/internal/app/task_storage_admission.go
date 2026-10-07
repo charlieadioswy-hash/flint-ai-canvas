@@ -9,7 +9,7 @@ import (
 // 文本任务只增长任务历史数据，不占用账号文件容量。
 func taskTypeProducesStoredFile(taskType string) bool {
 	switch taskType {
-	case "canvas_image", "canvas_video", "canvas_audio":
+	case "canvas_image", "canvas_video", "canvas_audio", "canvas_model3d":
 		return true
 	}
 	return strings.HasPrefix(taskType, "video_")

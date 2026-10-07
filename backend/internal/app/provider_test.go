@@ -542,8 +542,104 @@ func TestCanonicalAgentBodiesPreserveAssistantToolCalls(t *testing.T) {
 		t.Fatalf("responses input = %#v", responseInput)
 	}
 	functionCall, _ := responseInput[2].(map[string]interface{})
-	if functionCall["type"] != "function_call" || functionCall["name"] != "canvas_get_state" || functionCall["id"] != "fc-5" || functionCall["item_reference"] != "fc-5" {
+	if functionCall["type"] != "function_call" || functionCall["name"] != "canvas_get_state" || functionCall["id"] != "fc-5" || functionCall["call_id"] != "call-5" {
 		t.Fatalf("responses function call = %#v", functionCall)
+	}
+	if _, exists := functionCall["item_reference"]; exists {
+		t.Fatalf("responses function call contains a non-protocol field: %#v", functionCall)
+	}
+}
+
+func TestRunAgentToolTaskResponsesReplaysFunctionCallsWithoutInternalFields(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	for _, history := range []struct {
+		name string
+		call map[string]interface{}
+	}{
+		{"assistant_tool_calls", map[string]interface{}{
+			"role": "assistant", "content": "", "tool_calls": []map[string]interface{}{{
+				"id": "call-5", "item_id": "fc-5",
+				"function": map[string]interface{}{"name": "canvas_get_state", "arguments": `{}`},
+			}},
+		}},
+		{"function_call_item", map[string]interface{}{
+			"type": "function_call", "id": "fc-5", "call_id": "call-5", "name": "canvas_get_state", "arguments": `{}`,
+		}},
+	} {
+		t.Run(history.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/responses") {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				var body struct {
+					Input []json.RawMessage `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode request: %v", err)
+					http.Error(w, "invalid JSON", http.StatusBadRequest)
+					return
+				}
+				calls, outputs := 0, 0
+				for _, raw := range body.Input {
+					var kind struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(raw, &kind); err != nil {
+						t.Errorf("decode input item: %v", err)
+						continue
+					}
+					switch kind.Type {
+					case "function_call":
+						calls++
+						// A strict upstream rejects internal aliases, even when the call IDs are valid.
+						var call struct {
+							Type      string `json:"type"`
+							ID        string `json:"id"`
+							CallID    string `json:"call_id"`
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}
+						decoder := json.NewDecoder(bytes.NewReader(raw))
+						decoder.DisallowUnknownFields()
+						if err := decoder.Decode(&call); err != nil {
+							t.Errorf("invalid Responses function call: %v", err)
+							http.Error(w, "unknown function_call field", http.StatusBadRequest)
+							return
+						}
+						if call.ID != "fc-5" || call.CallID != "call-5" || call.Name != "canvas_get_state" || call.Arguments != `{}` {
+							t.Errorf("tool call identity changed: %#v", call)
+						}
+					case "function_call_output":
+						outputs++
+						var output map[string]interface{}
+						if err := json.Unmarshal(raw, &output); err != nil || output["call_id"] != "call-5" || output["output"] != `{"nodes":[]}` {
+							t.Errorf("tool output lost its pairing: %s", raw)
+						}
+					}
+				}
+				if calls != 1 || outputs != 1 {
+					t.Errorf("tool history incomplete: calls=%d outputs=%d", calls, outputs)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"完成"}]}]}`))
+			}))
+			defer server.Close()
+			result, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+				Config: providerConfig{BaseURL: server.URL, APIKey: "test-key", Model: "test-model", InterfaceType: string(model.ChannelInterfaceOpenAIResponse)},
+				AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+					ToolChoice: "auto",
+					Messages: []map[string]interface{}{
+						{"role": "user", "content": "读取画布"}, history.call,
+						{"role": "tool", "tool_call_id": "call-5", "content": `{"nodes":[]}`},
+					},
+				}},
+			})
+			if err != nil || result["text"] != "完成" || requests != 1 {
+				t.Fatalf("Responses continuation: result=%#v err=%v requests=%d", result, err, requests)
+			}
+		})
 	}
 }
 
@@ -1378,40 +1474,57 @@ func TestRunOpenAIImageTaskUsesMultipartEditContract(t *testing.T) {
 
 func TestRunGrokImageTaskUsesJSONEditContract(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/images/edits" {
-			t.Errorf("path = %q, want /v1/images/edits", r.URL.Path)
-		}
-		if contentType := r.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
-			t.Errorf("Content-Type = %q, want application/json", contentType)
-		}
-		var body grokImageRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if body.Model != "grok-imagine-image-quality" || body.N != 1 || body.ResponseFormat != "url" {
-			t.Fatalf("request body = %#v", body)
-		}
-		if body.Image == nil || body.Image.URL != testReferenceImageDataURL {
-			t.Fatalf("image = %#v", body.Image)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"url":"https://example.com/result.png"}]}`))
-	}))
-	defer server.Close()
+	// response_format 开关（#692）：支持时请求 b64_json，关闭时回落 url。
+	for _, tc := range []struct {
+		name           string
+		responseFormat bool
+		wantFormat     string
+		reply          string
+		wantDataURL    string
+	}{
+		{name: "b64_json", responseFormat: true, wantFormat: "b64_json", reply: `{"data":[{"b64_json":"aGVsbG8="}]}`, wantDataURL: "data:image/png;base64,aGVsbG8="},
+		{name: "url", responseFormat: false, wantFormat: "url", reply: `{"data":[{"url":"https://example.com/result.png"}]}`, wantDataURL: "https://example.com/result.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/images/edits" {
+					t.Errorf("path = %q, want /v1/images/edits", r.URL.Path)
+				}
+				if contentType := r.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+					t.Errorf("Content-Type = %q, want application/json", contentType)
+				}
+				var body grokImageRequest
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("decode request body: %v", err)
+				}
+				if body.Model != "grok-imagine-image-quality" || body.N != 1 || body.ResponseFormat != tc.wantFormat {
+					t.Errorf("request body = %#v", body)
+				}
+				if body.Image == nil || body.Image.URL != testReferenceImageDataURL {
+					t.Errorf("image = %#v", body.Image)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.reply))
+			}))
+			defer server.Close()
 
-	result, err := runImageTask(context.Background(), canvasGenerationInput{
-		Mode:            "image",
-		Prompt:          "edit the reference",
-		Config:          providerConfig{BaseURL: server.URL, APIKey: "key", Model: "grok-imagine-image-quality", InterfaceType: "grok-image"},
-		ReferenceImages: []providerMedia{{DataURL: testReferenceImageDataURL}},
-	})
-	if err != nil {
-		t.Fatalf("runImageTask() error = %v", err)
-	}
-	images, _ := result["images"].([]map[string]string)
-	if len(images) != 1 || images[0]["dataUrl"] != "https://example.com/result.png" {
-		t.Fatalf("images = %#v", result["images"])
+			profile := DefaultImageCapabilityConfig("grok-image", "grok-imagine-image-quality")
+			profile.ResponseFormat.Supported = tc.responseFormat
+			result, err := runImageTask(context.Background(), canvasGenerationInput{
+				Mode:            "image",
+				Prompt:          "edit the reference",
+				Config:          providerConfig{BaseURL: server.URL, APIKey: "key", Model: "grok-imagine-image-quality", InterfaceType: "grok-image"},
+				ImageCapability: profile,
+				ReferenceImages: []providerMedia{{DataURL: testReferenceImageDataURL}},
+			})
+			if err != nil {
+				t.Fatalf("runImageTask() error = %v", err)
+			}
+			images, _ := result["images"].([]map[string]string)
+			if len(images) != 1 || images[0]["dataUrl"] != tc.wantDataURL {
+				t.Fatalf("images = %#v", result["images"])
+			}
+		})
 	}
 }
 

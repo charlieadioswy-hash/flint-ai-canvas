@@ -5,6 +5,18 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 注册邮箱等价检查
+
+公开注册与邮箱绑定的唯一性检查将 `gmail.com` 和 `googlemail.com` 视为同一域，移除本地部分的点及 `+` 后缀。例如 `a.b+x@googlemail.com` 与 `ab@gmail.com` 不允许创建两个账号。其他域保留点和 `+`；现有域名白名单规则保持不变。
+
+邮箱原值仍按原有小写、去首尾空格规则保存。登录、密码重置、验证码收件地址保持精确邮箱匹配，避免既有重复别名账号被合并或错误授权。已存在的重复账号不迁移、不删除、不重新发放注册奖励；它们会阻止相同规范信箱的新注册。写入前在事务内重新检查，以覆盖不同实例使用不同验证码的并发注册。无数据库结构迁移；唯一性由公开注册与绑定的事务入口保证，直接 SQL 写入不属于该约束入口。
+
+## 分片上传配额
+
+`POST /resources/uploads` 在接收分片前预留整个文件的日额度和账号容量。文件大小必须严格小于 `resourceUploadMB`；同一账号最多 32 个未到期会话，跨后端实例共同计数。未满足配额的请求不会创建分片目录。分片和完成请求按会话串行执行；会话过期或已完成返回 404，重新创建会话后可整传重试。
+
+完成上传时以数据库事务提交容量并消费预留，使用既有资源幂等标识。失败释放预留；跨 UTC 日期完成需要通过当天日额度检查。请求与响应字段不变。
+
 ## AutoDL 视频画面规格配置
 
 渠道模型的 `capabilityConfig.video.resolutions` 与 `defaultResolution` 直接表示所选完整分辨率与默认值，始终生效；不再使用或返回 `customSizeEnabled`、`customScreenSpec`。AutoDL v2.3.0 未声明独立比例参数，因此 `ratios` 为空、`defaultRatio` 为空字符串，横竖与方形由完整分辨率标签表达。
@@ -19,15 +31,49 @@ description: 信封、错误码与 OpenAPI
 
 模型 HTTP 失败及经过 Provider 错误转换的业务失败，在通用提示后追加经过过滤的 `；上游：具体原因`，供任务错误和画布卡片展示内容安全、提示词、尺寸等可操作信息。只读取上游 `error` / `message` / `msg` / `detail` 消息字段，不回传整个 JSON；消息中的 HTTP(S) URL 隐藏，包含余额、账务、凭据、请求诊断或 HTML 的消息不追加原文，保留通用分类提示。后台响应拦截规则仍对最终用户文案生效；不会修改历史任务错误或改变重试、退款策略。
 
+## 图片合规检测
+
+以下路径均带 `/api` 前缀，采用本页统一信封；用户接口要求登录，管理接口另在 service 校验管理员权限。画布只使用统一报告，不提交平台、检测项目或凭据。
+
+| 方法与路径 | 请求与返回 |
+| --- | --- |
+| `GET /image-moderation/availability` | 返回 `{ available: boolean }`，仅说明是否配置生效服务，不请求检测平台 |
+| `POST /resources/:id/moderation-checks` | 请求体 `{}`；只接受属于当前用户的已保存原图，返回批次报告。只有此接口创建手动检测批次 |
+| `GET /resources/:id/moderation-checks/latest` | 返回当前用户该资源最新创建批次的报告，无报告时返回 `null`；失败和执行中批次同样参与“最新”选择 |
+| `GET /moderation-checks/:checkId` | 读取属于当前用户的指定报告，不触发检测 |
+| `GET /admin/image-moderation` | 返回 `providers`、`activeProviderId`、`activeConfigId`、`policyRevision` 和后端支持的 `providerTypes` |
+| `POST /admin/image-moderation/providers` | 保存新 Provider 及版本 1，返回最新配置视图，不自动生效 |
+| `PUT /admin/image-moderation/providers/:id` | 追加配置版本，平台类型不可改变；保存不切换原生效版本 |
+| `POST /admin/image-moderation/providers/:id/activate` | 请求 `{ configId, expectedRevision }`，配置须属于该 Provider 且为最新版本，切换唯一生效指针并返回管理状态 |
+| `POST /admin/image-moderation/disable` | 请求 `{ expectedRevision }`，停用新的检测，返回管理状态；在途批次继续旧配置 |
+| `DELETE /admin/image-moderation/providers/:id` | 归档非生效 Provider，保留历史配置和报告，返回管理状态 |
+| `POST /admin/image-moderation/providers/:id/validate` | 请求 `{ configId }`，只做本地配置校验，返回 `{ valid: true, message }`；不验证远程服务开通或凭据有效性 |
+
+保存 Provider 请求字段为 `name`、`type`、`enabled`、`region`、`services`、`timeoutSeconds`、`maxCallsPerDay`、`minIntervalSeconds`，以及 `accessKeyId`、`accessKeySecret`。超时须为 5–120 秒，每日调用上限须为 1–100000 次，用户新批次最小间隔须为 1–3600 秒，不使用缺省额度兜底。首次保存须同时提供两项凭据；编辑时两项同时留空沿用原凭据，只提供一项拒绝保存。读取只返回 `accessKeyIdConfigured` 和 `accessKeySecretConfigured`，不返回密钥。
+
+当前 `type` 仅支持 `aliyun`，地域为 `cn-shanghai`、`cn-beijing`，服务为 `aigcCheck`、`aigcViolationDetection`。管理员勾选的每个服务在一次手动批次中执行一次，多个服务分别占用平台全局 UTC 日调用预算；切换 Provider 不清零。保存、校验、设为生效及所有 GET 都不发起检测平台调用。
+
+统一报告字段为 `checkId`、`resourceId`、`contentVersion`、`status`、`overallRisk`、`riskTags`、`summary`、`createdAt`、可选 `completedAt`、`isCurrent` 和可选 `reused`。`status` 为 `queued|running|completed|partial|failed`，`overallRisk` 为 `none|low|medium|high|unknown`，风险标签为 `{ code, label, level }`。只有全部项目成功且无风险时才能返回 `completed + none`；部分失败且其余无风险返回 `partial + unknown`，部分失败且已知有风险保留最高等级并说明未完整。
+
+相同用户、原图内容和配置版本的在途批次复用并标记 `reused: true`；完成后的明确复检创建新批次，各次报告独立，不合并历史结果。最新批次失败时不返回旧无风险结果。`isCurrent` 校验资源身份、最新批次及当前生效配置；切换配置、停用或替换图片后旧结果过期。
+
+`GET /public/canvas-shares/:token` 的图片节点可包含 `metadata.sharedImageModeration: { sourceIdentity, report }`。`sourceIdentity` 为与分享图片匹配的 `resource:<id>`，`report` 仅包含 `status`、`overallRisk`、`riskTags`、`summary`、`createdAt`、可选 `completedAt` 和 `isCurrent`。这是保存的报告快照，分享读取不查询私有报告、不更新过期状态、不创建检测；原图不匹配或摘要格式无效时不返回该字段。报告中的资源引用不增加分享资源的访问范围。
+
+管理生效版本 CAS 冲突返回 409，未配置服务返回 503，新批次间隔超限按统一限流错误返回。入队后每日预算不足或平台失败会体现在报告终态；失败报告不是 HTTP 传输成功所代表的无风险结果。SDK 不自动重试，前端创建请求结果不确定时仅查询最新报告，不自动重发 POST。详细实现与恢复合同见[图片合规检测](/docs/backend/image-moderation)。
+
 ## 资源访问与 OSS/CDN 分发
+
+普通上传、分片合并及 URL 导入按内容签名识别 MIME，不以客户端声明或文件扩展名决定媒体类型；无法识别的内容仍可作为附件上传。上传标识对应的 ready/failed 重试均先读取内容，并核对检测后的 MIME、资源类型与大小；不一致返回 409，不覆盖原对象。这是内容判型与元数据一致性校验，不是完整格式解码或内容摘要去重。
+
+非媒体文件（包括可执行脚本的 SVG）通过平台本地读取或代理交付，强制 `Content-Disposition: attachment` 与 `Content-Security-Policy: sandbox; default-src 'none'`，不向浏览器或访问描述返回其 OSS/CDN 直链。普通图片、音频及视频保持原有媒体分发规则。历史资源不在本次变更中批量重新判型。
 
 资源展示、播放、下载、复制地址和模型输入统一消费资源访问合同，不在客户端通过 `direct=1`、`proxy=1` 或存储厂商规则选择出口。
 
 - `POST /api/resources/access` 要求登录，请求体为 1–100 项 `{ resourceId, purpose?, variant? }`。`purpose` 支持 `display`、`copy`、`download`、`browser-process`、`provider-input`；`variant` 支持 `original`、`playback`、`thumbnail`（缩略图未生成前回落原件，`fallbackReason` 为 `thumbnail_not_ready`）。每项独立返回 `access` 或结构化 `error`。
-- `access.delivery` 为 `cdn`、`origin`、`platform-local` 或 `platform-proxy`。配置了可用 CDN 时返回 CDN 地址；OSS 源站签名是源站直连，不等于 CDN。`requireCDN` 开启且 CDN 鉴权不完整时失败，不静默回源。浏览器的展示、复制、下载和本地处理不允许使用 `platform-proxy`，云资源正文始终由 OSS/CDN 直接发送给浏览器；`allowPrivateProxy` 只允许服务端在 `provider-input` 场景向第三方模型提交参考素材时读取私有源站。
+- `access.delivery` 为 `cdn`、`origin`、`platform-local` 或 `platform-proxy`。媒体配置了可用 CDN 时返回 CDN 地址；OSS 源站签名是源站直连，不等于 CDN。媒体的 `requireCDN` 开启且 CDN 鉴权不完整时失败，不静默回源。浏览器媒体的展示、复制、下载和本地处理不使用 `platform-proxy`，正文由 OSS/CDN 直接发送；`allowPrivateProxy` 允许服务端在 `provider-input` 场景读取私有媒体源站。非媒体附件始终通过平台控制响应头，不受上述媒体直连规则影响。
 - `expiresAt` / `refreshAt` 只描述当前授权有效期。有效期来自后台「资源与请求策略」（`provider-input` 与其余签名访问分别配置，默认均为 4 小时）；公开 CDN 可没有 `expiresAt`。签名地址不写入画布或服务端持久化内容。
 - `display`、`copy`、`browser-process` 的源站签名把签名起始时间对齐到有效期 1/4 的时间窗（按 Unix 纪元对齐），过期时间为窗口起点加有效期：同一窗口内重复签发得到逐字节相同的 URL，刷新画布或多实例签发都能命中浏览器 HTTP 缓存；签名同时携带 `response-cache-control=private, max-age=<有效期>, immutable`，由对象存储回写缓存头。`download` 与 `provider-input` 仍按当前时间签发，不带缓存覆盖。
-- `GET /api/resources/:id/file` 仍是稳定平台入口，负责本地/平台代理字节流，云资源只返回 307 到 CDN 或对象存储；`?access=1` 只返回访问描述，不打开正文。`Range` 只影响字节流路径。
+- `GET /api/resources/:id/file` 仍是稳定平台入口，负责本地/平台代理字节流，可直连的云媒体返回 307 到 CDN 或对象存储，非媒体附件走平台流；`?access=1` 只返回访问描述，不打开正文。`Range` 只影响字节流路径。
 - 公共资源、画布分享、外观、公告、管理员资源和日志媒体复用同一个 HTTP 执行器。公共签名链接受自身到期时间和变体绑定限制，但已签发的外部 URL 不承诺立即撤销。
 
 当前自动签名能力：公开 CDN、七牛私有下载签名和对象存储源站签名。阿里云/腾讯云私有 CDN 签名尚未自动支持，不能仅填写 CDN 域名就宣称已命中 CDN。真实 CORS、Range、CDN 命中率及账单收益必须在实际云环境通过浏览器网络记录和服务端流量观测验收。
@@ -73,6 +119,10 @@ CANVAS_BACKEND_DATA_DIR=/明确的数据目录 ./migrate-schema repair-canvas-re
 - 整批素材、版本、表现、业务关联、待删资源及对应历史资源索引，与物理删除 Outbox 在同一数据库事务中提交，数据库失败整批回滚。共享检查排除整批被删素材，避免两条互相共享的选中素材残留文件。
 - 物理空间由后台删除队列异步释放，失败保留任务重试；接口成功不代表对象存储已经清理完成。未选中素材使用的资源，以及其他 Resource 行（包括其他用户）复用的物理对象继续保留。
 - 旧画布 / 任务 / 历史快照记录本身保留，但被删媒体链接将失效。此操作不可恢复；没有数据库结构迁移。
+
+## 密码登录限流
+
+`POST /auth/login` 保留 IP 总请求限制与十分钟账号请求限制。同一 IP 下，用户名和邮箱解析为同一用户时共享账号计数；不存在的账号仍按去除首尾空白、转小写后的输入计次。错误密码与不存在的账号使用相同的 401 响应，达到限额后均返回 429，不返回限流键或用户身份。计数仍涵盖所有登录请求，成功不清零。
 
 ## 注册服务协议
 
@@ -210,6 +260,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - 审批拒绝是独立终态 `rejected`，表示本次操作未执行；不会生成 `tool_failed`、继续调用模型、写入画布、提交生成任务或扣费。拒绝后的草稿按既有草稿策略保留，用户可在下一轮说明修改方向。
 - 创建和追加消息可选择 `reasoningMode`，默认 `off`；`auto`/`deep` 为服务端行为策略与模型推理配置的选择，不等于允许暴露内部思维链。供应商能力由后端校验；声明式 Agent 渠道不支持时明确报错。推理可能增加耗时和费用。
 - Cloud Agent 与首页创造的规划请求使用自动工具选择。OpenAI Chat Completion 兼容协议会把显式 `auto` 归一化为省略 `tool_choice`，沿用协议默认的自动选择语义；显式开启思考模式时还会在首个上游请求前移除 `required` 或指定函数对象。非思考模式仍保留艺术点评、提示词优化等结构化任务的强制函数选择。若上游隐式开启思考而本地未声明，仍按 `required` → `auto` → 省略字段做兼容重试。
+- Responses 工具历史在出站时将工具条目身份写入 `function_call.id`，调用与结果通过 `call_id` 配对；兼容规范 `function_call` 条目和 assistant 的 `tool_calls` 两种内部来源，不向 `function_call` 写入 `item_reference` 属性。`item_reference` 是另一种独立输入条目类型，不能作为函数调用字段。参考 [OpenAI 工具调用文档](https://developers.openai.com/api/docs/guides/function-calling)。
 - `GET /agent/profile?scope=user|project|canvas&projectId=...&canvasId=...` 按作用域读取生效的用户 → 项目 → 画布偏好；`PATCH /agent/profile` 用 `{ scope, projectId?, canvasId?, content, revision }` 更新单层（首次 revision 为 0，冲突返回 409）。读取返回各层独立数字 revision，以及合并文档的 `revision`/`hash`；新轮次携带合并 `profileRevision`，发生变化拒绝创建，已运行轮次仍用提交时固定的快照。system prompt 只包含层级、revision、hash 和长度清单，正文保存在运行快照中；本轮快照有层时才提供 `agent_profile_read`，只读清单中存在的层。没有偏好层时工具清单不含该工具。偏好仅是非授权数据，不能扩展工具、节点或预算，不能绕过审批；最多 12000 字符/层。
 - 系统行为策略与媒体默认策略是版本化、编译进后端发布物的资源，修改它们仍需发布后端，不是后台热更新；工具、校验、扣费和审批在代码侧强制执行。系统行为策略当前版本为 10：`canvasSummary` 被定义为节点目录，模型不得把它当成完整画布。画布节点能力由服务端 registry 定义，工具 schema、创建、连线与画布目录读取共同消费；新生成模式还必须接入媒体任务适配器，不能仅凭 md 或注册节点启用收费操作。
 - 已安装且属于当前用户的技能在创建时只保存版本、哈希和文本文件路径，不预存全部正文，也不按所有选中技能正文合计 128KB 拒绝创建。`skill_read_file` 按需读取 `SKILL.md` 或必要引用，支持字符偏移 `offset`（默认 0），每页最多 12000 字符，返回 `hasMore` / `nextOffset`。读取时重新验证用户权限、启用状态和版本；技能更新后拒绝混读，需新开一轮。技能是不可信数据，不能创造工具、改变权限或覆盖系统规则。
@@ -337,6 +388,7 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 | 403 | 403 | `forbidden` | 无权限 |
 | 404 | 404 | `not_found` | 资源不存在 |
 | 409 | 409 | `conflict` | 冲突 |
+| 409 | 409 | `project_name_conflict` | `POST /projects` 同一用户下已有同名项目；客户端可有限更换名称重试 |
 | 429 | 429 | `rate_limited` | 限流（未细分） |
 | 500 | 500 | `internal` | 内部错误 |
 | 502 | 502 | `bad_gateway` | 上游失败 |
@@ -348,7 +400,7 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 
 模型错误把已有字符串码放进 `reason`（如 `model_capability_not_supported`），`code` 仍为 400。
 
-常量：后端 `service/error_codes.go`，前端 `web/src/services/api/error-codes.ts`。
+常量：后端标准原因定义在 `backend/internal/kernel/error_codes.go`，由 `app` 和 `service` 兼容导出；前端业务模块按 `ApiError.reason` 分支。
 
 ## 技能库分类 API
 
@@ -378,3 +430,40 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 | DELETE | `/api/tools/:id` | 仅删除自己的用户工具，不能删除内置或他人工具 |
 
 生成提示词工具引用格式为 `@[tool:type:ID:label:icon]`，label 使用 URI 编码。名称和图标只用于展示，不作为授权依据。服务端在任务入队及执行前检查用户可见性、启用状态、工具类型和生成模式；无效、越权、嵌套工具或数据库错误必须失败，不能把未解析 token 发送给模型。风格和九宫格仅用于图片，运镜和特效仅用于视频。入队校验不冻结工具快照：排队期间删除工具将导致执行失败。
+
+## 3D 模型生成 API
+
+以下路径以 `/api` 为前缀，使用标准业务信封；用户接口要求登录，管理接口要求管理员。
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| GET | `/model3d/capabilities` | 返回生效配置开放的模型、模式、默认模型、输入限制和 `policyRevision`；不返回密钥 |
+| POST | `/model3d/tasks` | 创建文本、单图或多视图生成任务，按用户与 `requestId` 幂等 |
+| GET | `/model3d/tasks/:id` | 读取本人任务与平台模型资源结果 |
+| GET | `/model3d/requests/:requestId` | 按本人请求编号只读恢复任务；未找到返回 `null`，不会触发生成 |
+| POST | `/model3d/tasks/:id/recover` | 恢复已有上游任务的结果回存，不能重发付费生成 |
+| GET | `/admin/model3d` | 服务商配置、支持能力、当前生效版本与策略修订 |
+| POST / PUT | `/admin/model3d/providers` / `/admin/model3d/providers/:id` | 新建服务商或保存不可变的新配置版本 |
+| POST | `/admin/model3d/providers/:id/activate` | 以 `{ configId, expectedRevision }` 切换生效版本 |
+| POST | `/admin/model3d/disable` | 以 `{ expectedRevision }` 停止接收新任务，在途任务继续原配置 |
+| DELETE | `/admin/model3d/providers/:id` | 归档非生效服务商，保留历史配置及生成结果 |
+
+创建体包含 `requestId`、`sourceFingerprint`、`canvasId`、`nodeId`、`mode`、`parameters` 和 `expectedPolicyRevision`。`mode=text` 使用 `prompt`；`image` 使用 `imageResourceId`；`multiview` 使用 `views: { front, left?, back?, right? }`，正面必填且共 2–4 张。所有输入图片必须是当前用户就绪资源。模型参数为强类型合同，模型不支持的字段、非法组合与超限输入在付费提交前拒绝。
+
+`parameters.texture` 与 `parameters.pbr` 必须显式传布尔值；缺失或 `null` 返回 400，`false` 是有效值。关闭贴图必须同时关闭 PBR。`delight` 仅允许在开启贴图且 `textureVersion=v3.5-20260815` 时传入，省略时由该版本默认开启。`exportUv` 省略时默认开启；UV 与导出朝向也适用于 H2.5。`textureQuality=fast` 同样要求贴图 3.5。关闭贴图或切换模式时，前端清理不适用参数，后端独立校验。
+
+任务投影包含 `status`（`queued/running/succeeded/failed/cancelled`）、`stage`、`progress`、`submissionOutcome`、`canRetryStorage`、上下文及可选 `result/error`。`result` 包含素材和资源 ID、存储键、URL、文件名、MIME、字节数、实际 `format: glb|fbx`。上游临时链接和密钥不会返回给画布。
+
+Tripo 适配器要求成功响应含显式整数 `code=0` 和非空 `data`，分别读取上传的 `file_token`、创建的 `task_id`、查询的 `status/progress/output.model_url`。非 2xx 也解析有效数字错误码，使用 HTTP 状态和上游错误码生成安全诊断；不透传上游 `message/suggestion` 等原始文本。预览图、实际积分与供应商时间字段目前不参与任务结果投影。
+
+`submissionOutcome=unknown` 表示上游创建是否收到尚不能确定，不能自动再发生成请求。已绑定上游 ID 时只查询原任务；浏览器创建响应丢失时按 requestId 查询。相同 requestId 但请求内容不同返回冲突。普通任务的通用重试不能用于重新提交 3D 生成。
+
+服务商保存体为 `name/type/baseUrl/enabled/defaultModel/allowedModels/allowedModes/timeoutSeconds/maxTasksPerDay/apiKey?`；`baseUrl` 必填，配置视图使用相同字段回显。后台新建表单预填国外地址 `https://openapi.tripo3d.ai/v3`，国内可填 `https://openapi.tripo3d.com/v3`。支持合法 HTTPS 主机，路径必须为 `/v3`，不得含账号、查询参数或片段；保存仅清理首尾空白及末尾斜杠，保留主机大小写与显式端口。地址进入不可变版本，上传、创建和轮询均使用任务配置快照。每次请求发送前校验 DNS 和出站安全策略，包括代理分支；画布能力与创建请求不暴露或接受地址。
+
+首次必须提供密钥，后续留空保留。保存与激活仅进行本地配置校验，不调用云端接口。迁移 49 为历史版本显式保存国外地址，运行时不提供缺省地址回退。详细设计见 `docs/design/model3d-generation.mdx`。
+
+## 平台技能策展
+
+新增登录读取 `/api/skills/curation` 与管理员 GET／PUT `/api/admin/skill-curation`；原技能列表仅在策展开启时应用新增分类筛选，响应结构不变。见 [接口与行为](./skill-curation)。
+
+一级分类扩展：管理写入增加 root 命令，assignment.rootId 与子分类完整集合一起保存；列表增加 platformRootId 筛选。关闭模式继续忽略新增筛选。

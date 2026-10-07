@@ -14,6 +14,8 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { applyGenerationConsumerEffect, generationEffectApplied } from "@/services/generation-consumer-dedupe";
 import { commitProducedModel } from "@/lib/canvas/produced-model";
+import { generationAssetId } from "@/lib/generation-asset-id";
+import { materializeEffectKey } from "@/services/generation-task-materializer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export function generationTaskInput(task: GenerationTask) {
@@ -111,7 +113,7 @@ function workflowMetadataForResultNode(): Partial<CanvasNodeMetadata> {
 }
 
 // 原地重生会换 storageKey 但继承旧 assetId，形成「旧素材 + 新资源」配对，云端校验会永久拒绝。
-// 新媒体结果必须清掉旧绑定，交给入库/修复路径按新资源重绑。
+// 新媒体结果只采用本次结果明确提供的素材身份，不能继承旧绑定。
 export function applyGeneratedMediaResultMetadata(node: CanvasNodeData, media: CanvasNodeMetadata, extra: Partial<CanvasNodeMetadata> = {}, fallbackModel?: string): CanvasNodeMetadata {
     return commitProducedModel({
         ...node.metadata,
@@ -119,14 +121,27 @@ export function applyGeneratedMediaResultMetadata(node: CanvasNodeData, media: C
         ...media,
         ...extra,
         errorDetails: undefined,
-        assetId: undefined,
+        assetId: extra.assetId,
     }, fallbackModel);
+}
+
+function generationTaskAssetId(task: GenerationTask, storageKey: string | undefined, outputIndex = 0) {
+    if (!storageKey) return undefined;
+    const id = task.outputs?.find((output) => output.outputIndex === outputIndex)?.materializedAssetId || generationAssetId(materializeEffectKey(task.id, outputIndex));
+    const asset = useAssetStore.getState().assets.find((candidate) => candidate.id === id);
+    return asset && asset.kind === generationTaskMode(task) && asset.kind !== "text" && asset.data.storageKey === storageKey ? asset.id : undefined;
 }
 
 export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: GenerationTask, nodes: CanvasNodeData[] = [node], outputIndex = 0): Promise<CanvasNodeData> {
     const mode = generationTaskMode(task, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
     const prompt = node.metadata?.prompt || task.prompt;
     const result = parseBackendGenerationResult(task);
+    const storedKey = mode === "image" && (result.images?.length || 0) <= 1 ? result.images?.[outputIndex]?.storageKey : mode === "video" ? result.video?.storageKey : mode === "audio" ? result.audio?.storageKey : undefined;
+    const registeredAssetId = generationTaskAssetId(task, storedKey, outputIndex);
+    // 同一不可变资源已回填时只补登记身份；恢复不能重算用户调整过的尺寸和位置。
+    if (registeredAssetId && node.metadata?.taskId === task.id && node.metadata.status === "success" && node.metadata.content && node.metadata.storageKey === storedKey && !node.metadata.emotionEdit) {
+        return { ...node, metadata: { ...node.metadata, assetId: registeredAssetId, ...(mode === "image" ? { generationOutputCount: 1 } : {}) } };
+    }
 
     if (mode === "image") {
         const image = result.images?.[outputIndex];
@@ -160,7 +175,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             width: imageSize.width,
             height: imageSize.height,
             position: { x: node.position.x + node.width / 2 - imageSize.width / 2, y: node.position.y + node.height / 2 - imageSize.height / 2 },
-            metadata: applyGeneratedMediaResultMetadata(node, imageMetadata(normalizedImage), { prompt, ...completedTaskMetadata(task), generationOutputCount: 1 }, task.model),
+            metadata: applyGeneratedMediaResultMetadata(node, imageMetadata(normalizedImage), { prompt, ...completedTaskMetadata(task), generationOutputCount: 1, assetId: generationTaskAssetId(task, normalizedImage.storageKey, outputIndex) }, task.model),
         };
     }
 
@@ -181,7 +196,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             ...node,
             type: CanvasNodeType.Video,
             ...geometry,
-            metadata: applyGeneratedMediaResultMetadata(node, videoMetadata(video), { prompt, ...completedTaskMetadata(task) }, task.model),
+            metadata: applyGeneratedMediaResultMetadata(node, videoMetadata(video), { prompt, ...completedTaskMetadata(task), assetId: generationTaskAssetId(task, video.storageKey) }, task.model),
         };
     }
 
@@ -190,7 +205,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
         const audio = result.audio.storageKey
             ? { url: await resolveMediaUrl(result.audio.storageKey, result.audio.dataUrl), storageKey: result.audio.storageKey, durationMs: result.audio.durationMs, bytes: result.audio.bytes || 0, mimeType: result.audio.mimeType || "audio/mpeg" }
             : await storeGeneratedAudio(await (await fetch(result.audio.dataUrl)).blob(), result.audio.format || "mp3");
-        return { ...node, type: CanvasNodeType.Audio, metadata: applyGeneratedMediaResultMetadata(node, audioMetadata(audio), { prompt, ...completedTaskMetadata(task) }, task.model) };
+        return { ...node, type: CanvasNodeType.Audio, metadata: applyGeneratedMediaResultMetadata(node, audioMetadata(audio), { prompt, ...completedTaskMetadata(task), assetId: generationTaskAssetId(task, audio.storageKey) }, task.model) };
     }
 
     if (!result.text) throw new Error("后端任务没有返回文本");
@@ -291,9 +306,15 @@ export async function applyMaterializedGenerationTaskResultToNodes(nodes: Canvas
 
 export function generationTaskOutputsApplied(node: CanvasNodeData, task: GenerationTask) {
     if (node.metadata?.taskId !== task.id || node.metadata.status !== "success" || !node.metadata.content) return false;
+    if (shouldRecoverCanvasMediaAsset(node)) return false;
     if (generationTaskMode(task) !== "image") return true;
     const count = parseBackendGenerationResult(task).images?.length || 1;
     return node.metadata.generationOutputCount === count || (count > 1 && (node.metadata.batchChildIds?.length || 0) >= count);
+}
+
+export function shouldRecoverCanvasMediaAsset(node: CanvasNodeData) {
+    return (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio)
+        && Boolean(node.metadata?.taskId && node.metadata.storageKey?.startsWith("resource:") && !node.metadata.assetId);
 }
 
 export function shouldRecoverCanvasImageOutputs(node: CanvasNodeData) {
@@ -317,7 +338,7 @@ async function buildGenerationTaskNodeResults(node: CanvasNodeData, task: Genera
             position: imageGenerationChildPosition(resultNode.position, resultNode.width, child, index),
             metadata: {
                 ...child.metadata,
-                assetId: task.outputs?.find((output) => output.outputIndex === index)?.materializedAssetId,
+                assetId: child.metadata?.assetId,
                 isBatchRoot: undefined, batchChildIds: undefined, primaryImageId: undefined, imageBatchExpanded: undefined,
                 batchRootId: node.id, versionOfNodeId: undefined, versionLabel: undefined, versionPrimary: undefined,
                 agentGenerationContinuation: undefined,

@@ -1,6 +1,33 @@
 import { expect, test } from "bun:test";
 
-type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "canvas-batch-commit-race" | "canvas-multi-output";
+type Scenario = "image-cleanup" | "scope-cleanup-switch" | "scope-cleanup-late-canvas-reference" | "video-commit-race" | "audio-commit-race" | "canvas-batch-commit-race" | "canvas-multi-output" | "canvas-copy-generation" | "http-registered-generation" | "http-generation-mismatch" | "http-generation-missing";
+
+test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Crypto 仍复用素材并保存", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    type Asset = import("../src/stores/use-asset-store").Asset;
+    const result = await runScenario<{ needsRecovery: boolean; lockError: string; materializedId: string; projectedId: string; saved: Node; restored: Node; replayed: Node; assets: Asset[]; requests: string[] }>("http-registered-generation");
+    const assetId = "generation_e8a36a9adf905e4dfd72cd164c1f5b412e6464d00dc490e3d988121db742e6e4";
+    expect(result.needsRecovery).toBe(true);
+    expect(result.lockError).toContain("跨页面生成副作用互斥");
+    expect(result.materializedId).toBe(assetId);
+    expect(result.projectedId).toBe(assetId);
+    for (const node of [result.saved, result.restored, result.replayed]) expect(node).toMatchObject({ id: "front", title: "用户改名", position: { x: 700, y: 100 }, metadata: { assetId, storageKey: "resource:http-image", status: "success", taskId: "task-http-recovery" } });
+    expect(result.assets).toHaveLength(1);
+    expect(result.assets[0]).toMatchObject({ id: assetId, title: "用户已修改标题", tags: ["精选"] });
+    expect(result.requests.filter((request) => request.startsWith("put:/assets/"))).toEqual([]);
+    expect(result.requests.some((request) => request.startsWith("put:/canvas-projects/"))).toBe(true);
+    expect(result.requests.some((request) => request.includes("/tasks"))).toBe(false);
+});
+
+test("HTTP 恢复拒绝资源不匹配的登记身份，缺失素材也不能绕过跨页互斥新建", async () => {
+    const mismatch = await runScenario<{ rejection: string; boundAssetId?: string; requests: string[] }>("http-generation-mismatch");
+    expect(mismatch.rejection).toContain("生成素材与任务资源不一致");
+    expect(mismatch.boundAssetId).toBeUndefined();
+    const missing = await runScenario<{ rejection: string; boundAssetId?: string; requests: string[] }>("http-generation-missing");
+    expect(missing.rejection).toContain("跨页面生成副作用互斥");
+    expect(missing.boundAssetId).toBeUndefined();
+    for (const result of [mismatch, missing]) expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+});
 
 test("一次任务四图经真实消费链路堆叠并保存，刷新和重放保留四个独立资源", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;
@@ -20,6 +47,16 @@ test("一次任务四图经真实消费链路堆叠并保存，刷新和重放�
     }
 });
 type ScenarioResponse<T> = { ok: true; result: T } | { ok: false; error: string };
+
+test("已生成图片的副本在普通保存和新生成结果持久化后仍保留，原节点不受影响", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    const result = await runScenario<{ beforeGeneration: Node[]; restored: Node[] }>("canvas-copy-generation");
+    expect(result.beforeGeneration.map((node) => node.id)).toEqual(["source", "copy"]);
+    expect(result.beforeGeneration.find((node) => node.id === "copy")?.metadata?.generationEffectKeys).toBeUndefined();
+    expect(result.restored.map((node) => node.id)).toEqual(["source", "copy"]);
+    expect(result.restored.find((node) => node.id === "source")?.metadata).toMatchObject({ content: "original-image", generationEffectKeys: ["attach-node:old-task:source:0"] });
+    expect(result.restored.find((node) => node.id === "copy")?.metadata).toMatchObject({ content: "new-image", status: "success", generationEffectKeys: ["attach-node:new-task:copy:0"] });
+});
 
 test("并发生成结果经真实持久化消费链路及重新读取后保留成功、失败和用户编辑", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;

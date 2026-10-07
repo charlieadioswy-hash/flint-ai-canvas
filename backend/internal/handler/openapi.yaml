@@ -27,6 +27,340 @@ tags:
   - name: admin
   - name: skills
 paths:
+  /model3d/capabilities:
+    get:
+      tags: [models]
+      summary: 读取生效的 3D 模型生成能力
+      description: 返回 available、providerName、policyRevision、activeConfigVersion、defaultModel、modelVersions、modes 和 inputLimits，不返回凭据。无生效配置时 available=false。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+  /model3d/tasks:
+    post:
+      tags: [tasks]
+      summary: 创建文本、单图或多视图 3D 任务
+      description: requestId 在当前用户内幂等；相同编号但内容不同返回冲突。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Model3DCreateRequest"}
+      responses:
+        "200": {description: 标准信封 data 为 Model3DTaskView}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /model3d/tasks/{id}:
+    get:
+      tags: [tasks]
+      summary: 读取本人 3D 任务和平台模型结果
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 Model3DTaskView}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /model3d/requests/{requestId}:
+    get:
+      tags: [tasks]
+      summary: 创建响应丢失后按本人请求编号只读恢复
+      description: 未找到返回 data=null，此接口不会创建任务或调用生成接口。
+      parameters:
+        - {in: path, name: requestId, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 Model3DTaskView 或 null}
+        "401": {$ref: "#/components/responses/Error"}
+  /model3d/tasks/{id}/recover:
+    post:
+      tags: [tasks]
+      summary: 恢复已有 3D 上游任务的模型回存
+      description: 仅允许恢复已有上游任务 ID 的可恢复失败，不创建新的供应商任务。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 Model3DTaskView}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/model3d:
+    get:
+      tags: [admin]
+      summary: 获取 3D 服务商配置与生效策略
+      description: 仅管理员。返回 providers（Model3DProviderView 数组，包含 baseUrl）、providerTypes、activeProviderId、activeConfigId、policyRevision；凭据仅返回 apiKeyConfigured。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/model3d/providers:
+    post:
+      tags: [admin]
+      summary: 创建 3D 服务商与首个配置版本
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Model3DProviderRequest"}
+      responses:
+        "200":
+          description: 标准信封 data 为服务商配置视图，不含 API Key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  data: {$ref: "#/components/schemas/Model3DProviderView"}
+                  msg: {type: string}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/model3d/providers/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    put:
+      tags: [admin]
+      summary: 保存 3D 服务商的新配置版本
+      description: 不自动切换生效版本。API Key 留空保留原凭据，类型不可更改。保存不请求云端。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Model3DProviderRequest"}
+      responses:
+        "200":
+          description: 标准信封 data 为服务商配置视图
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  data: {$ref: "#/components/schemas/Model3DProviderView"}
+                  msg: {type: string}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [admin]
+      summary: 归档非生效的 3D 服务商配置
+      description: 保留历史模型、任务与配置版本。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/model3d/providers/{id}/activate:
+    post:
+      tags: [admin]
+      summary: 按策略修订激活指定 3D 配置版本
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configId, expectedRevision]
+              properties:
+                configId: {type: string}
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/model3d/disable:
+    post:
+      tags: [admin]
+      summary: 停用新的 3D 生成任务
+      description: 在途任务继续使用受理时的旧配置，不重复提交上游。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation:
+    get:
+      tags: [admin]
+      summary: 图片检测 Provider、最新配置版本和唯一生效策略
+      description: 仅管理员可读。返回凭据是否已配置，不返回密钥或密文。保存新配置不会自动生效。
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState, content: {application/json: {schema: {allOf: [{$ref: "#/components/schemas/Envelope"}, {type: object, properties: {data: {$ref: "#/components/schemas/ImageModerationAdminState"}}}]}}}}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers:
+    post:
+      tags: [admin]
+      summary: 创建图片检测 Provider 和首个不可变配置版本
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ImageModerationProviderRequest"}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationProviderView}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    put:
+      tags: [admin]
+      summary: 追加 Provider 配置版本
+      description: 平台类型不可更改。留空凭据沿用上一版本。生效中的旧配置和在途报告均不被覆盖；须另行激活新版本。生效 Provider 须先停用才可禁用或归档。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ImageModerationProviderRequest"}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationProviderView}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [admin]
+      summary: 归档非生效图片检测 Provider
+      description: 保留配置版本和历史报告，不删除审计记录。
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}/activate:
+    post:
+      tags: [admin]
+      summary: 原子切换唯一生效 Provider 和配置版本
+      description: expectedRevision 防止多人同时操作覆盖生效策略；只允许激活未归档且启用 Provider 的最新配置版本。只做本地配置校验，不调用检测平台。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configId, expectedRevision]
+              properties:
+                configId: {type: string}
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/disable:
+    post:
+      tags: [admin]
+      summary: 停用图片检测服务
+      description: 不再受理新报告；在途检测继续使用受理时的配置版本。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationAdminState}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /admin/image-moderation/providers/{id}/validate:
+    post:
+      tags: [admin]
+      summary: 本地校验图片检测配置
+      description: 仅检查配置字段、凭据可解密和已支持平台能力，不调用上游，不验证密钥有效性或服务开通情况，不产生检测费用。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configId]
+              properties:
+                configId: {type: string}
+      responses:
+        "200": {description: 标准信封 data 为 valid=true、message}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /image-moderation/availability:
+    get:
+      tags: [resources]
+      summary: 获取当前图片检测是否可用
+      description: 标准信封 data 为 available 布尔值；不返回平台、规则和密钥。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+  /resources/{id}/moderation-checks:
+    post:
+      tags: [resources]
+      summary: 手动提交当前用户的原图内容检测
+      description: 只提交资源 ID，不接受用户选择平台或检测项目。图片须已保存且不超过 20 MiB、长边 16384 像素和总像素 2.5 亿；先本地解析原图，非法图片不提交平台。固定受理配置版本和原图 SHA-256；在途同用户、资源、内容版本、配置版本的重复请求复用报告。每项调用前预占全平台 UTC 日预算，无自动重试、无积分扣费、无生成后自动检测。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport，初始 queued 或复用报告, content: {application/json: {schema: {allOf: [{$ref: "#/components/schemas/Envelope"}, {type: object, properties: {data: {$ref: "#/components/schemas/ImageModerationReport"}}}]}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /resources/{id}/moderation-checks/latest:
+    get:
+      tags: [resources]
+      summary: 读取当前用户该图片的最新受理报告
+      description: 无报告返回 data=null；最新失败不会被旧的无风险报告覆盖。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport 或 null}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /moderation-checks/{checkId}:
+    get:
+      tags: [resources]
+      summary: 读取当前用户的统一图片检测报告
+      description: 汇总当前批次各项检测的最高风险与去重标签。部分失败且其余无风险时返回 partial/unknown；所有失败返回 failed/unknown。平台、检测清单、配置、原始响应及凭据不进入用户报告。历史批次风险不累加。
+      parameters:
+        - {in: path, name: checkId, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 ImageModerationReport}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /admin/settings/appearance/live2d:
     post:
       tags: [admin]
@@ -1325,6 +1659,197 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    Model3DProviderRequest:
+      type: object
+      required: [name, type, baseUrl, enabled, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        type: {type: string, enum: [tripo3d]}
+        baseUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          example: https://openapi.tripo3d.ai/v3
+          description: 必填的 HTTPS API 地址，路径为 /v3；不能包含账号、查询参数或片段。保存只移除首尾空白与末尾斜杠，保留主机大小写和显式端口。国内可用 https://openapi.tripo3d.com/v3；运行时按配置快照调用并检查出站安全策略，无缺省回退。
+        enabled: {type: boolean}
+        defaultModel: {type: string}
+        allowedModels: {type: array, minItems: 1, items: {type: string}}
+        allowedModes: {type: array, minItems: 1, items: {type: string, enum: [text, image, multiview]}}
+        timeoutSeconds: {type: integer, minimum: 10, maximum: 120}
+        maxTasksPerDay: {type: integer, minimum: 1, maximum: 100000}
+        apiKey: {type: string, writeOnly: true, description: 首次必填，后续留空保留已有密钥}
+    Model3DProviderView:
+      type: object
+      required: [id, name, type, baseUrl, enabled, archived, configId, version, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay, apiKeyConfigured]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [tripo3d]}
+        baseUrl: {type: string, format: uri, description: 此不可变配置版本保存的 API 地址}
+        enabled: {type: boolean}
+        archived: {type: boolean}
+        configId: {type: string}
+        version: {type: integer}
+        defaultModel: {type: string}
+        allowedModels: {type: array, items: {type: string}}
+        allowedModes: {type: array, items: {type: string, enum: [text, image, multiview]}}
+        timeoutSeconds: {type: integer}
+        maxTasksPerDay: {type: integer}
+        apiKeyConfigured: {type: boolean}
+    Model3DParameters:
+      type: object
+      additionalProperties: false
+      required: [model, texture, pbr]
+      properties:
+        model: {type: string, enum: [v3.1-20260211, v3.0-20250812, v2.5-20250123]}
+        negativePrompt: {type: string, maxLength: 255}
+        texture: {type: boolean, description: 必须显式传入布尔值，缺失或 null 拒绝}
+        pbr: {type: boolean, description: 必须显式传入布尔值，开启时必须同时开启 texture}
+        faceLimit: {type: integer, minimum: 1, description: 不传为自适应，上限按模型版本、质量、四边面和低模参数组合校验}
+        modelSeed: {type: integer}
+        imageSeed: {type: integer}
+        textureSeed: {type: integer}
+        textureQuality: {type: string, enum: [standard, detailed, extreme, fast], description: 仅 H3.0/H3.1，fast 必须使用贴图版本 v3.5-20260815}
+        textureVersion: {type: string, enum: [v2.5-20250123, v3.0-20250812, v3.5-20260815]}
+        geometryQuality: {type: string, enum: [standard, detailed]}
+        autoSize: {type: boolean}
+        quad: {type: boolean, description: 四边面会产生 FBX 格式}
+        smartLowPoly: {type: boolean}
+        compress: {type: string, enum: ["", geometry]}
+        exportOrientation: {type: string, enum: ["+x", "-x", "+y", "-y"]}
+        exportUv: {type: boolean, default: true}
+        delight: {type: boolean, default: true, description: 仅 texture 开启且 textureVersion 为 v3.5-20260815 时可传}
+        enableImageAutofix: {type: boolean, default: false, description: 仅单图模式可传}
+        textureAlignment: {type: string, enum: [original_image, geometry]}
+        orientation: {type: string, enum: [default, align_image]}
+    Model3DCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, sourceFingerprint, canvasId, nodeId, mode, parameters, expectedPolicyRevision]
+      properties:
+        requestId: {type: string, description: 当前用户内唯一的请求标识，重试保持不变}
+        sourceFingerprint: {type: string, description: 前端输入与参数快照身份，仅用于上下文回写，不替代后端请求摘要}
+        canvasId: {type: string}
+        nodeId: {type: string}
+        mode: {type: string, enum: [text, image, multiview]}
+        prompt: {type: string, maxLength: 1024}
+        imageResourceId: {type: string}
+        views:
+          type: object
+          additionalProperties: false
+          required: [front]
+          minProperties: 2
+          maxProperties: 4
+          properties:
+            front: {type: string}
+            left: {type: string}
+            back: {type: string}
+            right: {type: string}
+        parameters: {$ref: "#/components/schemas/Model3DParameters"}
+        expectedPolicyRevision: {type: integer, format: int64, minimum: 0}
+    Model3DTaskView:
+      type: object
+      required: [id, status, stage, mode, sourceFingerprint, clientContext, submissionOutcome, canRetryStorage, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
+        stage: {type: string}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        mode: {type: string, enum: [text, image, multiview]}
+        sourceFingerprint: {type: string}
+        clientContext: {type: object, properties: {canvasId: {type: string}, nodeId: {type: string}}}
+        submissionOutcome: {type: string, enum: [not_submitted, submitted, unknown]}
+        canRetryStorage: {type: boolean}
+        result:
+          type: object
+          properties:
+            assetId: {type: string}
+            resourceId: {type: string}
+            storageKey: {type: string}
+            url: {type: string}
+            fileName: {type: string}
+            mimeType: {type: string}
+            bytes: {type: integer, format: int64}
+            format: {type: string, enum: [glb, fbx]}
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            reason: {type: string}
+            message: {type: string}
+            retryClass: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    ImageModerationProviderRequest:
+      type: object
+      required: [name, type, enabled, region, services, timeoutSeconds, maxCallsPerDay, minIntervalSeconds]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        type: {type: string, enum: [aliyun]}
+        enabled: {type: boolean}
+        region: {type: string, enum: [cn-shanghai, cn-beijing]}
+        services: {type: array, minItems: 1, uniqueItems: true, items: {type: string, enum: [aigcCheck, aigcViolationDetection]}}
+        timeoutSeconds: {type: integer, minimum: 5, maximum: 120, default: 30}
+        maxCallsPerDay: {type: integer, minimum: 1, maximum: 100000, default: 100}
+        minIntervalSeconds: {type: integer, minimum: 1, maximum: 3600, default: 10}
+        accessKeyId: {type: string, writeOnly: true, description: 新建须同时填 ID 和 Secret；编辑须同时填写或同时留空沿用旧版本}
+        accessKeySecret: {type: string, writeOnly: true, description: 新建须同时填 ID 和 Secret；编辑须同时填写或同时留空沿用旧版本}
+    ImageModerationProviderView:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string}
+        enabled: {type: boolean}
+        archived: {type: boolean}
+        configId: {type: string}
+        version: {type: integer}
+        region: {type: string}
+        services: {type: array, items: {type: string}}
+        timeoutSeconds: {type: integer}
+        maxCallsPerDay: {type: integer}
+        minIntervalSeconds: {type: integer}
+        accessKeyIdConfigured: {type: boolean}
+        accessKeySecretConfigured: {type: boolean}
+    ImageModerationAdminState:
+      type: object
+      properties:
+        providers: {type: array, items: {$ref: "#/components/schemas/ImageModerationProviderView"}}
+        activeProviderId: {type: string}
+        activeConfigId: {type: string}
+        policyRevision: {type: integer, format: int64}
+        providerTypes:
+          type: array
+          items:
+            type: object
+            properties:
+              type: {type: string}
+              label: {type: string}
+              services: {type: array, items: {type: object, properties: {code: {type: string}, label: {type: string}}}}
+              regions: {type: array, items: {type: object, properties: {value: {type: string}, label: {type: string}}}}
+    ImageModerationReport:
+      type: object
+      required: [checkId, resourceId, contentVersion, status, overallRisk, riskTags, summary, createdAt, isCurrent]
+      properties:
+        checkId: {type: string}
+        resourceId: {type: string}
+        contentVersion: {type: string, description: 当前批次受理原图的 SHA-256 摘要}
+        status: {type: string, enum: [queued, running, completed, partial, failed]}
+        overallRisk: {type: string, enum: [none, low, medium, high, unknown]}
+        riskTags:
+          type: array
+          items:
+            type: object
+            required: [code, label, level]
+            properties:
+              code: {type: string}
+              label: {type: string}
+              level: {type: string, enum: [low, medium, high]}
+        summary: {type: string}
+        createdAt: {type: string, format: date-time}
+        completedAt: {type: string, format: date-time}
+        isCurrent: {type: boolean, description: 同一资源版本、当前生效配置版本，且为该资源最新受理报告}
+        reused: {type: boolean, description: 仅在复用在途批次时返回 true}
     ToolMutation:
       type: object
       required: [type, label, prompt]
@@ -1564,6 +2089,7 @@ components:
                 - forbidden
                 - not_found
                 - conflict
+                - project_name_conflict
                 - failed_precondition
                 - quota_exceeded
                 - rate_limited

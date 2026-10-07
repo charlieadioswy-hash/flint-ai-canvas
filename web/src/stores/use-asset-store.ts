@@ -8,6 +8,7 @@ import { parseAssetStorageDocumentRecovering, rebaseAssetSnapshot, serializeAsse
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { generationAssetId } from "@/lib/generation-asset-id";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { cleanupUnusedImages, collectImageStorageKeys, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/services/file-storage";
@@ -99,6 +100,12 @@ const queuedAssetPersists = new Map<string, QueuedAssetPersist>();
 const assetPersistTokens = new Map<string, number>();
 const assetOperations = new Set<Promise<unknown>>();
 const generationAssetFailures = new Map<string, unknown>();
+const generationAssetDefaults = new Map<string, Map<string, Asset>>();
+
+// 只记录本次实际创建的生成输入，不能把重读的缓存（可能已编辑）当作默认值。
+export function getGenerationAssetDefaults(id: string): Asset | undefined {
+    return generationAssetDefaults.get(getActiveUserScope())?.get(id);
+}
 
 function recordAssetStorageDocument(scope: string, document: AssetStorageDocument) {
     observedAssetPersists.set(scope, {
@@ -306,11 +313,6 @@ async function normalizePersistedAsset(asset: Asset): Promise<Asset> {
     return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
 }
 
-async function generationAssetId(effectKey: string) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
-    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
 export const useAssetStore = create<AssetStore>()(
     persist(
         (set, get) => ({
@@ -337,13 +339,17 @@ export const useAssetStore = create<AssetStore>()(
                             assetId: id,
                             createAsset: () => {
                                 const now = new Date().toISOString();
-                                return parseAssetRecord({
+                                const created = parseAssetRecord({
                                     ...asset,
                                     id,
                                     createdAt: now,
                                     updatedAt: now,
                                     metadata: { ...asset.metadata, generationEffectKey: effectKey },
                                 });
+                                const defaults = generationAssetDefaults.get(scope) ?? new Map<string, Asset>();
+                                defaults.set(id, structuredClone(created));
+                                generationAssetDefaults.set(scope, defaults);
+                                return created;
                             },
                             updateAssets: (updater) => {
                                 withAssetStorePersistenceSuppressed(() => {
@@ -408,6 +414,7 @@ export const useAssetStore = create<AssetStore>()(
             removeAsset: async (id) => get().removeAssets([id]),
             removeAssets: async (ids) => {
                 const removedIds = new Set(ids);
+                for (const id of ids) generationAssetDefaults.get(getActiveUserScope())?.delete(id);
                 let remainingAssets: Asset[] = [];
                 let hasLocalMedia = false;
                 set((state) => {

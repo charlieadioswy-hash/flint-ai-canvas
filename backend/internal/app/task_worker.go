@@ -186,9 +186,40 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	if task.Type == model.TaskTypeTimelineRender {
 		return w.processTimelineRender(task, ctx)
 	}
+	if task.Type == model.TaskTypeCanvasModel3D {
+		return w.processModel3DTask(task, ctx)
+	}
 	if task.MediaRecoveryJSON != "" {
 		result, recoveryErr := s.resumeTaskMedia(ctx, task)
 		return s.finishTaskMediaRecovery(task, result, recoveryErr)
+	}
+
+	// Creation and manual retry admission can precede execution by a long time.
+	// Re-read the feature policy before preparing or dispatching a model route.
+	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
+	if err != nil {
+		return err
+	}
+	var admissionInput map[string]any
+	if err := json.Unmarshal([]byte(decryptedInput), &admissionInput); err != nil {
+		return err
+	}
+	if err := s.requireCustomChannelsForTaskInput(admissionInput); err != nil {
+		// A reclaimed task may already have submitted upstream. Keep the existing
+		// review path for that evidence; only an unsent reservation is refundable.
+		attempts, readErr := s.repo.RouteAttempts(task.ID, task.RouteRun)
+		uncertain := readErr != nil || task.ProviderRequestID != "" || s.taskBilling().BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)
+		for _, attempt := range attempts {
+			if attempt.DispatchState == "accepted" || attempt.DispatchState == "submission_unknown" {
+				uncertain = true
+			}
+		}
+		// Legacy tasks without an explicit new retry run retain their conservative
+		// submission handling, as in createDirectTaskAttempt.
+		if len(attempts) == 0 && task.RouteRun <= 1 && task.Attempts > 1 {
+			uncertain = true
+		}
+		return terminal.markPreparationFailure(task, "渠道不可用", errors.Join(err, readErr), uncertain, "自定义渠道已关闭，上游请求未发出")
 	}
 
 	s.markAgentMemoryCompactRunning(*task)
@@ -350,6 +381,8 @@ func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Durat
 
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
+	case taskType == model.TaskTypeCanvasModel3D:
+		return 10 * time.Minute
 	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return max(time.Duration(policy.VideoTimeoutMinutes)*time.Minute, 5*time.Minute)
 	case strings.HasPrefix(taskType, "canvas_image"):

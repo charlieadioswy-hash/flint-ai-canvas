@@ -5,6 +5,14 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
+## 分片上传预留
+
+标准迁移 48 新增 `upload_reservations`：`id`、`user_id`、`size`、`day`、`expires_at`；已采用上游迁移 45 的数据库保留原记录，升级规则见下文。创建会话时在数据库事务内检查并行会话数、现有资源容量、未到期预留和每日上传用量，更新既有 `user_daily_upload_usages` 后插入预留。SQLite 先取得写锁，PostgreSQL 使用账号级事务 advisory lock。
+
+资源变为 ready 与删除对应预留在同一事务中提交；普通资源上传及生成结果的容量提交也使用同一锁，并计入分片预留。沿用 `UserStoredFileBytes` 的 ready 物理对象去重口径，不改变容量配置。跨 UTC 日期完成时重新预留当天日额度并释放原日额度，失败则整体回滚。
+
+预留有效期 90 分钟。失败或会话删除时释放原日额度；再次创建该账号会话时清理已到期预留。进程重启不批量删除其他实例的预留。分片文件与路由会话仍在本机，需要粘性路由；崩溃后的残片需要部署侧临时目录清理策略，未增加跨实例文件恢复或启动时全局清扫。
+
 ## 更新公告配置
 
 外观 JSON 合同版本 10 新增 `updates`：`enabled`、`currentVersion`、`releases`。每个版本保存 `id/version/title/date/blocks`，内容块保存 `id/type/text/resourceId/caption/layout`；公共媒体 URL 由服务端按当前引用生成，不保存客户端 URL。关闭开关保留公告和资源引用，只关闭公共展示。不增加数据库表或 schema 迁移。
@@ -23,11 +31,13 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前结构版本为 42。版本 42 `cloud_agent_pi_sessions` 新增 `cloud_agent_pi_sessions` 表，按运行 ID 保存 Pi 原生 JSONL 会话快照、用户 ID、乐观并发 revision 和更新时间；会话正文由 Agent runtime 管理，Go 只将其作为不透明快照读写，不替代有界控制检查点、事件日志或任务记录。版本 41 `resource_thumbnail` 为 `resources` 增加缩略图元数据。版本 40 `builtin_skill_tombstones` 新增内置技能删除记录，管理员删除平台技能后，后续启动同步不会重新创建该技能；版本 39 `skill_library_categories` 新增 `skill_library_categories` 表，并为 `user_skill_states` 增加 `library_category_id`，保存个人技能库分类及每个用户对技能的归类；分类不改变 `skills.tag` 的技能广场共享分类。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
+当前结构版本为 50。标准顺序为 44 图片合规检测、45 3D 模型生成、46 技能策展、47 技能一级分类、48 上传容量预占、49 3D API 地址快照、50 3D 素材时间字段修复。已应用上游版本 45 的数据库使用下述历史顺序识别，保留原迁移记录。
+
+版本 44 `image_content_moderation` 新增图片合规检测的 Provider、配置版本、生效策略、检测批次、检测项目及全局日调用计数六张表，详情见本页“图片合规检测”。版本 42 `cloud_agent_pi_sessions` 新增 `cloud_agent_pi_sessions` 表，按运行 ID 保存 Pi 原生 JSONL 会话快照、用户 ID、乐观并发 revision 和更新时间；会话正文由 Agent runtime 管理，Go 只将其作为不透明快照读写，不替代有界控制检查点、事件日志或任务记录。版本 41 `resource_thumbnail` 为 `resources` 增加缩略图元数据。版本 40 `builtin_skill_tombstones` 新增内置技能删除记录，管理员删除平台技能后，后续启动同步不会重新创建该技能；版本 39 `skill_library_categories` 新增 `skill_library_categories` 表，并为 `user_skill_states` 增加 `library_category_id`，保存个人技能库分类及每个用户对技能的归类；分类不改变 `skills.tag` 的技能广场共享分类。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
 
 版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持版本 42，回退需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 50 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 ### 生成成功后的作品保存恢复
 
@@ -55,6 +65,8 @@ description: 影策后端核心持久化表与状态边界
 渠道模型的文本能力 JSON 还可声明 `contextWindowTokens` 与 `maxOutputTokens`。这两个字段是模型能力合同，不是数据库或 Agent checkpoint 的容量配置；旧记录读取时补 128K / 16K 默认值。运行状态、journal 和 transcript 的持久化边界仍由既有 runtime 表及其 512KB checkpoint 校验负责，本阶段没有通过扩大 checkpoint 绕过模型上下文限制。
 
 历史发布曾使用版本 6 `asset_library_folders`，之后合并引入了上述 6/7 顺序冲突。迁移器仅在该历史记录的名称和校验和均精确匹配时选择历史顺序：保留版本 6 的素材目录记录及时间，在版本 7 应用 `resource_playback_variant`，再继续版本 8。新数据库及已采用“6 播放副本、7 素材目录”的数据库保持原顺序；状态检查与启动校验采用同一套识别规则。未知名称、被改动的校验和或冲突的版本 7 记录仍会拒绝迁移，不通过删除、改名或伪造已应用记录绕过检查。
+
+版本 45 的分支合并也保留已应用历史：本分支的 `canvas_model3d` 保持在 45，并在 48 创建上传预占表；如果数据库中的 45 精确匹配上游 `upload_reservations` 的名称与校验和，则保留该记录及时间，在 48 补齐 3D 表。两条路径均补齐图片合规检测与技能策展结构，未知名称、校验和或不一致的后续记录仍拒绝迁移。SQLite → PostgreSQL 的模型清单同时覆盖检测、3D、上传预占及技能策展表。
 
 升级前备份数据库，迁移命令必须沿用部署实际配置的数据库连接和数据目录。开发环境启用自动迁移时重新启动新代码即可；关闭自动迁移的部署先使用新构建的 `migrate-schema up`，然后 `migrate-schema verify`，成功后启动 Backend。迁移与记录写入在事务中执行；此修复不提供降级迁移，回退旧二进制可能无法识别历史顺序，应恢复匹配的备份和版本，不手工改迁移表。
 
@@ -297,3 +309,49 @@ Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`�
 - 启动幂等装载 87 个预设（风格 45、运镜 33、九宫格 9），不下载第三方媒体。显式 ID 与用户工具冲突时启动报错，不覆盖用户数据；PostgreSQL 同步自增序列。
 - 工具预览纳入资源引用检查；自定义预览必须是当前用户已上传完成的资源。公开工具暂不接受私人预览资源。
 - SQLite → PostgreSQL 迁移包含上述两表。首次启动前备份测试数据；回退旧代码不能视为数据库降级，应使用备份恢复，不手工重写迁移记录。
+
+## 图片合规检测
+
+迁移 44 `image_content_moderation` 增加以下六张表，不修改既有图片生成任务或积分订单结构。已有设置密钥负责检测凭据加密，部署和备份须保留对应密钥；密钥不可用时拒绝解密和执行，不使用空凭据兜底。
+
+| 表 | 关键字段 | 约束与用途 |
+| --- | --- | --- |
+| `image_moderation_providers` | `id`、`name`、`type`、`enabled`、`archived`、`latest_config_id`、时间字段 | 管理平台实例及最新已保存版本；平台类型创建后固定，归档不删除历史 |
+| `image_moderation_configs` | `id`、`provider_id`、`version`、`type`、`region`、`services_json`、`timeout_seconds`、`max_calls_per_day`、`min_interval_seconds`、`access_key_id_encrypted`、`access_key_secret_encrypted`、`created_by`、`created_at` | 只追加版本；`(provider_id, version)` 唯一；凭据字段不序列化给客户端 |
+| `image_moderation_policies` | `id`、`active_provider_id`、`active_config_id`、`revision`、`updated_at` | 固定 ID `image-content` 的单例生效指针，revision CAS 保证并发切换；空指针表示停用 |
+| `image_moderation_checks` | `id`、`user_id`、`resource_id`、`content_version`、`resource_version`、`provider_id`、`config_id`、`active_key`、`status`、`overall_risk`、`risk_tags_json`、`summary`、租约及时间字段 | 用户级批次和统一报告；`content_version` 为原始字节 SHA-256，`resource_version` 为资源身份哈希；绑定创建时配置 |
+| `image_moderation_items` | `id`、`check_id`、`service`、`status`、`risk_level`、`risk_tags_json`、`request_id`、`error_code`、开始/结束及时间字段 | 每批次每服务一项，`(check_id, service)` 唯一；仅存归一化结果及安全错误码，不保存原始云端响应或凭据 |
+| `image_moderation_daily_usages` | `day`、`calls`、`updated_at` | UTC 日期为主键的平台全局调用计数；更换 Provider 不清零 |
+
+`image_moderation_checks.active_key` 是用户、资源、内容哈希及配置版本组合的哈希，具有唯一索引。非终态保留该值，避免并发创建重复在途批次；结束时置为 `NULL`，允许用户之后明确复检。最新报告按 `created_at DESC, id DESC` 读取，失败报告同样参与排序。
+
+批次状态为 `queued`、`running`、`completed`、`partial`、`failed`；单项状态为 `queued`、`running`、`completed`、`failed`。Worker 领取任务时设置 `lease_owner` 与 `lease_expires_at`。回收过期租约时，原 `running` 项目记为 `execution_uncertain`，不重新调用平台；原 `queued` 项目仍可执行。
+
+每项开始时在同一事务中检查租约、增加全局当日预算、将单项标记为 `running` 并延长批次租约。预算不足时剩余项目失败，报告必须说明检测未完成。管理员保存、生效、停用和归档操作与既有 `admin_audit_events` 在同一事务提交，审计只记录配置 ID、版本、平台类型及服务标识等非敏感摘要。
+
+资源删除链路将 `queued`、`running` 批次视为引用，终态报告不永久阻止资源删除。报告只保留资源 ID、哈希、配置引用与结果，不额外持久化原始图片。
+## 3D 模型生成
+
+Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 `canvas_model3d` 类型。
+
+| 表 | 用途 | 关键约束 |
+| --- | --- | --- |
+| `model3d_providers` | 服务商实例、启用/归档状态和最新配置指针 | 当前类型为 `tripo3d`；归档不删除历史版本 |
+| `model3d_configs` | 不可变配置版本、API 地址 `base_url`、开放模型/模式、默认模型、超时、任务预算和加密 API Key | `(provider_id, version)` 唯一；在途任务固定 `config_id` |
+| `model3d_policies` | 唯一生效服务商/配置和策略修订 | 按 `revision` 比较并交换，防止并发管理员覆盖 |
+| `model3d_submissions` | 任务受理幂等、请求摘要、付费提交状态及恢复检查点 | `task_id` 主键，`(user_id, request_id)` 唯一；上传 token 与模型下载检查点加密 |
+| `model3d_daily_usages` | 全平台 UTC 日新任务计数 | `day` 主键；切换服务商不重置预算 |
+
+迁移 49 为 `model3d_configs` 新增 `base_url`（最长 2048 字符），将已有版本显式回填为历史地址 `https://openapi.tripo3d.ai/v3`。迁移保留配置版本、凭据密文、生效策略和任务引用，不改写历史迁移记录；已存在的非空地址保持不变。后续保存必须提供地址，运行时不为缺失字段设置默认值。切换到国内地址须保存并激活新配置，旧任务的上传、创建和查询继续使用原配置快照。
+
+迁移 50 `model3d_asset_timestamps` 修复已登记的 `model3d_` 模型素材：仅将 `metadata.source=model3d` 的素材 payload 中数字毫秒 `createdAt` / `updatedAt` 转为同一时刻的 UTC RFC3339 字符串，满足前端素材合同。已有字符串时间、素材行的创建/更新时间、所有权、用户编辑、资源引用和任务状态均保留；不重新下载模型，不创建上游任务，不修改迁移 49 的校验和。新完成登记直接写入完整素材合同。已经生成但无法保存画布的模型在正式升级后重新读取原素材并保存即可，无须再次生成。
+
+`tasks.provider_request_id` 保存已知 Tripo 任务编号。提交状态在付费 POST 前持久化；创建结果不确定时不能重新提交。已知上游编号的恢复只查询原任务，回存失败只恢复同一模型下载。
+
+输入图片在任务 JSON 中使用规范的 `referenceImages[].resourceId` 引用，参与资源删除保护。成功输出使用平台 `Resource.Kind=model` 和既有 `Asset.Kind=model`，保存真实 MIME、扩展名、文件字节数；画布通过 `assetId` 与 `storageKey` 绑定模型。供应商临时地址不作为永久资源地址。
+
+## 可选技能策展
+
+迁移 46 新增 skill_curation_settings、skill_curation_categories、skill_curation_assignments；默认关闭，不导入技能内容。表结构与事务规则见 [平台技能策展](./skill-curation)。
+
+迁移 47 依赖 46，新增 skill_curation_roots 与 skill_curation_root_assignments；保留原五个根 ID，根停用时使用派生默认桶，根表为空回落固定五类。

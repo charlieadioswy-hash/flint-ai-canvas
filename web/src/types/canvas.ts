@@ -8,6 +8,8 @@ import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
 import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
+import type { CanvasImageModerationState, CanvasSharedImageModerationState } from "@/lib/canvas/image-moderation";
+import type { CanvasModel3DState } from "@/lib/canvas/model3d";
 
 export type Position = {
     x: number;
@@ -38,6 +40,7 @@ export enum CanvasNodeType {
     Chart = "chart",
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
+    Model3D = "model3d",
     BatchTable = "batch-table",
 }
 
@@ -138,6 +141,10 @@ export type StoryboardRow = {
     videoNodeId?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
+    /** 与该分镜行关联的预演台场景 ID。由 Agent 或用户创建预演后写入。 */
+    previsSceneId?: string;
+    /** 最后一次生成白膜预演后的缩略图 URL，用于在分镜行内展示预览图。 */
+    previsSnapshotUrl?: string;
 };
 
 export type StoryboardData = {
@@ -320,6 +327,9 @@ export type CanvasNodeMetadata = {
     primaryImageId?: string;
     imageBatchExpanded?: boolean;
     storageKey?: string;
+    /** 手动图片检测的安全摘要；原图身份变化后旧报告只作为历史记录。 */
+    imageModeration?: CanvasImageModerationState;
+    sharedImageModeration?: CanvasSharedImageModerationState;
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
@@ -414,12 +424,12 @@ export type CanvasNodeMetadata = {
     versionPrimary?: boolean;
     copiedFromNodeId?: string;
     generationResultPlacement?: "replace-node" | "new-version";
-    directorSceneId?: string;
-    directorShotId?: string;
-    directorPreviewNodeId?: string;
-    directorDepthNodeId?: string;
-    directorNormalNodeId?: string;
-    directorClayVideoNodeId?: string;
+    previsSceneId?: string;
+    previsShotId?: string;
+    previsPreviewNodeId?: string;
+    previsDepthNodeId?: string;
+    previsNormalNodeId?: string;
+    previsClayVideoNodeId?: string;
     subtitleEntries?: SrtEntry[];
     subtitleHighlights?: SubtitleHighlight[];
     subtitleStyle?: SubtitleStyle;
@@ -432,6 +442,8 @@ export type CanvasNodeMetadata = {
     /** 调色节点的参数；缺省视为未调色。 */
     colorGrade?: CanvasColorGrade;
     mediaConversion?: MediaConversionNodeState;
+    model3d?: CanvasModel3DState;
+    model3dFormat?: "glb" | "fbx";
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
     storyboard?: StoryboardData;

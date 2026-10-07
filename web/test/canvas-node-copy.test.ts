@@ -29,6 +29,31 @@ describe("canvas node copy title", () => {
 });
 
 describe("canvas generation copy metadata", () => {
+    test("预演副本只保留本次复制的预览、深度和法线节点引用", () => {
+        const source: CanvasNodeData = {
+            id: "previs",
+            type: CanvasNodeType.Text,
+            title: "预演镜头",
+            position: { x: 0, y: 0 },
+            width: 340,
+            height: 240,
+            metadata: {
+                previsPreviewNodeId: "preview",
+                previsDepthNodeId: "depth",
+                previsNormalNodeId: "normal",
+            },
+        };
+
+        const metadata = isolateCopiedNodeMetadata(source, new Map([["preview", "preview-copy"], ["normal", "normal-copy"]]));
+
+        expect(metadata.previsPreviewNodeId).toBe("preview-copy");
+        expect(metadata.previsDepthNodeId).toBeUndefined();
+        expect(metadata.previsNormalNodeId).toBe("normal-copy");
+        expect(source.metadata?.previsPreviewNodeId).toBe("preview");
+        expect(source.metadata?.previsDepthNodeId).toBe("depth");
+        expect(source.metadata?.previsNormalNodeId).toBe("normal");
+    });
+
     test("媒体副本保留提示词与参考字段，并明确原地回填生成结果", () => {
         const source: CanvasNodeData = {
             id: "source",
@@ -43,6 +68,7 @@ describe("canvas generation copy metadata", () => {
                 videoStartFrameNodeId: "reference-start",
                 videoEndFrameNodeId: "reference-end",
                 generationResultPlacement: "new-version",
+                generationEffectKeys: ["attach-node:source-task:source:0"],
             },
         };
 
@@ -53,6 +79,8 @@ describe("canvas generation copy metadata", () => {
         expect(metadata.videoEndFrameNodeId).toBe("reference-end");
         expect(metadata.copiedFromNodeId).toBe("source");
         expect(metadata.generationResultPlacement).toBe("replace-node");
+        expect(metadata.generationEffectKeys).toBeUndefined();
+        expect(source.metadata?.generationEffectKeys).toEqual(["attach-node:source-task:source:0"]);
     });
 
     test("复制到副本的入边继续解析为同一张参考图", () => {

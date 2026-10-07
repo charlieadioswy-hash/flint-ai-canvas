@@ -48,7 +48,16 @@ func (r *Repository) DeleteAdminResources(resources []model.Resource, deletionJo
 	for _, resource := range resources {
 		resourceIDs = append(resourceIDs, resource.ID)
 	}
+	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := New(tx).RequireNoModel3DReferences(resourceIDs); err != nil {
+			return err
+		}
+		if moderationProtection {
+			if err := New(tx).RequireNoImageModerationReferences(resourceIDs); err != nil {
+				return err
+			}
+		}
 		if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
 			return err
 		}

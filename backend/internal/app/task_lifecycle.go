@@ -42,6 +42,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.MediaRecoveryJSON != "" {
 		return nil, BadAuthRequest("作品已生成，请使用重试保存，不要重复生成")
 	}
+	if task.Type == model.TaskTypeCanvasModel3D {
+		return nil, BadAuthRequest("3D 任务只能恢复原上游任务；重新生成须使用新的请求标识")
+	}
 	if task.CreationSubmissionID != nil {
 		return nil, creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
 	}
@@ -127,6 +130,17 @@ func (w *taskLifecycleCoordinator) cancelTaskWithIntent(_ context.Context, userI
 		return nil, fmt.Errorf("任务当前状态为 %s，无法取消", task.Status)
 	}
 
+	if task.Type == model.TaskTypeCanvasModel3D {
+		if err := s.repo.CancelModel3DTask(userID, id); err != nil {
+			return nil, model3DError(err)
+		}
+		s.cancelActiveTask(id)
+		latest, err := s.repo.TaskForUser(userID, id)
+		if err != nil {
+			return nil, err
+		}
+		return taskForOutput(*latest), nil
+	}
 	// 先从账单和请求日志补齐上游 ID，再做条件更新。取消与 worker 完成之间
 	// 以数据库终态为准，避免“用户已取消但迟到结果又把任务写成成功”。
 	s.hydrateTaskProviderRequestID(task)

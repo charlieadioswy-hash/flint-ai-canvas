@@ -1,5 +1,6 @@
 import { CanvasNodeType } from "@/types/canvas";
 import type { CanvasNodeMetadata } from "@/types/canvas";
+import { createDefaultModel3DState } from "@/lib/canvas/model3d";
 
 type CanvasNodeSpec = {
     width: number;
@@ -27,6 +28,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Chart]: { width: 480, height: 320, title: "图表" },
     [CanvasNodeType.ColorGrade]: { width: 420, height: 360, title: "调色" },
     [CanvasNodeType.MediaConversion]: { width: 480, height: 460, title: "转换" },
+    [CanvasNodeType.Model3D]: { width: 520, height: 420, title: "3D 模型" },
     [CanvasNodeType.BatchTable]: { width: 1280, height: 560, title: "批量创作表" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
@@ -104,6 +106,7 @@ export const NODE_SPECS = {
         metadata: { status: "idle" },
     },
     [CanvasNodeType.MediaConversion]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.MediaConversion], metadata: { status: "idle" } },
+    [CanvasNodeType.Model3D]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.Model3D], metadata: { status: "idle", model3d: createDefaultModel3DState() } },
     [CanvasNodeType.BatchTable]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.BatchTable],
         metadata: {
