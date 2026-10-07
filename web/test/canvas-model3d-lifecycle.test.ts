@@ -25,7 +25,7 @@ function task(input: Model3DCreateRequest, patch: Partial<Model3DTaskView> = {})
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 class TestApiError extends Error { constructor(public status: number, public reason: string) { super("admission error"); } }
 
-function harness(initial = node(), initialTask: Model3DTaskView | null = null) {
+function harness(initial = node(), initialTask: Model3DTaskView | null = null, browserCrypto: Pick<Crypto, "getRandomValues"> = crypto) {
     const cells: any[] = [];
     let cursor = 0; let dirty = false;
     let effects: Array<{ index: number; callback: () => (() => void) | void; deps: unknown[] }> = [];
@@ -65,11 +65,27 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null) {
         }, getImageBlob: async () => new Blob(["original"], { type: "image/png" }), getMediaBlob: async () => new Blob(["original"], { type: "image/png" }),
     };
     const module = { exports: {} as any };
-    runInNewContext(hookSource, { module, exports: module.exports, env, AbortController, DOMException, Blob, File, structuredClone, crypto, fetch: () => { throw new Error("unexpected network fetch"); }, setTimeout: (callback: () => void) => { timers.set(++timerId, callback); return timerId; }, clearTimeout: (id: number) => timers.delete(id) });
+    runInNewContext(hookSource, { module, exports: module.exports, env, AbortController, DOMException, Blob, File, structuredClone, crypto: browserCrypto, fetch: () => { throw new Error("unexpected network fetch"); }, setTimeout: (callback: () => void) => { timers.set(++timerId, callback); return timerId; }, clearTimeout: (id: number) => timers.delete(id) });
     function render() { cursor = 0; dirty = false; output = module.exports.useCanvasModel3D(input); const committed = effects; effects = []; committed.forEach(({ index }) => cells[index]?.cleanup?.()); committed.forEach(({ index, callback, deps }) => { cells[index] = { deps, cleanup: callback() }; }); }
     render();
     return { counters, behavior, get state() { return output; }, get nodes() { return input.nodesRef.current; }, get payload() { return lastPayload; }, set task(value: Model3DTaskView | null) { lastTask = value; }, generate() { return output.generate("node"); }, mutate(change: (nodes: CanvasNodeData[]) => CanvasNodeData[]) { input.setNodes(change); render(); }, setProject(value: string) { input.projectId = value; render(); }, setUser(value: string | null) { userState.user = value ? { id: value } : null; render(); }, advancePoll() { const pending = [...timers.values()]; timers.clear(); pending.forEach((callback) => callback()); }, unmount() { cells.forEach((cell) => cell?.cleanup?.()); }, async flush() { let stable = 0; for (let attempt = 0; attempt < 160 && stable < 24; attempt++) { await Promise.resolve(); if (dirty) { render(); stable = 0; } else stable++; } expect(stable).toBe(24); } };
 }
+
+test("HTTP browsers without randomUUID can submit unique 3D requests", async () => {
+    const browserCrypto = { getRandomValues: crypto.getRandomValues.bind(crypto) };
+    const first = harness(node(), null, browserCrypto);
+    const second = harness(node(), null, browserCrypto);
+    await Promise.all([first.flush(), second.flush()]);
+    await Promise.all([first.generate(), second.generate()]);
+    await Promise.all([first.flush(), second.flush()]);
+    expect(first.counters.creates).toBe(1);
+    expect(second.counters.creates).toBe(1);
+    expect(first.payload?.requestId).toMatch(/^[A-Za-z0-9_-]{21}$/);
+    expect(second.payload?.requestId).not.toBe(first.payload?.requestId);
+    expect(first.nodes[0].metadata?.model3d?.run?.requestId).toBe(first.payload?.requestId);
+    expect(first.nodes[0].metadata?.model3d?.result?.resourceId).toBe("result");
+    first.unmount(); second.unmount();
+});
 
 test("duplicate click creates one task and freezes a snapshot before paid admission", async () => {
     const h = harness(); await h.flush();

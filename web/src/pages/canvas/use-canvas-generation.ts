@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
-import { applyGenerationTaskResultToNodes, generationTaskCanReloadResource, generationTaskNodeId, generationTaskOutputsApplied, shouldRecoverCanvasImageOutputs } from "@/lib/canvas/canvas-generation-task-sync";
+import { applyGenerationTaskResultToNodes, generationTaskCanReloadResource, generationTaskNodeId, generationTaskOutputsApplied, shouldRecoverCanvasImageOutputs, shouldRecoverCanvasMediaAsset } from "@/lib/canvas/canvas-generation-task-sync";
 import { commitCanvasGenerationResult } from "@/lib/canvas/canvas-generation-result";
 import { reconcileImageBatchRoot } from "@/lib/canvas/canvas-image-batch-retry";
 import { markCanvasTaskRecoveryUnconfirmed } from "@/lib/canvas/canvas-task-state";
@@ -295,6 +295,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 const applied = await applyGenerationTaskResultToNodes(nodesRef.current, task, nodeId);
                 if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
                 if (!applied.updated || !applied.node) throw new Error("画布中找不到对应任务节点");
+                if (shouldRecoverCanvasMediaAsset(applied.node)) throw new Error("生成结果素材尚未加载，请重新读取原任务结果");
                 setNodes((current) => commitCanvasGenerationResult(current, before, applied.node!, task.id, applied.additionalNodes));
             };
             if (!task.outputs?.length && task.type === "canvas_text") {
@@ -383,8 +384,9 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 if (node.type === CanvasNodeType.Model3D) return false;
                 const pendingAgentContinuation = node.metadata?.agentGenerationContinuation?.status === "pending";
                 const aggregateBatchRoot = node.metadata?.isBatchRoot && node.metadata.batchChildIds?.length;
-                if (aggregateBatchRoot && !pendingAgentContinuation) return false;
-                return shouldRecoverCanvasImageOutputs(node) || pendingAgentContinuation || node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== NODE_STATUS_SUCCESS);
+                const missingAsset = shouldRecoverCanvasMediaAsset(node);
+                if (aggregateBatchRoot && !pendingAgentContinuation && !missingAsset) return false;
+                return missingAsset || shouldRecoverCanvasImageOutputs(node) || pendingAgentContinuation || node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== NODE_STATUS_SUCCESS);
             });
             const needsDiscovery = recoveryNodes.some((node) => !node.metadata?.taskId && !node.metadata?.agentGenerationContinuation?.taskId);
             let projectTasks: GenerationTask[] = [];

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 
 import { applyModel3DTask, isModel3DPending, model3DInputError, normalizeModel3DParameters, model3DPrompt, model3DSourceFingerprint, MODEL3D_VIEWS, readModel3DState, resolveModel3DImage, type Model3DImageBinding, type Model3DRun } from "@/lib/canvas/model3d";
+import { createClientId } from "@/lib/client-id";
 import { createModel3DTask, getModel3DCapabilities, getModel3DTask, getModel3DTaskByRequest, recoverModel3DTask, type Model3DCapabilities, type Model3DCreateRequest, type Model3DTaskView } from "@/services/api/model3d";
 import { ApiError } from "@/services/api/request";
 import { importResourceFromUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
@@ -150,7 +151,7 @@ export function useCanvasModel3D({ projectId, projectLoaded, nodes, nodesRef, co
         if (isModel3DPending(state.run) || state.run?.status === "submission_unknown" || state.run?.submissionOutcome === "unknown") return;
         const draft = structuredClone(state.draft);
         const originalFingerprint = model3DSourceFingerprint(draft, nodesRef.current, inputNodes(nodeId));
-        const requestId = crypto.randomUUID();
+        const requestId = createClientId();
         const operation: Operation = { context, requestId, fingerprint: originalFingerprint, controller: new AbortController(), kind: "submit" };
         operations.current.set(nodeId, operation);
         setNodes((current) => current.map((item) => item.id === nodeId ? { ...item, metadata: { ...item.metadata, model3d: { ...readModel3DState(item), run: { requestId, sourceFingerprint: originalFingerprint, snapshot: draft, status: "submitting" } } } } : item));

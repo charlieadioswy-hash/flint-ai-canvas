@@ -1,12 +1,13 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
+import { generationAssetId } from "@/lib/generation-asset-id";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError } from "@/services/api/request";
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
-import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
+import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
 import { uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
@@ -197,6 +198,11 @@ export function projectGenerationTaskResult(task: GenerationTask, result?: Backe
                   },
               ]
             : (task.outputs?.map((output) => ({ ...output })) ?? []);
+
+    for (const output of outputs) {
+        const original = task.outputs?.find((item) => item.outputIndex === output.outputIndex && item.mediaType === output.mediaType);
+        if (original && (!output.providerArtifactRef || !original.providerArtifactRef || output.providerArtifactRef === original.providerArtifactRef)) Object.assign(output, { ...original, ...output });
+    }
 
     return {
         ...task,
@@ -456,7 +462,25 @@ function generationTaskMaterializer(task: GenerationTask) {
 }
 
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
-    return generationTaskMaterializer(task).materialize(projectGenerationTaskResult(task), signal);
+    throwIfAborted(signal);
+    const projected = projectGenerationTaskResult(task);
+    const outputs = projected.outputs || [];
+    if (task.status === "succeeded" && outputs.length && outputs.every((output) => output.providerArtifactRef?.startsWith("resource:"))) {
+        const identities = outputs.map((output) => output.materializedAssetId || generationAssetId(materializeEffectKey(task.id, output.outputIndex)));
+        // 后端完成交易已登记的资源只需读取素材；不能再次依赖浏览器 Web Lock / Web Crypto 入库。
+        const assets = await loadAssetsForUse(identities, { allowMissing: true });
+        throwIfAborted(signal);
+        const registered = outputs.map((output, index) => {
+            const asset = assets.find((candidate) => candidate.id === identities[index]);
+            if (!asset) return undefined;
+            if (asset.kind !== output.mediaType || asset.data.storageKey !== output.providerArtifactRef) throw new Error("生成素材与任务资源不一致，请重新读取生成结果");
+            return { ...output, materializedAssetId: asset.id };
+        });
+        if (registered.every((output): output is GenerationTaskOutput & { materializedAssetId: string } => Boolean(output)) && typeof window !== "undefined" && !globalThis.navigator?.locks) {
+            return { ...projected, outputs: registered, resultState: "READY" };
+        }
+    }
+    return generationTaskMaterializer(task).materialize(projected, signal);
 }
 
 export function attachGenerationTaskNode(task: GenerationTask, nodeId: string, outputIndex: number, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["attachNode"]>[3], signal?: AbortSignal) {

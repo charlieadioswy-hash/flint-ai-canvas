@@ -8,6 +8,7 @@ import { parseAssetStorageDocumentRecovering, rebaseAssetSnapshot, serializeAsse
 import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { generationAssetId } from "@/lib/generation-asset-id";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { cleanupUnusedImages, collectImageStorageKeys, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/services/file-storage";
@@ -310,11 +311,6 @@ async function normalizePersistedAsset(asset: Asset): Promise<Asset> {
     if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
     const image = await uploadImage(asset.data.dataUrl);
     return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
-}
-
-async function generationAssetId(effectKey: string) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
-    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export const useAssetStore = create<AssetStore>()(

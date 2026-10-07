@@ -321,14 +321,16 @@ async function loadReferencedAssets(ids: Iterable<string>) {
     }
 }
 
-export async function loadAssetsForUse(ids: Iterable<string>) {
+export async function loadAssetsForUse(ids: Iterable<string>, options: { allowMissing?: boolean } = {}): Promise<Asset[]> {
     const epoch = sessionEpoch;
     const requestedIds = [...new Set(ids)];
-    await withRemoteUserDataSyncExclusive(async () => {
+    return withRemoteUserDataSyncExclusive(async () => {
         if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新读取素材");
         if (activeRemoteUserId) await loadReferencedAssets(requestedIds);
+        if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新读取素材");
         const available = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
-        if (requestedIds.some((id) => !available.has(id) || (activeRemoteUserId && !verifiedAssets.has(id)))) throw new Error("部分素材不存在或无权访问，请重新选择素材");
+        if (!options.allowMissing && requestedIds.some((id) => !available.has(id) || (activeRemoteUserId && !verifiedAssets.has(id)))) throw new Error("部分素材不存在或无权访问，请重新选择素材");
+        return useAssetStore.getState().assets.filter((asset) => requestedIds.includes(asset.id) && (!activeRemoteUserId || verifiedAssets.has(asset.id)));
     });
 }
 
