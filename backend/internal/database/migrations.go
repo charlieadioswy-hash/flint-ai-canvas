@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 49
+const CurrentSchemaVersion int64 = 50
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -159,6 +159,7 @@ var schemaMigrations = []migration{
 		return tx.AutoMigrate(&model.UploadReservation{})
 	}},
 	{version: 49, name: "model3d_base_url", checksum: "sha256:model3d-base-url-v49-20261007", apply: migrateModel3DBaseURL},
+	{version: 50, name: "model3d_asset_timestamps", checksum: "sha256:model3d-asset-timestamps-v50-20261007", apply: migrateModel3DAssetTimestamps},
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {

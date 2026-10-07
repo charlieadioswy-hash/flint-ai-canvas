@@ -213,7 +213,10 @@ func (s *Service) completeModel3DTask(task *model.Task, input model3DInput, resu
 		return err
 	}
 	now := time.Now()
-	payload, _ := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": "3D 生成模型", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UnixMilli(), "updatedAt": now.UnixMilli(), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": map[string]any{"source": "model3d", "taskId": task.ID, "canvasId": input.ClientContext.CanvasID, "nodeId": input.ClientContext.NodeID}})
+	payload, err := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": "3D 生成模型", "coverUrl": "", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": map[string]any{"source": "model3d", "taskId": task.ID, "canvasId": input.ClientContext.CanvasID, "nodeId": input.ClientContext.NodeID}})
+	if err != nil {
+		return err
+	}
 	asset := model.Asset{ID: result.AssetID, UserID: task.UserID, Kind: "model", Category: "material", Status: "confirmed", Title: "3D 生成模型", PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
 	policy, err := s.RuntimePolicy()
 	if err != nil {

@@ -241,6 +241,21 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 	if err != nil || asset.Kind != "model" {
 		t.Fatalf("asset: %v %+v", err, asset)
 	}
+	var payload struct {
+		CreatedAt string  `json:"createdAt"`
+		UpdatedAt string  `json:"updatedAt"`
+		CoverURL  *string `json:"coverUrl"`
+		Data      struct {
+			StorageKey string `json:"storageKey"`
+			Bytes      int64  `json:"bytes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(asset.PayloadJSON), &payload); err != nil {
+		t.Fatalf("model asset violates the frontend field types: %v", err)
+	}
+	if payload.CreatedAt != asset.CreatedAt.UTC().Format(time.RFC3339Nano) || payload.UpdatedAt != asset.UpdatedAt.UTC().Format(time.RFC3339Nano) || payload.CoverURL == nil || payload.Data.StorageKey != view.Result.StorageKey || payload.Data.Bytes != view.Result.Bytes {
+		t.Fatalf("incomplete model asset contract: %+v", payload)
+	}
 	resource, err := s.repo.ResourceForUser("3d-user", view.Result.ResourceID)
 	if err != nil || resource.Kind != "model" {
 		t.Fatalf("resource: %v %+v", err, resource)

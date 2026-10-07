@@ -2978,11 +2978,10 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 相关离线覆盖入口：`backend/internal/moderation/moderation_test.go`、`backend/internal/app/image_moderation_test.go`、`backend/internal/database/image_moderation_test.go`、`backend/internal/handler/image_moderation_test.go`、`web/test/canvas-image-moderation.test.ts`、`web/test/canvas-image-moderation-lifecycle.test.ts` 与 `web/test/image-moderation-settings-form.test.ts`。测试是否通过以当次命令输出为准；本清单不预先声明真实场景通过。
 ## 3D 模型生成验收
 
-代码与离线链路已实现，真实供应商效果尚未验收。调研和设计见 `docs/design/model3d-api-research.mdx` 与 `docs/design/model3d-generation.mdx`。
+代码与离线链路已实现，Tripo H3.1 多视图纯几何的真实链路已验证，其他生成模式及贴图效果仍待验收。调研和设计见 `docs/design/model3d-api-research.mdx` 与 `docs/design/model3d-generation.mdx`。
 
 - 上传失败诊断已修复并通过离线专项：PNG/JPEG 文件 part MIME、DNS/TLS/超时/连接/出站限制分类、HTTP 与数字上游错误码、未知错误兜底、敏感描述过滤，以及失败提示进入任务记录后不调用生成接口。部署后的真实节点已显示认证失败的 HTTP 401 和数字错误码 2，提交记录确认未创建上游生成任务；其他真实失败类型仍待验收。
 - 后台 API 地址已纳入不可变配置版本：保存体与视图均为必填 `baseUrl`，新建表单预填国外地址，支持切换国内地址；画布没有地址入口。后端专项已验证 schema 49 显式回填历史地址并保留配置、任务、策略及迁移记录，任务继续使用原地址快照，上传/创建/轮询统一拼接且代理前拦截私网目标，DNS/SSRF 预校验失败提示安全入库。模型域、应用、数据库、handler 专项及 OpenAPI 解析通过；前端表单 10 项、52 条断言及生产构建通过。实际 PostgreSQL 48→49 正式迁移和 verify 通过，旧配置地址已回填且密钥保持已配置；真实后台已显示国内地址新版本生效。
-
 - 已验证：后端 `go test ./...` 全量通过；最后资源检查点与通用任务摘要调整后，3D/app/handler/canvas/database 专项再次通过。覆盖三模式协议、权限与归属、持久幂等、未知提交不重发、已知任务恢复、下载及素材登记恢复、资源引用、分享投影、迁移 45。
 - 前一轮已验证：前端生产构建（含 TypeScript）、`bun run lint` 和 36 项集中测试（267 个断言）通过。集中命令覆盖 `canvas-model3d.test.ts`、`canvas-model3d-lifecycle.test.ts`、`canvas-model3d-preview.test.ts`、`model3d-settings-form.test.ts`、`canvas-connection-create-menu.test.ts`。包含真实提交 payload 的参数清理、动态面数范围、状态恢复、跨账号/画布隔离，以及 GLB、Meshopt 压缩 GLB、FBX 离线解析和资源释放。
 - 已验证：真实后台首次加载、密钥不回显、保存新版本与手动激活分离、明暗主题；停用后显示未启用，可恢复原生效版本；保存备用配置后归档，原生效配置保持不变。并发版本冲突有后端测试覆盖。
@@ -2993,7 +2992,7 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - 本轮离线验证通过：`go test ./internal/model3d ./internal/handler ./internal/app -run 'Test(Tripo|Model3D|ModelFile|ModelDownload)' -count=1`；覆盖 126 个去光照参数组合、36 个布尔输入边界，以及官方响应样例、异常信封、安全错误码与不重复提交。前端 6 个专项文件共 41 项测试、326 个断言通过（增加 `canvas-model3d-parameter-panel.test.ts`）；生产构建含 TypeScript 通过，OpenAPI 解析与相关枚举/默认值检查通过。
 - 本轮真实页面检查通过：UV 初始开启；贴图 3.5 下去光照初始开启，可显式关闭，切换旧版本后隐藏；关闭贴图后不再保留这些纹理选项。仅操作本地测试画布草稿，未点击生成，结束后恢复原贴图开关。
 - 待验证：真实生成期间的刷新恢复、供应商产物的几何/贴图质量和真实四边面 FBX；离线文件不能代替这些供应商效果。
-- 真实 API 暂缓：按用户要求，本轮只复核官方请求/返回文档并离线回归，不再读取密钥或查询余额，也不上传和生成；付费生成调用数仍为 0。恢复真实验收时按文本/单图/多视图各一次纯几何的最小方案执行，记录任务、模型解析与实际消耗；不自动追加格式转换或重复付费任务。
+- 上一轮按用户要求暂缓真实 API，仅复核协议与离线回归。本轮按新的工作流请求恢复多视图验收，已生成机器人正面、左侧和背面三张图片。用户在后台更新并激活国内凭据后，参考图上传、Tripo H3.1 多视图纯几何生成和模型回存成功；仅创建一次上游模型任务。GLB 为 41,288,008 字节，真实页面的节点预览、放大预览与方向键旋转通过；用户保留的下载文件通过 glTF v2、声明长度、网格和无外部缓冲文件检查。画布已保存到云端；未追加生成或格式转换，贴图效果及其他模式仍待真实验收。
 
 ## Responses 工具历史与 Dola Pool 参数修复
 
@@ -3022,3 +3021,5 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 已修复：HTTP 浏览器缺少 Web Locks 时，已由后端登记的 `resource:` 生成结果按稳定 SHA-256 素材身份只读加载，核对资源与类型后回填；成功但缺少素材绑定的旧节点可从原任务恢复，保留位置、尺寸和名称，不再次生成。新建本地产物仍要求跨页互斥，素材缺失或资源不匹配不会被当作保存成功。
 - 已修复：3D 请求编号改用已有的 CSPRNG `createClientId`，支持没有 `crypto.randomUUID` 的内网 HTTP 浏览器，保留幂等与不确定提交只读恢复合同。
 - 离线验证：素材结果、存储一致性和远端 revision 共 34 项、186 条断言通过；3D 生命周期 13 项、119 条断言通过。完整前端构建（含 TypeScript）通过，冻结锁文件校验通过。
+- 真实 HTTP 页面已验证旧成功任务只读恢复；机器人正面、左侧、背面三图均生成、绑定素材并保存到云端，刷新后保持名称、尺寸和连线。多视图绑定已进入 3D 请求，后台模型生成、素材登记和文件保存成功；真实节点回填、放大预览、方向键旋转与 GLB 下载通过。
+- 已修复真实模型素材的时间合同：新登记使用 RFC3339Nano 字符串，schema 50 正式迁移仅修复既有 Tripo 素材的数字时间，保留任务、资源、所有权和用户编辑。数据库全包及 3D 专项通过，可选 PostgreSQL 隔离测试因未配置 DSN 跳过；部署节点的 PostgreSQL 49→50 正式迁移和 verify 通过，原任务仍成功且时间字段类型正确，真实画布已恢复云端保存。完整本地 ZIP 已导出，下载保留与归档内容核对仍待本轮完成。
