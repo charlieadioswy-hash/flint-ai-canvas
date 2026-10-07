@@ -64,37 +64,79 @@ export function moderationProviderStatus(provider: ModerationProviderView, state
 }
 
 export function moderationProviderResponseMatches(provider: ModerationProviderView, input: ModerationProviderInput, previous: ModerationProviderView | null): boolean {
-    return Boolean(provider.id && provider.configId)
-        && (!previous || (provider.id === previous.id && provider.configId !== previous.configId && provider.version > previous.version))
-        && provider.name === input.name && provider.type === input.type && provider.enabled === input.enabled && !provider.archived
-        && provider.region === input.region
-        && JSON.stringify([...provider.services].sort()) === JSON.stringify([...input.services].sort())
-        && provider.timeoutSeconds === input.timeoutSeconds && provider.maxCallsPerDay === input.maxCallsPerDay && provider.minIntervalSeconds === input.minIntervalSeconds
-        && provider.accessKeyIdConfigured && provider.accessKeySecretConfigured;
+    return (
+        Boolean(provider.id && provider.configId) &&
+        (!previous || (provider.id === previous.id && provider.configId !== previous.configId && provider.version > previous.version)) &&
+        provider.name === input.name &&
+        provider.type === input.type &&
+        provider.enabled === input.enabled &&
+        !provider.archived &&
+        provider.region === input.region &&
+        JSON.stringify([...provider.services].sort()) === JSON.stringify([...input.services].sort()) &&
+        provider.timeoutSeconds === input.timeoutSeconds &&
+        provider.maxCallsPerDay === input.maxCallsPerDay &&
+        provider.minIntervalSeconds === input.minIntervalSeconds &&
+        provider.accessKeyIdConfigured &&
+        provider.accessKeySecretConfigured
+    );
 }
 
 export function isModerationAdminState(value: unknown): value is ModerationAdminState {
     if (!value || typeof value !== "object") return false;
     const state = value as ModerationAdminState;
-    if (!Array.isArray(state.providers) || !Array.isArray(state.providerTypes)
-        || typeof state.activeProviderId !== "string" || typeof state.activeConfigId !== "string"
-        || Boolean(state.activeProviderId) !== Boolean(state.activeConfigId)
-        || !Number.isInteger(state.policyRevision) || state.policyRevision < 0) return false;
+    if (
+        !Array.isArray(state.providers) ||
+        !Array.isArray(state.providerTypes) ||
+        typeof state.activeProviderId !== "string" ||
+        typeof state.activeConfigId !== "string" ||
+        Boolean(state.activeProviderId) !== Boolean(state.activeConfigId) ||
+        !Number.isInteger(state.policyRevision) ||
+        state.policyRevision < 0
+    )
+        return false;
     const providerIds = new Set<string>();
     for (const provider of state.providers) {
-        if (!provider || !provider.id || typeof provider.id !== "string" || providerIds.has(provider.id)
-            || typeof provider.name !== "string" || !provider.name || typeof provider.type !== "string"
-            || typeof provider.enabled !== "boolean" || typeof provider.archived !== "boolean"
-            || typeof provider.configId !== "string" || !provider.configId || !Number.isInteger(provider.version) || provider.version < 1
-            || typeof provider.region !== "string" || !Array.isArray(provider.services) || !provider.services.every((service) => typeof service === "string")
-            || !Number.isInteger(provider.timeoutSeconds) || provider.timeoutSeconds < 5 || provider.timeoutSeconds > 120
-            || !Number.isInteger(provider.maxCallsPerDay) || provider.maxCallsPerDay < 1 || provider.maxCallsPerDay > 100_000
-            || !Number.isInteger(provider.minIntervalSeconds) || provider.minIntervalSeconds < 1 || provider.minIntervalSeconds > 3600
-            || typeof provider.accessKeyIdConfigured !== "boolean" || typeof provider.accessKeySecretConfigured !== "boolean") return false;
+        if (
+            !provider ||
+            !provider.id ||
+            typeof provider.id !== "string" ||
+            providerIds.has(provider.id) ||
+            typeof provider.name !== "string" ||
+            !provider.name ||
+            typeof provider.type !== "string" ||
+            typeof provider.enabled !== "boolean" ||
+            typeof provider.archived !== "boolean" ||
+            typeof provider.configId !== "string" ||
+            !provider.configId ||
+            !Number.isInteger(provider.version) ||
+            provider.version < 1 ||
+            typeof provider.region !== "string" ||
+            !Array.isArray(provider.services) ||
+            !provider.services.every((service) => typeof service === "string") ||
+            !Number.isInteger(provider.timeoutSeconds) ||
+            provider.timeoutSeconds < 5 ||
+            provider.timeoutSeconds > 120 ||
+            !Number.isInteger(provider.maxCallsPerDay) ||
+            provider.maxCallsPerDay < 1 ||
+            provider.maxCallsPerDay > 100_000 ||
+            !Number.isInteger(provider.minIntervalSeconds) ||
+            provider.minIntervalSeconds < 1 ||
+            provider.minIntervalSeconds > 3600 ||
+            typeof provider.accessKeyIdConfigured !== "boolean" ||
+            typeof provider.accessKeySecretConfigured !== "boolean"
+        )
+            return false;
         providerIds.add(provider.id);
     }
     if (state.activeProviderId && !state.providers.some((provider) => provider.id === state.activeProviderId && !provider.archived)) return false;
-    return state.providerTypes.every((providerType) => providerType && typeof providerType.type === "string" && typeof providerType.label === "string"
-        && Array.isArray(providerType.services) && providerType.services.every((service) => service && typeof service.code === "string" && typeof service.label === "string")
-        && Array.isArray(providerType.regions) && providerType.regions.every((region) => region && typeof region.value === "string" && typeof region.label === "string"));
+    return state.providerTypes.every(
+        (providerType) =>
+            providerType &&
+            typeof providerType.type === "string" &&
+            typeof providerType.label === "string" &&
+            Array.isArray(providerType.services) &&
+            providerType.services.every((service) => service && typeof service.code === "string" && typeof service.label === "string") &&
+            Array.isArray(providerType.regions) &&
+            providerType.regions.every((region) => region && typeof region.value === "string" && typeof region.label === "string"),
+    );
 }

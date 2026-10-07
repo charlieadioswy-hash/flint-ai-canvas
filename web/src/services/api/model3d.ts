@@ -139,9 +139,7 @@ export function getModel3DAdminState(signal?: AbortSignal) {
 }
 
 export function saveModel3DProvider(input: Model3DProviderInput, providerId?: string) {
-    return providerId
-        ? http.put<Model3DProviderView>(`/admin/model3d/providers/${encodeURIComponent(providerId)}`, input)
-        : http.post<Model3DProviderView>("/admin/model3d/providers", input);
+    return providerId ? http.put<Model3DProviderView>(`/admin/model3d/providers/${encodeURIComponent(providerId)}`, input) : http.post<Model3DProviderView>("/admin/model3d/providers", input);
 }
 
 export function activateModel3DProvider(providerId: string, configId: string, expectedRevision: number) {

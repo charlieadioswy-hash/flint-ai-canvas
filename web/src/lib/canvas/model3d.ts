@@ -74,9 +74,15 @@ export function model3DParametersForModel(parameters: Model3DParameters, capabil
 
 export function normalizeModel3DParameters(mode: Model3DMode, parameters: Model3DParameters, capabilities: Model3DCapabilities | null): Model3DParameters {
     const result = model3DParametersForModel(parameters, capabilities);
-    if (mode !== "text") { delete result.negativePrompt; delete result.imageSeed; }
+    if (mode !== "text") {
+        delete result.negativePrompt;
+        delete result.imageSeed;
+    }
     if (mode !== "image") delete result.enableImageAutofix;
-    if (mode === "text") { delete result.textureAlignment; delete result.orientation; }
+    if (mode === "text") {
+        delete result.textureAlignment;
+        delete result.orientation;
+    }
     if (!result.texture) {
         result.pbr = false;
         for (const key of ["textureQuality", "textureVersion", "textureSeed", "textureAlignment", "orientation"] as const) delete result[key];
@@ -90,14 +96,18 @@ export function model3DFaceRange(parameters: Model3DParameters, capabilities: Mo
     let maximum = parameters.geometryQuality === "detailed" ? version?.maxFacesDetailed : version?.maxFacesStandard;
     let minimum = 1;
     if (parameters.quad) maximum = 150000;
-    if (parameters.smartLowPoly) { minimum = 500; maximum = parameters.quad ? 10000 : 20000; }
+    if (parameters.smartLowPoly) {
+        minimum = 500;
+        maximum = parameters.quad ? 10000 : 20000;
+    }
     return { min: minimum, max: maximum };
 }
 
 export function model3DParameterError(mode: Model3DMode, parameters: Model3DParameters, capabilities: Model3DCapabilities | null) {
     const normalized = normalizeModel3DParameters(mode, parameters, capabilities);
     const range = model3DFaceRange(normalized, capabilities);
-    if (normalized.faceLimit !== undefined && (!Number.isSafeInteger(normalized.faceLimit) || normalized.faceLimit < range.min || (range.max !== undefined && normalized.faceLimit > range.max))) return `面数须为 ${range.min.toLocaleString()}–${range.max?.toLocaleString() || "服务允许的上限"}。`;
+    if (normalized.faceLimit !== undefined && (!Number.isSafeInteger(normalized.faceLimit) || normalized.faceLimit < range.min || (range.max !== undefined && normalized.faceLimit > range.max)))
+        return `面数须为 ${range.min.toLocaleString()}–${range.max?.toLocaleString() || "服务允许的上限"}。`;
     if (normalized.negativePrompt && Array.from(normalized.negativePrompt).length > 255) return "负面描述最多 255 字。";
     if (normalized.textureQuality === "fast" && normalized.textureVersion !== "v3.5-20260815") return "快速贴图须选择 v3.5-20260815 贴图版本。";
     if (normalized.textureVersion && !["v2.5-20250123", "v3.0-20250812", "v3.5-20260815"].includes(normalized.textureVersion)) return "请选择服务支持的贴图版本。";
@@ -122,8 +132,18 @@ function imageIdentity(binding?: Model3DImageBinding) {
 
 /** Stable draft identity includes current bound image contents, not merely source node IDs. */
 export function model3DSourceFingerprint(draft: Model3DDraft, nodes: CanvasNodeData[], inputNodes: CanvasNodeData[] = []) {
-    const parameters = Object.fromEntries(Object.entries(draft.parameters).filter(([, value]) => value !== undefined && value !== "").sort(([a], [b]) => a.localeCompare(b)));
-    const value = JSON.stringify({ mode: draft.mode, prompt: draft.mode === "text" ? model3DPrompt(draft, inputNodes) : "", image: draft.mode === "image" ? imageIdentity(resolveModel3DImage(draft.image, nodes)) : "", views: draft.mode === "multiview" ? MODEL3D_VIEWS.map((view) => [view, imageIdentity(resolveModel3DImage(draft.views[view], nodes))]) : [], parameters });
+    const parameters = Object.fromEntries(
+        Object.entries(draft.parameters)
+            .filter(([, value]) => value !== undefined && value !== "")
+            .sort(([a], [b]) => a.localeCompare(b)),
+    );
+    const value = JSON.stringify({
+        mode: draft.mode,
+        prompt: draft.mode === "text" ? model3DPrompt(draft, inputNodes) : "",
+        image: draft.mode === "image" ? imageIdentity(resolveModel3DImage(draft.image, nodes)) : "",
+        views: draft.mode === "multiview" ? MODEL3D_VIEWS.map((view) => [view, imageIdentity(resolveModel3DImage(draft.views[view], nodes))]) : [],
+        parameters,
+    });
     let hash = 2166136261;
     let second = 5381;
     for (let index = 0; index < value.length; index++) {
@@ -166,13 +186,25 @@ export function applyModel3DTask(node: CanvasNodeData, task: Model3DTaskView, ca
     const state = readModel3DState(node);
     if (!state.run || !model3DTaskMatches(task, { canvasId, nodeId: node.id, fingerprint: state.run.sourceFingerprint, taskId: state.run.taskId })) return node;
     const result = task.status === "succeeded" ? task.result : undefined;
-    return { ...node, metadata: { ...node.metadata,
-        ...(result ? { content: result.url, storageKey: result.storageKey, assetId: result.assetId, bytes: result.bytes, mimeType: result.mimeType, model3dFormat: result.format, status: "success" as const } : {}),
-        model3d: { ...state, run: { ...state.run, taskId: task.id, status: task.status, stage: task.stage, progress: task.progress, submissionOutcome: task.submissionOutcome, error: task.error?.message, canRetryStorage: task.canRetryStorage }, ...(result ? { result, resultFingerprint: state.run.sourceFingerprint } : {}) },
-    } };
+    return {
+        ...node,
+        metadata: {
+            ...node.metadata,
+            ...(result ? { content: result.url, storageKey: result.storageKey, assetId: result.assetId, bytes: result.bytes, mimeType: result.mimeType, model3dFormat: result.format, status: "success" as const } : {}),
+            model3d: {
+                ...state,
+                run: { ...state.run, taskId: task.id, status: task.status, stage: task.stage, progress: task.progress, submissionOutcome: task.submissionOutcome, error: task.error?.message, canRetryStorage: task.canRetryStorage },
+                ...(result ? { result, resultFingerprint: state.run.sourceFingerprint } : {}),
+            },
+        },
+    };
 }
 
 export function model3DDownloadName(result: Pick<Model3DResult, "format" | "fileName">, title = "3D模型") {
-    const base = (result.fileName || title).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/\.(glb|fbx)$/i, "").trim() || "model";
+    const base =
+        (result.fileName || title)
+            .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+            .replace(/\.(glb|fbx)$/i, "")
+            .trim() || "model";
     return `${base}.${result.format}`;
 }

@@ -11,4 +11,6 @@ export type CanvasModel3DContextValue = {
     openParameters: (nodeId: string) => void;
 };
 export const CanvasModel3DContext = createContext<CanvasModel3DContextValue | null>(null);
-export function useCanvasModel3DContext() { return useContext(CanvasModel3DContext); }
+export function useCanvasModel3DContext() {
+    return useContext(CanvasModel3DContext);
+}

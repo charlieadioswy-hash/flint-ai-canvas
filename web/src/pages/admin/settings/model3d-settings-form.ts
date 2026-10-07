@@ -13,8 +13,7 @@ export function validateModel3DBaseUrl(value: string): string {
     if (!/^https:\/\/[^/?#]+\/v3\/*$/i.test(address) || /[\u0000-\u0020\u007f\\?#]/.test(address)) return message;
     try {
         const url = new URL(address);
-        if (url.protocol !== "https:" || !url.hostname || url.username || url.password || address.split("/")[2]?.includes("@")
-            || url.pathname.replace(/\/+$/, "") !== "/v3") return message;
+        if (url.protocol !== "https:" || !url.hostname || url.username || url.password || address.split("/")[2]?.includes("@") || url.pathname.replace(/\/+$/, "") !== "/v3") return message;
         return "";
     } catch {
         return message;
@@ -39,12 +38,15 @@ export function model3DProviderDraft(provider: Model3DProviderView | null, state
 
 export function model3DProviderInput(draft: Model3DProviderDraft): Model3DProviderInput {
     return {
-        name: draft.name.trim(), type: draft.type, enabled: draft.enabled,
+        name: draft.name.trim(),
+        type: draft.type,
+        enabled: draft.enabled,
         baseUrl: draft.baseUrl.trim().replace(/\/+$/, ""),
         defaultModel: draft.defaultModel,
         allowedModels: [...new Set(draft.allowedModels)].sort(),
         allowedModes: [...new Set(draft.allowedModes)].sort(),
-        timeoutSeconds: draft.timeoutSeconds, maxTasksPerDay: draft.maxTasksPerDay,
+        timeoutSeconds: draft.timeoutSeconds,
+        maxTasksPerDay: draft.maxTasksPerDay,
         ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
     };
 }
@@ -76,40 +78,79 @@ export function model3DProviderStatus(provider: Model3DProviderView, state: Pick
 }
 
 export function model3DProviderResponseMatches(provider: Model3DProviderView, input: Model3DProviderInput, previous: Model3DProviderView | null) {
-    return Boolean(provider?.id && provider.configId && provider.apiKeyConfigured && !provider.archived)
-        && (!previous || (provider.id === previous.id && provider.configId !== previous.configId && provider.version > previous.version))
-        && provider.name === input.name && provider.type === input.type && provider.enabled === input.enabled
-        && provider.baseUrl === input.baseUrl
-        && provider.defaultModel === input.defaultModel
-        && JSON.stringify([...provider.allowedModels].sort()) === JSON.stringify([...input.allowedModels].sort())
-        && JSON.stringify([...provider.allowedModes].sort()) === JSON.stringify([...input.allowedModes].sort())
-        && provider.timeoutSeconds === input.timeoutSeconds && provider.maxTasksPerDay === input.maxTasksPerDay;
+    return (
+        Boolean(provider?.id && provider.configId && provider.apiKeyConfigured && !provider.archived) &&
+        (!previous || (provider.id === previous.id && provider.configId !== previous.configId && provider.version > previous.version)) &&
+        provider.name === input.name &&
+        provider.type === input.type &&
+        provider.enabled === input.enabled &&
+        provider.baseUrl === input.baseUrl &&
+        provider.defaultModel === input.defaultModel &&
+        JSON.stringify([...provider.allowedModels].sort()) === JSON.stringify([...input.allowedModels].sort()) &&
+        JSON.stringify([...provider.allowedModes].sort()) === JSON.stringify([...input.allowedModes].sort()) &&
+        provider.timeoutSeconds === input.timeoutSeconds &&
+        provider.maxTasksPerDay === input.maxTasksPerDay
+    );
 }
 
 export function isModel3DAdminState(value: unknown): value is Model3DAdminState {
     if (!value || typeof value !== "object") return false;
     const state = value as Model3DAdminState;
-    if (!Array.isArray(state.providers) || !Array.isArray(state.providerTypes)
-        || typeof state.activeProviderId !== "string" || typeof state.activeConfigId !== "string"
-        || Boolean(state.activeProviderId) !== Boolean(state.activeConfigId)
-        || !Number.isInteger(state.policyRevision) || state.policyRevision < 0) return false;
+    if (
+        !Array.isArray(state.providers) ||
+        !Array.isArray(state.providerTypes) ||
+        typeof state.activeProviderId !== "string" ||
+        typeof state.activeConfigId !== "string" ||
+        Boolean(state.activeProviderId) !== Boolean(state.activeConfigId) ||
+        !Number.isInteger(state.policyRevision) ||
+        state.policyRevision < 0
+    )
+        return false;
     const ids = new Set<string>();
     for (const row of state.providers) {
-        if (!row || typeof row.id !== "string" || !row.id || ids.has(row.id)
-            || typeof row.configId !== "string" || !row.configId || !Number.isInteger(row.version) || row.version < 1
-            || typeof row.name !== "string" || !row.name || typeof row.type !== "string"
-            || typeof row.baseUrl !== "string" || Boolean(validateModel3DBaseUrl(row.baseUrl))
-            || typeof row.enabled !== "boolean" || typeof row.archived !== "boolean" || typeof row.apiKeyConfigured !== "boolean"
-            || typeof row.defaultModel !== "string" || !Array.isArray(row.allowedModels) || !row.allowedModels.includes(row.defaultModel)
-            || !row.allowedModels.every((model) => typeof model === "string" && Boolean(model))
-            || !Array.isArray(row.allowedModes) || !row.allowedModes.length || !row.allowedModes.every((mode) => ["text", "image", "multiview"].includes(mode))
-            || !Number.isInteger(row.timeoutSeconds) || row.timeoutSeconds < 10 || row.timeoutSeconds > 120
-            || !Number.isInteger(row.maxTasksPerDay) || row.maxTasksPerDay < 1 || row.maxTasksPerDay > 100000) return false;
+        if (
+            !row ||
+            typeof row.id !== "string" ||
+            !row.id ||
+            ids.has(row.id) ||
+            typeof row.configId !== "string" ||
+            !row.configId ||
+            !Number.isInteger(row.version) ||
+            row.version < 1 ||
+            typeof row.name !== "string" ||
+            !row.name ||
+            typeof row.type !== "string" ||
+            typeof row.baseUrl !== "string" ||
+            Boolean(validateModel3DBaseUrl(row.baseUrl)) ||
+            typeof row.enabled !== "boolean" ||
+            typeof row.archived !== "boolean" ||
+            typeof row.apiKeyConfigured !== "boolean" ||
+            typeof row.defaultModel !== "string" ||
+            !Array.isArray(row.allowedModels) ||
+            !row.allowedModels.includes(row.defaultModel) ||
+            !row.allowedModels.every((model) => typeof model === "string" && Boolean(model)) ||
+            !Array.isArray(row.allowedModes) ||
+            !row.allowedModes.length ||
+            !row.allowedModes.every((mode) => ["text", "image", "multiview"].includes(mode)) ||
+            !Number.isInteger(row.timeoutSeconds) ||
+            row.timeoutSeconds < 10 ||
+            row.timeoutSeconds > 120 ||
+            !Number.isInteger(row.maxTasksPerDay) ||
+            row.maxTasksPerDay < 1 ||
+            row.maxTasksPerDay > 100000
+        )
+            return false;
         ids.add(row.id);
     }
     if (state.activeProviderId && !state.providers.some((row) => row.id === state.activeProviderId && !row.archived)) return false;
-    return state.providerTypes.every((type) => type && typeof type.type === "string" && typeof type.label === "string"
-        && Array.isArray(type.modes) && type.modes.every((mode) => ["text", "image", "multiview"].includes(mode))
-        && Array.isArray(type.modelVersions) && type.modelVersions.every((model) => model && typeof model.id === "string" && typeof model.label === "string"
-            && typeof model.supportsAdvanced === "boolean" && Number.isFinite(model.maxFacesStandard) && Number.isFinite(model.maxFacesDetailed)));
+    return state.providerTypes.every(
+        (type) =>
+            type &&
+            typeof type.type === "string" &&
+            typeof type.label === "string" &&
+            Array.isArray(type.modes) &&
+            type.modes.every((mode) => ["text", "image", "multiview"].includes(mode)) &&
+            Array.isArray(type.modelVersions) &&
+            type.modelVersions.every((model) => model && typeof model.id === "string" && typeof model.label === "string" && typeof model.supportsAdvanced === "boolean" && Number.isFinite(model.maxFacesStandard) && Number.isFinite(model.maxFacesDetailed)),
+    );
 }

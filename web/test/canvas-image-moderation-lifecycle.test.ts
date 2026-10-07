@@ -17,13 +17,15 @@ const build = await Bun.build({
     entrypoints: [new URL("../src/pages/canvas/use-canvas-image-moderation.ts", import.meta.url).pathname],
     target: "browser",
     format: "cjs",
-    plugins: [{
-        name: "moderation-hook-harness",
-        setup(builder) {
-            builder.onResolve({ filter: /^(react|@\/services\/|@\/stores\/use-user-store)/ }, ({ path }) => modules[path] ? { path, namespace: "moderation-test" } : undefined);
-            builder.onLoad({ filter: /.*/, namespace: "moderation-test" }, ({ path }) => ({ contents: modules[path], loader: "js" }));
+    plugins: [
+        {
+            name: "moderation-hook-harness",
+            setup(builder) {
+                builder.onResolve({ filter: /^(react|@\/services\/|@\/stores\/use-user-store)/ }, ({ path }) => (modules[path] ? { path, namespace: "moderation-test" } : undefined));
+                builder.onLoad({ filter: /.*/, namespace: "moderation-test" }, ({ path }) => ({ contents: modules[path], loader: "js" }));
+            },
         },
-    }],
+    ],
 });
 expect(build.success).toBe(true);
 const hookSource = await build.outputs[0].text();
@@ -37,7 +39,10 @@ function node(patch: Partial<CanvasNodeData["metadata"]> = {}): CanvasNodeData {
 function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (error: unknown) => void;
-    const promise = new Promise<T>((success, failure) => { resolve = success; reject = failure; });
+    const promise = new Promise<T>((success, failure) => {
+        resolve = success;
+        reject = failure;
+    });
     return { promise, resolve, reject };
 }
 
@@ -48,11 +53,17 @@ function harness(initial = node(), initialLatest?: () => Promise<ModerationRepor
     let effects: Array<{ index: number; callback: () => (() => void) | void; deps: unknown[] }> = [];
     let output: ReturnType<typeof import("@/pages/canvas/use-canvas-image-moderation").useCanvasImageModeration>;
     const counters = { latest: 0, availability: 0, create: 0, status: 0, uploads: 0, imports: 0, imageReads: 0, mediaReads: 0 };
-    const input = { projectId: "canvas-a", projectLoaded: true, nodes: [initial], nodesRef: { current: [initial] }, setNodes: (next: any) => {
-        input.nodes = typeof next === "function" ? next(input.nodesRef.current) : next;
-        input.nodesRef.current = input.nodes;
-        dirty = true;
-    } };
+    const input = {
+        projectId: "canvas-a",
+        projectLoaded: true,
+        nodes: [initial],
+        nodesRef: { current: [initial] },
+        setNodes: (next: any) => {
+            input.nodes = typeof next === "function" ? next(input.nodesRef.current) : next;
+            input.nodesRef.current = input.nodes;
+            dirty = true;
+        },
+    };
     const userState = { user: { id: "user-a" } as { id: string } | null };
     let latestValue: ModerationReport | null = null;
     let originalBlob = new Blob(["original pixels"], { type: "image/png" });
@@ -62,7 +73,10 @@ function harness(initial = node(), initialLatest?: () => Promise<ModerationRepor
     const useUserStore = Object.assign((selector: (state: typeof userState) => any) => selector(userState), { getState: () => userState });
     const behavior = {
         latest: initialLatest || (async () => latestValue),
-        create: async (resourceId: string) => { latestValue = report({ checkId: `check-${counters.create}`, resourceId }); return latestValue; },
+        create: async (resourceId: string) => {
+            latestValue = report({ checkId: `check-${counters.create}`, resourceId });
+            return latestValue;
+        },
         status: async () => latestValue || report(),
         upload: async (_file: Blob) => ({ id: "uploaded-original" }),
         imageBlob: async () => originalBlob,
@@ -74,12 +88,21 @@ function harness(initial = node(), initialLatest?: () => Promise<ModerationRepor
             useState(initialValue: any) {
                 const index = cursor++;
                 if (!(index in cells)) cells[index] = typeof initialValue === "function" ? initialValue() : initialValue;
-                return [cells[index], (next: any) => {
-                    const value = typeof next === "function" ? next(cells[index]) : next;
-                    if (!Object.is(value, cells[index])) { cells[index] = value; dirty = true; }
-                }];
+                return [
+                    cells[index],
+                    (next: any) => {
+                        const value = typeof next === "function" ? next(cells[index]) : next;
+                        if (!Object.is(value, cells[index])) {
+                            cells[index] = value;
+                            dirty = true;
+                        }
+                    },
+                ];
             },
-            useRef(initialValue: any) { const index = cursor++; return cells[index] ||= { current: initialValue }; },
+            useRef(initialValue: any) {
+                const index = cursor++;
+                return (cells[index] ||= { current: initialValue });
+            },
             useCallback(callback: any, deps: unknown[]) {
                 const index = cursor++;
                 if (dependenciesChanged(cells[index]?.deps, deps)) cells[index] = { deps, callback };
@@ -92,27 +115,66 @@ function harness(initial = node(), initialLatest?: () => Promise<ModerationRepor
         },
         useUserStore,
         api: {
-            getImageModerationAvailability: async () => { counters.availability++; return { available: true }; },
-            getLatestImageModerationCheck: async () => { counters.latest++; return behavior.latest(); },
-            createImageModerationCheck: async (resourceId: string) => { counters.create++; return behavior.create(resourceId); },
-            getImageModerationCheck: async () => { counters.status++; return behavior.status(); },
+            getImageModerationAvailability: async () => {
+                counters.availability++;
+                return { available: true };
+            },
+            getLatestImageModerationCheck: async () => {
+                counters.latest++;
+                return behavior.latest();
+            },
+            createImageModerationCheck: async (resourceId: string) => {
+                counters.create++;
+                return behavior.create(resourceId);
+            },
+            getImageModerationCheck: async () => {
+                counters.status++;
+                return behavior.status();
+            },
         },
         resources: {
-            resourceIdFromStorageKey: (key?: string) => key?.startsWith("resource:") ? key.slice(9) : "",
+            resourceIdFromStorageKey: (key?: string) => (key?.startsWith("resource:") ? key.slice(9) : ""),
             resourceStorageKey: (id: string) => `resource:${id}`,
             resourceFileUrl: (id: string) => `/api/resources/${id}/file`,
-            uploadResourceFile: async (file: Blob, kind: string, meta: any) => { counters.uploads++; uploads.push({ file, kind, meta }); return behavior.upload(file); },
-            importResourceFromUrl: async (url: string) => { counters.imports++; imports.push(url); return { id: "imported-original" }; },
+            uploadResourceFile: async (file: Blob, kind: string, meta: any) => {
+                counters.uploads++;
+                uploads.push({ file, kind, meta });
+                return behavior.upload(file);
+            },
+            importResourceFromUrl: async (url: string) => {
+                counters.imports++;
+                imports.push(url);
+                return { id: "imported-original" };
+            },
         },
-        getImageBlob: async () => { counters.imageReads++; return behavior.imageBlob(); },
-        getMediaBlob: async () => { counters.mediaReads++; return originalBlob; },
+        getImageBlob: async () => {
+            counters.imageReads++;
+            return behavior.imageBlob();
+        },
+        getMediaBlob: async () => {
+            counters.mediaReads++;
+            return originalBlob;
+        },
     };
     const module = { exports: {} as any };
     runInNewContext(hookSource, {
-        module, exports: module.exports, env, AbortController, DOMException, Blob, Response, TextEncoder, crypto,
-        setTimeout: (callback: () => void) => { timers.set(++timerId, callback); return timerId; },
+        module,
+        exports: module.exports,
+        env,
+        AbortController,
+        DOMException,
+        Blob,
+        Response,
+        TextEncoder,
+        crypto,
+        setTimeout: (callback: () => void) => {
+            timers.set(++timerId, callback);
+            return timerId;
+        },
         clearTimeout: (id: number) => timers.delete(id),
-        fetch: () => { throw new Error("unexpected network fetch"); },
+        fetch: () => {
+            throw new Error("unexpected network fetch");
+        },
     });
     function render() {
         cursor = 0;
@@ -121,27 +183,62 @@ function harness(initial = node(), initialLatest?: () => Promise<ModerationRepor
         const committed = effects;
         effects = [];
         committed.forEach(({ index }) => cells[index]?.cleanup?.());
-        committed.forEach(({ index, callback, deps }) => { cells[index] = { deps, cleanup: callback() }; });
+        committed.forEach(({ index, callback, deps }) => {
+            cells[index] = { deps, cleanup: callback() };
+        });
     }
     render();
     return {
-        counters, behavior, uploads, imports,
-        get state() { return output; },
-        get nodes() { return input.nodesRef.current; },
-        get blob() { return originalBlob; },
-        set latest(value: ModerationReport | null) { latestValue = value; },
-        setBlob(value: Blob) { originalBlob = value; },
-        open() { output.open(input.nodesRef.current[0]); },
-        mutate(change: (value: CanvasNodeData[]) => CanvasNodeData[]) { input.setNodes(change); render(); },
-        setUser(userId: string | null) { userState.user = userId ? { id: userId } : null; render(); },
-        setProject(projectId: string) { input.projectId = projectId; render(); },
-        advancePoll() { const pending = [...timers.values()]; timers.clear(); pending.forEach((callback) => callback()); },
-        unmount() { cells.forEach((cell) => cell?.cleanup?.()); },
+        counters,
+        behavior,
+        uploads,
+        imports,
+        get state() {
+            return output;
+        },
+        get nodes() {
+            return input.nodesRef.current;
+        },
+        get blob() {
+            return originalBlob;
+        },
+        set latest(value: ModerationReport | null) {
+            latestValue = value;
+        },
+        setBlob(value: Blob) {
+            originalBlob = value;
+        },
+        open() {
+            output.open(input.nodesRef.current[0]);
+        },
+        mutate(change: (value: CanvasNodeData[]) => CanvasNodeData[]) {
+            input.setNodes(change);
+            render();
+        },
+        setUser(userId: string | null) {
+            userState.user = userId ? { id: userId } : null;
+            render();
+        },
+        setProject(projectId: string) {
+            input.projectId = projectId;
+            render();
+        },
+        advancePoll() {
+            const pending = [...timers.values()];
+            timers.clear();
+            pending.forEach((callback) => callback());
+        },
+        unmount() {
+            cells.forEach((cell) => cell?.cleanup?.());
+        },
         async flush() {
             let stable = 0;
             for (let attempt = 0; attempt < 120 && stable < 24; attempt++) {
                 await Promise.resolve();
-                if (dirty) { render(); stable = 0; } else stable++;
+                if (dirty) {
+                    render();
+                    stable = 0;
+                } else stable++;
             }
             expect(stable).toBe(24);
         },
@@ -167,7 +264,9 @@ test("rapid repeated clicks share one submission and explicit recheck starts a s
     h.behavior.create = () => pending.promise;
     h.open();
     await h.flush();
-    h.open(); h.open(); h.state.recheck();
+    h.open();
+    h.open();
+    h.state.recheck();
     await h.flush();
     expect(h.counters.create).toBe(1);
     h.latest = report({ checkId: "first" });
@@ -185,7 +284,9 @@ test("repeated clicks during refresh share its GET and create at most one check"
     const pending = deferred<ModerationReport | null>();
     const h = harness(node(), () => pending.promise);
     await h.flush();
-    h.open(); h.open(); h.open();
+    h.open();
+    h.open();
+    h.open();
     await h.flush();
     expect(h.counters.latest).toBe(1);
     expect(h.counters.create).toBe(0);
@@ -197,7 +298,9 @@ test("repeated clicks during refresh share its GET and create at most one check"
 
 test("failed latest reads never fall through to a paid POST", async () => {
     const h = harness();
-    h.behavior.latest = async () => { throw new Error("offline"); };
+    h.behavior.latest = async () => {
+        throw new Error("offline");
+    };
     await h.flush();
     h.open();
     await h.flush();
@@ -209,7 +312,10 @@ test("failed latest reads never fall through to a paid POST", async () => {
 test("lost submit responses are recovered by GET without resubmitting", async () => {
     const h = harness();
     await h.flush();
-    h.behavior.create = async () => { h.latest = report({ checkId: "accepted" }); throw new Error("response lost"); };
+    h.behavior.create = async () => {
+        h.latest = report({ checkId: "accepted" });
+        throw new Error("response lost");
+    };
     h.open();
     await h.flush();
     expect(h.counters.create).toBe(1);
@@ -225,7 +331,9 @@ test("latest failed report replaces previously saved green result", async () => 
     original.metadata!.imageModeration = { sourceIdentity: "resource:original", report: report({ checkId: "old-green" }) };
     const h = harness(original);
     h.latest = report({ checkId: "latest-failed", status: "failed", overallRisk: "unknown" });
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.state.report?.checkId).toBe("latest-failed");
     expect(h.state.report?.status).toBe("failed");
     expect(h.counters.create).toBe(0);
@@ -257,7 +365,8 @@ for (const change of ["replace", "delete", "user", "project", "unmount"] as cons
 test("local-image detection uploads its stored original, not preview or display URL", async () => {
     const h = harness(node({ storageKey: "image:user-a:original", content: "blob:display-only", previewContent: "thumbnail" }));
     await h.flush();
-    h.open(); h.open();
+    h.open();
+    h.open();
     await h.flush();
     expect(h.counters.imageReads).toBe(1);
     expect(h.counters.mediaReads).toBe(0);
@@ -274,7 +383,9 @@ test("account switch while uploading local original prevents detection submissio
     const h = harness(node({ storageKey: "image:user-a:original", content: "blob:original" }));
     const pending = deferred<{ id: string }>();
     h.behavior.upload = () => pending.promise;
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.counters.uploads).toBe(1);
     h.setUser("user-b");
     pending.resolve({ id: "old-user-upload" });
@@ -288,7 +399,9 @@ test("account switch while reading local original prevents upload", async () => 
     const h = harness(node({ storageKey: "image:user-a:original", content: "blob:original" }));
     const pending = deferred<Blob>();
     h.behavior.imageBlob = () => pending.promise;
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.counters.imageReads).toBe(1);
     expect(h.counters.uploads).toBe(0);
     h.setUser("user-b");
@@ -302,7 +415,9 @@ test("account switch while reading local original prevents upload", async () => 
 test("new account cannot upload a stale previous-account local reference", async () => {
     const h = harness(node({ storageKey: "image:user-a:original", content: "blob:original" }));
     h.setUser("user-b");
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.counters.imageReads).toBe(0);
     expect(h.counters.uploads).toBe(0);
     expect(h.counters.create).toBe(0);
@@ -312,7 +427,9 @@ test("new account cannot upload a stale previous-account local reference", async
 
 test("signed existing resource display URLs are never imported or uploaded", async () => {
     const h = harness(node({ content: "https://cdn/thumbnail?signature=secret", previewContent: "other-thumbnail" }));
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.counters.uploads).toBe(0);
     expect(h.counters.imports).toBe(0);
     expect(h.state.report?.resourceId).toBe("original");
@@ -323,13 +440,17 @@ test("pending reports only poll GET and stop after completion", async () => {
     const h = harness();
     h.latest = report({ status: "queued" });
     await h.flush();
-    h.open(); h.state.recheck(); await h.flush();
+    h.open();
+    h.state.recheck();
+    await h.flush();
     expect(h.counters.create).toBe(0);
     h.latest = report({ status: "failed", overallRisk: "unknown" });
-    h.advancePoll(); await h.flush();
+    h.advancePoll();
+    await h.flush();
     expect(h.counters.status).toBe(1);
     expect(h.state.report?.status).toBe("failed");
-    h.advancePoll(); await h.flush();
+    h.advancePoll();
+    await h.flush();
     expect(h.counters.status).toBe(1);
     expect(h.counters.create).toBe(0);
     h.unmount();
@@ -338,7 +459,9 @@ test("pending reports only poll GET and stop after completion", async () => {
 test("guest clicks cannot submit detection", async () => {
     const h = harness();
     h.setUser(null);
-    await h.flush(); h.open(); await h.flush();
+    await h.flush();
+    h.open();
+    await h.flush();
     expect(h.counters.create).toBe(0);
     expect(h.counters.uploads).toBe(0);
     expect(h.state.canCheck).toBe(false);

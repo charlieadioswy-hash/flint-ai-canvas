@@ -44,7 +44,13 @@ describe("canvas generation copy metadata", () => {
             },
         };
 
-        const metadata = isolateCopiedNodeMetadata(source, new Map([["preview", "preview-copy"], ["normal", "normal-copy"]]));
+        const metadata = isolateCopiedNodeMetadata(
+            source,
+            new Map([
+                ["preview", "preview-copy"],
+                ["normal", "normal-copy"],
+            ]),
+        );
 
         expect(metadata.previsPreviewNodeId).toBe("preview-copy");
         expect(metadata.previsDepthNodeId).toBeUndefined();

@@ -7,7 +7,11 @@ import type { Model3DCapabilities } from "@/services/api/model3d";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const capabilities: Model3DCapabilities = {
-    available: true, providerName: "Tripo", policyRevision: 1, activeConfigVersion: 1, defaultModel: "h3.1",
+    available: true,
+    providerName: "Tripo",
+    policyRevision: 1,
+    activeConfigVersion: 1,
+    defaultModel: "h3.1",
     modelVersions: [
         { id: "h3.1", label: "H3.1", supportsAdvanced: true, maxFacesStandard: 1500000, maxFacesDetailed: 2000000 },
         { id: "h2.5", label: "H2.5", supportsAdvanced: false, maxFacesStandard: 500000, maxFacesDetailed: 500000 },
@@ -18,18 +22,44 @@ const capabilities: Model3DCapabilities = {
 
 function labeledElement(value: ReactNode, label: string): ReactElement<any> | undefined {
     if (Array.isArray(value)) {
-        for (const child of value) { const match = labeledElement(child, label); if (match) return match; }
+        for (const child of value) {
+            const match = labeledElement(child, label);
+            if (match) return match;
+        }
     } else if (isValidElement<any>(value)) {
         if (value.props.label === label) return value;
         const child = labeledElement(value.props.children, label);
         if (child) return child;
-        for (const item of value.props.items || []) { const match = labeledElement(item.children, label); if (match) return match; }
+        for (const item of value.props.items || []) {
+            const match = labeledElement(item.children, label);
+            if (match) return match;
+        }
     }
 }
 
 function harness() {
     const node: CanvasNodeData = { id: "model", title: "3D", type: CanvasNodeType.Model3D, width: 520, height: 420, position: { x: 0, y: 0 }, metadata: { model3d: createDefaultModel3DState("h3.1") } };
-    const render = () => Model3DParameterPanel({ node, nodes: [node], inputNodes: [], theme: canvasThemes.dark, capabilities, capabilityError: "", onChange: (update) => { node.metadata!.model3d!.draft = update(node.metadata!.model3d!.draft); }, onGenerate: () => { throw new Error("unexpected generation"); }, onRefresh: () => {}, onReloadConfig: () => {}, onClose: () => {}, onUpload: async () => { throw new Error("unexpected upload"); } });
+    const render = () =>
+        Model3DParameterPanel({
+            node,
+            nodes: [node],
+            inputNodes: [],
+            theme: canvasThemes.dark,
+            capabilities,
+            capabilityError: "",
+            onChange: (update) => {
+                node.metadata!.model3d!.draft = update(node.metadata!.model3d!.draft);
+            },
+            onGenerate: () => {
+                throw new Error("unexpected generation");
+            },
+            onRefresh: () => {},
+            onReloadConfig: () => {},
+            onClose: () => {},
+            onUpload: async () => {
+                throw new Error("unexpected upload");
+            },
+        });
     const control = (label: string) => {
         let field = labeledElement(render(), label);
         if (!field) return undefined;
@@ -37,7 +67,12 @@ function harness() {
         const children = Array.isArray(field!.props.children) ? field!.props.children : [field!.props.children];
         return children.find((child: ReactNode): child is ReactElement<any> => isValidElement<any>(child) && typeof child.props.onChange === "function") as ReactElement<any> | undefined;
     };
-    return { control, get parameters() { return node.metadata!.model3d!.draft.parameters; } };
+    return {
+        control,
+        get parameters() {
+            return node.metadata!.model3d!.draft.parameters;
+        },
+    };
 }
 
 test("real panel displays UV provider default, preserves explicit false and supports H2.5 export options", () => {

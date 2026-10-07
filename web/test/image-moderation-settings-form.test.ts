@@ -12,14 +12,37 @@ import {
 import type { ModerationAdminState, ModerationProviderView } from "../src/services/api/image-moderation";
 
 const provider: ModerationProviderView = {
-    id: "provider-1", name: "检测平台", type: "aliyun", enabled: true, archived: false,
-    configId: "config-2", version: 2, region: "cn-shanghai", services: ["aigcCheck"],
-    timeoutSeconds: 30, maxCallsPerDay: 100, minIntervalSeconds: 10,
-    accessKeyIdConfigured: true, accessKeySecretConfigured: true,
+    id: "provider-1",
+    name: "检测平台",
+    type: "aliyun",
+    enabled: true,
+    archived: false,
+    configId: "config-2",
+    version: 2,
+    region: "cn-shanghai",
+    services: ["aigcCheck"],
+    timeoutSeconds: 30,
+    maxCallsPerDay: 100,
+    minIntervalSeconds: 10,
+    accessKeyIdConfigured: true,
+    accessKeySecretConfigured: true,
 };
 const state: ModerationAdminState = {
-    providers: [provider], activeProviderId: provider.id, activeConfigId: "config-1", policyRevision: 1,
-    providerTypes: [{ type: "aliyun", label: "阿里云", services: [{ code: "aigcCheck", label: "内容风险" }, { code: "aigcInfringement", label: "疑似侵权" }], regions: [{ value: "cn-shanghai", label: "上海" }] }],
+    providers: [provider],
+    activeProviderId: provider.id,
+    activeConfigId: "config-1",
+    policyRevision: 1,
+    providerTypes: [
+        {
+            type: "aliyun",
+            label: "阿里云",
+            services: [
+                { code: "aigcCheck", label: "内容风险" },
+                { code: "aigcInfringement", label: "疑似侵权" },
+            ],
+            regions: [{ value: "cn-shanghai", label: "上海" }],
+        },
+    ],
 };
 
 describe("image moderation provider settings (offline)", () => {

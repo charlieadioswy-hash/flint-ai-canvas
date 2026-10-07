@@ -50,7 +50,9 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             controls.enableZoom = expanded;
             controls.minDistance = 1.3;
             controls.maxDistance = 15;
-            const render = () => { if (active && !renderer.getContext().isContextLost()) renderer.render(scene, camera); };
+            const render = () => {
+                if (active && !renderer.getContext().isContextLost()) renderer.render(scene, camera);
+            };
             const resize = () => {
                 const width = Math.max(host.clientWidth, 1);
                 const height = Math.max(host.clientHeight, 1);
@@ -68,7 +70,12 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             };
             renderer.domElement.addEventListener("webglcontextlost", lost);
             controller.current = {
-                reset: () => { camera.position.set(2.7, 1.6, 3.2); controls.target.set(0, 0, 0); controls.update(); render(); },
+                reset: () => {
+                    camera.position.set(2.7, 1.6, 3.2);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                    render();
+                },
                 rotate: (x, y) => {
                     const spherical = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
                     spherical.theta += x;
@@ -95,7 +102,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             if (!active) return;
             if (!resolved) throw new Error("模型资源暂时不可用");
             const model = format === "fbx" ? await createModel3DFBXLoader().loadAsync(resolved) : (await createModel3DGLTFLoader().loadAsync(resolved)).scene;
-            if (!active) { disposePrevisObject3D(model); return; }
+            if (!active) {
+                disposePrevisObject3D(model);
+                return;
+            }
             ownedModel = model;
             model.updateMatrixWorld(true);
             const bounds = new THREE.Box3().setFromObject(model);
@@ -118,21 +128,66 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 cleanup = undefined;
             }
         });
-        return () => { active = false; cleanup?.(); };
+        return () => {
+            active = false;
+            cleanup?.();
+        };
     }, [identity, storageKey, url, format, expanded, retry]);
 
     const error = failure?.identity === identity ? failure.message : "";
     return (
         <div className="relative size-full min-h-32" style={{ background: theme.node.panel, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
-            <div ref={hostRef} className="size-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" tabIndex={0} aria-label="3D 模型预览，拖拽或使用方向键旋转" style={{ touchAction: "none" }} onKeyDown={(event) => {
-                const directions: Record<string, [number, number]> = { ArrowLeft: [0.1, 0], ArrowRight: [-0.1, 0], ArrowUp: [0, -0.1], ArrowDown: [0, 0.1] };
-                const direction = directions[event.key];
-                if (direction) { event.preventDefault(); event.stopPropagation(); controller.current?.rotate(...direction); }
-                if (event.key.toLowerCase() === "r") { event.stopPropagation(); controller.current?.reset(); }
-            }} />
-            {!error && loadedIdentity !== identity ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-xs" style={{ color: theme.node.muted }}><LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />正在加载模型</div> : null}
-            {error ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center text-xs" style={{ background: theme.node.panel, color: theme.node.muted }}><span role="alert">{error}</span><button type="button" className="rounded-[var(--r-md)] border px-3 py-2" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => setRetry((value) => value + 1)}>重新加载预览</button></div> : null}
-            {!error && loadedIdentity === identity ? <><button type="button" title="重置视角" aria-label="重置视角" className="absolute bottom-2 right-2 rounded-[var(--r-md)] border p-2" style={{ background: theme.node.panel, borderColor: theme.node.stroke }} onClick={() => controller.current?.reset()}><RotateCcw className="size-3.5" /></button><span className="pointer-events-none absolute bottom-3 left-3 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>拖拽旋转 · 方向键 · R 重置{expanded ? " · 滚轮缩放" : ""}</span></> : null}
+            <div
+                ref={hostRef}
+                className="size-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                tabIndex={0}
+                aria-label="3D 模型预览，拖拽或使用方向键旋转"
+                style={{ touchAction: "none" }}
+                onKeyDown={(event) => {
+                    const directions: Record<string, [number, number]> = { ArrowLeft: [0.1, 0], ArrowRight: [-0.1, 0], ArrowUp: [0, -0.1], ArrowDown: [0, 0.1] };
+                    const direction = directions[event.key];
+                    if (direction) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        controller.current?.rotate(...direction);
+                    }
+                    if (event.key.toLowerCase() === "r") {
+                        event.stopPropagation();
+                        controller.current?.reset();
+                    }
+                }}
+            />
+            {!error && loadedIdentity !== identity ? (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 text-xs" style={{ color: theme.node.muted }}>
+                    <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                    正在加载模型
+                </div>
+            ) : null}
+            {error ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center text-xs" style={{ background: theme.node.panel, color: theme.node.muted }}>
+                    <span role="alert">{error}</span>
+                    <button type="button" className="rounded-[var(--r-md)] border px-3 py-2" style={{ borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => setRetry((value) => value + 1)}>
+                        重新加载预览
+                    </button>
+                </div>
+            ) : null}
+            {!error && loadedIdentity === identity ? (
+                <>
+                    <button
+                        type="button"
+                        title="重置视角"
+                        aria-label="重置视角"
+                        className="absolute bottom-2 right-2 rounded-[var(--r-md)] border p-2"
+                        style={{ background: theme.node.panel, borderColor: theme.node.stroke }}
+                        onClick={() => controller.current?.reset()}
+                    >
+                        <RotateCcw className="size-3.5" />
+                    </button>
+                    <span className="pointer-events-none absolute bottom-3 left-3 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                        拖拽旋转 · 方向键 · R 重置{expanded ? " · 滚轮缩放" : ""}
+                    </span>
+                </>
+            ) : null}
         </div>
     );
 }
