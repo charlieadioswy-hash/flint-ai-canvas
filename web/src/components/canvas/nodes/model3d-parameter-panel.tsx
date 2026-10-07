@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Collapse, Input, InputNumber, Select, Switch } from "antd";
-import { Box, RefreshCw, Upload, X } from "lucide-react";
+import { Box, RefreshCw, Settings2, Upload, X } from "lucide-react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -55,13 +55,16 @@ export function Model3DParameterPanel({ node, theme, nodes, inputNodes, capabili
         </div>
         <footer className="shrink-0 space-y-2 border-t p-4" style={{ borderColor: theme.node.stroke }}>
             {inputError ? <p className="text-xs leading-relaxed" style={{ color: theme.node.muted }}>{inputError}</p> : null}
-            <div className="flex items-center gap-2"><Button type="primary" className="flex-1" loading={pending} disabled={!capabilities?.available || Boolean(inputError) || uncertain} onClick={onGenerate}>{pending ? "任务进行中" : "生成 3D 模型"}</Button>{run?.requestId ? <Button title="刷新任务状态" icon={<RefreshCw className="size-3.5" />} onClick={onRefresh} /> : null}<Button title="刷新服务配置" icon={<SettingsIcon />} onClick={onReloadConfig} /></div>
+            <Button type="primary" block loading={pending} disabled={!capabilities?.available || Boolean(inputError) || uncertain} onClick={onGenerate}>{pending ? "任务进行中" : "生成 3D 模型"}</Button>
+            <div className="flex flex-wrap gap-2">
+                {run?.requestId ? <Button className="min-w-fit flex-1" title="同步当前任务的进度和生成结果" icon={<RefreshCw className="size-3.5" />} onClick={onRefresh}>刷新任务状态</Button> : null}
+                <Button className="min-w-fit flex-1" title="读取后台当前生效的服务商及开放模型、生成模式" icon={<Settings2 className="size-3.5" />} onClick={onReloadConfig}>更新服务配置</Button>
+            </div>
             <p className="text-[var(--fs-tiny)] leading-relaxed" style={{ color: theme.node.muted }}>{uncertain ? "提交结果待确认，核实前不会再次生成。" : pending ? "本次任务使用提交时的参数；继续编辑会用于下一次生成。" : `手动提交异步任务 · ${parameters.quad ? "FBX" : "GLB"} 输出`}</p>
         </footer>
     </section>;
 }
 
-function SettingsIcon() { return <RefreshCw className="size-3.5" />; }
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block space-y-2"><span className="block text-xs font-medium">{label}</span>{children}</label>; }
 function Toggle({ label, checked, onChange }: { label: string; checked?: boolean; onChange: (value: boolean) => void }) { return <Field label={label}><Switch checked={Boolean(checked)} onChange={onChange} /></Field>; }
 function SeedField({ label, value, onChange }: { label: string; value?: number; onChange: (value?: number) => void }) { return <Field label={label}><InputNumber className="!w-full" precision={0} value={value} placeholder="随机" onChange={(next) => onChange(next ?? undefined)} /></Field>; }
