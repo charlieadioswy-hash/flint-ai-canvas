@@ -13,20 +13,21 @@ import (
 )
 
 type PluginProviderCatalogItem struct {
-	ID                string                      `json:"id"`
-	Version           string                      `json:"version"`
-	Name              string                      `json:"name"`
-	Vendor            string                      `json:"vendor"`
-	Categories        []protocol.Capability       `json:"categories"`
-	Scopes            []protocol.Surface          `json:"scopes"`
-	Create            string                      `json:"create,omitempty"`
-	Poll              string                      `json:"poll,omitempty"`
-	ContentType       string                      `json:"contentType,omitempty"`
-	BaseURL           string                      `json:"baseUrl,omitempty"`
-	Enabled           bool                        `json:"enabled"`
-	UnavailableReason string                      `json:"unavailableReason,omitempty"`
-	Parameters        []protocol.Parameter        `json:"parameters,omitempty"`
-	Workflows         []protocol.ManifestWorkflow `json:"workflows,omitempty"`
+	SupportsControlNet bool                        `json:"supportsControlNet,omitempty"`
+	ID                 string                      `json:"id"`
+	Version            string                      `json:"version"`
+	Name               string                      `json:"name"`
+	Vendor             string                      `json:"vendor"`
+	Categories         []protocol.Capability       `json:"categories"`
+	Scopes             []protocol.Surface          `json:"scopes"`
+	Create             string                      `json:"create,omitempty"`
+	Poll               string                      `json:"poll,omitempty"`
+	ContentType        string                      `json:"contentType,omitempty"`
+	BaseURL            string                      `json:"baseUrl,omitempty"`
+	Enabled            bool                        `json:"enabled"`
+	UnavailableReason  string                      `json:"unavailableReason,omitempty"`
+	Parameters         []protocol.Parameter        `json:"parameters,omitempty"`
+	Workflows          []protocol.ManifestWorkflow `json:"workflows,omitempty"`
 }
 
 // PluginProviderCatalog projects provider and workflow contributions from the
@@ -46,6 +47,7 @@ func (s *Service) PluginProviderCatalog(scope, capability string, includeUnavail
 			// host-backed dispatch paths out of every user-facing catalog consumer.
 			if adapter, ok := canonicalProviderAdapter(s.protocolRegistry(), provider.ID); ok {
 				metadata := adapter.Metadata()
+				item.SupportsControlNet = metadata.SupportsControlNet
 				item.Create, item.Poll, item.ContentType = metadata.Create, metadata.Poll, metadata.ContentType
 			}
 			if includeUnavailable || item.Enabled {

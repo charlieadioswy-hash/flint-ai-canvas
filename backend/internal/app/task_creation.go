@@ -48,6 +48,13 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
+	if metadata, ok := normalizedInput["metadata"].(map[string]any); ok {
+		// Upload checkpoints are issued by the worker, never by the caller.
+		delete(metadata, liblibPreparedMetadataKey)
+	}
+	if err := s.prepareControlNetTaskInput(userID, normalizedInput); err != nil {
+		return nil, err
+	}
 	// Fail admission before queueing or charging; the worker validates again in
 	// case a tool is deleted or its visibility changes while queued.
 	toolMode, _ := normalizedInput["mode"].(string)

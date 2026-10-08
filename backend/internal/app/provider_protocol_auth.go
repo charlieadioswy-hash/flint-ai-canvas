@@ -94,6 +94,8 @@ func applyProtocolAuth(req *http.Request, config providerConfig, auth protocol.M
 	case "tc3":
 		secret := protocolCredentialField(config, auth.SecretField)
 		return signProtocolTC3(req, credential, secret, auth)
+	case "liblib-hmac-sha1":
+		return signProtocolLiblib(req, credential, protocolCredentialField(config, auth.SecretField))
 	default:
 		return fmt.Errorf("插件声明了尚未启用的鉴权驱动 %s", auth.Type)
 	}

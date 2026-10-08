@@ -32,20 +32,22 @@ type ModelSelection struct {
 // Options contains public user choices, not resolved provider configuration.
 // node/task tags are the only mapping between the persisted canvas and task wire names.
 type Options struct {
-	Size                  *string `json:"size,omitempty" node:"size" task:"size" modes:"image,video"`
-	Quality               *string `json:"quality,omitempty" node:"quality" task:"quality" modes:"image"`
-	Count                 *int    `json:"count,omitempty" node:"count" task:"count" modes:"image"`
-	TransparentBackground *bool   `json:"transparentBackground,omitempty" node:"transparentBackground" task:"transparentBackground" modes:"image"`
-	DurationSeconds       *int    `json:"durationSeconds,omitempty" node:"seconds" task:"videoSeconds" modes:"video"`
-	Resolution            *string `json:"resolution,omitempty" node:"vquality" task:"vquality" modes:"video"`
-	GenerateAudio         *bool   `json:"generateAudio,omitempty" node:"generateAudio" task:"videoGenerateAudio" modes:"video"`
-	Watermark             *bool   `json:"watermark,omitempty" node:"watermark" task:"videoWatermark" modes:"video"`
-	AudioVoice            *string `json:"audioVoice,omitempty" node:"audioVoice" task:"audioVoice" modes:"audio"`
-	AudioFormat           *string `json:"audioFormat,omitempty" node:"audioFormat" task:"audioFormat" modes:"audio"`
-	AudioSpeed            *string `json:"audioSpeed,omitempty" node:"audioSpeed" task:"audioSpeed" modes:"audio"`
-	AudioLanguage         *string `json:"audioLanguage,omitempty" node:"audioLanguage" task:"audioLanguage" modes:"audio"`
-	AudioDialect          *string `json:"audioDialect,omitempty" node:"audioDialect" task:"audioDialect" modes:"audio"`
-	AudioInstructions     *string `json:"audioInstructions,omitempty" node:"audioInstructions" task:"audioInstructions" modes:"audio"`
+	ControlNet            *[]ControlNetBinding `json:"controlNet,omitempty" node:"controlNet" task:"controlNet" modes:"image"`
+	OutputMask            *OutputMaskBinding   `json:"outputMask,omitempty" node:"outputMask" task:"outputMask" modes:"image"`
+	Size                  *string              `json:"size,omitempty" node:"size" task:"size" modes:"image,video"`
+	Quality               *string              `json:"quality,omitempty" node:"quality" task:"quality" modes:"image"`
+	Count                 *int                 `json:"count,omitempty" node:"count" task:"count" modes:"image"`
+	TransparentBackground *bool                `json:"transparentBackground,omitempty" node:"transparentBackground" task:"transparentBackground" modes:"image"`
+	DurationSeconds       *int                 `json:"durationSeconds,omitempty" node:"seconds" task:"videoSeconds" modes:"video"`
+	Resolution            *string              `json:"resolution,omitempty" node:"vquality" task:"vquality" modes:"video"`
+	GenerateAudio         *bool                `json:"generateAudio,omitempty" node:"generateAudio" task:"videoGenerateAudio" modes:"video"`
+	Watermark             *bool                `json:"watermark,omitempty" node:"watermark" task:"videoWatermark" modes:"video"`
+	AudioVoice            *string              `json:"audioVoice,omitempty" node:"audioVoice" task:"audioVoice" modes:"audio"`
+	AudioFormat           *string              `json:"audioFormat,omitempty" node:"audioFormat" task:"audioFormat" modes:"audio"`
+	AudioSpeed            *string              `json:"audioSpeed,omitempty" node:"audioSpeed" task:"audioSpeed" modes:"audio"`
+	AudioLanguage         *string              `json:"audioLanguage,omitempty" node:"audioLanguage" task:"audioLanguage" modes:"audio"`
+	AudioDialect          *string              `json:"audioDialect,omitempty" node:"audioDialect" task:"audioDialect" modes:"audio"`
+	AudioInstructions     *string              `json:"audioInstructions,omitempty" node:"audioInstructions" task:"audioInstructions" modes:"audio"`
 }
 
 type ReferenceBinding struct {
@@ -54,7 +56,7 @@ type ReferenceBinding struct {
 	ResourceID  string `json:"resourceId,omitempty"`
 	TransientID string `json:"transientId,omitempty"`
 	MediaType   string `json:"mediaType" enum:"image,video,audio,text"`
-	Role        string `json:"role" enum:"reference,source-text,first-frame,last-frame,mask"`
+	Role        string `json:"role" enum:"reference,source-text,first-frame,last-frame,mask,control-image,control-mask,output-mask"`
 	Order       int    `json:"order"`
 	Resolution  string `json:"resolution" enum:"latest,snapshot"`
 }
@@ -144,17 +146,17 @@ func (s GenerationSpec) Validate() error {
 		if binding.MediaType != "image" && binding.MediaType != "video" && binding.MediaType != "audio" && binding.MediaType != "text" {
 			return invalid(path+".mediaType", "未知参考类型")
 		}
-		if binding.Role != "reference" && binding.Role != "source-text" && binding.Role != "first-frame" && binding.Role != "last-frame" && binding.Role != "mask" {
+		if binding.Role != "reference" && binding.Role != "source-text" && binding.Role != "first-frame" && binding.Role != "last-frame" && binding.Role != "mask" && binding.Role != "control-image" && binding.Role != "control-mask" && binding.Role != "output-mask" {
 			return invalid(path+".role", "未知参考角色")
 		}
 		if binding.Role == "source-text" && binding.MediaType != "text" {
 			return invalid(path+".role", "文本来源必须引用文本")
 		}
-		if (binding.Role == "first-frame" || binding.Role == "last-frame" || binding.Role == "mask") && binding.MediaType != "image" {
+		if (binding.Role == "first-frame" || binding.Role == "last-frame" || binding.Role == "mask" || binding.Role == "control-image" || binding.Role == "control-mask" || binding.Role == "output-mask") && binding.MediaType != "image" {
 			return invalid(path+".role", "帧和遮罩必须引用图片")
 		}
 	}
-	return nil
+	return s.validateControlBindings()
 }
 
 func Decode(data []byte) (GenerationSpec, error) {
@@ -205,6 +207,16 @@ func OptionsFromTaskConfig(mode string, config map[string]any) (Options, error) 
 				return options, invalid("options."+field.Tag.Get("task"), "必须是整数")
 			}
 			parsed.Elem().SetInt(int64(number))
+		default:
+			encoded, err := json.Marshal(raw)
+			if err != nil {
+				return options, invalid("options."+field.Tag.Get("task"), "结构参数无效")
+			}
+			decoder := json.NewDecoder(bytes.NewReader(encoded))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(parsed.Interface()); err != nil {
+				return options, invalid("options."+field.Tag.Get("task"), "结构参数无效")
+			}
 		}
 		value.Field(i).Set(parsed)
 	}
@@ -216,7 +228,12 @@ func (o Options) TaskConfig() map[string]any {
 	value, typ := reflect.ValueOf(o), reflect.TypeOf(o)
 	for i := 0; i < typ.NumField(); i++ {
 		if !value.Field(i).IsNil() {
-			result[typ.Field(i).Tag.Get("task")] = fmt.Sprint(value.Field(i).Elem().Interface())
+			v := value.Field(i).Elem()
+			if v.Kind() == reflect.Struct || v.Kind() == reflect.Slice {
+				result[typ.Field(i).Tag.Get("task")] = v.Interface()
+			} else {
+				result[typ.Field(i).Tag.Get("task")] = fmt.Sprint(v.Interface())
+			}
 		}
 	}
 	return result
@@ -243,7 +260,7 @@ func (s GenerationSpec) NodeMetadata() (map[string]any, error) {
 			continue
 		}
 		fieldValue := value.Field(i).Elem().Interface()
-		if typ.Field(i).Tag.Get("node") != "count" {
+		if typ.Field(i).Tag.Get("node") != "count" && value.Field(i).Elem().Kind() != reflect.Struct && value.Field(i).Elem().Kind() != reflect.Slice {
 			fieldValue = fmt.Sprint(fieldValue)
 		}
 		result[typ.Field(i).Tag.Get("node")] = fieldValue

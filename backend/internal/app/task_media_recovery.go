@@ -28,10 +28,11 @@ type mediaCheckpoint struct {
 }
 
 type mediaCheckpointItem struct {
-	Reference  protocol.MediaReference `json:"reference"`
-	TempName   string                  `json:"tempName,omitempty"`
-	MIMEType   string                  `json:"mimeType,omitempty"`
-	ResourceID string                  `json:"resourceId,omitempty"`
+	Reference         protocol.MediaReference `json:"reference"`
+	TempName          string                  `json:"tempName,omitempty"`
+	MIMEType          string                  `json:"mimeType,omitempty"`
+	ResourceID        string                  `json:"resourceId,omitempty"`
+	OutputMaskApplied bool                    `json:"outputMaskApplied,omitempty"`
 }
 
 type mediaRecoveryError struct {
@@ -57,6 +58,8 @@ func mediaStageLabel(stage string) string {
 		return "上传 OSS 失败"
 	case "local_save":
 		return "保存本地文件失败"
+	case "output_mask":
+		return "应用输出蒙版失败"
 	case "register":
 		return "登记作品失败"
 	default:
@@ -182,6 +185,14 @@ func (s *Service) materializeTaskMedia(ctx context.Context, task *model.Task, co
 	if _, err := s.mediaTaskProject(task); err != nil {
 		return nil, &mediaRecoveryError{stage: "register", cause: err}
 	}
+	outputMask, err := s.taskOutputMask(task)
+	if err != nil {
+		return nil, &mediaRecoveryError{stage: "output_mask", cause: err}
+	}
+	if outputMask != nil && checkpoint.Mode != "image" {
+		return nil, &mediaRecoveryError{stage: "output_mask", cause: errors.New("输出蒙版仅支持图片生成")}
+	}
+	var outputMaskData []byte
 	items := make([]interface{}, 0, len(checkpoint.Items))
 	for index := range checkpoint.Items {
 		item := &checkpoint.Items[index]
@@ -211,9 +222,36 @@ func (s *Service) materializeTaskMedia(ctx context.Context, task *model.Task, co
 					return nil, &mediaRecoveryError{stage: "download", retryable: retryableMediaRecovery(err), cause: err}
 				}
 				path = s.mediaTempPath(item.TempName)
+				item.OutputMaskApplied = false
 				if err := s.saveMediaCheckpoint(task, checkpoint, "download"); err != nil {
 					return nil, err
 				}
+			}
+			if outputMask != nil && !item.OutputMaskApplied {
+				if err := s.saveMediaCheckpoint(task, checkpoint, "output_mask"); err != nil {
+					return nil, err
+				}
+				if outputMaskData == nil {
+					outputMaskData, err = s.readOutputMask(task.UserID, outputMask)
+					if err != nil {
+						return nil, &mediaRecoveryError{stage: "output_mask", cause: err}
+					}
+				}
+				maskedName, err := s.stageOutputMaskedImage(ctx, path, outputMaskData, outputMask.Mode, outputMask.ResizeMode)
+				if err != nil {
+					return nil, &mediaRecoveryError{stage: "output_mask", cause: err}
+				}
+				previous := *item
+				item.TempName, item.MIMEType, item.OutputMaskApplied = maskedName, "image/png", true
+				// The original remains intact until the new PNG and its marker
+				// are durable together. Restores never multiply a feather twice.
+				if err := s.saveMediaCheckpoint(task, checkpoint, "output_mask"); err != nil {
+					*item = previous
+					_ = os.Remove(s.mediaTempPath(maskedName))
+					return nil, err
+				}
+				_ = os.Remove(path)
+				path = s.mediaTempPath(maskedName)
 			}
 			stage := "local_save"
 			_, _, oss, settingErr := s.activeResourceOSSSetting(task.UserID)

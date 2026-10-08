@@ -27,6 +27,17 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		MaxOutputs:            15,
 	}
 	switch model.ChannelInterfaceType(protocol) {
+	case "liblib-image":
+		image.ControlNet = defaultLiblibControlNetCapability()
+		image.References.MaxImages = 1
+		image.References.MaxImageBytes = 10 << 20
+		image.References.MaskSupported = false
+		image.Size = ImageSizeConfig{Parameter: "size", Values: []string{"1024x1024", "1344x768", "768x1344"}, Default: "1024x1024", AllowCustom: true}
+		image.Quality = ImageQualityConfig{Supported: false, Default: "auto"}
+		image.TransparentBackground.Supported = false
+		image.ResponseFormat.Supported = false
+		image.OutputFormat.Supported = false
+		image.MaxOutputs = 4
 	case model.ChannelInterfaceGrokImage:
 		image.References.MaxImages = 1
 		image.References.MaskSupported = false

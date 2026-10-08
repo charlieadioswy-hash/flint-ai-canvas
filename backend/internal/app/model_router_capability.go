@@ -74,6 +74,9 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 	if mask, exists := input["mask"]; exists && mask != nil {
 		intent.Inputs["mask"] = 1
 	}
+	if controls, ok := input["controlNet"].([]any); ok && len(controls) > 0 {
+		intent.Inputs["control_image"] = len(controls)
+	}
 	explicitOptions := false
 	if options, ok := input["capabilityOptions"].(map[string]any); ok {
 		explicitOptions = true

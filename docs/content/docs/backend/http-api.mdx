@@ -5,6 +5,14 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 结构控制图片任务
+
+图片生成复用 `POST /tasks` 和现有任务查询、恢复接口。任务 `input` 新增可选顶层 `controlNet[]`（`id`、`image`、可选 `mask`、`parameters`）和 `outputMask`（`image`、`mode`、`resizeMode`）。控制图不进入 `referenceImages`；控制影响蒙版与现有局部重绘 `mask` 互相独立。`outputMask.mode` 为 `luminance|non-black`，`resizeMode` 为 `stretch`，最终保存黑底 PNG。
+
+这些图片先通过资源 API 保存，再以 `storageKey: "resource:<id>"` 提交。服务端入队前校验归属和真实图片字节、尺寸、参数、渠道能力及 Liblib 必需配置；不能用 URL 或客户端声明的尺寸替代。恢复原任务使用保存的输入快照；新生成使用当前画布配置。
+
+模型能力 `image.controlNet` 声明 `supported`、`maxUnits`、`preprocessors` 和可选 `models`。Liblib 专有参数保存在 `metadata.providerOptions["liblib-image"]`；AK/SK 由受管渠道保存，浏览器不拼装供应商签名。字段范围和平台扩展规则见[结构控制与 Liblib](/docs/backend/controlnet)。
+
 ## 注册邮箱等价检查
 
 公开注册与邮箱绑定的唯一性检查将 `gmail.com` 和 `googlemail.com` 视为同一域，移除本地部分的点及 `+` 后缀。例如 `a.b+x@googlemail.com` 与 `ab@gmail.com` 不允许创建两个账号。其他域保留点和 `+`；现有域名白名单规则保持不变。

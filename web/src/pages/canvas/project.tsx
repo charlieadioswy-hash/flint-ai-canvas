@@ -2173,6 +2173,7 @@ function InfiniteCanvasPage() {
                 <CanvasNodePromptPanel
                     projectId={projectId}
                     node={panelNode}
+                    controlSourceNodes={nodeGraphContext.getUpstreamNodes?.(panelNode.id)}
                     isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
                     mentionReferences={[
                         ...(mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES),
@@ -2467,7 +2468,7 @@ function InfiniteCanvasPage() {
         isProjectLinked: Boolean(shortDramaEnabled && currentProject?.projectId),
         handlers: {
             onAddText: () => createNode(CanvasNodeType.Text),
-            onAddImage: () => createNode(CanvasNodeType.Image),
+            onAddImage: (metadata) => createNode(CanvasNodeType.Image, undefined, undefined, metadata),
             onAddVideo: () => createNode(CanvasNodeType.Video),
             onAddAudio: () => createNode(CanvasNodeType.Audio),
             onAddScript: () => createNode(CanvasNodeType.Script),
@@ -2776,7 +2777,7 @@ function InfiniteCanvasPage() {
                                         appearance={canvasAppearance}
                                         backgroundMode={backgroundMode}
                                         showImageInfo={showImageInfo}
-                                        onAddImage={() => createNode(CanvasNodeType.Image)}
+                                        onAddImage={(metadata) => createNode(CanvasNodeType.Image, undefined, undefined, metadata)}
                                         onAddVideo={() => createNode(CanvasNodeType.Video)}
                                         onAddAudio={() => createNode(CanvasNodeType.Audio)}
                                         onAddText={() => createNode(CanvasNodeType.Text)}
@@ -3058,7 +3059,7 @@ function InfiniteCanvasPage() {
                             selectedCount={selectedNodeIds.size}
                             screenToCanvas={screenToCanvas}
                             onClose={() => setContextMenu(null)}
-                            onAddNode={(type, position) => createNode(type, position)}
+                            onAddNode={(type, position, metadata) => createNode(type, position, undefined, metadata)}
                             onAddFolder={createFolder}
                             onChooseStyle={() => setStylePickerOpen(true)}
                             onOpenPrevis={(position) => setPrevisTemplateRequest({ position })}

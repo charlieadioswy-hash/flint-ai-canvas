@@ -3,6 +3,7 @@ import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import { GENERATION_CONTRACT_VERSION, GENERATION_LIMITS, GENERATION_OPTION_FIELDS, type GenerationSpec, type ModelSelection, type Options, type ReferenceBinding } from "./generation-contract.generated";
 
 export type { GenerationSpec, ModelSelection, ReferenceBinding } from "./generation-contract.generated";
+import { validateControlNetBindings, validateOutputMaskBinding } from "./controlnet";
 
 export function canvasGenerationMode(mode: string): GenerationSpec["mode"] | undefined {
     return mode === "image" || mode === "video" || mode === "audio" ? mode : undefined;
@@ -23,6 +24,8 @@ function allowKeys(value: Record<string, unknown>, keys: string[], path: string)
 }
 
 function optionValue(value: unknown, kind: string, path: string) {
+    if (kind === "ControlNetBinding[]") return validateControlNetBindings(value);
+    if (kind === "OutputMaskBinding") return validateOutputMaskBinding(value);
     if (kind === "boolean") {
         if (value === true || value === "true") return true;
         if (value === false || value === "false") return false;
@@ -61,7 +64,7 @@ export function validateGenerationSpec(value: unknown): GenerationSpec {
         const current = rawOptions[field.name];
         if (current === undefined) continue;
         if (!(field.modes as readonly string[]).includes(mode)) fieldError(`options.${field.name}`, "不适用于当前模式");
-        if (typeof current !== field.kind) fieldError(`options.${field.name}`, "合同类型不正确");
+        if (field.kind !== "ControlNetBinding[]" && field.kind !== "OutputMaskBinding" && typeof current !== field.kind) fieldError(`options.${field.name}`, "合同类型不正确");
         options[field.name] = optionValue(current, field.kind, `options.${field.name}`);
     }
     if (typeof options.durationSeconds === "number" && options.durationSeconds < 0) fieldError("options.durationSeconds", "不能为负数");
@@ -78,13 +81,18 @@ export function validateGenerationSpec(value: unknown): GenerationSpec {
         if (!ref.nodeId && !ref.resourceId && !ref.transientId) fieldError("referenceBindings", "缺少引用来源");
         if (ref.transientId && (ref.nodeId || ref.resourceId)) fieldError("referenceBindings", "临时引用不能混用其他来源");
         if (!["image", "video", "audio", "text"].includes(String(ref.mediaType))) fieldError("referenceBindings.mediaType", "未知参考类型");
-        if (!["reference", "source-text", "first-frame", "last-frame", "mask"].includes(String(ref.role))) fieldError("referenceBindings.role", "未知参考角色");
+        if (!["reference", "source-text", "first-frame", "last-frame", "mask", "control-image", "control-mask", "output-mask"].includes(String(ref.role))) fieldError("referenceBindings.role", "未知参考角色");
         if (ref.role === "source-text" && ref.mediaType !== "text") fieldError("referenceBindings.role", "文本来源必须引用文本");
-        if (["first-frame", "last-frame", "mask"].includes(String(ref.role)) && ref.mediaType !== "image") fieldError("referenceBindings.role", "帧和遮罩必须引用图片");
+        if (["first-frame", "last-frame", "mask", "control-image", "control-mask", "output-mask"].includes(String(ref.role)) && ref.mediaType !== "image") fieldError("referenceBindings.role", "帧和遮罩必须引用图片");
         if (ref.resolution !== "latest" && ref.resolution !== "snapshot") fieldError("referenceBindings.resolution", "未知解析策略");
         ids.add(ref.id); orders.add(ref.order);
         return ref as unknown as ReferenceBinding;
     });
+    const requireRole = (id: string | undefined, role: ReferenceBinding["role"]) => {
+        if (id && !referenceBindings.some((binding) => binding.id === id && binding.role === role)) fieldError("referenceBindings", "控制图或蒙版缺少匹配的资源绑定");
+    };
+    for (const unit of (options.controlNet || []) as NonNullable<GenerationSpec["options"]["controlNet"]>) { requireRole(unit.imageBindingId, "control-image"); requireRole(unit.maskBindingId, "control-mask"); }
+    if (options.outputMask) requireRole((options.outputMask as NonNullable<GenerationSpec["options"]["outputMask"]>).bindingId, "output-mask");
     return { version: GENERATION_CONTRACT_VERSION, mode, prompt: raw.prompt, options, modelSelection, referenceBindings, textInputMode: raw.textInputMode } as GenerationSpec;
 }
 
@@ -178,7 +186,7 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
     for (const field of GENERATION_OPTION_FIELDS) {
         if (!(field.modes as readonly string[]).includes(spec.mode)) continue;
         const value = spec.options[field.name as keyof Options];
-        result[field.node] = value === undefined ? undefined : field.node === "count" ? value : String(value);
+        result[field.node] = value === undefined ? undefined : field.node === "count" || field.kind === "ControlNetBinding[]" || field.kind === "OutputMaskBinding" ? value : String(value);
     }
     if (spec.modelSelection?.kind === "channel") result.model = encodeChannelModel(spec.modelSelection.channelId, spec.modelSelection.modelKey);
     return result as CanvasNodeMetadata;
@@ -187,6 +195,7 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
 export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<CanvasNodeMetadata> = {}): CanvasNodeData {
     const metadata = { ...node.metadata, ...patch };
     if (!canvasGenerationMode(node.type)) return { ...node, metadata };
+    if (patch.generationSpec) return { ...node, metadata: { ...metadata, ...generationSpecMetadata(validateGenerationSpec(patch.generationSpec)) } };
     const current = readNodeGenerationSpec(node);
     if (!current) return { ...node, metadata };
     const next: GenerationSpec = { ...current, options: { ...current.options } };

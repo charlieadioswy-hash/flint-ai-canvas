@@ -146,11 +146,15 @@ func (c *pluginRuntime) bootstrapBuiltInPlugins() error {
 			return fmt.Errorf("校验官方插件包 %s：%w", entry.Name(), err)
 		}
 		packageData, pkg := official.data, official.info
-		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") {
+		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") && !protocol.IsLiblibHostManifest(pkg.Manifest) {
 			return fmt.Errorf("官方插件 %q 不能依赖 host 执行器", pkg.Manifest.Metadata.ID)
 		}
 		if len(pkg.Manifest.Contributes.PaymentProviders) == 0 {
-			if _, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil); err != nil {
+			var resolver protocol.AdapterResolver
+			if protocol.IsLiblibHostManifest(pkg.Manifest) {
+				resolver = protocol.Builtins().Get
+			}
+			if _, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, resolver); err != nil {
 				return fmt.Errorf("加载官方插件 %q：%w", pkg.Manifest.Metadata.ID, err)
 			}
 		}
@@ -412,7 +416,11 @@ func (c *pluginRuntime) reload() error {
 			plugins[id] = record
 			continue
 		}
-		adapters, loadErr := protocol.LoadInstalledProviders(record.Raw, nil)
+		var resolver protocol.AdapterResolver
+		if isBuiltInPluginSource(record.Source) && protocol.IsLiblibHostManifest(manifest) {
+			resolver = protocol.Builtins().Get
+		}
+		adapters, loadErr := protocol.LoadInstalledProviders(record.Raw, resolver)
 		if loadErr != nil {
 			record.Metadata.Enabled = false
 			record.Metadata.UnavailableReason = loadErr.Error()

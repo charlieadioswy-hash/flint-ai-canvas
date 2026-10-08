@@ -3,6 +3,8 @@ import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
+import { resolveCanvasControlNetInputs } from "@/lib/canvas/controlnet";
+import { retryStructureControlTask, taskHasStructureControl } from "@/services/controlnet-task-retry";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildEmotionImageArtifacts, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
@@ -104,6 +106,16 @@ export function useCanvasGenerationRetry({
                 } finally {
                     finishGenerationRequest(node.id, controller);
                 }
+                return;
+            }
+            if (sourceTask && taskHasStructureControl(sourceTask)) {
+                const controller = startGenerationRequest(node.id, node.id, node.id);
+                try {
+                    const completed = await retryStructureControlTask(sourceTask, { signal: controller.signal, onTaskUpdate: (task) => bindGenerationTask(node.id, task) });
+                    await applyGenerationTaskResult(node.id, completed);
+                } catch (error) {
+                    if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "原结构控制任务重试失败");
+                } finally { finishGenerationRequest(node.id, controller); }
                 return;
             }
             const retryMode = retryModeForNode(node.type);
@@ -417,6 +429,7 @@ export function useCanvasGenerationRetry({
                     prompt: mediaPrompt,
                     config: generationConfig,
                     referenceImages: useReferenceImages ? retryImages : [],
+                    ...resolveCanvasControlNetInputs(sourceNode, nodesRef.current),
                     signal: controller.signal,
                     metadata: {
                         retry: true,
@@ -424,6 +437,7 @@ export function useCanvasGenerationRetry({
                         resolvedCharacterVersions: context?.resolvedCharacterVersions || [],
                         promptTemplateOperation: node.metadata?.promptTemplateOperation,
                         promptTemplateVariables: node.metadata?.promptTemplateVariables,
+                        providerOptions: sourceNode.metadata?.providerOptions,
                         ...styleMetadata,
                         ...skillMetadata,
                     },

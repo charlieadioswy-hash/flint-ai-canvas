@@ -5,6 +5,12 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
+## 结构控制图片合同
+
+ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。画布节点 `GenerationSpec.options` 保存控制单元及输出蒙版绑定；模型能力 JSON 新增 `image.controlNet`。任务 `input_json` 保存已校验的顶层 `controlNet`、`outputMask`、资源引用及平台参数；资源引用继续参与归属和删除检查。
+
+结果保存的加密 `media_recovery_json` 每项新增 `outputMaskApplied`。合成文件和标志作为同一个检查点保存，恢复时不重复乘灰度蒙版；需要重新下载原始输出时清除此标志并重新合成。第三方上传凭证只用于即时媒体上传，不进入公开任务结果。详见[结构控制与 Liblib](/docs/backend/controlnet)。
+
 ## 分片上传预留
 
 标准迁移 48 新增 `upload_reservations`：`id`、`user_id`、`size`、`day`、`expires_at`；已采用上游迁移 45 的数据库保留原记录，升级规则见下文。创建会话时在数据库事务内检查并行会话数、现有资源容量、未到期预留和每日上传用量，更新既有 `user_daily_upload_usages` 后插入预留。SQLite 先取得写锁，PostgreSQL 使用账号级事务 advisory lock。

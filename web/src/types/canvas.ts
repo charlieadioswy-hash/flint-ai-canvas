@@ -6,7 +6,7 @@ import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
 import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
-import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
+import type { ControlNetBinding, GenerationSpec, OutputMaskBinding } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasImageModerationState, CanvasSharedImageModerationState } from "@/lib/canvas/image-moderation";
 import type { CanvasModel3DState } from "@/lib/canvas/model3d";
@@ -227,6 +227,10 @@ export type CanvasSkillSnapshot = {
 export type CanvasNodeMetadata = {
     /** Credential-free editable generation contract; submitted recipes live with tasks. */
     generationSpec?: GenerationSpec;
+    structureControl?: boolean;
+    controlNet?: ControlNetBinding[];
+    outputMask?: OutputMaskBinding;
+    providerOptions?: Record<string, Record<string, unknown>>;
     /** Namespaced extension ownership for nodes contributed by a unified plugin. */
     pluginId?: string;
     pluginNodeId?: string;

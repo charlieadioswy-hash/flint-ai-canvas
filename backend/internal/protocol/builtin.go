@@ -80,7 +80,7 @@ func Builtins() *Registry {
 	registry, err := NewRegistry(
 		openAIChatAdapter(), openAIResponsesAdapter(), claudeAdapter(),
 		openAIVideosAdapter(), newAPIChannel1Adapter(), newAPIVideosAdapter(), xAIVideosAdapter(), arkVideosAdapter(), jimengVideosAdapter(), geminiVeoAdapter(), novitaVideosAdapter(), miniMaxVideosAdapter(),
-		agnesAdapter(),
+		agnesAdapter(), liblibImageAdapter(),
 	)
 	if err != nil {
 		panic(err)

@@ -1,5 +1,5 @@
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position } from "@/types/canvas";
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
 
@@ -14,7 +14,7 @@ type CanvasProjectContextMenuProps = {
     selectedCount: number;
     screenToCanvas: (clientX: number, clientY: number) => Position;
     onClose: () => void;
-    onAddNode: (type: CanvasNodeTypeId, position: Position) => void;
+    onAddNode: (type: CanvasNodeTypeId, position: Position, metadata?: Partial<CanvasNodeMetadata>) => void;
     onAddFolder: (position: Position) => void;
     onChooseStyle: () => void;
     onOpenPrevis: (position?: Position) => void;
@@ -59,8 +59,8 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             canPaste={props.canPaste}
             selectedCount={props.selectedCount}
             onClose={props.onClose}
-            onAddNode={(type) => {
-                if (menu.type === "canvas") props.onAddNode(type, menu.position);
+            onAddNode={(type, metadata) => {
+                if (menu.type === "canvas") props.onAddNode(type, menu.position, metadata);
             }}
             onAddFolder={() => {
                 if (menu.type === "canvas") props.onAddFolder(menu.position);

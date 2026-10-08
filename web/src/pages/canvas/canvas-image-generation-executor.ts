@@ -8,6 +8,8 @@ import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { canvasImageReferenceLimitError, buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { imageGenerationReferenceConnections } from "@/lib/canvas/canvas-resource-references";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
+import { isStructureControlNode, nodeControlNet, nodeOutputMask, resolveCanvasControlNetInputs } from "@/lib/canvas/controlnet";
+import { generationSpecMetadata, readNodeGenerationSpec, specFromConfig } from "@/lib/canvas/generation-contract";
 import { commitProducedModel } from "@/lib/canvas/produced-model";
 import { CONTENT_MODERATION_ERROR_CODE, generationFailureMetadata, type GenerationFailureMetadata } from "@/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -47,6 +49,9 @@ export async function executeImageGeneration({
     showError,
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
+    let structureInputs: ReturnType<typeof resolveCanvasControlNetInputs>;
+    try { structureInputs = resolveCanvasControlNetInputs(sourceNode, canvasNodes); }
+    catch (error) { showError(error instanceof Error ? error.message : "结构控制配置无效"); return; }
     const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
     if (referenceLimitError) {
         showError(referenceLimitError);
@@ -64,6 +69,11 @@ export async function executeImageGeneration({
     const referenceImages = generationContext.referenceImages;
     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+    const sourceSpec = sourceNode ? readNodeGenerationSpec(sourceNode) : undefined;
+    const outputSpec = specFromConfig("image", prompt, generationConfig);
+    const structureMetadata = sourceSpec && (structureInputs.controlNet.length || structureInputs.outputMask)
+        ? { ...generationSpecMetadata({ ...outputSpec, options: { ...outputSpec.options, controlNet: nodeControlNet(sourceNode), outputMask: nodeOutputMask(sourceNode) }, referenceBindings: sourceSpec.referenceBindings }), structureControl: isStructureControlNode(sourceNode) }
+        : {};
     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
     const imageDefaults = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     // 生成中占位框按设置比例显示，避免 16:9 任务显示成默认 340x240。
@@ -109,6 +119,8 @@ export async function executeImageGeneration({
             storageKey: undefined,
             assetId: undefined,
             ...generationMetadata,
+            ...structureMetadata,
+            providerOptions: sourceNode?.metadata?.providerOptions ? structuredClone(sourceNode.metadata.providerOptions) : undefined,
             ...styleMetadata,
             ...skillMetadata,
             imageBatchExpanded: count > 1 ? true : undefined,
@@ -130,6 +142,8 @@ export async function executeImageGeneration({
             size: generationConfig.size,
             batchRootId: rootId,
             ...generationMetadata,
+            ...structuredClone(structureMetadata),
+            providerOptions: sourceNode?.metadata?.providerOptions ? structuredClone(sourceNode.metadata.providerOptions) : undefined,
             ...styleMetadata,
             ...skillMetadata,
             generationErrorCode: undefined,
@@ -194,6 +208,7 @@ export async function executeImageGeneration({
                         prompt: effectivePrompt,
                         config: { ...generationConfig, count: "1" },
                         referenceImages,
+                        ...structureInputs,
                         signal: controller.signal,
                         metadata: {
                             sourceNodeId: nodeId,
@@ -201,6 +216,7 @@ export async function executeImageGeneration({
                             resolvedCharacterVersions: generationContext.resolvedCharacterVersions,
                             promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation,
                             promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables,
+                            providerOptions: sourceNode?.metadata?.providerOptions,
                             ...styleMetadata,
                             ...skillMetadata,
                         },

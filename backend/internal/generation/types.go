@@ -18,6 +18,8 @@ type Input struct {
 	ReferenceAudios []Media                `json:"referenceAudios"`
 	TextHistory     []TextMessage          `json:"textHistory"`
 	Mask            *Media                 `json:"mask"`
+	ControlNet      []ControlNetUnit       `json:"controlNet,omitempty"`
+	OutputMask      *OutputMask            `json:"outputMask,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata"`
 	AgentRequests   *AgentToolRequests     `json:"agentRequests"`
 	TextOptions     TextOptions            `json:"textOptions"`
@@ -165,13 +167,14 @@ type TextReferenceConfig struct {
 }
 
 type ImageCapabilityConfig struct {
-	References            ImageReferenceConfig `json:"references"`
-	Size                  ImageSizeConfig      `json:"size"`
-	Quality               ImageQualityConfig   `json:"quality"`
-	TransparentBackground VideoBooleanConfig   `json:"transparentBackground"`
-	ResponseFormat        ParameterSupport     `json:"responseFormat"`
-	OutputFormat          ParameterSupport     `json:"outputFormat"`
-	MaxOutputs            int                  `json:"maxOutputs"`
+	ControlNet            *ControlNetCapability `json:"controlNet,omitempty"`
+	References            ImageReferenceConfig  `json:"references"`
+	Size                  ImageSizeConfig       `json:"size"`
+	Quality               ImageQualityConfig    `json:"quality"`
+	TransparentBackground VideoBooleanConfig    `json:"transparentBackground"`
+	ResponseFormat        ParameterSupport      `json:"responseFormat"`
+	OutputFormat          ParameterSupport      `json:"outputFormat"`
+	MaxOutputs            int                   `json:"maxOutputs"`
 }
 
 type ImageReferenceConfig struct {

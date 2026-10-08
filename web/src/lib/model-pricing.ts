@@ -103,6 +103,7 @@ export function modelQuoteRequest(config: AiConfig, value: string, capability?: 
             image: (input?.imageCount || 0) + (input?.characterCount || 0),
             video: input?.videoCount || 0,
             audio: input?.audioCount || 0,
+            ...(requirements?.controlNetUnits ? { control_image: requirements.controlNetUnits } : {}),
         },
         options: {
             ...modelRequestOptions(config, capability),

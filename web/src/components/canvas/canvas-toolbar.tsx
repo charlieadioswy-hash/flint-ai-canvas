@@ -16,7 +16,7 @@ import type { CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { canvasThemes, type CanvasBackgroundMode, type CanvasTheme } from "@/lib/canvas-theme";
 import { defaultToolbarPrefs, readToolbarPrefs, resolveToolbarEntries, type ToolContext, type ToolbarHandlers, type ToolbarPrefs } from "@/lib/canvas/tool-registry";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import type { CanvasNodeTypeId, CanvasToolMode, CanvasWorkspaceMode } from "@/types/canvas";
+import type { CanvasNodeMetadata, CanvasNodeTypeId, CanvasToolMode, CanvasWorkspaceMode } from "@/types/canvas";
 
 export function CanvasToolbar({
     selectedCount,
@@ -65,7 +65,7 @@ export function CanvasToolbar({
     appearance: CanvasAppearance;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
-    onAddImage: () => void;
+    onAddImage: (metadata?: Partial<CanvasNodeMetadata>) => void;
     onAddVideo: () => void;
     onAddAudio: () => void;
     onAddText: () => void;

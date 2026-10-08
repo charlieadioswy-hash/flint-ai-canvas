@@ -13,6 +13,7 @@
     "newapi-channel-2",
     "system-update",
     "protocol-plugins",
+    "controlnet",
     "canvas-data-structure"
   ]
 }

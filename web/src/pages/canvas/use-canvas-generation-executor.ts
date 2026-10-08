@@ -3,6 +3,7 @@ import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
+import { isStructureControlNode, nodeControlNet, resolveCanvasControlNetInputs } from "@/lib/canvas/controlnet";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildGenerationConfig, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
 import { canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
@@ -151,6 +152,7 @@ export function useCanvasGenerationExecutor({
                     // 普通视频协议只保留输入框文本（显式 @文本 引用仍会展开为真实内容）；声明式工作流还要保留连接媒体。
                     const promptOnly = mode === "video" && !usesWorkflowProvider;
                     try {
+                        if (mode === "image") resolveCanvasControlNetInputs(sourceNode, nodesRef.current);
                         const baseContext = buildNodeGenerationContext(
                             nodeId,
                             nodesRef.current,
@@ -224,7 +226,7 @@ export function useCanvasGenerationExecutor({
                         mode,
                         prompt: effectivePrompt,
                         model: generationConfig.model,
-                        options: modelRequestOptions(generationConfig, mode),
+                        options: { ...modelRequestOptions(generationConfig, mode), ...(mode === "image" ? { ...resolveCanvasControlNetInputs(sourceNode, nodesRef.current), providerOptions: sourceNode?.metadata?.providerOptions } : {}) },
                         workflow:
                             generationConfig.taskWorkflowProvider && generationConfig.taskWorkflowProvider !== "model"
                                 ? {
@@ -412,6 +414,7 @@ function generationModelRequirements(
 ): ModelRequirements {
     return {
         capability: mode,
+        controlNetUnits: mode === "image" && isStructureControlNode(sourceNode) ? Math.max(1, nodeControlNet(sourceNode).length) : undefined,
         input: {
             textCount: input.textCount,
             imageCount: input.imageCount,

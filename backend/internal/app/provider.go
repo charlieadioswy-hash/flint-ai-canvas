@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
@@ -19,23 +20,25 @@ import (
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
 
 type canvasGenerationInput struct {
-	Mode             string                 `json:"mode"`
-	Prompt           string                 `json:"prompt"`
-	Config           providerConfig         `json:"config"`
-	ReferenceImages  []providerMedia        `json:"referenceImages"`
-	ReferenceVideos  []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios  []providerMedia        `json:"referenceAudios"`
-	TextHistory      []providerTextMessage  `json:"textHistory"`
-	Mask             *providerMedia         `json:"mask"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	AgentRequests    *agentToolRequests     `json:"agentRequests"`
-	TextOptions      canvasTextOptions      `json:"textOptions"`
-	ImageCapability  *ImageCapabilityConfig `json:"-"`
-	StreamText       bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
-	MaxOutputTokens  int                    `json:"-"`
-	OnTextDelta      func(string)           `json:"-"`
-	OnReasoningDelta func(string)           `json:"-"`
-	VideoCapability  *VideoCapabilityConfig `json:"-"`
+	Mode             string                      `json:"mode"`
+	Prompt           string                      `json:"prompt"`
+	Config           providerConfig              `json:"config"`
+	ReferenceImages  []providerMedia             `json:"referenceImages"`
+	ReferenceVideos  []providerMedia             `json:"referenceVideos"`
+	ReferenceAudios  []providerMedia             `json:"referenceAudios"`
+	TextHistory      []providerTextMessage       `json:"textHistory"`
+	Mask             *providerMedia              `json:"mask"`
+	ControlNet       []generation.ControlNetUnit `json:"controlNet,omitempty"`
+	OutputMask       *generation.OutputMask      `json:"outputMask,omitempty"`
+	Metadata         map[string]interface{}      `json:"metadata"`
+	AgentRequests    *agentToolRequests          `json:"agentRequests"`
+	TextOptions      canvasTextOptions           `json:"textOptions"`
+	ImageCapability  *ImageCapabilityConfig      `json:"-"`
+	StreamText       bool                        `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
+	MaxOutputTokens  int                         `json:"-"`
+	OnTextDelta      func(string)                `json:"-"`
+	OnReasoningDelta func(string)                `json:"-"`
+	VideoCapability  *VideoCapabilityConfig      `json:"-"`
 }
 
 type canvasTextOptions struct {
@@ -162,6 +165,9 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	input.Config = config
+	if err := validateControlledImageExecutor(ctx, input); err != nil {
+		return nil, err
+	}
 	if input.Mode == "text" && input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {
 		// The same capability contract drives provider output limits, billing
 		// estimates and Agent context budgeting. Never silently fall back to a

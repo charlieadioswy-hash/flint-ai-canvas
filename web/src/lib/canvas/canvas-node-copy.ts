@@ -79,6 +79,13 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         .filter((nodeId): nodeId is string => Boolean(nodeId));
     metadata.videoStartFrameNodeId = remapReferenceId(node.metadata?.videoStartFrameNodeId, idMap);
     metadata.videoEndFrameNodeId = remapReferenceId(node.metadata?.videoEndFrameNodeId, idMap);
+    if (node.metadata?.generationSpec) {
+        metadata.generationSpec = structuredClone(node.metadata.generationSpec);
+        metadata.generationSpec.referenceBindings = metadata.generationSpec.referenceBindings.map((binding) => ({ ...binding, ...(binding.nodeId ? { nodeId: remapReferenceId(binding.nodeId, idMap) } : {}) }));
+    }
+    metadata.controlNet = node.metadata?.controlNet ? structuredClone(node.metadata.controlNet) : undefined;
+    metadata.outputMask = node.metadata?.outputMask ? { ...node.metadata.outputMask } : undefined;
+    metadata.providerOptions = node.metadata?.providerOptions ? structuredClone(node.metadata.providerOptions) : undefined;
     metadata.previsPreviewNodeId = remapOwnedNodeId(node.metadata?.previsPreviewNodeId, idMap);
     metadata.previsDepthNodeId = remapOwnedNodeId(node.metadata?.previsDepthNodeId, idMap);
     metadata.previsNormalNodeId = remapOwnedNodeId(node.metadata?.previsNormalNodeId, idMap);

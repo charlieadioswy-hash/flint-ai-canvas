@@ -381,12 +381,12 @@ export default function ChannelsPage() {
                         name="apiKey"
                         label={editingChannel ? `API Key / Access Key（${configuredSecretText}）` : "API Key / Access Key"}
                         rules={editingChannel ? [] : [{ required: true, message: "请填写 API Key 或 Access Key" }]}
-                        extra="OpenAI 兼容协议填写 API Key；即梦官方协议填写 IAM Access Key。"
+                        extra="OpenAI 兼容协议填写 API Key；Liblib、即梦等签名协议填写 Access Key。"
                     >
                         <Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原凭证" : "API Key 或 Access Key"} />
                     </Form.Item>
-                    <Form.Item name="secretKey" label={editingChannel ? `Secret Key（${channelSecretText(editingChannel)}）` : "Secret Key（可选）"} extra="仅即梦官方等 AK/SK 签名协议需要；其他渠道留空。">
-                        <Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原 Secret Key" : "IAM Secret Key"} />
+                    <Form.Item name="secretKey" label={editingChannel ? `Secret Key（${channelSecretText(editingChannel)}）` : "Secret Key（可选）"} extra="Liblib、即梦等 AK/SK 签名协议需要；其他渠道留空。">
+                        <Input.Password autoComplete="new-password" placeholder={editingChannel ? "留空保留原 Secret Key" : "Secret Key"} />
                     </Form.Item>
                     <div className="mb-6">
                         <Form.Item name="headers" noStyle>

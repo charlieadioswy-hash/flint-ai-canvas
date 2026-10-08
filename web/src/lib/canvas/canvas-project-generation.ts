@@ -19,6 +19,7 @@ import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, typ
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { generationSpecMetadata, readNodeGenerationSpec, resolveGenerationSelection } from "@/lib/canvas/generation-contract";
+import type { ControlNetInput, OutputMaskInput } from "@/lib/canvas/controlnet";
 
 export async function runBackendCanvasGenerationTask(
     {
@@ -31,6 +32,8 @@ export async function runBackendCanvasGenerationTask(
         referenceVideos = [],
         referenceAudios = [],
         mask,
+        controlNet,
+        outputMask,
         signal,
         metadata,
         onTaskCreated,
@@ -47,6 +50,8 @@ export async function runBackendCanvasGenerationTask(
         referenceVideos?: ReferenceVideo[];
         referenceAudios?: ReferenceAudio[];
         mask?: ReferenceImage;
+        controlNet?: ControlNetInput[];
+        outputMask?: OutputMaskInput;
         signal?: AbortSignal;
         metadata?: Record<string, unknown>;
         onTaskCreated?: (task: GenerationTask) => void;
@@ -67,6 +72,8 @@ export async function runBackendCanvasGenerationTask(
             referenceVideos,
             referenceAudios,
             mask,
+            controlNet,
+            outputMask,
             signal,
             metadata: { nodeId, ...(mode === "video" && !metadata?.videoEditOperation ? { videoEditOperation: "image_to_video" } : {}), ...metadata },
             onTaskUpdate: onTaskCreated,

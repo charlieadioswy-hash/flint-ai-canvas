@@ -12,7 +12,7 @@ import { isCanvasFolderNode } from "@/lib/canvas/canvas-frame";
 import { resolveAddNodeMenuCommands, type AddNodeMenuContext } from "@/lib/canvas/tool-registry";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { usePluginStore } from "@/stores/use-plugin-store";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type CanvasWorkspaceMode, type ContextMenuState, type Position } from "@/types/canvas";
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
 
@@ -28,7 +28,7 @@ type CanvasNodeContextMenuProps = {
     canPaste: boolean;
     selectedCount?: number;
     onClose: () => void;
-    onAddNode: (type: CanvasNodeTypeId) => void;
+    onAddNode: (type: CanvasNodeTypeId, metadata?: Partial<CanvasNodeMetadata>) => void;
     onAddFolder: () => void;
     onChooseStyle: () => void;
     onOpenPrevis: (position: Position) => void;
@@ -270,7 +270,7 @@ export function CanvasNodeContextMenu({
                         parentPosition={position}
                         workspaceMode={workspaceMode}
                         isProjectLinked={isProjectLinked}
-                        onAddNode={(type) => runAction(() => onAddNode(type))}
+                        onAddNode={(type, metadata) => runAction(() => onAddNode(type, metadata))}
                         onAddFolder={() => runAction(onAddFolder)}
                         onChooseStyle={() => runAction(onChooseStyle)}
                         onOpenPrevis={() => runAction(() => onOpenPrevis(menu.position))}
@@ -284,7 +284,7 @@ export function CanvasNodeContextMenu({
     );
 }
 
-function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, onAddNode, onAddFolder, onChooseStyle, onOpenPrevis, onUpload, onOpenAssets, onOpenProjectCharacters }: { parentPosition: { left: number; top: number }; workspaceMode: CanvasWorkspaceMode; isProjectLinked: boolean; onAddNode: (type: CanvasNodeTypeId) => void; onAddFolder: () => void; onChooseStyle: () => void; onOpenPrevis: () => void; onUpload: () => void; onOpenAssets: () => void; onOpenProjectCharacters: () => void }) {
+function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, onAddNode, onAddFolder, onChooseStyle, onOpenPrevis, onUpload, onOpenAssets, onOpenProjectCharacters }: { parentPosition: { left: number; top: number }; workspaceMode: CanvasWorkspaceMode; isProjectLinked: boolean; onAddNode: (type: CanvasNodeTypeId, metadata?: Partial<CanvasNodeMetadata>) => void; onAddFolder: () => void; onChooseStyle: () => void; onOpenPrevis: () => void; onUpload: () => void; onOpenAssets: () => void; onOpenProjectCharacters: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     const installations = usePluginStore((state) => state.installations);
     const pluginStates = usePluginStore((state) => state.pluginStates);
@@ -295,7 +295,7 @@ function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, on
         enabledPluginIds: new Set(installations.filter((item) => pluginStates[item.manifest.id]?.effectiveEnabled ?? item.enabled).map((item) => item.manifest.id)),
         handlers: {
             onAddText: () => onAddNode(CanvasNodeType.Text),
-            onAddImage: () => onAddNode(CanvasNodeType.Image),
+            onAddImage: (metadata) => onAddNode(CanvasNodeType.Image, metadata),
             onAddVideo: () => onAddNode(CanvasNodeType.Video),
             onAddAudio: () => onAddNode(CanvasNodeType.Audio),
             onAddScript: () => onAddNode(CanvasNodeType.Script),

@@ -4,7 +4,40 @@ export const GENERATION_LIMITS = { nodeTitle: 240, prompt: 16000, canvasOperatio
 
 export type ModelSelection = { kind: "logical"; logicalModelId: string; channelId?: never; modelKey?: never } | { kind: "channel"; channelId: string; modelKey: string; logicalModelId?: never };
 
+export type CannyParameters = {
+    resolution: number;
+    lowThreshold: number;
+    highThreshold: number;
+};
+
+export type ControlNetParameters = {
+    preprocessor: string;
+    model: string;
+    strength: number;
+    start: number;
+    end: number;
+    pixelPerfect: boolean;
+    controlMode: "balanced" | "prompt" | "control";
+    resizeMode: "stretch" | "crop" | "fill";
+    canny?: CannyParameters;
+};
+
+export type ControlNetBinding = {
+    id: string;
+    imageBindingId: string;
+    maskBindingId?: string;
+    parameters: ControlNetParameters;
+};
+
+export type OutputMaskBinding = {
+    bindingId: string;
+    mode: "luminance" | "non-black";
+    resizeMode: "stretch";
+};
+
 export type Options = {
+    controlNet?: ControlNetBinding[];
+    outputMask?: OutputMaskBinding;
     size?: string;
     quality?: string;
     count?: number;
@@ -27,7 +60,7 @@ export type ReferenceBinding = {
     resourceId?: string;
     transientId?: string;
     mediaType: "image" | "video" | "audio" | "text";
-    role: "reference" | "source-text" | "first-frame" | "last-frame" | "mask";
+    role: "reference" | "source-text" | "first-frame" | "last-frame" | "mask" | "control-image" | "control-mask" | "output-mask";
     order: number;
     resolution: "latest" | "snapshot";
 };
@@ -43,6 +76,24 @@ export type GenerationSpec = {
 };
 
 export const GENERATION_OPTION_FIELDS = [
+    {
+        "kind": "ControlNetBinding[]",
+        "modes": [
+            "image"
+        ],
+        "name": "controlNet",
+        "node": "controlNet",
+        "task": "controlNet"
+    },
+    {
+        "kind": "OutputMaskBinding",
+        "modes": [
+            "image"
+        ],
+        "name": "outputMask",
+        "node": "outputMask",
+        "task": "outputMask"
+    },
     {
         "kind": "string",
         "modes": [

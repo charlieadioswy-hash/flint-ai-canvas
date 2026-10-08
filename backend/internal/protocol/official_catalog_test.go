@@ -42,7 +42,8 @@ func TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins(t *testing.T
 		if pkg.Manifest.APIVersion != "yingce.plugin/v2" {
 			t.Fatalf("%s apiVersion = %q", filepath.Base(path), pkg.Manifest.APIVersion)
 		}
-		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") {
+		hostLiblib := pkg.Manifest.Metadata.ID == LiblibImageProtocolID && pkg.Manifest.Runtime.Backend == "host:"+LiblibImageProtocolID
+		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") && !hostLiblib {
 			t.Fatalf("%s depends on host runtime", filepath.Base(path))
 		}
 		if len(pkg.Files["README.md"]) == 0 || len(pkg.Files["docs/interface.md"]) == 0 {
@@ -62,7 +63,11 @@ func TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins(t *testing.T
 				t.Fatalf("%s interface documentation is missing configuration field %q", filepath.Base(path), field.Name)
 			}
 		}
-		adapters, err := LoadInstalledProviders(pkg.ManifestRaw, nil)
+		var resolver AdapterResolver
+		if hostLiblib {
+			resolver = Builtins().Get
+		}
+		adapters, err := LoadInstalledProviders(pkg.ManifestRaw, resolver)
 		if err != nil {
 			t.Fatalf("load %s: %v", filepath.Base(path), err)
 		}

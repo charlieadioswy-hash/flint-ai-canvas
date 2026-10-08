@@ -68,6 +68,16 @@ func protocolRequestFromInput(input canvasGenerationInput) protocol.GenerationRe
 	request.Inputs = append(request.Inputs, request.Images...)
 	request.Inputs = append(request.Inputs, request.Videos...)
 	request.Inputs = append(request.Inputs, request.Audios...)
+	for index, unit := range input.ControlNet {
+		control := protocol.ControlNetUnit{ID: unit.ID, Image: protocolMediaReference(providerMedia(unit.Image), "image", index), Parameters: unit.Parameters}
+		control.Image.Role = "control_image"
+		if unit.Mask != nil {
+			mask := protocolMediaReference(providerMedia(*unit.Mask), "image", index)
+			mask.Role = "control_mask"
+			control.Mask = &mask
+		}
+		request.ControlNet = append(request.ControlNet, control)
+	}
 	if input.MaxOutputTokens > 0 {
 		request.Extra["max_output_tokens"] = input.MaxOutputTokens
 		request.Extra["max_tokens"] = input.MaxOutputTokens

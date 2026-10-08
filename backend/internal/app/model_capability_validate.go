@@ -5,6 +5,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
@@ -38,6 +40,16 @@ func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 }
 
 func validateImageCapabilityConfig(value *ImageCapabilityConfig) error {
+	if control := value.ControlNet; control != nil && control.Supported {
+		if control.MaxUnits < 1 || control.MaxUnits > 4 || len(control.Preprocessors) == 0 {
+			return BadAuthRequest("结构控制必须配置 1–4 组上限及支持的预处理器")
+		}
+		for _, name := range control.Preprocessors {
+			if strings.TrimSpace(name) == "" {
+				return BadAuthRequest("结构控制预处理器不能为空")
+			}
+		}
+	}
 	if value.References.PromptMaxChars < 1 || value.References.PromptMaxChars > 1000000 {
 		return BadAuthRequest("提示词最大字符数必须在 1-1000000 之间")
 	}
@@ -195,6 +207,24 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	if err := json.Unmarshal(encoded, &taskInput); err != nil || (taskInput.Mode != "image" && taskInput.Mode != "video" && taskInput.Mode != "audio") {
 		return nil
 	}
+	if err := validateControlledImageExecutor(withProtocolRegistry(context.Background(), s.protocolRegistry()), taskInput); err != nil {
+		return err
+	}
+	if taskInput.Config.InterfaceType == protocol.LiblibImageProtocolID {
+		request := protocolRequestFromInput(taskInput)
+		request.Model = firstNonEmpty(taskInput.Config.ProviderModelKey, taskInput.Config.Model)
+		// Admission precedes hydration: resource-only references still count as img2img.
+		request.Images = nil
+		for range taskInput.ReferenceImages {
+			request.Images = append(request.Images, protocol.MediaReference{Role: "edit_source"})
+		}
+		if taskInput.Mask != nil {
+			request.Images = append(request.Images, protocol.MediaReference{Role: "mask"})
+		}
+		if err := protocol.ValidateLiblibRequest(request); err != nil {
+			return BadAuthRequest(err.Error())
+		}
+	}
 	if isWorkflowProviderInterface(taskInput.Config.InterfaceType) {
 		if err := validateWorkflowProviderPromptLength(taskInput); err != nil {
 			return err
@@ -215,7 +245,7 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 			if taskInput.Config.CapabilityConfig != nil && taskInput.Config.CapabilityConfig.Image != nil {
 				profile = taskInput.Config.CapabilityConfig.Image
 			}
-			return validateImageTask(profile, taskInput)
+			return validateImageTask(applyModelSpecificImageCapability(profile, taskInput.Config.InterfaceType, taskInput.Config.Model, taskInput.Config.APIFormat), taskInput)
 		}
 		profile := taskInput.Config.CapabilityConfig
 		if profile == nil || profile.Video == nil {
@@ -265,11 +295,13 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	return validateVideoTask(normalized.Video, taskInput)
 }
 
-// applyModelSpecificImageCapability is retained as a narrow normalization hook
-// for provider-specific image validation. The stored capability profile is
-// already normalized when the channel model is saved, so no second override is
-// needed here.
-func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, _ string, _ string, _ string) *ImageCapabilityConfig {
+// Fill an omitted protocol capability without overriding an explicit disable.
+func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocolID string, _ string, _ string) *ImageCapabilityConfig {
+	if profile != nil && protocolID == protocol.LiblibImageProtocolID && profile.ControlNet == nil {
+		value := *profile
+		value.ControlNet = defaultLiblibControlNetCapability()
+		return &value
+	}
 	return profile
 }
 
@@ -345,6 +377,9 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 }
 
 func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInput) error {
+	if err := validateControlNetTask(profile, input); err != nil {
+		return err
+	}
 	if profile == nil {
 		return nil
 	}

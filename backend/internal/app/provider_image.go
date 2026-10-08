@@ -19,6 +19,14 @@ import (
 )
 
 func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if err := validateControlledImageExecutor(ctx, input); err != nil {
+		return nil, err
+	}
+	if input.OutputMask != nil {
+		if _, ok := ctx.Value(mediaExecutionTaskKey{}).(model.Task); !ok {
+			return nil, errors.New("输出蒙版必须通过持久生成任务保存")
+		}
+	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceOpenAIImage) {
 		if err := validateOpenAIImageInput(input); err != nil {
 			return nil, err

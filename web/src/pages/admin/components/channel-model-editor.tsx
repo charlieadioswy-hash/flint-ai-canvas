@@ -341,6 +341,7 @@ export function ChannelModelEditor({
                                                     protocol={form.getFieldValue("protocol")}
                                                     section="references"
                                                     workflows={protocols.find((item) => item.value === modelProtocol)?.workflows}
+                                                    supportsControlNet={protocols.find((item) => item.value === modelProtocol)?.supportsControlNet}
                                                     value={capabilityConfig}
                                                     onChange={(next) => {
                                                         dirtyRef.current = true;
@@ -360,6 +361,7 @@ export function ChannelModelEditor({
                                                     protocol={form.getFieldValue("protocol")}
                                                     section="protocol"
                                                     workflows={protocols.find((item) => item.value === modelProtocol)?.workflows}
+                                                    supportsControlNet={protocols.find((item) => item.value === modelProtocol)?.supportsControlNet}
                                                     value={capabilityConfig}
                                                     onChange={(next) => {
                                                         dirtyRef.current = true;

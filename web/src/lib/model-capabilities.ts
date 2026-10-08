@@ -43,6 +43,7 @@ export type ImageSizeParameter = "none" | "size" | "aspect_ratio";
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
 
 export type ImageCapabilityConfig = {
+    controlNet?: { supported: boolean; maxUnits: number; preprocessors: string[]; models?: string[] };
     references: {
         promptMaxChars: number;
         maxImages: number;
@@ -140,6 +141,7 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
         image: config.image
             ? {
                   ...config.image,
+                  ...(config.image.controlNet ? { controlNet: { ...config.image.controlNet, preprocessors: normalizeCapabilityStrings(config.image.controlNet.preprocessors || []), models: config.image.controlNet.models ? normalizeCapabilityStrings(config.image.controlNet.models) : undefined } } : {}),
                   size: {
                       ...config.image.size,
                       values: normalizeCapabilityStrings(config.image.size.values),
@@ -220,6 +222,17 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         outputFormat: { supported: true },
         maxOutputs: 15,
     };
+    if (protocol === "liblib-image") {
+        image.controlNet = { supported: true, maxUnits: 4, preprocessors: ["canny"] };
+        image.references = { ...image.references, maxImages: 1, maxImageBytes: 10 * 1024 * 1024, maskSupported: false };
+        image.size = { parameter: "size", values: ["1024x1024", "1344x768", "768x1344"], default: "1024x1024", allowCustom: true };
+        image.quality = { supported: false, values: [], default: "auto" };
+        image.transparentBackground = { supported: false, default: false };
+        image.responseFormat = { supported: false };
+        image.outputFormat = { supported: false };
+        image.maxOutputs = 4;
+        return image;
+    }
     if (protocol === "kacang-midjourney-special" || protocol === "kacang-midjourney-v7" || protocol === "kacang-midjourney") {
         const stable = protocol === "kacang-midjourney";
         const extendedRatios = stable || protocol === "kacang-midjourney-v7";

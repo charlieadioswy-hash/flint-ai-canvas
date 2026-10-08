@@ -14,6 +14,10 @@ import (
 )
 
 func (s *Service) estimateCallCost(log *model.ApiCallLog) {
+	if providerRequestIsAuxiliary(log.RequestKind) {
+		log.EstimatedCostMicros, log.CostAvailable = 0, true
+		return
+	}
 	if log.Status == model.ApiCallStatusFailed && !log.UsageAvailable {
 		return
 	}
@@ -93,6 +97,31 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 			}
 		}
 	}
+	liblibImage := log.Capability == "image" && (log.Path == "/api/generate/webui/text2img" || log.Path == "/api/generate/webui/img2img" || log.Path == "/api/generate/webui/status")
+	if liblibImage {
+		// Keep the accepted upstream identity before polling so process recovery
+		// resumes that generation instead of submitting a second paid request.
+		if log.RequestKind == "create" {
+			if extracted, err := firstJSONString(payload, "generateUuid"); err == nil {
+				nestedTaskID = extracted
+			}
+		}
+		if status, present := firstInt64Value(payload, "generateStatus"); present {
+			switch status {
+			case 1:
+				log.ProviderStatus = "pending"
+			case 2, 3, 4:
+				// 3 is generated but not audited; only 5 is deliverable.
+				log.ProviderStatus = "processing"
+			case 5:
+				log.ProviderStatus = "succeeded"
+			case 6:
+				log.ProviderStatus = "failed"
+			case 7:
+				log.ProviderStatus = "expired"
+			}
+		}
+	}
 	if log.Status == model.ApiCallStatusFailed {
 		errorCode, errorMessage := providerFailureDetails(payload)
 		log.ErrorCode = errorCode
@@ -141,17 +170,26 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		}
 		log.CachedTokens = firstInt64(usageMetadata, "cachedContentTokenCount")
 	}
-	if extracted, err := firstJSONString(payload, "task_id", "id", "request_id", "name"); err == nil {
+	if liblibImage {
+		// Polling can report a malformed or mismatched UUID. The adapter rejects
+		// it later, so logging must retain the original request identity now.
+		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
+	} else if extracted, err := firstJSONString(payload, "task_id", "id", "request_id", "name"); err == nil {
 		log.ProviderRequestID = firstNonEmpty(nestedTaskID, extracted, log.ProviderRequestID)
 	} else {
 		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
 	}
-	log.ProviderStatus = strings.ToLower(firstNonEmpty(stringField(payload, "status"), log.ProviderStatus))
+	if !liblibImage {
+		log.ProviderStatus = strings.ToLower(firstNonEmpty(stringField(payload, "status"), log.ProviderStatus))
+	}
 	if log.ProviderStatus == "failed" || log.ProviderStatus == "cancelled" || log.ProviderStatus == "expired" {
 		log.Status = model.ApiCallStatusFailed
 		errorCode, errorMessage := providerFailureDetails(payload)
 		log.ErrorCode = firstNonEmpty(errorCode, log.ErrorCode)
 		log.Error = firstNonEmpty(errorMessage, log.Error)
+		if liblibImage {
+			log.Error = firstNonEmpty(truncateRunes(strings.TrimSpace(stringField(payload, "generateMsg")), 500), log.Error)
+		}
 	}
 	if log.Capability == "image" {
 		if data, ok := payload["data"].([]any); ok {

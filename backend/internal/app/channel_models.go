@@ -278,6 +278,9 @@ func normalizeChannelModelContractWithRegistry(registry *protocol.Registry, chan
 	if !ok || !adapter.Metadata().Enabled || adapter.Metadata().UnavailableReason != "" {
 		return "", "", "", "", BadAuthRequest("请选择有效的模型请求协议")
 	}
+	if adapter.Metadata().ID == protocol.LiblibImageProtocolID && (channel == nil || strings.TrimSpace(channel.APIKey) == "" || strings.TrimSpace(channel.SecretKey) == "") {
+		return "", "", "", "", BadAuthRequest("Liblib 官方协议需要先在渠道中配置 AccessKey 和 SecretKey")
+	}
 	protocol := model.ChannelInterfaceType(adapter.Metadata().ID)
 	if expected := protocolCapabilityFromMetadata(adapter.Metadata()); expected != "" && expected != capability {
 		return "", "", "", "", BadAuthRequest("模型能力与请求协议不匹配")

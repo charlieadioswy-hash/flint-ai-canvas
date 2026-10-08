@@ -15,6 +15,7 @@ import { compileCharacterReferencePrompt, normalizeCharacterImageMentions } from
 import { nodeReferenceImage } from "@/lib/canvas/canvas-project-generation";
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
+import { structureControlBindingNodeIds } from "@/lib/canvas/controlnet";
 import type { ModelReferenceLimits } from "@/lib/model-selection";
 import type { Asset } from "@/stores/use-asset-store";
 
@@ -373,11 +374,13 @@ function hasMentionBoundary(value: string, index: number) {
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
-    return buildGenerationInputs(getGenerationResourceNodes(nodeId, nodes, connections), nodes, connections);
+    const controlNodes = structureControlBindingNodeIds(nodes.find((node) => node.id === nodeId));
+    return buildGenerationInputs(getGenerationResourceNodes(nodeId, nodes, connections).filter((node) => !controlNodes.has(node.id)), nodes, connections);
 }
 
 function buildNodeMentionGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
-    return buildGenerationInputs(getMentionResourceNodes(nodeId, nodes, connections), nodes, connections);
+    const controlNodes = structureControlBindingNodeIds(nodes.find((node) => node.id === nodeId));
+    return buildGenerationInputs(getMentionResourceNodes(nodeId, nodes, connections).filter((node) => !controlNodes.has(node.id)), nodes, connections);
 }
 
 function buildGenerationInputs(resourceNodes: CanvasNodeData[], nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {

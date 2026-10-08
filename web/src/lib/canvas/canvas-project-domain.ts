@@ -265,6 +265,9 @@ function resetGenerationParamsOnModelSwitch(node: CanvasNodeData, patch: Partial
     for (const key of NODE_MODEL_GENERATION_PARAMS) {
         reset[key] = undefined;
     }
+    const controls = node.metadata?.generationSpec?.options.controlNet || node.metadata?.controlNet;
+    if (controls) reset.controlNet = controls.map((unit) => ({ ...unit, parameters: { ...unit.parameters, model: "" } }));
+    reset.providerOptions = undefined;
     return { ...reset, ...patch };
 }
 

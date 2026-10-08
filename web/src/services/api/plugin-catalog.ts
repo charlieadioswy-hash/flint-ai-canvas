@@ -14,6 +14,7 @@ type PluginProviderCatalogItem = {
     enabled: boolean;
     unavailableReason?: string;
     baseUrl?: string;
+    supportsControlNet?: boolean;
     parameters?: Array<{
         name: string;
         type: string;
@@ -49,6 +50,7 @@ function toProviderDefinition(item: PluginProviderCatalogItem): ModelProtocolDef
         media: `${item.vendor} · ${item.version}`,
         enabled: item.enabled && !item.unavailableReason,
         baseUrl: item.baseUrl,
+        supportsControlNet: item.supportsControlNet === true,
         parameters: item.parameters || [],
         workflows: item.workflows || [],
     };

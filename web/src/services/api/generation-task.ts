@@ -1,13 +1,14 @@
 import { normalizeAudioFormatForConfig, normalizeAudioVoiceForConfig } from "@/lib/audio-generation";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
-import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { importResourceFromUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import type { ControlNetInput, OutputMaskInput } from "@/lib/canvas/controlnet";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
 import { resolveGenerationWorkflowExecution, type GenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
-import { resolveVideoOperation } from "@/lib/model-selection";
+import { modelCompatibilityError, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -39,6 +40,8 @@ type BackendGenerationTaskOptions = {
     referenceAudios?: ReferenceAudio[];
     textHistory?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
     mask?: ReferenceImage;
+    controlNet?: ControlNetInput[];
+    outputMask?: OutputMaskInput;
     signal?: AbortSignal;
     metadata?: Record<string, unknown>;
     onTaskUpdate?: (task: GenerationTask) => void;
@@ -68,6 +71,8 @@ type PreparedGenerationReferences = {
     referenceVideos: Awaited<ReturnType<typeof prepareBackendMediaReference>>[];
     referenceAudios: Awaited<ReturnType<typeof prepareBackendMediaReference>>[];
     mask?: Awaited<ReturnType<typeof prepareBackendImageReference>>;
+    controlNet?: ControlNetInput[];
+    outputMask?: OutputMaskInput;
 };
 
 // 生成、计费、取消和任务记录必须共用后端任务生命周期，页面层不能再直连供应商。
@@ -82,6 +87,8 @@ export async function runBackendGenerationTask(
         referenceAudios = [],
         textHistory = [],
         mask,
+        controlNet,
+        outputMask,
         signal,
         metadata,
         onTaskUpdate,
@@ -97,7 +104,7 @@ export async function runBackendGenerationTask(
     throwIfAborted(signal);
     assertClientPromptLimit(mode, prompt, config, metadata);
     assertBackendRuntimeConfigured(config, mode);
-    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask });
+    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask, controlNet, outputMask });
     throwIfAborted(signal);
     return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId }, prepared, dependencies);
 }
@@ -241,14 +248,29 @@ async function prepareGenerationReferences({
     referenceVideos = [],
     referenceAudios = [],
     mask,
-}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask">): Promise<PreparedGenerationReferences> {
+    controlNet,
+    outputMask,
+}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask" | "controlNet" | "outputMask">): Promise<PreparedGenerationReferences> {
+    if ((controlNet?.length || outputMask) && mode !== "image") throw new Error("结构控制与输出蒙版仅用于图片生成");
+    if (controlNet?.length) {
+        const error = modelCompatibilityError(config, config.model, { capability: "image", controlNetUnits: controlNet.length });
+        if (error) throw new Error(error);
+    }
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
     const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
     const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));
     const preparedVideos = await Promise.all(referenceVideos.map(prepareBackendMediaReference));
     const preparedAudios = await Promise.all(referenceAudios.map(prepareBackendMediaReference));
     const preparedMask = mask ? await prepareBackendImageReference(mask, false) : undefined;
-    return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask };
+    const controlledImages = new Map<string, Promise<ReferenceImage>>();
+    const persistControlImage = (image: ReferenceImage) => {
+        const key = image.storageKey || image.url || image.dataUrl;
+        if (!controlledImages.has(key)) controlledImages.set(key, prepareBackendImageReference(image, false, true));
+        return controlledImages.get(key)!.then((prepared) => ({ ...prepared, id: image.id, name: image.name }));
+    };
+    const preparedControlNet = controlNet ? await Promise.all(controlNet.map(async (unit) => ({ ...unit, image: await persistControlImage(unit.image), mask: unit.mask ? await persistControlImage(unit.mask) : undefined, parameters: structuredClone(unit.parameters) }))) : undefined;
+    const preparedOutputMask = outputMask ? { ...outputMask, image: await persistControlImage(outputMask.image) } : undefined;
+    return { referenceImages: preparedImages, referenceVideos: preparedVideos, referenceAudios: preparedAudios, mask: preparedMask, controlNet: preparedControlNet, outputMask: preparedOutputMask };
 }
 
 // 与后端 isArkPrivateAssetVideoConfig 对齐：方舟视频渠道允许参考图直接 asset:// 引用，
@@ -307,6 +329,8 @@ function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepa
             referenceVideos: prepared.referenceVideos,
             referenceAudios: prepared.referenceAudios,
             mask: prepared.mask,
+            controlNet: prepared.controlNet,
+            outputMask: prepared.outputMask,
             metadata: generationMetadata(config, {
                 ...metadata,
                 ...(options.clientOperationId ? { clientOperationId: options.clientOperationId } : {}),
@@ -351,12 +375,21 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
     }
 }
 
-async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false) {
+async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false, persistResource = false) {
     if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
     if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;
-    if (/^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
-    const blob = image.storageKey ? await getImageBlob(image.storageKey) : sourceUrl ? await (await fetch(sourceUrl)).blob() : null;
+    if (/^https?:\/\//i.test(sourceUrl)) {
+        if (!persistResource) return backendImageReference(image, { url: sourceUrl });
+        const resource = await importResourceFromUrl(sourceUrl, "image");
+        return backendImageReference(image, { storageKey: resourceStorageKey(resource.id), type: resource.mimeType || image.type });
+    }
+    let blob = image.storageKey ? await getImageBlob(image.storageKey) : null;
+    if (!blob && sourceUrl) {
+        const response = await fetch(sourceUrl);
+        if (!response.ok) throw new Error("参考图片无法读取，请重新上传后再生成");
+        blob = await response.blob();
+    }
     if (!blob) throw new Error("参考图片尚未保存，请重新上传后再生成");
     try {
         const resource = await uploadResourceFile(blob, "image", { fileName: image.name });

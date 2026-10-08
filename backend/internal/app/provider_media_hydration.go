@@ -37,9 +37,11 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 		}
 	}
 	if input.Mask != nil {
-		return s.hydrateProviderMedia(userID, input.Mask, policy)
+		if err := s.hydrateProviderMedia(userID, input.Mask, policy); err != nil {
+			return err
+		}
 	}
-	return nil
+	return s.hydrateControlNetMedia(userID, input)
 }
 
 func (s *Service) hydrateProviderMedia(userID string, media *providerMedia, policy providerMediaHydrationPolicy) error {

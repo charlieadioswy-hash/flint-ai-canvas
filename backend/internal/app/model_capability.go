@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -38,13 +39,14 @@ type TextReferenceConfig struct {
 }
 
 type ImageCapabilityConfig struct {
-	References            ImageReferenceConfig `json:"references"`
-	Size                  ImageSizeConfig      `json:"size"`
-	Quality               ImageQualityConfig   `json:"quality"`
-	TransparentBackground VideoBooleanConfig   `json:"transparentBackground"`
-	ResponseFormat        ParameterSupport     `json:"responseFormat"`
-	OutputFormat          ParameterSupport     `json:"outputFormat"`
-	MaxOutputs            int                  `json:"maxOutputs"`
+	ControlNet            *generation.ControlNetCapability `json:"controlNet,omitempty"`
+	References            ImageReferenceConfig             `json:"references"`
+	Size                  ImageSizeConfig                  `json:"size"`
+	Quality               ImageQualityConfig               `json:"quality"`
+	TransparentBackground VideoBooleanConfig               `json:"transparentBackground"`
+	ResponseFormat        ParameterSupport                 `json:"responseFormat"`
+	OutputFormat          ParameterSupport                 `json:"outputFormat"`
+	MaxOutputs            int                              `json:"maxOutputs"`
 }
 
 type ImageReferenceConfig struct {
@@ -202,7 +204,7 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 		if input == nil || input.Image == nil {
 			return nil, BadAuthRequest("请配置图片模型能力参数")
 		}
-		value := &ModelCapabilityConfig{Version: 1, Image: input.Image}
+		value := &ModelCapabilityConfig{Version: 1, Image: applyModelSpecificImageCapability(input.Image, protocol, modelName, "")}
 		if err := validateImageCapabilityConfig(value.Image); err != nil {
 			return nil, err
 		}
@@ -300,6 +302,9 @@ func CapabilitySpecFromModelCapabilityConfig(config *ModelCapabilityConfig, capa
 		addInputConstraint(spec.Inputs, "image", 0, image.References.MaxImages)
 		if image.References.MaskSupported {
 			addInputConstraint(spec.Inputs, "mask", 0, 1)
+		}
+		if image.ControlNet != nil && image.ControlNet.Supported {
+			addInputConstraint(spec.Inputs, "control_image", 0, image.ControlNet.MaxUnits)
 		}
 		if image.Size.Parameter != "none" {
 			spec.Options["size"] = imageSizeOptionConstraint(image.Size)

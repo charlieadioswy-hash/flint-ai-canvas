@@ -128,7 +128,7 @@ export function useCanvasNodeOperations({
         setSelectedConnectionId(null);
     }, [selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
 
-    const createNode = useCallback((type: CanvasNodeTypeId, position?: Position, workflowProvider?: "runninghub") => {
+    const createNode = useCallback((type: CanvasNodeTypeId, position?: Position, workflowProvider?: "runninghub", initialMetadata?: Partial<CanvasNodeMetadata>) => {
         if (type === CanvasNodeType.Drawing && !isDrawingEngineAvailable(defaultDrawingEngine, tldrawLicenseKey)) {
             message.error("当前生产构建未配置 tldraw License Key，不能创建 tldraw 绘图");
             return;
@@ -146,7 +146,8 @@ export function useCanvasNodeOperations({
             : type === CanvasNodeType.Config
                 ? { generationMode: "image", workflowProvider: selectedWorkflowProvider || "model" }
                 : undefined;
-        const node = createCanvasNode(type, position || getCanvasCenter(), metadata);
+        const node = createCanvasNode(type, position || getCanvasCenter(), { ...metadata, ...initialMetadata });
+        if (initialMetadata?.structureControl) node.title = "结构控制生图";
         if (workflowTitle) node.title = workflowTitle;
         commitNodes([...nodesRef.current, node]);
         selectNodes(new Set([node.id]));

@@ -283,6 +283,7 @@ func manifestRequestValues(request GenerationRequest) map[string]any {
 	output.Watermark = output.Watermark || request.Watermark
 	outputValue, _ := requestAsManifestValue(output)
 	providerOptionsValue, _ := requestAsManifestValue(request.ProviderOptions)
+	controlNetValue, _ := requestAsManifestValue(request.ControlNet)
 	if providerOptionsValue == nil {
 		providerOptionsValue = map[string]any{}
 	}
@@ -295,6 +296,7 @@ func manifestRequestValues(request GenerationRequest) map[string]any {
 		"messages":        messages,
 		"inputs":          manifestMediaValues(inputs),
 		"images":          manifestMediaValues(request.Images),
+		"controlNet":      controlNetValue,
 		"videos":          manifestMediaValues(request.Videos),
 		"audios":          manifestMediaValues(request.Audios),
 		"imageCount":      request.ImageCount,

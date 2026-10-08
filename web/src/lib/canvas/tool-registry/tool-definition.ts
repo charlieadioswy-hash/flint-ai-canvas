@@ -32,7 +32,7 @@ export type ToolbarHandlers = {
     onClear: () => void;
     // 主工具栏——创建节点
     onAddText: () => void;
-    onAddImage: () => void;
+    onAddImage: (metadata?: Partial<CanvasNodeMetadata>) => void;
     onAddVideo: () => void;
     onAddAudio: () => void;
     onAddScript: () => void;

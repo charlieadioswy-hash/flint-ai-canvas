@@ -83,6 +83,7 @@ type GenerationRequest struct {
 	Messages        []Message                 `json:"messages,omitempty"`
 	Inputs          []MediaReference          `json:"inputs,omitempty"`
 	Images          []MediaReference          `json:"images,omitempty"`
+	ControlNet      []ControlNetUnit          `json:"controlNet,omitempty"`
 	Videos          []MediaReference          `json:"videos,omitempty"`
 	Audios          []MediaReference          `json:"audios,omitempty"`
 	Duration        int                       `json:"duration,omitempty"`
@@ -163,6 +164,7 @@ type Parameter struct {
 }
 
 type Metadata struct {
+	SupportsControlNet      bool         `json:"supportsControlNet,omitempty"`
 	ID                      string       `json:"id"`
 	Version                 string       `json:"version"`
 	Name                    string       `json:"name"`
@@ -330,6 +332,7 @@ type ManifestPaymentResponse struct {
 }
 
 type ManifestProvider struct {
+	SupportsControlNet      bool                   `json:"supportsControlNet,omitempty"`
 	ID                      string                 `json:"id"`
 	Label                   string                 `json:"label"`
 	Capabilities            []Capability           `json:"capabilities"`

@@ -16,6 +16,9 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
+import { CanvasControlNetPopover } from "./canvas-controlnet-popover";
+import { isStructureControlNode, nodeControlNet, structureControlBindingNodeIds } from "@/lib/canvas/controlnet";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { CanvasAudioSettingsPopover } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -50,6 +53,7 @@ type CanvasNodePromptPanelProps = {
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     mentionReferences?: CanvasResourceReference[];
+    controlSourceNodes?: CanvasNodeData[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
     onReorderReferences?: (nodeId: string, orderedNodeIds: string[]) => void;
@@ -78,7 +82,7 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional", onListGenerate }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], controlSourceNodes, onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional", onListGenerate }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
@@ -89,6 +93,8 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const mode = defaultMode(node.type);
     const showPromptTemplates = !simpleMode && mode !== "image";
     node = { ...node, metadata: canonicalGenerationMetadata(node, mode) };
+    const controlNodes = structureControlBindingNodeIds(node);
+    mentionReferences = mentionReferences.filter((reference) => !reference.nodeId || !controlNodes.has(reference.nodeId));
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const savedPrompt = nodeGenerationPrompt(node);
@@ -132,6 +138,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill" && item.kind !== "tool");
     const requirements: ModelRequirements = {
         capability: mode,
+        controlNetUnits: mode === "image" && isStructureControlNode(node) ? Math.max(1, nodeControlNet(node).length) : undefined,
         input: {
             textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
             imageCount: activeReferences.filter((item) => item.kind === "image").length,
@@ -497,6 +504,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     ) : mode === "image" ? (
                         // 图片模式下，显示相机配置与镜头配置
                         <>
+                            {isStructureControlNode(node) || modelCapabilityConfigFor(config, config.model).image?.controlNet?.supported ? <CanvasControlNetPopover node={node} config={config} sourceNodes={controlSourceNodes} disabled={isRunning} onChange={(patch) => onConfigChange(node.id, patch)} onOpenChange={expanded ? undefined : onImageSettingsOpenChange} /> : null}
                             <CanvasCameraControlPopover
                                 cameraControl={node.metadata?.cameraControl}
                                 onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })}

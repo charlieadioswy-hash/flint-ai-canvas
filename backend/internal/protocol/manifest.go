@@ -404,6 +404,7 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 	manifest.Metadata.Cancel = operationSummaryPtr(provider.Cancel)
 	manifest.Metadata.ContentType = provider.Create.ContentType
 	manifest.Metadata.RequiresPublicMediaURLs = provider.RequiresPublicMediaURLs
+	manifest.Metadata.SupportsControlNet = provider.SupportsControlNet
 	manifest.Metadata.Execution = manifest.Runtime.Backend
 	manifest.Create = provider.Create
 	manifest.Agent = provider.Agent

@@ -48,7 +48,7 @@ func EnsureOfficialProtocolAdapter(ctx context.Context, interfaceType string) co
 	}
 	registry := LoadOfficialFallbackRegistry()
 	adapter, ok := registry.Resolve(interfaceType)
-	if !ok || adapter.Metadata().Execution != "declarative" {
+	if !ok || !protocol.UsesProtocolTaskHost(adapter.Metadata()) {
 		return ctx
 	}
 	return WithProtocolRegistry(ctx, registry)
@@ -115,7 +115,7 @@ func OfficialDeclarativeAudioInterface(interfaceType string) (string, bool) {
 
 func DeclarativeProtocolAdapterForContext(ctx context.Context, id string) (protocol.Adapter, bool) {
 	adapter, ok := ProtocolAdapterForContext(ctx, id)
-	if !ok || adapter.Metadata().Execution != "declarative" {
+	if !ok || !protocol.UsesProtocolTaskHost(adapter.Metadata()) {
 		return nil, false
 	}
 	return adapter, true
@@ -166,7 +166,11 @@ func LoadOfficialFallbackRegistry() *protocol.Registry {
 			if err != nil {
 				return
 			}
-			providers, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, nil)
+			var resolver protocol.AdapterResolver
+			if protocol.IsLiblibHostManifest(pkg.Manifest) {
+				resolver = protocol.Builtins().Get
+			}
+			providers, err := protocol.LoadInstalledProviders(pkg.ManifestRaw, resolver)
 			if err != nil {
 				return
 			}

@@ -17,6 +17,7 @@ export type ModelRequirements = {
     videoOperation?: string;
     videoSeconds?: string;
     imageSize?: string;
+    controlNetUnits?: number;
     options?: Record<string, unknown>;
 };
 
@@ -115,6 +116,13 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
     const channel = resolveModelChannel(config, model);
     const logicalCost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     const logicalSpecs = logicalCost?.logicalCapabilityProfiles?.length ? logicalCost.logicalCapabilityProfiles : logicalCost?.logicalCapabilitySpec ? [logicalCost.logicalCapabilitySpec] : [];
+    if (capability === "image" && requirements?.controlNetUnits && (channel.id === PUBLIC_MODEL_CATALOG_ID || logicalCost?.logicalModelId || logicalSpecs.length)) return "结构控制生图需选择具体渠道模型";
+    if (capability === "image" && requirements?.controlNetUnits) {
+        const controls = modelCapabilityConfigFor(config, model).image?.controlNet;
+        const maxUnits = logicalSpecs.length ? Math.max(0, ...logicalSpecs.map((spec) => spec.inputs?.control_image?.max || 0)) : controls?.supported ? controls.maxUnits : 0;
+        if (!maxUnits) return "当前模型不支持结构控制生图";
+        if (requirements.controlNetUnits > maxUnits) return `最多支持 ${maxUnits} 组结构控制`;
+    }
     if (logicalSpecs.length) {
         const publicOptionNames = logicalCost?.logicalCapabilitySpec?.options || {};
         const logicalRequirements = {
@@ -202,6 +210,7 @@ function logicalModelCompatibilityError(spec: NonNullable<NonNullable<AiConfig["
         image: visualInputCount,
         video: input?.videoCount || 0,
         audio: input?.audioCount || 0,
+        control_image: requirements.controlNetUnits || 0,
     };
     for (const [kind, count] of Object.entries(counts)) {
         const constraint = spec.inputs?.[kind];

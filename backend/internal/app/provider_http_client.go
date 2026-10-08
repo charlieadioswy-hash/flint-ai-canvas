@@ -451,7 +451,13 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		}
 	}
 	metadata.Service.EnrichAPICallLog(&callLog, responseBody)
+	if requestKind == "upload-signature" || requestKind == "upload" {
+		callLog.RequestBody, callLog.ResponseBody = "", ""
+	}
 	callLog.Error = withUserVisibleLogError(requestErr, callLog.Error)
+	if (requestKind == "upload-signature" || requestKind == "upload") && callLog.Status == model.ApiCallStatusFailed {
+		callLog.Error = "供应商素材上传请求失败"
+	}
 	if err := metadata.Service.LogAPICall(callLog); err != nil {
 		if !channelSlotFailure && metadata.Billing != nil {
 			if uncertainErr := metadata.Billing.MarkBillingUncertain(metadata.BillingOrderID, "上游调用日志写入失败，费用状态待核对"); uncertainErr != nil {
@@ -463,14 +469,18 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 }
 
 func providerRequestIsBillable(method, requestKind string) bool {
-	if method != http.MethodPost {
+	if method != http.MethodPost || providerRequestIsAuxiliary(requestKind) {
 		return false
 	}
+	return true
+}
+
+func providerRequestIsAuxiliary(requestKind string) bool {
 	switch requestKind {
-	case "cancel", "cache-create", "cache-delete":
-		return false
-	default:
+	case "cancel", "cache-create", "cache-delete", "poll", "download", "upload-signature", "upload":
 		return true
+	default:
+		return false
 	}
 }
 

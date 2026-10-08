@@ -37,14 +37,15 @@ type Props = {
     workflows?: ModelProtocolWorkflow[];
     disabled?: boolean;
     section?: "all" | "protocol" | "references";
+    supportsControlNet?: boolean;
 };
 
-export function ModelCapabilityEditor({ value, onChange, protocol, capability = "video", model = "", workflows = [], disabled = false, section = "all" }: Props) {
+export function ModelCapabilityEditor({ value, onChange, protocol, capability = "video", model = "", workflows = [], disabled = false, section = "all", supportsControlNet = false }: Props) {
     if (capability === "text") {
         return <TextCapabilityEditor value={value} onChange={onChange} protocol={protocol} disabled={disabled} section={section} />;
     }
     if (capability === "image") {
-        return <ImageCapabilityEditor value={value} onChange={onChange} protocol={protocol} model={model} disabled={disabled} section={section} />;
+        return <ImageCapabilityEditor value={value} onChange={onChange} protocol={protocol} model={model} disabled={disabled} section={section} supportsControlNet={supportsControlNet} />;
     }
     const workflow = workflows.find((item) => item.id === model.trim().replace(/^models\//, "") && item.providerId === protocol);
     const storedProfile = normalizeModelCapabilityConfig(value || defaultModelCapabilityConfig(protocol, model)).video!;
@@ -435,12 +436,13 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
     );
 }
 
-function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, section }: Required<Pick<Props, "model" | "disabled">> & Pick<Props, "value" | "onChange" | "protocol" | "section">) {
+function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, section, supportsControlNet }: Required<Pick<Props, "model" | "disabled">> & Pick<Props, "value" | "onChange" | "protocol" | "section" | "supportsControlNet">) {
     const profile = normalizeModelCapabilityConfig(value || { version: 1, image: defaultImageCapabilityConfig(protocol, model) }).image!;
     const update = (patch: Partial<ImageCapabilityConfig>) => onChange?.({ version: 1, image: { ...profile, ...patch } });
     const updateReferences = (patch: Partial<ImageCapabilityConfig["references"]>) => update({ references: { ...profile.references, ...patch } });
     const updateSize = (patch: Partial<ImageCapabilityConfig["size"]>) => update({ size: { ...profile.size, ...patch } });
     const updateQuality = (patch: Partial<ImageCapabilityConfig["quality"]>) => update({ quality: { ...profile.quality, ...patch } });
+    const controlFields = <ControlNetCapabilityFields value={profile.controlNet} available={supportsControlNet === true} disabled={disabled} onChange={(controlNet) => update({ controlNet })} />;
 
     if (section === "references") {
         return (
@@ -454,6 +456,7 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, sec
                     <ReferenceCard title="通用限制" description="所有图片请求共用的基础约束">
                         <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} disabled={disabled} onChange={(promptMaxChars) => updateReferences({ promptMaxChars: promptMaxChars || 1 })} />
                     </ReferenceCard>
+                    {supportsControlNet || profile.controlNet ? <ReferenceCard title="结构控制" description="独立控制图与预处理器能力">{controlFields}</ReferenceCard> : null}
                 </div>
             </div>
         );
@@ -547,6 +550,7 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, sec
                 </div>
                 <ParameterField label="蒙版编辑" description="允许调用图片编辑接口并提交 mask" supported={profile.references.maskSupported} disabled={disabled} onChange={(maskSupported) => updateReferences({ maskSupported })} />
             </CapabilityGroup>
+            {supportsControlNet || profile.controlNet ? <CapabilityGroup title="结构控制" description="仅已声明 ControlNet 能力的调用协议可开启">{controlFields}</CapabilityGroup> : null}
 
             <CapabilityGroup title="输出规格" description="单次生成数量、尺寸参数与默认值">
                 <CapabilityBlock title="生成数量">
@@ -617,6 +621,15 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, disabled, sec
             </CapabilityGroup>
         </div>
     );
+}
+
+function ControlNetCapabilityFields({ value, available, disabled, onChange }: { value: ImageCapabilityConfig["controlNet"]; available: boolean; disabled: boolean; onChange: (value: NonNullable<ImageCapabilityConfig["controlNet"]>) => void }) {
+    const current = value || { supported: false, maxUnits: 4, preprocessors: ["canny"], models: [] };
+    const update = (patch: Partial<typeof current>) => onChange({ ...current, ...patch });
+    return <div className="space-y-2">
+        <ParameterField label="结构控制生图" description={available ? "允许提交独立控制图及 ControlNet 参数" : "当前调用协议未声明结构控制能力"} supported={current.supported} disabled={disabled || !available} onChange={(supported) => update({ supported })} />
+        {current.supported ? <><NumberField label="最大控制组数" value={current.maxUnits} min={1} max={4} disabled={disabled || !available} onChange={(maxUnits) => update({ maxUnits: maxUnits || 1 })} /><Field label="支持的预处理器"><Select mode="tags" className="w-full" aria-label="支持的预处理器" value={current.preprocessors} tokenSeparators={[","]} disabled={disabled || !available} options={[{ label: "Canny", value: "canny" }]} onChange={(preprocessors) => update({ preprocessors })} /></Field><Field label="控制模型标识（可选目录）"><Select mode="tags" className="w-full" aria-label="控制模型标识目录" value={current.models || []} tokenSeparators={[","]} disabled={disabled || !available} placeholder="未配置目录时，画布中手动填写控制模型标识" onChange={(models) => update({ models })} /></Field></> : null}
+    </div>;
 }
 
 function CapabilityGroup({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
