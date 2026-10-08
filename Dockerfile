@@ -1,11 +1,16 @@
-# syntax=docker/dockerfile:1.7
+# Use the BuildKit bundled frontend for cache mounts and COPY permissions.
+
+ARG BUN_IMAGE=oven/bun:1.3.9
+ARG NGINX_IMAGE=nginx:1.27-alpine
 
 # 构建 Vite 前端产物。
-FROM --platform=$BUILDPLATFORM oven/bun:1.3.9 AS web-build
+FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS web-build
 
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
+    bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache --registry="$NPM_REGISTRY"
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY README.md /app/README.md
@@ -23,12 +28,12 @@ ENV CANVAS_BUILD_TIME=${BUILD_TIME}
 RUN bun --bun ./node_modules/vite/bin/vite.js build
 
 # 运行镜像：nginx 托管静态前端，并在 Compose 中把 /api 转发到后端服务。
-FROM nginx:1.27-alpine
+FROM ${NGINX_IMAGE}
 
 COPY --from=web-build /app/web/dist /opt/canvas-release
-COPY docker/canvas-web-entrypoint.sh /usr/local/bin/canvas-web-entrypoint
-RUN chmod +x /usr/local/bin/canvas-web-entrypoint
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN find /opt/canvas-release \( -type d ! -perm -0555 -o -type f ! -perm -0444 \) -exec chmod a+rX {} +
+COPY --chmod=0755 docker/canvas-web-entrypoint.sh /usr/local/bin/canvas-web-entrypoint
+COPY --chmod=0644 nginx.conf /etc/nginx/conf.d/default.conf
 
 ENTRYPOINT ["/usr/local/bin/canvas-web-entrypoint"]
 

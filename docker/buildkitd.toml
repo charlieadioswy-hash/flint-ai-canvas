@@ -1,0 +1,12 @@
+# 软件包源由 Dockerfile 的 ALPINE_MIRROR / NPM_REGISTRY / GOPROXY 配置。
+# 此处只处理 Docker Hub 基础镜像；企业部署可替换为自己的可信镜像缓存。
+[registry."docker.io"]
+  mirrors = ["docker.m.daocloud.io"]
+
+# 小内存开发服务器串行执行重型构建步骤，避免 Go 与前端编译同时耗尽内存。
+[worker.oci]
+  max-parallelism = 1
+  # 适合 30 GB 开发盘：保留常用依赖，避免默认 20% 空闲阈值反复淘汰刚完成的构建。
+  reservedSpace = "4GB"
+  maxUsedSpace = "12GB"
+  minFreeSpace = "2GB"

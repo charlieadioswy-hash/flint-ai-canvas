@@ -1,13 +1,16 @@
 ARG GO_IMAGE=golang:1.25-alpine
 FROM ${GO_IMAGE}
 
-ARG GOPROXY=https://proxy.golang.org,direct
-ARG ALPINE_MIRROR
+ARG GOPROXY=https://goproxy.cn,direct
+ARG ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
 ENV GOPROXY=$GOPROXY
 
-RUN if [ -n "$ALPINE_MIRROR" ]; then sed -i "s#https://dl-cdn.alpinelinux.org#${ALPINE_MIRROR}#g" /etc/apk/repositories; fi \
-    && apk add --no-cache build-base git \
-    && go install github.com/air-verse/air@v1.63.0
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    sed -i "s#https\?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#g" /etc/apk/repositories \
+    && apk --cache-dir /var/cache/apk --update-cache add build-base git
+RUN --mount=type=cache,id=canvas-go-modules,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/air-verse/air@v1.63.0
 
 WORKDIR /workspace/backend
 

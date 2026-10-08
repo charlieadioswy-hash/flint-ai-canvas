@@ -123,3 +123,45 @@ LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
 ```
 
 Docker 开发编排也使用 `.local/project-workbench-debug`，并默认暴露前端 `3000` 和后端 `8080`。端口冲突时，可通过 `CANVAS_WEB_HOST_PORT` 和 `CANVAS_BACKEND_HOST_PORT` 调整宿主机端口。
+
+## 国内源与增量镜像构建
+
+源码构建需要启用 BuildKit。Dockerfile 使用内置 frontend，避免额外下载 `docker/dockerfile`；开发、源码部署及独立 Agent 镜像统一使用以下默认软件源，可通过 `.env` 和 Compose 构建参数覆盖：
+
+| 构建参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `ALPINE_MIRROR` | `https://mirrors.tuna.tsinghua.edu.cn/alpine` | 替换 Alpine 仓库主机，保留基础镜像的发行版与架构 |
+| `NPM_REGISTRY` | `https://registry.npmmirror.com` | Bun 与 npm 包下载；npm 同时处理锁文件中的 npmjs 地址 |
+| `GOPROXY` | `https://goproxy.cn,direct` | Go 模块及校验数据库代理，保留校验数据库检查 |
+
+换源不会升级依赖或重写锁文件。`web/bun.lock` 已锁定 npmmirror 下载地址；Pi 运行时继续使用原有 `package-lock.json` 和 integrity 校验。
+
+软件源不处理 Docker Hub 基础镜像。仓库的 `docker/buildkitd.toml` 为 BuildKit 配置了 DaoCloud 镜像缓存；企业环境可以替换为自己的可信镜像仓库。`GO_IMAGE`、`ALPINE_IMAGE`、`NODE_IMAGE`、`BUN_IMAGE`、`NGINX_IMAGE` 也可覆盖为完整镜像引用，固定 digest 可避免标签漂移。热更新前端单独使用 `BUN_DEV_IMAGE`。
+
+首次创建持久化构建器后，后续一直复用同一个构建器。配置按小内存、30 GB 开发盘设置：重型步骤串行执行，保留至少 4 GB 构建缓存，缓存上限 12 GB，空闲空间目标 2 GB。较大服务器可调整 `max-parallelism` 和空间阈值；缓存保留与空闲空间存在取舍，应随业务数据增长检查磁盘：
+
+```bash
+docker buildx create --name canvas-build --driver docker-container \
+  --driver-opt image=docker.m.daocloud.io/moby/buildkit:buildx-stable-1 \
+  --buildkitd-config docker/buildkitd.toml --bootstrap
+
+BUILDX_BUILDER=canvas-build docker compose \
+  --env-file .env -f docker-compose.deploy.yml -f docker-compose.build.yml build
+```
+
+首次创建构建器本身也需要获取 `moby/buildkit` 镜像；若 Docker daemon 尚不能访问 Docker Hub，先从可信镜像仓库拉取该镜像，或通过 `--driver-opt image=<可信镜像引用>` 指定。构建器配置中的 registry mirror 只在构建器启动后生效。
+
+已有构建器需要移除旧代理或更换镜像配置时，先等待当前构建结束。`docker buildx rm --keep-state <名称>` 保留缓存卷，再以相同名称创建构建器即可复用原缓存；不要删除卷或运行 `docker system prune --volumes`。
+
+缓存分为两层：
+
+- 依赖清单先于业务源码复制。锁文件不变时，Bun/npm 安装和 Go 模块下载层可直接复用；普通源码变化仅重新编译应用。
+- Bun、npm、APK、Go 模块与 Go 编译结果使用持久缓存挂载。依赖清单改变时仍能复用已下载内容。Go 模块另外保留普通镜像层，供支付插件、后端以及 CI 的 GHA 层缓存共用。
+
+`docker-compose.build.yml` 同时提供后端、前端和 `yingce-agent` 的源码构建；迁移程序使用同一个后端镜像。`.dockerignore` 排除各目录的 `node_modules`、本地后端二进制和开发数据，避免无关本机文件增加上传量或使缓存失效。
+
+验证时清空构建命令和构建器中的 HTTP/HTTPS/ALL proxy，连续运行两次相同构建，检查第二次依赖步骤是否为 `CACHED`；再改变应用源码或构建版本标记，确认依赖下载层仍命中。不要使用 `--no-cache` 或频繁换构建器来做日常更新。首次依赖下载及缓存被清理后的下载仍需要网络，公共镜像的限流与故障不能由本地缓存配置消除。
+
+源码快照解压时须保证构建上下文目录可遍历；不要将私有 `.env`、数据库或密钥打进源码包。最终镜像也会规范插件、Agent 与静态资源的读取权限，并在应用用户下检查官方插件可读，避免严格 umask 导致启动失败。
+
+资料：[TUNA Alpine](https://mirrors.tuna.tsinghua.edu.cn/help/alpine/)、[npmmirror](https://npmmirror.com/)、[Goproxy.cn](https://goproxy.cn/)、[DaoCloud 镜像服务](https://github.com/DaoCloud/public-image-mirror)、[Docker 构建缓存](https://docs.docker.com/build/cache/optimize/)。

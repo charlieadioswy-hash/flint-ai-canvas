@@ -1,16 +1,23 @@
-# syntax=docker/dockerfile:1.7
+# Use the BuildKit bundled frontend for cache mounts and COPY permissions.
 
-FROM node:22.19-alpine
+ARG NODE_IMAGE=node:22.19-alpine
+FROM ${NODE_IMAGE}
 
-RUN apk add --no-cache ca-certificates wget \
+ARG ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    sed -i "s#https*://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#g" /etc/apk/repositories \
+    && apk --cache-dir /var/cache/apk add --update-cache ca-certificates wget \
     && addgroup -S app \
     && adduser -S app -G app
 
 WORKDIR /app
-COPY backend/agent-runtime/pi/package.json backend/agent-runtime/pi/package-lock.json /app/agent-runtime/
-RUN npm ci --omit=dev --ignore-scripts --prefix /app/agent-runtime
-COPY backend/agent-runtime/pi/agent-runtime.mjs /app/agent-runtime/agent-runtime.mjs
-COPY yingce-agent/server.mjs /app/server.mjs
+COPY --chmod=0644 backend/agent-runtime/pi/package.json backend/agent-runtime/pi/package-lock.json /app/agent-runtime/
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+      --registry="$NPM_REGISTRY" --cache=/root/.npm --prefix /app/agent-runtime
+COPY --chmod=0644 backend/agent-runtime/pi/agent-runtime.mjs /app/agent-runtime/agent-runtime.mjs
+COPY --chmod=0644 yingce-agent/server.mjs /app/server.mjs
 
 ENV NODE_ENV=production
 USER app
