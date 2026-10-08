@@ -13,6 +13,7 @@ import (
 	_ "image/png"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
 	"strings"
@@ -210,7 +211,7 @@ func uploadLiblibImage(ctx context.Context, config providerConfig, data []byte, 
 	if strings.HasPrefix(s.Key, "/") || strings.Contains(s.Key, "\\") || path.Clean(s.Key) != s.Key || strings.HasPrefix(s.Key, "../") {
 		return "", errors.New("Liblib上传对象key无效")
 	}
-	body, contentType, err := liblibUploadMultipart(s, name, data)
+	body, contentType, err := liblibUploadMultipart(s, name, data, "image/"+format)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +228,10 @@ func uploadLiblibImage(ctx context.Context, config providerConfig, data []byte, 
 	return objectURL, nil
 }
 
-func liblibUploadMultipart(s liblibUploadSignature, name string, data []byte) ([]byte, string, error) {
+func liblibUploadMultipart(s liblibUploadSignature, name string, data []byte, mimeType string) ([]byte, string, error) {
+	if mimeType != "image/png" && mimeType != "image/jpeg" {
+		return nil, "", errors.New("Liblib 上传仅支持PNG/JPEG图片")
+	}
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
 	for _, field := range [][2]string{{"key", s.Key}, {"policy", s.Policy}, {"x-oss-date", s.Date}, {"x-oss-credential", s.Credential}, {"x-oss-signature-version", s.Version}, {"x-oss-signature", s.Signature}} {
@@ -235,7 +239,14 @@ func liblibUploadMultipart(s liblibUploadSignature, name string, data []byte) ([
 			return nil, "", err
 		}
 	}
-	file, err := writer.CreateFormFile("file", name)
+	// OSS checks the file part's media type. CreateFormFile defaults to
+	// application/octet-stream, which Liblib's image-only policy rejects.
+	header := make(textproto.MIMEHeader)
+	// OSS also requires quoted disposition parameters, even for token-safe names.
+	quotedName := strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(name)
+	header.Set("Content-Disposition", fmt.Sprintf("form-data; name=\"file\"; filename=\"%s\"", quotedName))
+	header.Set("Content-Type", mimeType)
+	file, err := writer.CreatePart(header)
 	if err != nil {
 		return nil, "", err
 	}

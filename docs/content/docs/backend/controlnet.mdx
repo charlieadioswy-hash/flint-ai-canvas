@@ -59,7 +59,33 @@ Liblib 网页还提供 Depth、OpenPose、Lineart、SoftEdge 等类型。网页�
 
 安装官方 `liblib-image` 插件后，在渠道中选择「Liblib 图片与 ControlNet」，配置 AccessKey 与 SecretKey，再配置图片模型能力。节点的「生成参数」按插件参数声明显示，`family` 选择 `f1` 或 `sd`，填写当前生成模式对应的 `templateUuid` 与采样步数。`sd` 还需要 checkpoint UUID、采样器枚举和 CFG；图生图需要 `denoisingStrength`。模板与模型 UUID 不使用臆造默认值。
 
+### 手工配置 SD 示例模型
+
+不依赖 `/models` 自动发现。`scripts/sql/configure-liblib-sd.sql` 是 PostgreSQL 的显式配置脚本，只对已存在、已启用且保存了 AK/SK 的 `liblib` 系统渠道添加一个模型与价格档，不属于全站自动迁移。脚本按 [liblibai SDK 0.0.11 的接口示例](https://www.npmjs.com/package/liblibai/v/0.0.11)使用基础模型版本 UUID `0ea388c7eb854be3ba3c6f65aac6bfd3`，同时作为产品模型标识和上游模型 ID。飞书原文未能直接抓取，SDK 示例不能替代真实上游可用性验证。
+
+脚本采用事务、渠道行锁和现有 `id_sequences` 分配 ID，重复执行不会新增重复模型或价格档；遇到已有配置冲突时终止，不覆盖管理员后续配置。执行前备份目标配置；可先用 `psql -X -v ON_ERROR_STOP=1 -v dry_run=true -f scripts/sql/configure-liblib-sd.sql` 演练并回滚，正式执行去掉 `dry_run`。完成后递增 Redis 的 `canvas:logical-model-route-catalog:version` 使目录缓存失效。脚本不包含密钥，不创建前台模型或线路。
+
+该示例按部署者指定的 **1 积分/张**配置；由于本站图片采用 `fixed_request` 计费，限制每次输出 1 张。上游成本价格保持未配置，不把售价当成供应商成本。尺寸先使用示例的 `768x1024`，未核实兼容控制模型前关闭 ControlNet。
+
+模型表没有 `providerOptions` 默认值字段，节点「生成参数」仍须填写以下内容，不能把请求模板 UUID 当作基础模型 ID：
+
+| 参数 | 文生图 | 图生图 |
+| --- | --- | --- |
+| `family` | `sd` | `sd` |
+| `templateUuid` | `e10adc3949ba59abbe56e057f20f883e` | `9c7d531dc75f476aa833b3d452b8f7ad` |
+| `steps` / `sampler` / `cfgScale` | `20` / `15` / `7` | `20` / `15` / `7` |
+| `seed` | `-1` | `-1` |
+| `denoisingStrength` | 不填 | `0.75`，另提供一张普通参考图 |
+
+`checkPointId` 留空时，现有 SD 适配器采用上游模型 ID。开发环境已验证该组合的单张文生图与输出蒙版合成；横向示例另在渠道允许尺寸中加入 `1024x576`。图生图需单独验收。
+
+### 协议与控制模型边界
+
 基础模型、控制模型和模板必须匹配。API 接口能接收 ControlNet 并不代表其中每个模型都支持同一控制模型；管理员可用 `image.controlNet.models` 缩小节点中的选择范围。切换基础模型时清除旧控制模型标识，要求重新选择。
+
+[Liblib 官方文档](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d)的 XL Canny 推荐控制模型为 `xinsir_controlnet-canny-sdxl_V2`，UUID 为 `b6806516962f4e1599a93ac4483c3d23`。彩色分区图作为 `control-image` 输入，保留内部边界；输出蒙版仅负责生成后的外轮廓裁切，不能替代控制图。Canny 提供边缘约束，区域内容仍由提示词描述，精确分区与透视效果需检查实图。
+
+上传控制图时，multipart 的 `file` 部分必须携带由图片真实格式确定的 `image/png` 或 `image/jpeg`。Liblib OSS 的签名策略会校验该类型；Go `CreateFormFile` 默认的 `application/octet-stream` 会被拒绝为 HTTP 403，即使上传签名接口已成功。文件部分的 `Content-Disposition` 中 `name`、`filename` 还必须保留双引号；真实 OSS 会将不带引号的形式拒绝为 `MalformedPOSTRequest`。文件保持最后一个表单域，AK/SK 不发送给 OSS。真实上传复现与修正验证见待测试记录。
 
 Liblib 的生成请求包装为 `templateUuid` 与 `generateParams`；控制数组映射到 `generateParams.controlNet`。`sourceImage` 使用供应商可访问的 URL，单元 `width`、`height` 是真实控制图尺寸，输出尺寸另行传递。
 
