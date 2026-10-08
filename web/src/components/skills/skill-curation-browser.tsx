@@ -70,10 +70,11 @@ export function SkillCurationBrowser({ data, value, onChange, error, retry }: { 
     if (error) return <Alert type="warning" title={error} action={<Button onClick={retry}>重试</Button>} />;
     if (!data?.enabled) return null;
     return (
-        <Space wrap>
-            <span>平台分类</span>
+        <div className="skill-curation-browser">
+            <span className="skill-curation-browser-label">平台分类</span>
             <Select
                 aria-label="平台分类"
+                className="skill-curation-browser-select"
                 value={value}
                 onChange={onChange}
                 popupMatchSelectWidth={false}
@@ -95,6 +96,6 @@ export function SkillCurationBrowser({ data, value, onChange, error, retry }: { 
                     ...data.categories.map((item) => ({ value: item.id, label: `${data.roots?.find((root) => root.id === item.rootTag)?.name || "分类"} / ${item.name}` })),
                 ]}
             />
-        </Space>
+        </div>
     );
 }

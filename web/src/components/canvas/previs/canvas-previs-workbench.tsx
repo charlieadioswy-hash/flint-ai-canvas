@@ -1891,8 +1891,8 @@ export function CanvasPrevisWorkbench({
                     </button>
                 </aside>
             </div>
-            <section className="pv-inline-timeline">
-                {capabilities.timeline ? (
+            {capabilities.timeline ? (
+                <section className={`pv-inline-timeline ${sequencerVisible ? "" : "is-collapsed"}`}>
                     <PrevisSequencer
                         scene={draft}
                         shot={activeShot}
@@ -1921,8 +1921,8 @@ export function CanvasPrevisWorkbench({
                             setPlayhead(0);
                         }}
                     />
-                ) : null}
-            </section>
+                </section>
+            ) : null}
         </div>
     );
 }

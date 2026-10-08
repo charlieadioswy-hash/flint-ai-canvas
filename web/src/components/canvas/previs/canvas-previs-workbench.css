@@ -3040,6 +3040,10 @@
     background: var(--pd-s1);
     overflow: hidden;
 }
+.pv-inline-timeline.is-collapsed {
+    flex: 0 0 var(--space-8);
+    min-height: var(--space-8);
+}
 .pv-inline-timeline .previs-sequencer {
     height: 100% !important;
     border: 0 !important;

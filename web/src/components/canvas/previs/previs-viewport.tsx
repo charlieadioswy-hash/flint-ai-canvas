@@ -40,6 +40,7 @@ import { createPrevisTransaction, installPrevisTerminalListeners } from "@/lib/c
 import { emptyPrevisPlacementIntent, finitePrevisGroundPoint, type PrevisGroundPoint, type PrevisPlacementIntent } from "@/lib/canvas/previs/previs-placement";
 import { previsDiagnosticObjectKind } from "@/lib/canvas/previs/previs-diagnostics";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
+import { PREVIS_MIN_ORBIT_DISTANCE, resolvePrevisFrameBounds, resolvePrevisZoomMinDistance } from "@/lib/canvas/previs/previs-frame-bounds";
 import {
     previsCaptureInitial,
     previsCaptureUsable,
@@ -655,6 +656,21 @@ function PrevisSceneContent({
         };
     }, [camera, effectiveViewport.orbit, gl, onGroundClick, onGroundPoint, onTrajectoryComplete, trajectoryDrawing, transforming]);
 
+    // 滚轮/触控缩放与按钮缩放共用同一最近距离：环绕目标落在演员体内时不允许推进到身体内部。
+    // 走 state 而不是直接写 controls.minDistance，否则 drei 每次 render 回写 props 会把它重置。
+    const [orbitMinDistance, setOrbitMinDistance] = useState(PREVIS_MIN_ORBIT_DISTANCE);
+    useEffect(() => {
+        const controls = orbitRef.current;
+        if (!controls) return;
+        const sync = () => {
+            const next = resolvePrevisZoomMinDistance(scene.objects, controls.target);
+            setOrbitMinDistance((current) => (Math.abs(current - next) > 0.01 ? next : current));
+        };
+        sync();
+        controls.addEventListener("end", sync);
+        return () => controls.removeEventListener("end", sync);
+    }, [scene.objects]);
+
     // 导航只改 free 相机，不写回场景坐标。初次挂载自动适配一次，避免对象出现在视口角落；之后由用户按钮控制取景。
     const initialFrameSceneRef = useRef<string | null>(null);
     useEffect(() => {
@@ -666,39 +682,17 @@ function PrevisSceneContent({
             invalidate();
         };
         const frame = (ids?: Set<string>) => {
-            const objects = scene.objects.filter((object) => object.visible && (!ids || ids.has(object.id)));
-            if (!objects.length) return resetCamera();
+            const aspect = size.width / Math.max(size.height, 1);
+            const bounds = resolvePrevisFrameBounds(scene.objects, ids, aspect, freeCamera.fov);
+            if (!bounds) return resetCamera();
 
-            const min = new Vector3(Infinity, Infinity, Infinity);
-            const max = new Vector3(-Infinity, -Infinity, -Infinity);
-            objects.forEach((object) => {
-                const [x, y, z] = object.transform.position;
-                const [sx, sy, sz] = object.transform.scale;
-                const actor = object.kind === "actor" || object.primitive === "character";
-                const primitiveBounds: [number, number, number] = actor
-                    ? [0.55, 1.45, 0.55]
-                    : object.primitive === "sphere"
-                      ? [0.6, 0.6, 0.6]
-                      : object.primitive === "cylinder"
-                        ? [0.55, 0.8, 0.55]
-                        : object.primitive === "plane"
-                          ? [1.2, 0.05, 1.2]
-                          : [0.6, 0.6, 0.6];
-                const half = new Vector3(primitiveBounds[0] * Math.max(0.1, Math.abs(sx)), primitiveBounds[1] * Math.max(0.1, Math.abs(sy)), primitiveBounds[2] * Math.max(0.1, Math.abs(sz)));
-                min.min(new Vector3(x, y, z).sub(half));
-                max.max(new Vector3(x, y, z).add(half));
-            });
-
-            const target = min.clone().add(max).multiplyScalar(0.5);
-            const span = max.clone().sub(min);
-            const radius = Math.max(1.8, Math.max(span.x, span.y, span.z) * 0.72 + 0.7);
             const orbitTarget = orbitRef.current?.target || new Vector3(...PREVIS_FREE_ORBIT_TARGET);
             const direction = freeCamera.position.clone().sub(orbitTarget);
             if (direction.lengthSq() < 0.01) direction.set(4.8, 2.7, 6.8);
             direction.normalize();
-            orbitRef.current?.target.copy(target);
-            freeCamera.position.copy(target).add(direction.multiplyScalar(radius));
-            freeCamera.lookAt(target);
+            orbitRef.current?.target.copy(bounds.target);
+            freeCamera.position.copy(bounds.target).add(direction.multiplyScalar(Math.max(1.8, bounds.fitDistance * 1.18)));
+            freeCamera.lookAt(bounds.target);
             orbitRef.current?.update();
             invalidate();
         };
@@ -708,11 +702,12 @@ function PrevisSceneContent({
             resetCamera,
             zoom: (factor: number) => {
                 const target = orbitRef.current?.target || new Vector3(...PREVIS_FREE_ORBIT_TARGET);
-                const offset = freeCamera.position
-                    .clone()
-                    .sub(target)
-                    .multiplyScalar(Math.max(0.2, Math.min(2, factor)));
-                freeCamera.position.copy(target).add(offset);
+                const offset = freeCamera.position.clone().sub(target);
+                const currentDistance = offset.length();
+                const direction = currentDistance > 0.01 ? offset.multiplyScalar(1 / currentDistance) : new Vector3(4.8, 2.7, 6.8).normalize();
+                const minDistance = resolvePrevisZoomMinDistance(scene.objects, target);
+                const nextDistance = Math.max(minDistance, currentDistance * Math.max(0.2, Math.min(2, factor)));
+                freeCamera.position.copy(target).add(direction.multiplyScalar(nextDistance));
                 freeCamera.lookAt(target);
                 orbitRef.current?.update();
                 invalidate();
@@ -724,7 +719,7 @@ function PrevisSceneContent({
             frame();
         }
         return () => onNavigationReady?.({ focusSelected: () => undefined, frameScene: () => undefined, resetCamera: () => undefined, zoom: () => undefined });
-    }, [freeCamera, invalidate, onNavigationReady, scene.id, scene.objects, selectedObjectId]);
+    }, [freeCamera, invalidate, onNavigationReady, scene.id, scene.objects, selectedObjectId, size.height, size.width]);
 
     useEffect(() => {
         threeScene.background = new Color(scene.background);
@@ -839,7 +834,7 @@ function PrevisSceneContent({
                 camera={freeCamera}
                 enabled={!transforming && effectiveViewport.orbit}
                 target={PREVIS_FREE_ORBIT_TARGET}
-                minDistance={0.6}
+                minDistance={orbitMinDistance}
                 maxDistance={80}
                 enableDamping
                 dampingFactor={0.08}
