@@ -19,8 +19,12 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 COPY --chmod=0644 backend/agent-runtime/pi/agent-runtime.mjs /app/agent-runtime/agent-runtime.mjs
 COPY --chmod=0644 yingce-agent/server.mjs /app/server.mjs
 
+# COPY 的文件权限不能作为运行目录权限；非 root 用户需要目录执行权限。
+RUN chmod 0755 /app/agent-runtime
+
 ENV NODE_ENV=production
 USER app
+RUN test -r /app/server.mjs && test -r /app/agent-runtime/agent-runtime.mjs
 EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8081/healthz >/dev/null || exit 1
 CMD ["node", "server.mjs"]
