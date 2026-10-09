@@ -52,6 +52,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		// Upload checkpoints are issued by the worker, never by the caller.
 		delete(metadata, liblibPreparedMetadataKey)
 	}
+	delete(normalizedInput, channelProviderDefaultsSnapshotKey)
 	if err := s.prepareControlNetTaskInput(userID, normalizedInput); err != nil {
 		return nil, err
 	}
@@ -305,6 +306,7 @@ func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map
 	}
 	nextConfig["providerModelKey"] = firstNonEmpty(providerModelKey, routed.ChannelModel.ModelKey)
 	input["config"] = nextConfig
+	applyChannelProviderDefaults(input, routed.ChannelModel)
 	return input
 }
 
@@ -526,6 +528,7 @@ func (s *Service) resolveSystemChannelModelSelection(input map[string]any, taskT
 	nextConfig["providerModelKey"] = firstNonEmpty(priceTier.ProviderModelKey, channelModel.ProviderModelKey, channelModel.ModelKey)
 	nextConfig["interfaceType"] = string(channelModel.Protocol)
 	nextConfig["apiFormat"] = channelAPIFormatForProtocol(channel.APIFormat, channelModel.Protocol)
+	applyChannelProviderDefaults(input, *channelModel)
 	return input, nil
 }
 

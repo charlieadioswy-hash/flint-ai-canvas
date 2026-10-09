@@ -14,6 +14,10 @@
 
 `providerOptions.liblib-image` 提供 family、templateUuid、checkPointId、steps、sampler、cfgScale、seed、negativePrompt、denoisingStrength以及可选输出width/height。统一输出合同提供像素宽高和图片数量。首版只处理一张普通参考图，图生图必须给出0–1的重绘幅度。采样步数须是正整数，随机种子-1表示随机，其余为非负整数。
 
+文生图将输出尺寸写入 `generateParams.width/height`；图生图使用 `resizedWidth/resizedHeight`，并发送 `sourceImage`、`mode: 0` 与 `resizeMode: 0`。这些尺寸来自统一输出合同，不是参考图真实尺寸；ControlNet 的 `width/height` 仍是控制图真实尺寸。`mode: 4` 是局部重绘，不用于普通内容参考图或后处理输出蒙版。映射依据 [LiblibAI SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image)。插件 1.0.2 需要同步升级后端内置适配器。
+
+渠道 `providerDefaults` 可保存协议默认参数及 textToImageTemplateUuid、imageToImageTemplateUuid、controlNetModel。任务创建按实际选定渠道合并用户显式值，再根据普通参考图选择文生/图生模板，填补缺省控制模型并冻结；辅助字段不会直接发送上游。已验证 SDXL checkpoint `0ea388c7eb854be3ba3c6f65aac6bfd3` 在启用兼容 ControlNet 时提供默认组合，其他 checkpoint 不推断模板和控制模型。
+
 ControlNet 最多四组，执行顺序从1开始。首版 Canny 对应平台预处理器1，检测分辨率64–2048、阈值1–255。控制权重0–2，起止比例0–1且起点不晚于终点。控制偏好可选择均衡、提示词优先或ControlNet优先；图像适配可选择直接缩放、等比裁切或等比补边。可选控制影响蒙版要求白色蒙版、黑色底色并与参考图同尺寸。控制影响蒙版不会锁住生成图片外部像素；独立输出范围蒙版在结果保存阶段合成。
 
 ## 官方文档与鉴权

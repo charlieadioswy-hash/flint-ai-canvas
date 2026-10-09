@@ -226,6 +226,7 @@ export function systemChannelModelChannels(channels: PublicChannelCatalog[]): Mo
                     outputTokenPriceMicrocredits: outputPrice,
                     cachedTokenPriceMicrocredits: cachedPrice,
                     capabilityConfig: (model.capabilityConfig as ModelCapabilityConfig | undefined) || defaultModelCapabilityConfig(),
+                    defaultOptions: model.defaultOptions,
                     channelModelId: model.id,
                     channelId: channel.id,
                     modelKey: model.modelKey,

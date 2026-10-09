@@ -7,6 +7,7 @@ import { ModelIconPicker } from "@/components/model-logo";
 import { ModelIcon } from "@/components/model-picker";
 import { ModelProtocolBrowser } from "@/components/model-protocol-browser";
 import { ModelCapabilityEditor } from "@/components/model-capability-editor";
+import { ProviderParameterInput } from "@/components/provider-parameter-input";
 import { defaultModelCapabilityConfig, normalizeModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { createAdminChannelModel, testAdminChannelModel, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
@@ -53,6 +54,7 @@ export function ChannelModelEditor({
     const modelKey = Form.useWatch("modelKey", form) || "";
     const providerModelKey = Form.useWatch("providerModelKey", form) || "";
     const capabilityConfig = Form.useWatch("capabilityConfig", form);
+    const providerParameters = protocols.find((item) => item.value === modelProtocol)?.parameters?.filter((item) => item.mapping === `providerOptions.${modelProtocol}.${item.name}` && ["string", "integer", "number", "boolean"].includes(item.type)) || [];
     const modelEnabled = Form.useWatch("enabled", form) !== false;
     const priceTiers = Form.useWatch("priceTiers", form) || [];
     const hasDefaultPriceTier = priceTiers.some((tier) => tier.matchMode === "default");
@@ -75,6 +77,7 @@ export function ChannelModelEditor({
             form.setFieldsValue(changeChannelModelCapability(form.getFieldsValue(true), protocols));
             setConfigurationChanged(true);
         } else if (changed.protocol) {
+            form.setFieldValue("providerDefaults", {});
             form.setFieldValue("capabilityConfig", modelCapability === "audio" ? undefined : defaultModelCapabilityConfig(changed.protocol, providerModelKey.trim() || modelKey.trim()));
             setConfigurationChanged(true);
         } else if (changed.providerModelKey !== undefined || changed.modelKey !== undefined) {
@@ -128,6 +131,7 @@ export function ChannelModelEditor({
                 priceTiers: values.priceTiers.map((tier) => priceTierPayloadFromForm(values.capability, tier, upstreamModel)),
                 enabled: values.enabled !== false,
                 capabilityConfig,
+                providerDefaults: values.providerDefaults,
             };
             if (editing) await updateAdminChannelModel(channel.id, editing.id, payload);
             else await createAdminChannelModel(channel.id, payload);
@@ -162,6 +166,7 @@ export function ChannelModelEditor({
                 capability: values.capability,
                 protocol: values.protocol,
                 capabilityConfig,
+                providerDefaults: values.providerDefaults,
             });
             message.success(`模型测试通过，耗时 ${(result.durationMs / 1000).toFixed(2)} 秒`);
         } catch (error) {
@@ -372,6 +377,17 @@ export function ChannelModelEditor({
                                         </section>
                                     ) : null}
                                     {modelCapability === "audio" && <Alert type="info" title="音频模型无需额外配置引用与参数" description="调用协议和积分定价仍需在对应分组中配置。" />}
+                                    {providerParameters.length > 0 && <section className="admin-model-editor-section admin-model-editor-section-stacked">
+                                        <SectionHeading title="生成默认参数" description="按当前协议配置默认值；任务创建时采用所选渠道模型的默认值，用户在高级设置中填写的值优先。" />
+                                        <div className="admin-model-editor-section-content">
+                                            {modelProtocol === "liblib-image" && <p className="mb-3 text-xs text-muted-foreground">文生图与图生图分别配置模板，系统根据内容参考图自动选择。默认 Canny 模型用于未指定控制模型的任务；固定模板留空即可自动选择。</p>}
+                                            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+                                                {providerParameters.map((parameter) => <Form.Item key={parameter.name} label={parameter.description || parameter.name} name={["providerDefaults", parameter.name]}>
+                                                    <ProviderParameterInput parameter={parameter} disabled={busy} />
+                                                </Form.Item>)}
+                                            </div>
+                                        </div>
+                                    </section>}
                                 </div>
                             ),
                         },

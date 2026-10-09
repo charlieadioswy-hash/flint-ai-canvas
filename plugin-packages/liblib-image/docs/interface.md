@@ -4,11 +4,17 @@
 
 创建请求 `POST /api/generate/webui/text2img`；有一张普通参考图时使用 `/api/generate/webui/img2img`。顶层为 `templateUuid` 与 `generateParams`。查询为 `POST /api/generate/webui/status`，只提交原 `generateUuid`，恢复任务不重新创建。
 
+文生图输出尺寸映射为 `generateParams.width/height`；图生图映射为 `generateParams.resizedWidth/resizedHeight`，同时传入普通内容参考图的 `sourceImage`、`mode: 0`（普通图生图）与 `resizeMode: 0`（完整画幅拉伸）。尺寸使用统一输出合同，不能替换为内容参考图或 ControlNet 原图尺寸；独立 ControlNet 单元仍携带各自真实 `width/height`。本协议不把输出范围蒙版转成 `mode: 4` 局部重绘。字段依据 [LiblibAI SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image)，飞书原文不可达时以该同模板示例核对。
+
 `providerOptions.liblib-image` 提供 `family`、`templateUuid`、`checkPointId`、`steps`、`sampler`、`cfgScale`、`seed`、`negativePrompt`、`denoisingStrength`、`width`、`height`。`family=f1` 的官方固定基础算法模板不发送 `checkPointId`、`sampler`、`cfgScale`；`family=sd` 必须配置这些值。图生图必须配置 `denoisingStrength`。不默认写入未经确认的 UUID。
+
+渠道模型的 `providerDefaults` 保存上述协议标量参数，并支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`。服务端按是否有普通内容参考图选择模板，显式 `templateUuid` 优先；控制图不触发图生图。未指定控制模型的单元使用 `controlNetModel`。这些辅助字段仅用于解析配置，真实上游 payload 仍只有 `templateUuid` 与 `generateParams`。当前实际选定渠道的默认值与用户显式值在创建任务时合并并冻结，后台后续修改不影响已排队任务；自动切换渠道只带用户原有显式值。
+
+仅已验证 checkpoint `0ea388c7eb854be3ba3c6f65aac6bfd3` 且启用兼容的 ControlNet 能力时提供默认值：`family=sd`、文生图模板 `e10adc3949ba59abbe56e057f20f883e`、图生图模板 `9c7d531dc75f476aa833b3d452b8f7ad`、Canny XL `b6806516962f4e1599a93ac4483c3d23`、`steps=20`、`sampler=15`、`cfgScale=7`、`seed=-1`、`denoisingStrength=0.75`。管理员配置覆盖这些值，其他 checkpoint 不套用此组合。
 
 独立 `controlNet` 单元映射 `unitOrder`（1–4）、`sourceImage`、参考图 `width/height`、`preprocessor`、`annotationParameters`、`model`、`controlWeight`、`startingControlStep/endingControlStep`、`pixelPerfect`、`controlMode`、`resizeMode` 与可选 `maskImage`。首版 Canny 枚举为 1，参数为分辨率64–2048、阈值1–255。控制影响蒙版须与参考图同尺寸；该蒙版不保证外部像素为黑。
 
-本地素材采用上传签名与 OSS postObject 流程，格式PNG/JPEG且不超过10MB。OSS表单字段遵循官方V4规范；Liblib返回字段到V4表单字段的映射尚待真实账号验证。签名凭证仅在内存使用，不保存在任务正文或日志。
+本地素材采用上传签名与 OSS postObject 流程，格式PNG/JPEG且不超过10MB。OSS表单字段遵循官方V4规范。签名凭证仅在内存使用，不保存在任务正文或日志。
 
 响应业务 `code` 必须为0。生成状态1等待，2执行中，3已生图，4审核中，5最终成功，6失败，7超时。3与4继续查询；成功必须有可用图片，审核拒绝的图片不返回。来源：[官方API说明](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d)、[上传说明](https://resonate.feishu.cn/wiki/A9M2whHxsiKtu8kpIn3cZp0PnVw)。
 
@@ -22,7 +28,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "liblib-image",
   "name": "Liblib 图片与 ControlNet",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "影策",
   "description": "Liblib 官方异步图片 API：独立控制图、服务端签名、上传与审核后结果。",
   "runtime": {
@@ -82,11 +88,28 @@
             "description": "模板基础算法：F.1 固定基础模型，或 SD/SDXL 自定义 checkpoint。"
           },
           {
+            "name": "textToImageTemplateUuid",
+            "type": "string",
+            "mapping": "providerOptions.liblib-image.textToImageTemplateUuid",
+            "description": "文生图默认模板 UUID；没有普通参考图时使用。"
+          },
+          {
+            "name": "imageToImageTemplateUuid",
+            "type": "string",
+            "mapping": "providerOptions.liblib-image.imageToImageTemplateUuid",
+            "description": "图生图默认模板 UUID；有普通内容参考图时使用。"
+          },
+          {
+            "name": "controlNetModel",
+            "type": "string",
+            "mapping": "providerOptions.liblib-image.controlNetModel",
+            "description": "默认 Canny 控制模型 UUID；控制单元未指定模型时使用。"
+          },
+          {
             "name": "templateUuid",
             "type": "string",
-            "required": true,
             "mapping": "providerOptions.liblib-image.templateUuid",
-            "description": "当前文生图或图生图模式的官方模板 UUID，必须由渠道配置提供。"
+            "description": "可选固定模板 UUID，覆盖按生成方式选择的默认模板。"
           },
           {
             "name": "checkPointId",

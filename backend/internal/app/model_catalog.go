@@ -235,6 +235,12 @@ func (s *Service) sanitizeChannelModel(cm *model.ChannelModel) (PublicChannelMod
 		}
 	}
 
+	if defaultOptions == nil {
+		defaultOptions = make(map[string]any)
+	}
+	for key, value := range channelModelProviderDefaults(*cm) {
+		defaultOptions[key] = value
+	}
 	return PublicChannelModel{
 		ID:               cm.ID,
 		ModelKey:         cm.ModelKey,

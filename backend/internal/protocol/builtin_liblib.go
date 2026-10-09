@@ -15,7 +15,24 @@ const LiblibImageProtocolID = "liblib-image"
 
 func liblibImageAdapter() Adapter {
 	info := metadata(LiblibImageProtocolID, "Liblib 图片与 ControlNet", "LiblibAI", CapabilityImage, "POST /api/generate/webui/text2img", "POST /api/generate/webui/status", "application/json")
+	info.Version = "1.0.2"
 	info.SupportsControlNet = true
+	info.Parameters = []Parameter{
+		{Name: "family", Type: "string", Values: []string{"f1", "sd"}, Description: "基础算法", Mapping: "providerOptions.liblib-image.family"},
+		{Name: "templateUuid", Type: "string", Description: "固定模板 UUID（覆盖按生成方式选择的模板）", Mapping: "providerOptions.liblib-image.templateUuid"},
+		{Name: "textToImageTemplateUuid", Type: "string", Description: "文生图模板 UUID", Mapping: "providerOptions.liblib-image.textToImageTemplateUuid"},
+		{Name: "imageToImageTemplateUuid", Type: "string", Description: "图生图模板 UUID", Mapping: "providerOptions.liblib-image.imageToImageTemplateUuid"},
+		{Name: "controlNetModel", Type: "string", Description: "默认 Canny 控制模型 UUID", Mapping: "providerOptions.liblib-image.controlNetModel"},
+		{Name: "checkPointId", Type: "string", Description: "基础模型 UUID（留空使用渠道上游模型）", Mapping: "providerOptions.liblib-image.checkPointId"},
+		{Name: "steps", Type: "integer", Description: "采样步数", Mapping: "providerOptions.liblib-image.steps"},
+		{Name: "sampler", Type: "integer", Description: "采样器枚举", Mapping: "providerOptions.liblib-image.sampler"},
+		{Name: "cfgScale", Type: "number", Description: "提示词引导系数", Mapping: "providerOptions.liblib-image.cfgScale"},
+		{Name: "seed", Type: "integer", Description: "随机种子（-1 随机）", Mapping: "providerOptions.liblib-image.seed"},
+		{Name: "negativePrompt", Type: "string", Description: "负向提示词", Mapping: "providerOptions.liblib-image.negativePrompt"},
+		{Name: "denoisingStrength", Type: "number", Description: "图生图重绘幅度（0–1）", Mapping: "providerOptions.liblib-image.denoisingStrength"},
+		{Name: "width", Type: "integer", Description: "输出宽度", Mapping: "providerOptions.liblib-image.width"},
+		{Name: "height", Type: "integer", Description: "输出高度", Mapping: "providerOptions.liblib-image.height"},
+	}
 	info.Execution = "declarative"
 	return builtinAdapter{info: info, create: buildLiblibCreate, parseCreate: parseLiblibCreate,
 		poll: func(c PollContext) (RequestSpec, error) {
@@ -119,7 +136,7 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 	if count == 0 {
 		count = 1
 	}
-	params := map[string]any{"prompt": r.Prompt, "width": width, "height": height, "imgCount": count, "steps": o["steps"], "seed": -1}
+	params := map[string]any{"prompt": r.Prompt, "imgCount": count, "steps": o["steps"], "seed": -1}
 	if liblibOptionString(o, "family") == "sd" {
 		params["checkPointId"] = model
 		params["sampler"] = o["sampler"]
@@ -137,7 +154,12 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 			return RequestSpec{}, err
 		}
 		params["sourceImage"] = imageURL
+		// Liblib img2img uses resized dimensions; mode 0 is ordinary image editing.
+		params["resizedWidth"], params["resizedHeight"] = width, height
+		params["resizeMode"], params["mode"] = 0, 0
 		path = "/api/generate/webui/img2img"
+	} else {
+		params["width"], params["height"] = width, height
 	}
 	units := make([]any, 0, len(r.ControlNet))
 	for index, unit := range r.ControlNet {

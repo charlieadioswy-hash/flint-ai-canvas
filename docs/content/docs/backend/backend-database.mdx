@@ -37,13 +37,13 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 ## 结构迁移与版本
 
-当前结构版本为 50。标准顺序为 44 图片合规检测、45 3D 模型生成、46 技能策展、47 技能一级分类、48 上传容量预占、49 3D API 地址快照、50 3D 素材时间字段修复。已应用上游版本 45 的数据库使用下述历史顺序识别，保留原迁移记录。
+当前结构版本为 51。标准顺序为 44 图片合规检测、45 3D 模型生成、46 技能策展、47 技能一级分类、48 上传容量预占、49 3D API 地址快照、50 3D 素材时间字段修复、51 渠道模型生成默认参数。已应用上游版本 45 的数据库使用下述历史顺序识别，保留原迁移记录。
 
 版本 44 `image_content_moderation` 新增图片合规检测的 Provider、配置版本、生效策略、检测批次、检测项目及全局日调用计数六张表，详情见本页“图片合规检测”。版本 42 `cloud_agent_pi_sessions` 新增 `cloud_agent_pi_sessions` 表，按运行 ID 保存 Pi 原生 JSONL 会话快照、用户 ID、乐观并发 revision 和更新时间；会话正文由 Agent runtime 管理，Go 只将其作为不透明快照读写，不替代有界控制检查点、事件日志或任务记录。版本 41 `resource_thumbnail` 为 `resources` 增加缩略图元数据。版本 40 `builtin_skill_tombstones` 新增内置技能删除记录，管理员删除平台技能后，后续启动同步不会重新创建该技能；版本 39 `skill_library_categories` 新增 `skill_library_categories` 表，并为 `user_skill_states` 增加 `library_category_id`，保存个人技能库分类及每个用户对技能的归类；分类不改变 `skills.tag` 的技能广场共享分类。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
 
 版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 50 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 51 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 ### 生成成功后的作品保存恢复
 
@@ -309,6 +309,8 @@ schema v27 为 `channel_model_price_tiers` 和 `billing_orders` 添加 `cost_con
 Schema 30 新增 `tools`，31 新增 `tool_favorites`；主分支已有 28（Agent 执行日志）、29（资源租约）编号和 checksum 不变。
 
 Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`），通过 JSON serializer 存储有序的 `{ text, color }` 数组。每个模型最多 5 个标签，文字去除首尾空白后为 1–12 字且不重复，颜色为 `purple/blue/green/gold/orange/pink`。标签仅用于展示，不影响价格、能力和路由。后端启动时执行增量迁移，已有模型默认无标签；回退应用可保留此新增列，若人工删除列会丢失标签配置，须先备份。
+
+Schema 51 为 `channel_models` 新增可空 TEXT 字段 `provider_defaults`，通过 JSON serializer 保存协议声明的标量参数对象。旧模型为空，服务端仅对已验证 Liblib checkpoint 与兼容 ControlNet 能力采用内置推荐组合，管理员保存的值优先；其他模型不推断 UUID。生成任务在 `input_json.metadata.providerOptions` 中保存有效值，并以 `channelProviderDefaultsSnapshot` 保存原用户覆盖项，避免排队后配置变化或切线时混用其他渠道的默认值。该列不存凭据、控制图或蒙版资源；迁移只新增列，价格、模型标识和已有任务数据不变。
 
 - `tools`：自增 `id`、类型 `type`、名称 `label/label_en`、描述/标签、`prompt`、预览 `cover/media_url/extra_info_json`、比例、`owner_id`、`source`、`enabled`、`visibility`、排序权重和时间。
 - `tool_favorites`：`id`、`user_id`、`tool_id`、收藏时间；用户和工具联合唯一。删除自己的自定义工具时事务清理收藏，不删除预览文件。

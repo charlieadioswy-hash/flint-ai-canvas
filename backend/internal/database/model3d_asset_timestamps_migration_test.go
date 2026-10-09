@@ -114,7 +114,7 @@ func testModel3DAssetTimestampMigration(t *testing.T, db *gorm.DB) {
 			t.Fatal(err)
 		}
 		status, err := ReadSchemaStatus(db)
-		if err != nil || !status.Ready || status.Current != 50 {
+		if err != nil || !status.Ready || status.Current != CurrentSchemaVersion {
 			t.Fatalf("migration status: %+v %v", status, err)
 		}
 		for index, expected := range assets {

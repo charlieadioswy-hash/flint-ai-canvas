@@ -19,12 +19,13 @@ export type ChannelModelFormValues = {
     priceTiers: PriceTierFormValues[];
     enabled: boolean;
     capabilityConfig?: ModelCapabilityConfig;
+    providerDefaults?: Record<string, unknown>;
 };
 
 export type EditorSection = "identity" | "capabilities" | "pricing";
 
 export function editorSectionForField(name: (string | number)[]): EditorSection {
-    return name[0] === "priceTiers" ? "pricing" : name[0] === "capabilityConfig" ? "capabilities" : "identity";
+    return name[0] === "priceTiers" ? "pricing" : name[0] === "capabilityConfig" || name[0] === "providerDefaults" ? "capabilities" : "identity";
 }
 
 export function initialChannelModelValues(item: ChannelModel | null, protocols: ModelProtocolDefinition[]): ChannelModelFormValues {
@@ -43,6 +44,7 @@ export function initialChannelModelValues(item: ChannelModel | null, protocols: 
         protocol,
         priceTiers: item ? (item.priceTiers?.length ? item.priceTiers.map(priceTierToForm) : [legacyPriceTierToForm(item)]) : [defaultPriceTier()],
         enabled: item?.enabled ?? true,
+        providerDefaults: { ...item?.providerDefaults },
         capabilityConfig: capability === "audio" ? undefined : normalizeModelCapabilityConfig(item?.capabilityConfig || defaultModelCapabilityConfig(protocol, upstreamModel)),
     };
 }
@@ -54,6 +56,7 @@ export function changeChannelModelCapability(values: ChannelModelFormValues, pro
     return {
         ...values,
         protocol,
+        providerDefaults: {},
         capabilityConfig: capability === "audio" ? undefined : defaultModelCapabilityConfig(protocol, values.providerModelKey?.trim() || values.modelKey.trim()),
         priceTiers: values.priceTiers.map((tier) => ({
             ...tier,

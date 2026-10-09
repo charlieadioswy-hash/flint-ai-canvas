@@ -15,6 +15,7 @@ test("public channel order, alias and model order survive session normalization 
         icon: "",
         capability: "image",
         protocol: "openai-image",
+        defaultOptions: { family: "sd", steps: 20, seed: 0, imageToImageTemplateUuid: "configured-template" },
         available,
         priceTiers: [],
         pricingMode: "fixed",
@@ -33,6 +34,7 @@ test("public channel order, alias and model order survive session normalization 
     expect(config.channels[0]!.models).toEqual(["z-model", "a-model"]);
     expect(selectableModelsByCapability(config, "image")).toEqual(["z-channel::z-model", "z-channel::a-model", "a-channel::b-model"]);
     expect(config.model).toBe("z-channel::a-model");
+    expect(config.channels[0]!.modelCosts?.[0]?.defaultOptions).toEqual({ family: "sd", steps: 20, seed: 0, imageToImageTemplateUuid: "configured-template" });
 });
 
 test("sorting exposes a simple settings entry and moves items without changing their data", () => {

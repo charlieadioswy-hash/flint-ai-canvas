@@ -58,6 +58,7 @@ type ChannelModel struct {
 	CapabilityConfigJSON         string               `json:"-" gorm:"type:text"`
 	CapabilityVersion            int64                `json:"capabilityVersion"`
 	CapabilityConfig             map[string]any       `json:"capabilityConfig,omitempty" gorm:"-"`
+	ProviderDefaults             map[string]any       `json:"providerDefaults,omitempty" gorm:"serializer:json;type:text"`
 	// PriceTiers 是系统渠道模型的价格真相。标量价格仅为旧调用与历史数据兼容，
 	// 新的创作端报价必须按所选规格命中一个价格档。
 	PriceTiers []ChannelModelPriceTier `json:"priceTiers" gorm:"-"`

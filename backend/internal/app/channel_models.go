@@ -30,6 +30,7 @@ type ChannelModelRequest struct {
 	PriceConfigured              bool                           `json:"priceConfigured"`
 	Enabled                      *bool                          `json:"enabled"`
 	CapabilityConfig             *ModelCapabilityConfig         `json:"capabilityConfig"`
+	ProviderDefaults             map[string]any                 `json:"providerDefaults"`
 	PriceTiers                   []ChannelModelPriceTierRequest `json:"priceTiers"`
 }
 
@@ -99,6 +100,7 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 		return nil, err
 	}
 	for index := range items {
+		items[index].ProviderDefaults = channelModelProviderDefaults(items[index])
 		if strings.TrimSpace(items[index].CapabilityConfigJSON) == "" {
 			continue
 		}
@@ -162,6 +164,10 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if err != nil {
 		return nil, err
 	}
+	providerDefaults, err := normalizeChannelProviderDefaults(s.protocolRegistry(), string(protocol), req.ProviderDefaults)
+	if err != nil {
+		return nil, err
+	}
 	// 先检查同渠道重复模型，避免无关能力校验或生成无用序列号掩盖真正的冲突。
 	conflict, conflictErr := s.repo.ChannelModelByKeyIncludingDisabled(channelID, modelKey)
 	if conflictErr != nil && !errors.Is(conflictErr, gorm.ErrRecordNotFound) {
@@ -171,8 +177,15 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		return nil, BadAuthRequest("该渠道已存在模型 " + modelKey + "，请直接编辑已有模型")
 	}
 	if capability == "text" || capability == "image" || capability == "video" {
-		if _, err := NormalizeModelCapabilityConfigForModel(capability, string(protocol), providerModelKey, req.CapabilityConfig); err != nil {
+		config, err := NormalizeModelCapabilityConfigForModel(capability, string(protocol), providerModelKey, req.CapabilityConfig)
+		if err != nil {
 			return nil, err
+		}
+		if config != nil && config.Image != nil && config.Image.ControlNet != nil {
+			control := metadataString(providerDefaults, "controlNetModel")
+			if control != "" && len(config.Image.ControlNet.Models) > 0 && !containsCapabilityString(config.Image.ControlNet.Models, control) {
+				return nil, BadAuthRequest("默认控制模型不在当前渠道模型的兼容目录内")
+			}
 		}
 	}
 	tiers, err := s.normalizeChannelModelPriceTiers(req, capability, protocol, providerModelKey)
@@ -214,6 +227,7 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	item.Icon = strings.TrimSpace(req.Icon)
 	item.Capability = capability
 	item.Protocol = protocol
+	item.ProviderDefaults = providerDefaults
 	s.applyChannelModelPriceTierSummary(item, tiers)
 	if capability == "text" || capability == "image" || capability == "video" {
 		capabilityConfig, normalizeErr := NormalizeModelCapabilityConfigForModel(capability, string(protocol), providerModelKey, req.CapabilityConfig)

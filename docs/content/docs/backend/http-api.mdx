@@ -13,6 +13,8 @@ description: 信封、错误码与 OpenAPI
 
 模型能力 `image.controlNet` 声明 `supported`、`maxUnits`、`preprocessors` 和可选 `models`。Liblib 专有参数保存在 `metadata.providerOptions["liblib-image"]`；AK/SK 由受管渠道保存，浏览器不拼装供应商签名。字段范围和平台扩展规则见[结构控制与 Liblib](/docs/backend/controlnet)。
 
+管理端渠道模型新增 `providerDefaults` 对象，保存协议声明的标量默认参数；写入按协议参数名称、类型、枚举和 Liblib 数值/UUID 范围校验，不接受凭据字段。创作模型目录通过 `defaultOptions` 发布有效默认值。Liblib 支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`；实际有普通内容参考图时选择图生图模板，显式 `templateUuid` 优先，控制图不改变生成方式。服务端按实际选定渠道模型合并管理员默认值与用户显式 `metadata.providerOptions`，在入队/扣费前写入任务快照；后台修改不改变已排队任务，切线重新应用新渠道默认值并保留原用户显式值。辅助选择字段不直接进入上游请求。
+
 ## 注册邮箱等价检查
 
 公开注册与邮箱绑定的唯一性检查将 `gmail.com` 和 `googlemail.com` 视为同一域，移除本地部分的点及 `+` 后缀。例如 `a.b+x@googlemail.com` 与 `ab@gmail.com` 不允许创建两个账号。其他域保留点和 `+`；现有域名白名单规则保持不变。

@@ -28,8 +28,10 @@ func TestLiblibCreateMapsControlUnitsWithoutOrdinaryReferences(t *testing.T) {
 	}
 	body := spec.Body.(map[string]any)
 	params := body["generateParams"].(map[string]any)
-	if _, ok := params["sourceImage"]; ok {
-		t.Fatal("control image turned txt2img into img2img")
+	for _, key := range []string{"sourceImage", "resizedWidth", "resizedHeight", "resizeMode", "mode"} {
+		if _, ok := params[key]; ok {
+			t.Fatalf("control image introduced img2img field %s into txt2img", key)
+		}
 	}
 	unit := params["controlNet"].([]any)[0].(map[string]any)
 	if unit["unitOrder"] != 1 || unit["width"] != 1256 || unit["height"] != 704 || unit["resizeMode"] != 2 || unit["preprocessor"] != 1 {
@@ -50,6 +52,52 @@ func TestLiblibCreateMapsControlUnitsWithoutOrdinaryReferences(t *testing.T) {
 	}
 	if spec.Path != "/api/generate/webui/img2img" || spec.Body.(map[string]any)["generateParams"].(map[string]any)["sourceImage"] == nil {
 		t.Fatal("ordinary reference missing img2img mapping")
+	}
+}
+
+func TestLiblibImg2ImgMapsResizedOutputAndOrdinaryEditingMode(t *testing.T) {
+	for _, family := range []string{"sd", "f1"} {
+		for _, sizeSource := range []string{"output", "provider-options", "aspect-ratio"} {
+			t.Run(family+"/"+sizeSource, func(t *testing.T) {
+				r := liblibTestRequest()
+				r.Images = []MediaReference{{URL: "https://cdn.example.com/content.png", Role: "edit_source", Metadata: map[string]any{"width": 640, "height": 960}}}
+				o := r.ProviderOptions[LiblibImageProtocolID]
+				o["family"], o["denoisingStrength"], o["seed"] = family, 0.0, 42
+				switch sizeSource {
+				case "output":
+					r.Output.Width, r.Output.Height = 1824, 1024
+					o["width"], o["height"] = 512, 512
+				case "provider-options":
+					o["width"], o["height"] = 1824, 1024
+				case "aspect-ratio":
+					r.AspectRatio = "1824x1024"
+				}
+				spec, err := LiblibImageAdapter().BuildCreate(context.Background(), RequestContext{Request: r})
+				if err != nil {
+					t.Fatal(err)
+				}
+				params := spec.Body.(map[string]any)["generateParams"].(map[string]any)
+				if spec.Path != "/api/generate/webui/img2img" || params["sourceImage"] != r.Images[0].URL || params["resizedWidth"] != 1824 || params["resizedHeight"] != 1024 || params["resizeMode"] != 0 || params["mode"] != 0 {
+					t.Fatalf("incomplete img2img geometry: %+v", params)
+				}
+				if params["denoisingStrength"] != 0.0 || params["seed"] != 42 {
+					t.Fatalf("explicit image settings changed: %+v", params)
+				}
+				for _, key := range []string{"width", "height", "inpaintParam"} {
+					if _, ok := params[key]; ok {
+						t.Fatalf("ordinary img2img received unrelated field %s", key)
+					}
+				}
+				unit := params["controlNet"].([]any)[0].(map[string]any)
+				if unit["sourceImage"] != r.ControlNet[0].Image.URL || unit["width"] != 1256 || unit["height"] != 704 || unit["resizeMode"] != 2 {
+					t.Fatalf("content reference replaced independent control geometry: %+v", unit)
+				}
+				_, hasCheckpoint := params["checkPointId"]
+				if hasCheckpoint != (family == "sd") {
+					t.Fatal("family checkpoint behavior changed")
+				}
+			})
+		}
 	}
 }
 

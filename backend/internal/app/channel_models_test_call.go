@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -106,6 +107,17 @@ func (s *Service) TestAdminChannelModel(ctx context.Context, actor *model.User, 
 	if capability == "video" {
 		input.VideoCapability = videoProfile
 	}
+	defaults, err := normalizeChannelProviderDefaults(s.protocolRegistry(), string(protocol), req.ProviderDefaults)
+	if err != nil {
+		return nil, err
+	}
+	capabilityJSON, err := json.Marshal(req.CapabilityConfig)
+	if err != nil {
+		return nil, err
+	}
+	defaultInput := map[string]any{}
+	applyChannelProviderDefaults(defaultInput, model.ChannelModel{Protocol: protocol, Capability: capability, ModelKey: modelKey, ProviderModelKey: providerModelKey, ProviderDefaults: defaults, CapabilityConfigJSON: string(capabilityJSON)})
+	input.Metadata, _ = defaultInput["metadata"].(map[string]any)
 
 	// 测试复用真实生成协议、运行时并发和熔断策略，但不创建用户任务或计费订单。
 	testCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)

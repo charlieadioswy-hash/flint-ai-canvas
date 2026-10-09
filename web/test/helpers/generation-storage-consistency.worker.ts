@@ -15,7 +15,10 @@ type Scenario =
     | "canvas-copy-generation"
     | "http-registered-generation"
     | "http-generation-mismatch"
-    | "http-generation-missing";
+    | "http-generation-missing"
+    | "http-screen-generation"
+    | "http-screen-generation-mismatch"
+    | "http-screen-generation-missing";
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
@@ -101,6 +104,7 @@ function installStorageHarness() {
             clearTimeout: () => undefined,
             addEventListener: () => undefined,
             removeEventListener: () => undefined,
+            dispatchEvent: () => true,
         },
     });
     Object.defineProperty(globalThis, "navigator", {
@@ -593,7 +597,7 @@ async function runCanvasCopyGeneration() {
     }
 }
 
-async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | "missing" = "registered") {
+async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | "missing" = "registered", screen = false) {
     const harness = installStorageHarness();
     const previousScope = getActiveUserScope();
     const originalCrypto = globalThis.crypto;
@@ -618,11 +622,13 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     const requests: string[] = [];
     let savedProject: import("../../src/stores/canvas/use-canvas-store").CanvasProject | undefined;
     let remoteProject: import("../../src/stores/canvas/use-canvas-store").CanvasProject;
+    let polledTask: import("../../src/services/api/task-center").GenerationTask;
     apiClient.defaults.adapter = async (config) => {
         requests.push(`${config.method}:${config.url}`);
         const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
         let data: unknown;
-        if (config.url === "/assets/batch") data = { assets: body.ids.includes(assetId) && variant !== "missing" ? [{ ...asset, data: { ...asset.data, storageKey: variant === "mismatch" ? "resource:other-image" : storageKey } }] : [] };
+        if (config.url === "/tasks/task-http-recovery") data = polledTask;
+        else if (config.url === "/assets/batch") data = { assets: body.ids.includes(assetId) && variant !== "missing" ? [{ ...asset, data: { ...asset.data, storageKey: variant === "mismatch" ? "resource:other-image" : storageKey } }] : [] };
         else if (config.url === "/resources/access")
             data = {
                 items: [
@@ -672,7 +678,11 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             height: 240,
             metadata: { content: "/api/resources/http-image/file", storageKey, taskId: "task-http-recovery", taskStatus: "succeeded", status: "success", generationOutputCount: 1 },
         };
-        useCanvasStore.getState().updateProject(projectId, { nodes: [node], revision: 1 });
+        if (screen) node.metadata = { taskId: "task-http-recovery", taskStatus: "succeeded", status: "loading", size: "640x480" };
+        useCanvasStore.getState().updateProject(projectId, {
+            nodes: [node], revision: 1,
+            ...(screen ? { creationScene: { kind: "irregular-screen" as const, version: 1 as const, nodeIds: { controlImage: "screen-control", outputMask: "screen-mask", generation: node.id } } } : {}),
+        });
         await flushCanvasStorePersistence();
         remoteProject = structuredClone(useCanvasStore.getState().projects.find((project) => project.id === projectId)!);
         await initializeRemoteUserDataSession("http-user");
@@ -687,6 +697,21 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             updatedAt: "",
             resultJson: JSON.stringify({ images: [{ dataUrl: "/api/resources/http-image/file", storageKey, width: 640, height: 480, bytes: 100, mimeType: "image/png" }] }),
         };
+        polledTask = task;
+        if (screen) {
+            const { recoverScreenGeneration } = await import("../../src/services/irregular-screen-generation");
+            let rejection = "";
+            try {
+                await recoverScreenGeneration(projectId, new AbortController().signal, () => {});
+            } catch (error) {
+                rejection = error instanceof Error ? error.message : String(error);
+            }
+            await flushCanvasStorePersistence();
+            const restored = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
+            const result = { rejection, saved: savedProject?.nodes[0], restored: restored.nodes[0], assets: useAssetStore.getState().assets, requests };
+            resetRemoteUserDataSync();
+            return result;
+        }
         const needsRecovery = shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task);
         if (variant !== "registered") {
             let rejection = "";
@@ -739,7 +764,13 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
 self.onmessage = async (event: MessageEvent<Scenario>) => {
     try {
         const result =
-            event.data === "http-generation-mismatch"
+            event.data === "http-screen-generation"
+                ? await runHTTPRegisteredGeneration("registered", true)
+                : event.data === "http-screen-generation-mismatch"
+                  ? await runHTTPRegisteredGeneration("mismatch", true)
+                  : event.data === "http-screen-generation-missing"
+                    ? await runHTTPRegisteredGeneration("missing", true)
+                    : event.data === "http-generation-mismatch"
                 ? await runHTTPRegisteredGeneration("mismatch")
                 : event.data === "http-generation-missing"
                   ? await runHTTPRegisteredGeneration("missing")

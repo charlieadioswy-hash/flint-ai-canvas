@@ -47,6 +47,7 @@ const CanvasPage = lazy(loadCanvasPage);
 const CanvasProjectPage = lazy(loadCanvasProjectPage);
 const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
 const CreatePage = lazy(loadCreatePage);
+const ScreenCreationPage = lazy(() => import("@/pages/screen-creation"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const SkillsPage = lazy(() => import("@/pages/skills"));
 const PluginsPage = lazy(() => import("@/pages/plugins"));
@@ -109,6 +110,8 @@ export const router = createBrowserRouter([
         children: [
             { path: "/", element: deferred(<CreatePage />) },
             { path: "/create", element: deferred(<CreatePage />) },
+            { path: "/screen-creation", element: <RequireAuth>{deferred(<ScreenCreationPage />)}</RequireAuth> },
+            { path: "/screen-creation/:canvasId", element: <RequireAuth>{deferred(<ScreenCreationPage />)}</RequireAuth> },
             {
                 path: "/tasks",
                 element: (

@@ -176,6 +176,7 @@ export type PublicChannelModel = {
     capability: string;
     protocol?: string;
     capabilityConfig?: Record<string, any>;
+    defaultOptions?: Record<string, unknown>;
     priceTiers: PublicChannelModelPriceTier[];
     pricingMode: string;
     displayPrice?: number;

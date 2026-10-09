@@ -7,7 +7,8 @@ import { controlImageReference, defaultControlNetBinding, nodeControlNet, nodeOu
 import { generationSpecMetadata, readNodeGenerationSpec, specFromConfig, validateGenerationSpec } from "@/lib/canvas/generation-contract";
 import type { ControlNetBinding, ControlNetParameters, GenerationSpec, ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import type { ModelProtocolDefinition, ModelProtocolParameter } from "@/lib/model-protocols";
+import type { ModelProtocolDefinition } from "@/lib/model-protocols";
+import { ProviderParameterInput } from "@/components/provider-parameter-input";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { uploadResourceFile } from "@/services/api/resources";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
@@ -101,13 +102,4 @@ export function CanvasControlNetPopover({ node, config, sourceNodes: providedSou
         {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}{uploading ? <p role="status" className="text-xs text-foreground/60">正在保存图片…</p> : null}
     </div>;
     return <Popover open={open} onOpenChange={(next) => { setOpen(next); onOpenChange?.(next); }} trigger="click" placement="topLeft" content={content}><button type="button" className="canvas-node-composer-settings-trigger" disabled={disabled} aria-expanded={open} aria-label="结构控制生图设置"><ScanLine className="size-3" /><span>结构控制{units.length ? ` · ${units.length}` : ""}</span></button></Popover>;
-}
-
-function ProviderParameterInput({ parameter, value, disabled, onChange }: { parameter: ModelProtocolParameter; value: unknown; disabled?: boolean; onChange: (value: unknown) => void }) {
-    if (parameter.type === "boolean" || parameter.values?.length) {
-        const values = parameter.type === "boolean" ? ["true", "false"] : parameter.values || [];
-        return <select className="h-8 w-full rounded-md border border-border bg-background px-2" aria-label={parameter.name} disabled={disabled} value={value === undefined ? "" : String(value)} onChange={(event) => onChange(event.target.value === "" ? undefined : parameter.type === "boolean" ? event.target.value === "true" : event.target.value)}><option value="">使用模型默认值</option>{values.map((item) => <option key={item} value={item}>{item}</option>)}</select>;
-    }
-    if (parameter.type === "integer" || parameter.type === "number") return <InputNumber className="!w-full" size="small" aria-label={parameter.name} disabled={disabled} value={typeof value === "number" ? value : null} precision={parameter.type === "integer" ? 0 : undefined} onChange={(next) => onChange(next === null ? undefined : Number(next))} />;
-    return <Input size="small" aria-label={parameter.name} disabled={disabled} value={String(value ?? "")} placeholder={parameter.name} onChange={(event) => onChange(event.target.value)} />;
 }

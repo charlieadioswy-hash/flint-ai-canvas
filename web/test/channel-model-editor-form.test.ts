@@ -39,6 +39,16 @@ describe("channel model editor drafts", () => {
         expect(tier.operation).toBe("text_to_video");
         expect(() => validateChannelModelPrices(next)).toThrow("按秒");
     });
+    test("provider defaults reopen independently and reset when capability changes", () => {
+        const item = { modelKey: "sdxl", capability: "image" as const, protocol: "image", providerDefaults: { steps: 20, seed: 0 } };
+        const draft = initialChannelModelValues(item as Parameters<typeof initialChannelModelValues>[0], protocols);
+        expect(draft.providerDefaults).toEqual({ steps: 20, seed: 0 });
+        draft.providerDefaults!.steps = 30;
+        expect(item.providerDefaults.steps).toBe(20);
+        const next = changeChannelModelCapability({ ...draft, capability: "text" }, protocols);
+        expect(next.providerDefaults).toEqual({});
+        expect(editorSectionForField(["providerDefaults", "steps"])).toBe("capabilities");
+    });
     test("audio does not retain image/video configuration", () => {
         const draft = initialChannelModelValues(null, protocols);
         expect(changeChannelModelCapability({ ...draft, capability: "audio" }, protocols).capabilityConfig).toBeUndefined();
