@@ -15,6 +15,7 @@ import (
 	"yingce/backend/internal/generation"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
@@ -214,9 +215,11 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
-	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiImage) {
+	baseProtocol := protocol.WangsuBaseProtocol(input.Config.InterfaceType)
+	if input.Config.APIFormat == "gemini" && baseProtocol != string(model.ChannelInterfaceGeminiVeo) && baseProtocol != string(model.ChannelInterfaceGeminiImage) {
 		_, hasDeclarativeAgent := agentProtocolAdapterForContext(ctx, input.Config.InterfaceType)
-		if input.AgentRequests == nil || !hasDeclarativeAgent {
+		_, hasDeclarativeText := declarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType)
+		if (input.AgentRequests == nil || !hasDeclarativeAgent) && !(input.Mode == "text" && baseProtocol == officialGeminiAgentInterface && hasDeclarativeText) {
 			return nil, errors.New("后端任务队列暂不支持该 Gemini 调用格式，请选择已安装的 Gemini 协议插件")
 		}
 	}
@@ -310,7 +313,7 @@ func providerPrefersMediaURLs(interfaceType string, input canvasGenerationInput)
 		// OpenAI 图片编辑等 multipart 请求需要真实文件字节，遮罩场景不能改发 URL。
 		return false
 	}
-	switch strings.TrimSpace(interfaceType) {
+	switch protocol.WangsuBaseProtocol(interfaceType) {
 	case string(model.ChannelInterfaceChatCompletion), string(model.ChannelInterfaceOpenAIResponse), string(model.ChannelInterfaceClaudeAPI),
 		string(model.ChannelInterfaceGrokImage), string(model.ChannelInterfaceVolcengineArkImage), string(model.ChannelInterfaceVolcengineArkAgentPlanImage),
 		string(model.ChannelInterfaceXAIVideo), string(model.ChannelInterfaceNovitaVideo),
@@ -416,9 +419,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 
 // channelAPIFormatForProtocol 以模型协议而不是客户端缓存决定鉴权和请求封装格式。
 // 同一系统渠道可以挂载不同协议的模型，因此渠道级 APIFormat 只能作为协议缺失时的兼容值。
-func channelAPIFormatForProtocol(channelDefault string, protocol model.ChannelInterfaceType) string {
-	switch protocol {
-	case model.ChannelInterfaceGeminiVeo, model.ChannelInterfaceGeminiImage:
+func channelAPIFormatForProtocol(channelDefault string, interfaceType model.ChannelInterfaceType) string {
+	switch model.ChannelInterfaceType(protocol.WangsuBaseProtocol(string(interfaceType))) {
+	case model.ChannelInterfaceGeminiVeo, model.ChannelInterfaceGeminiImage, officialGeminiAgentInterface:
 		return "gemini"
 	case model.ChannelInterfaceClaudeAPI:
 		return "claude"

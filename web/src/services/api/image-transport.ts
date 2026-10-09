@@ -1,9 +1,12 @@
 import { buildApiUrl, isSystemProxyBaseUrl, resolveBackendApiUrl, type AiConfig } from "@/stores/use-config-store";
 import { createClientId } from "@/lib/client-id";
+import { wangsuRequestPath } from "@/lib/wangsu-protocols";
 import { createChannelTransport } from "@/services/api/channel-transport";
 import type { GeminiPayload, ImageApiResponse, RequestOptions } from "@/services/api/image-contracts";
 
-export function aiApiUrl(config: Pick<AiConfig, "baseUrl">, path: string) {
+export function aiApiUrl(config: Pick<AiConfig, "baseUrl"> & { interfaceType?: string }, path: string) {
+    const wangsuPath = wangsuRequestPath(config.interfaceType, path);
+    if (wangsuPath && !isSystemProxyBaseUrl(config.baseUrl)) return `${config.baseUrl.trim().replace(/\/+$/, "")}${wangsuPath}`;
     return buildApiUrl(config.baseUrl, path);
 }
 
@@ -29,7 +32,10 @@ export function geminiModelName(model: string) {
     return model.trim().replace(/^models\//, "");
 }
 
-export function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
+export function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model"> & { interfaceType?: string }, action?: "generateContent" | "streamGenerateContent") {
+    if ((config.interfaceType === "wangsu-gemini" || config.interfaceType === "wangsu-gemini-image") && !isSystemProxyBaseUrl(config.baseUrl)) {
+        return aiApiUrl(config, action ? `/models/${encodeURIComponent(geminiModelName(config.model))}:${action}` : "/models");
+    }
     const baseUrl = geminiBaseUrl(config);
     if (!action) return `${baseUrl}/models`;
     return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;

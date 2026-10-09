@@ -28,7 +28,7 @@ func protocolRequestFromInput(input canvasGenerationInput) protocol.GenerationRe
 		}
 	}
 	aspectRatio := input.Config.Size
-	if input.Mode == "image" && strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
+	if input.Mode == "image" && protocol.WangsuBaseProtocol(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
 		aspectRatio = normalizePixelSize(aspectRatio)
 	}
 	request := protocol.GenerationRequest{

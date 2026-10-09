@@ -252,6 +252,20 @@ func protocolCredentialField(config providerConfig, field string) string {
 }
 
 func protocolRequestURL(baseURL string, spec protocol.RequestSpec) (string, error) {
+	if spec.BasePath {
+		if spec.OriginPath {
+			return "", fmt.Errorf("originPath and basePath are mutually exclusive")
+		}
+		base, err := url.Parse(strings.TrimSpace(baseURL))
+		if err != nil || base.Scheme == "" || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
+			return "", fmt.Errorf("协议 Base URL 相对路径请求的 Base URL 无效")
+		}
+		requestPath, err := url.Parse(spec.Path)
+		if err != nil || !strings.HasPrefix(requestPath.Path, "/") || strings.HasPrefix(requestPath.Path, "//") || requestPath.Host != "" || requestPath.Scheme != "" || requestPath.User != nil {
+			return "", fmt.Errorf("协议 Base URL 相对路径请求必须使用相对路径")
+		}
+		return appendProtocolQuery(strings.TrimRight(base.String(), "/")+spec.Path, spec.Query)
+	}
 	if !spec.OriginPath {
 		return appendProtocolQuery(apiURL(baseURL, spec.Path), spec.Query)
 	}

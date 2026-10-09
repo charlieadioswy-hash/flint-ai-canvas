@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"yingce/backend/internal/model"
+	providerprotocol "yingce/backend/internal/protocol"
 	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -357,7 +358,7 @@ func proxySystemRequestPath(c *gin.Context, svc *service.Service, user *model.Us
 		fail(c, http.StatusForbidden, err)
 		return
 	}
-	if channelModel != nil && channelModel.BillingMode == "token" && protocol == model.ChannelInterfaceChatCompletion {
+	if channelModel != nil && channelModel.BillingMode == "token" && providerprotocol.WangsuBaseProtocol(string(protocol)) == string(model.ChannelInterfaceChatCompletion) {
 		body, err = service.EnsureChatCompletionStreamUsageRequest(body)
 		if err != nil {
 			fail(c, http.StatusBadRequest, err)
@@ -422,9 +423,10 @@ func proxySystemRequestPath(c *gin.Context, svc *service.Service, user *model.Us
 	}
 	service.ApplyOutboundHeaders(upstreamReq, channelHeaders)
 	service.ApplyDefaultOutboundHeaders(upstreamReq)
-	if protocol == model.ChannelInterfaceGeminiVeo || protocol == model.ChannelInterfaceGeminiImage {
+	baseProtocol := model.ChannelInterfaceType(providerprotocol.WangsuBaseProtocol(string(protocol)))
+	if baseProtocol == model.ChannelInterfaceGeminiVeo || baseProtocol == model.ChannelInterfaceGeminiImage || baseProtocol == "gemini-generate-content" {
 		upstreamReq.Header.Set("x-goog-api-key", channel.APIKey)
-	} else if protocol == model.ChannelInterfaceClaudeAPI {
+	} else if baseProtocol == model.ChannelInterfaceClaudeAPI {
 		upstreamReq.Header.Set("x-api-key", channel.APIKey)
 		upstreamReq.Header.Set("anthropic-version", "2023-06-01")
 	} else {
@@ -519,8 +521,11 @@ func markSystemProxyBillingUncertain(svc *service.Service, billingOrderID string
 func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID string, capability string, protocol model.ChannelInterfaceType, method string, path string, target string, body []byte, contentType string, status model.ApiCallStatus, statusCode int, duration time.Duration, errorText string, concurrencyLimit int) model.ApiCallLog {
 	requestKind := "create"
 	apiFormat := "openai"
-	if protocol == model.ChannelInterfaceGeminiVeo || protocol == model.ChannelInterfaceGeminiImage {
+	switch model.ChannelInterfaceType(providerprotocol.WangsuBaseProtocol(string(protocol))) {
+	case model.ChannelInterfaceGeminiVeo, model.ChannelInterfaceGeminiImage, "gemini-generate-content":
 		apiFormat = "gemini"
+	case model.ChannelInterfaceClaudeAPI:
+		apiFormat = "claude"
 	}
 	if method == http.MethodGet {
 		requestKind = "poll"
@@ -539,7 +544,7 @@ func apiCallLog(user *model.User, channel *model.ModelChannel, billingOrderID st
 		APIFormat:          apiFormat,
 		Method:             method,
 		Path:               path,
-		Model:              readPayloadModel(body),
+		Model:              proxyRequestModelForPath(path, contentType, body),
 		Status:             status,
 		StatusCode:         statusCode,
 		DurationMs:         duration.Milliseconds(),

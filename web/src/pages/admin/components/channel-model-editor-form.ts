@@ -71,7 +71,15 @@ export function changeChannelModelCapability(values: ChannelModelFormValues, pro
     };
 }
 
-export function updateChannelModelUpstreamCapabilities(values: ChannelModelFormValues): ChannelModelFormValues {
+export function updateChannelModelUpstreamCapabilities(values: ChannelModelFormValues, previousModel?: string): ChannelModelFormValues {
+    if (values.protocol?.startsWith("wangsu-") && previousModel !== undefined && (values.capability === "image" || values.capability === "video")) {
+        const previous = normalizeModelCapabilityConfig(defaultModelCapabilityConfig(values.protocol, previousModel));
+        const current = values.capabilityConfig ? normalizeModelCapabilityConfig(values.capabilityConfig) : previous;
+        if (JSON.stringify(current[values.capability]) !== JSON.stringify(previous[values.capability])) return values;
+        const next = defaultModelCapabilityConfig(values.protocol, values.providerModelKey?.trim() || values.modelKey.trim());
+        if (JSON.stringify(normalizeModelCapabilityConfig(next)[values.capability]) === JSON.stringify(current[values.capability])) return values;
+        return { ...values, capabilityConfig: { ...values.capabilityConfig, version: 1, [values.capability]: next[values.capability] } };
+    }
     if (values.capability !== "image" || values.protocol !== "cangyuan-midjourney-v82") return values;
     const defaults = defaultModelCapabilityConfig(values.protocol, values.providerModelKey?.trim() || values.modelKey.trim());
     const image = values.capabilityConfig?.image;

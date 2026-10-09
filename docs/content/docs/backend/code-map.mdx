@@ -5,6 +5,13 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Wangsu 网宿协议
+
+- 独立协议与完整字段文档：`plugin-packages/wangsu/`，生成器 `plugin-packages/generate-wangsu.mjs`；发布包 `wangsu.yingce-plugin`。
+- 路径合同：`internal/protocol/wangsu.go`、`manifest.go`、`types.go`；宿主 `app/provider_protocol_auth.go` 处理完整 Base URL，`provider_text*.go` 复用标准 JSON/SSE 解析，`handler/auth.go` / `security.go` 约束系统代理。
+- 模型默认与参数校验：`app/model_capability_wangsu.go`、`web/src/lib/model-capabilities-wangsu.ts`；前端基础格式路由 `web/src/lib/wangsu-protocols.ts`。
+- 专项测试：`internal/protocol/wangsu_test.go`、`app/provider_wangsu_runtime_test.go`、`handler/system_proxy_wangsu_test.go`、`web/test/wangsu-protocols.test.ts`。配置见 [Wangsu](/docs/backend/wangsu)。
+
 ## 国内源与镜像构建缓存
 
 - 镜像构建：根 `Dockerfile`、`backend/Dockerfile`、`backend/Dockerfile.dev`、`yingce-agent/Dockerfile`；软件源参数由源码构建 Compose 和 `.env.example` 暴露。

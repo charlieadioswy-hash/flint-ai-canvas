@@ -376,14 +376,19 @@ func manifestResponseString(template any, env map[string]any) string {
 	if err != nil {
 		return ""
 	}
-	items := manifestArray(value)
-	parts := make([]string, 0, len(items))
-	for _, item := range items {
-		if text := strings.TrimSpace(manifestString(item)); text != "" {
-			parts = append(parts, text)
+	var result strings.Builder
+	var appendValue func(any)
+	appendValue = func(value any) {
+		if items, ok := value.([]any); ok {
+			for _, item := range items {
+				appendValue(item)
+			}
+			return
 		}
+		result.WriteString(strings.TrimSpace(manifestString(value)))
 	}
-	return strings.Join(parts, "")
+	appendValue(value)
+	return result.String()
 }
 
 func manifestResponseMedia(template any, env map[string]any, kind string, ephemeral bool) []MediaReference {

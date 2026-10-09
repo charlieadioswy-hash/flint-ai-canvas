@@ -80,7 +80,7 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		image.OutputFormat = ParameterSupport{Supported: false}
 		image.MaxOutputs = 1
 	}
-	return image
+	return wangsuImageCapability(protocol, modelName, image)
 }
 
 func defaultImageSizeValues() []string {
@@ -167,5 +167,5 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 	case model.ChannelInterfaceAgnesVideo:
 		video = applyModelSpecificVideoCapability(video, protocol, modelName)
 	}
-	return &ModelCapabilityConfig{Version: 1, Text: text, Image: DefaultImageCapabilityConfig(protocol, modelName), Video: video}
+	return &ModelCapabilityConfig{Version: 1, Text: text, Image: DefaultImageCapabilityConfig(protocol, modelName), Video: wangsuVideoCapability(protocol, modelName, video)}
 }

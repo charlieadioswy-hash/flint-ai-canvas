@@ -14,6 +14,7 @@ type ManifestOperation struct {
 	Path                string             `json:"path"`
 	PathTemplate        any                `json:"pathTemplate,omitempty"`
 	OriginPath          bool               `json:"originPath,omitempty"`
+	BasePath            bool               `json:"basePath,omitempty"`
 	ContentType         string             `json:"contentType,omitempty"`
 	ContentTypeTemplate any                `json:"contentTypeTemplate,omitempty"`
 	Headers             map[string]any     `json:"headers,omitempty"`
@@ -439,6 +440,9 @@ func operationSummaryPtr(operation *ManifestOperation) string {
 }
 
 func validateManifestOperation(operation ManifestOperation) error {
+	if operation.OriginPath && operation.BasePath {
+		return fmt.Errorf("originPath and basePath are mutually exclusive")
+	}
 	method := strings.ToUpper(strings.TrimSpace(operation.Method))
 	if method != http.MethodGet && method != http.MethodPost && method != http.MethodDelete && method != http.MethodPut {
 		return fmt.Errorf("unsupported HTTP method %q", operation.Method)

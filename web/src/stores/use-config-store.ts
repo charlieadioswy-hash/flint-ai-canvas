@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
+import { wangsuBaseProtocol } from "@/lib/wangsu-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
@@ -535,6 +536,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const model = modelOptionName(value || config.model);
     const modelProtocol = channel.modelCosts?.find((item) => item.model === model)?.protocol;
     const interfaceType = modelProtocol || channel.interfaceType;
+    const wireProtocol = wangsuBaseProtocol(interfaceType);
     return {
         ...config,
         model,
@@ -542,7 +544,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         apiKey: channel.apiKey,
         secretKey: channel.secretKey,
         headers: channel.headers,
-        apiFormat: interfaceType ? (interfaceType === "gemini-veo" || interfaceType === "gemini-image" ? ("gemini" as const) : interfaceType === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
+        apiFormat: wireProtocol ? (wireProtocol === "gemini-veo" || wireProtocol === "gemini-image" ? ("gemini" as const) : wireProtocol === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
         interfaceType,
         channelId: channel.scope === "system" ? channel.id : "",
     };

@@ -319,6 +319,9 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 	if profile == nil {
 		return BadAuthRequest("当前视频模型能力参数无效")
 	}
+	if err := validateWangsuVideoTask(profile, input); err != nil {
+		return err
+	}
 	if err := validateModelPromptLength("视频", input.Prompt, profile.References.PromptMaxChars); err != nil {
 		return err
 	}

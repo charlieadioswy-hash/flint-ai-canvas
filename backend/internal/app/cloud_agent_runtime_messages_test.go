@@ -105,7 +105,9 @@ func TestValidateCanonicalAgentHistoryRequiresResponsesItemID(t *testing.T) {
 		},
 		ToolChoice: "auto",
 	}
-	if _, err := expandCanonicalAgentRequest(&request, providerConfig{InterfaceType: string(model.ChannelInterfaceOpenAIResponse)}, false); err == nil || !strings.Contains(err.Error(), "call-3") {
-		t.Fatalf("missing Responses item id error = %v", err)
+	for _, id := range []string{string(model.ChannelInterfaceOpenAIResponse), "wangsu-responses", "wangsu-openai-responses"} {
+		if _, err := expandCanonicalAgentRequest(&request, providerConfig{InterfaceType: id}, true); err == nil || !strings.Contains(err.Error(), "call-3") {
+			t.Fatalf("%s missing Responses item id error = %v", id, err)
+		}
 	}
 }

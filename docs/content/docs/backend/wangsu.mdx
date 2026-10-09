@@ -1,0 +1,52 @@
+---
+title: Wangsu 网宿渠道协议
+description: 网宿生成协议、完整 Base URL、模型参数差异与验证边界
+---
+
+# Wangsu 网宿渠道协议
+
+在系统渠道填写网宿 API Token 和完整 Base URL `https://api.edgecloudapp.com/v2/llm`，每个模型选择对应的 `Wangsu · …` 调用协议。同一渠道可包含多种协议；不要再在渠道地址追加 `/openai`、`/anthropic`、`/gemini` 或 `/v1`。
+
+## 14 个生成协议
+
+| 能力 | 协议 ID | 相对 Base URL 的路径 |
+| --- | --- | --- |
+| 文本 | `wangsu-chat` | `/chat/completions` |
+| 文本 | `wangsu-responses` | `/responses` |
+| 文本 | `wangsu-openai-chat` | `/openai/chat/completions` |
+| 文本 | `wangsu-openai-responses` | `/openai/responses` |
+| 文本 | `wangsu-anthropic` | `/anthropic/v1/messages` |
+| 文本 | `wangsu-gemini` | `/gemini/v1beta/models/{model}:generateContent` |
+| 图片 | `wangsu-images` | `/images/generations`、`/images/edits` |
+| 图片 | `wangsu-openai-images` | `/openai/images/generations`、`/openai/images/edits` |
+| 图片 | `wangsu-gemini-image` | `/gemini/v1beta/models/{model}:generateContent` |
+| 图片 | `wangsu-chat-image` | `/chat/completions` |
+| 视频 | `wangsu-videos` | `/videos` |
+| 视频 | `wangsu-openai-videos` | `/openai/videos` |
+| 语音合成 | `wangsu-audio` | `/audio/speech` |
+| 语音合成 | `wangsu-openai-audio` | `/openai/audio/speech` |
+
+模型支持的接口以[网宿模型目录](http://doc.model-store.ai/ai-gateway/model/support-doc)为准，不能只按模型名称猜测协议。后台协议入口来自官方 `wangsu.yingce-plugin`；当前面向系统渠道，不出现在个人自定义渠道列表。
+
+## URL、鉴权与运行时
+
+声明式操作新增 `basePath: true`，保留渠道完整路径后追加操作路径，不自动加入 `/v1`；与替换根路径的 `originPath` 互斥。原有插件路径语义不变。Base URL 不接受凭据、query 或 fragment；仍由宿主执行出站限制和凭据注入。
+
+OpenAI/兼容入口使用 Bearer，Anthropic 使用 `x-api-key` 和版本头，Gemini 使用 `x-goog-api-key`。日志、任务、模型配置保留具体 Wangsu 协议 ID，仅请求映射和解析复用基础协议。系统代理按已选模型校验允许路径，异步视频继续走任务接口。
+
+Chat、Responses、Anthropic 复用 JSON/SSE 和 Agent 工具调用解析；Responses 保留工具调用 item ID。声明式 Gemini 使用非流式 generateContent，不复用官方 Gemini 缓存接口。后台模型发现没有按模型选定协议，不能假设混合渠道的 `/models` 可返回全部模型，允许手动录入目录中的模型 ID。
+
+## 模型参数差异
+
+- Images 生成使用 JSON，有源图时改用 multipart 编辑，源图字段为 `image`，蒙版为 `mask`；支持 URL/base64 结果。Qwen Image/Plus 仅文生图；Chat 图片中的 Gemini 配置不会发送给 Qwen Edit。
+- 视频兼容使用 JSON，首尾帧为 `eca_first_frame/eca_last_frame`，比例为 `eca_aspect_ratio`。Seedance/Veo 的参考图使用单 URL，通用主体参考使用 URL 数组；查询和下载使用同一任务 ID。未声明上游取消接口。
+- Hailuo 02 支持 512P/768P/1080P，2.3 支持 768P/1080P；10 秒仅限 768P。Veo 参考图最多三张，要求 16:9、8 秒，且与首尾帧互斥。
+- 原生 OpenAI 视频使用 multipart、单张参考图、4/8/12 秒；横竖比例转换为像素尺寸。它与网宿多模态视频兼容协议分开配置。
+- Seedance 适配器保留上游 `seconds:-1`，但平台时长合同和计费目前要求正数，因此 UI 只开放固定秒数。
+- TTS 使用 JSON 请求、二进制音频响应；不声明音频 SSE、语音识别或翻译能力。
+
+向量、内容审核、ASR、Legacy completions、图片 variations 和 Gemini Interactions 不属于这 14 个已实现生成入口。插件包 `docs/interface.md` 含完整请求/响应字段与官方依据。真实模型权限、效果、计费及下载仍需在线验证，模拟接口通过不代表供应商可用。
+
+## 维护
+
+`plugin-packages/generate-wangsu.mjs` 复用现有标准协议模板，单独生成 Wangsu manifest；随后运行 `node plugin-packages/embed-documentation.mjs wangsu`，重新打包 `wangsu.yingce-plugin`，保持源码、内嵌文档和包一致。协议契约、宿主流式与代理、能力默认值均有专项测试，验收状态见[待测试清单](/docs/progress/pending-test)。

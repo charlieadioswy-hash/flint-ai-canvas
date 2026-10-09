@@ -116,6 +116,7 @@ type RequestSpec struct {
 	Method      string              `json:"method"`
 	Path        string              `json:"path"`
 	OriginPath  bool                `json:"originPath,omitempty"`
+	BasePath    bool                `json:"basePath,omitempty"`
 	ContentType string              `json:"contentType"`
 	Headers     map[string]string   `json:"headers,omitempty"`
 	Query       map[string][]string `json:"query,omitempty"`
@@ -401,6 +402,12 @@ type ManifestCommand struct {
 func (r RequestSpec) Validate() error {
 	if r.Method == "" || r.Path == "" {
 		return fmt.Errorf("protocol request spec is incomplete")
+	}
+	if r.OriginPath && r.BasePath {
+		return fmt.Errorf("originPath and basePath are mutually exclusive")
+	}
+	if r.BasePath && !isRelativePath(r.Path) {
+		return fmt.Errorf("basePath request path must be relative")
 	}
 	if len(r.Files) > 0 && r.ContentType != "multipart/form-data" {
 		return fmt.Errorf("protocol file parts require multipart/form-data")

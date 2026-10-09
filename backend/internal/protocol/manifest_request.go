@@ -72,7 +72,7 @@ func buildManifestOperation(operation ManifestOperation, auth ManifestAuth, requ
 		return RequestSpec{}, fmt.Errorf("evaluate request content type: %w", err)
 	}
 	contentType := defaultValue(manifestString(evaluatedContentType), "application/json")
-	return RequestSpec{Method: strings.ToUpper(operation.Method), Path: path, OriginPath: operation.OriginPath, ContentType: contentType, Headers: headers, Query: query, Body: body, Files: files, Auth: auth}, nil
+	return RequestSpec{Method: strings.ToUpper(operation.Method), Path: path, OriginPath: operation.OriginPath, BasePath: operation.BasePath, ContentType: contentType, Headers: headers, Query: query, Body: body, Files: files, Auth: auth}, nil
 }
 
 func evaluateManifestStringMap(values map[string]any, env map[string]any) (map[string]string, error) {

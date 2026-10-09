@@ -29,15 +29,23 @@ func runTextTask(ctx context.Context, input canvasGenerationInput) (map[string]i
 }
 
 // Known text protocols keep the plugin's request mapping and host transport,
-// while sharing the SSE parser used by text generation and Agent requests.
+// while sharing the JSON/SSE parsers used by text generation and Agent requests.
 func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInput, spec protocol.RequestSpec) ([]byte, *protocol.Result, error) {
-	wire := input.Config.InterfaceType
+	wire := protocol.WangsuBaseProtocol(input.Config.InterfaceType)
 	if wire == string(model.ChannelInterfaceOpenAIResponse) {
 		wire = "responses"
 	}
-	if input.Mode != "text" || !input.StreamText || (wire != "chat-completion" && wire != "responses" && wire != "claude-api") {
+	if input.Mode != "text" || (wire != "chat-completion" && wire != "responses" && wire != "claude-api") {
 		data, err := executeProtocolRequest(ctx, input.Config, spec)
 		return data, nil, err
+	}
+	if !input.StreamText {
+		data, err := executeProtocolRequest(ctx, input.Config, spec)
+		if err != nil {
+			return data, nil, err
+		}
+		result, err := parseProtocolTextResult(data, wire)
+		return data, result, err
 	}
 	body := protocolBodyObject(spec.Body)
 	if body == nil {
@@ -53,8 +61,12 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 	parser := newStreamingAgentParser(wire, input.OnTextDelta)
 	parser.emitReasoning = input.OnReasoningDelta
 	data, mimeType, err := executeProtocolBinaryRequestWithConsumer(ctx, input.Config, spec, parser.consume)
-	if err != nil || !strings.Contains(strings.ToLower(mimeType), "event-stream") {
+	if err != nil {
 		return data, nil, err
+	}
+	if !strings.Contains(strings.ToLower(mimeType), "event-stream") {
+		result, err := parseProtocolTextResult(data, wire)
+		return data, result, err
 	}
 	parser.flush()
 	parsed, err := parser.result()
@@ -66,6 +78,18 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 		return nil, nil, errors.New("流式文本接口没有返回内容")
 	}
 	return data, &protocol.Result{Text: text, Reasoning: stringField(parsed, "reasoning")}, nil
+}
+
+func parseProtocolTextResult(data []byte, wire string) (*protocol.Result, error) {
+	parsed, err := parseAgentToolResponse(data, wire)
+	if err != nil {
+		return nil, err
+	}
+	text := stringField(parsed, "text")
+	if text == "" {
+		return nil, errors.New("文本接口没有返回内容")
+	}
+	return &protocol.Result{Text: text, Reasoning: stringField(parsed, "reasoning")}, nil
 }
 
 func runLegacyTextTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {

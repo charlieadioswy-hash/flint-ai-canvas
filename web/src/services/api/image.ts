@@ -7,6 +7,7 @@ import { withOpenAIPromptCacheKey } from "@/lib/openai-prompt-cache";
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { buildGeminiImageGenerationConfig, parseGeminiImageDataUrl, type GeminiImageGenerationConfig } from "@/lib/gemini-image";
 import { isVolcengineArkImageProtocol } from "@/lib/model-protocols";
+import { wangsuBaseProtocol } from "@/lib/wangsu-protocols";
 import { aiApiUrl, aiHeaders, imageChannelTransport, postChannelJSON, postGeminiJSON, postVolcengineArkImage } from "@/services/api/image-transport";
 
 const IMAGE_OUTPUT_FORMAT = "png";
@@ -62,7 +63,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     validateImageCapability(imageProfile, []);
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
-    if (requestConfig.interfaceType === "gemini-image") {
+    if (wangsuBaseProtocol(requestConfig.interfaceType) === "gemini-image") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
         } catch (error) {
@@ -139,7 +140,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const normalizedImage = normalizeImageValue(imageProfile, config);
     const n = Number(normalizedImage.count);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    if (requestConfig.interfaceType === "gemini-image") {
+    if (wangsuBaseProtocol(requestConfig.interfaceType) === "gemini-image") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
@@ -237,12 +238,12 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === "没有返回内容") onDelta(answer);
             return answer;
         }
-        if (requestConfig.interfaceType === "claude-api") {
+        if (wangsuBaseProtocol(requestConfig.interfaceType) === "claude-api") {
             const answer = (await requestStreamingClaude(requestConfig, toClaudeBody(requestConfig, messages), onDelta, options)).content || "没有返回内容";
             if (answer === "没有返回内容") onDelta(answer);
             return answer;
         }
-        if (requestConfig.interfaceType === "chat-completion" || !requestConfig.interfaceType) {
+        if (wangsuBaseProtocol(requestConfig.interfaceType) === "chat-completion" || !requestConfig.interfaceType) {
             const answer =
                 (
                     await requestStreamingChatCompletion(
@@ -283,8 +284,8 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
         }
-        if (requestConfig.interfaceType === "claude-api") return await requestStreamingClaude(requestConfig, toClaudeBody(requestConfig, messages, tools), onDelta, options);
-        if (requestConfig.interfaceType === "chat-completion" || !requestConfig.interfaceType) {
+        if (wangsuBaseProtocol(requestConfig.interfaceType) === "claude-api") return await requestStreamingClaude(requestConfig, toClaudeBody(requestConfig, messages, tools), onDelta, options);
+        if (wangsuBaseProtocol(requestConfig.interfaceType) === "chat-completion" || !requestConfig.interfaceType) {
             const chatPayload: Record<string, unknown> = {
                 model: requestConfig.model,
                 messages: toChatCompletionMessages(withSystemMessage(requestConfig, messages)),

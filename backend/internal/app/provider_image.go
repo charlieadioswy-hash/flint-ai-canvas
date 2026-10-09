@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -27,7 +28,7 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 			return nil, errors.New("输出蒙版必须通过持久生成任务保存")
 		}
 	}
-	if input.Config.InterfaceType == string(model.ChannelInterfaceOpenAIImage) {
+	if protocol.WangsuBaseProtocol(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
 		if err := validateOpenAIImageInput(input); err != nil {
 			return nil, err
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 // The browser sends one protocol-neutral conversation. Only the selected
@@ -66,7 +67,7 @@ func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerC
 			return nil, errors.New("画布 Agent 工具定义缺少名称")
 		}
 	}
-	if err := validateCanonicalAgentHistory(source, config.InterfaceType == string(model.ChannelInterfaceOpenAIResponse)); err != nil {
+	if err := validateCanonicalAgentHistory(source, protocol.WangsuBaseProtocol(config.InterfaceType) == string(model.ChannelInterfaceOpenAIResponse)); err != nil {
 		return nil, err
 	}
 	switch choice := source.ToolChoice.(type) {

@@ -124,7 +124,7 @@ func applyAgentOutputLimit(body map[string]interface{}, limit int, protocol stri
 }
 
 func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, adapter protocol.AgentAdapter) (map[string]interface{}, error) {
-	wire := input.Config.InterfaceType
+	wire := protocol.WangsuBaseProtocol(input.Config.InterfaceType)
 	if wire == string(model.ChannelInterfaceOpenAIResponse) {
 		wire = "responses"
 	}
@@ -171,12 +171,13 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 				parser.flush()
 				return parser.result()
 			}
-			var payload map[string]interface{}
-			if err := json.Unmarshal(data, &payload); err != nil {
-				return nil, fmt.Errorf("Agent 接口返回格式无效：%w", err)
-			}
-			return parseAgentToolPayload(payload, wire)
+			return parseAgentToolResponse(data, wire)
 		}
+		data, err := executeProtocolRequest(ctx, input.Config, spec)
+		if err != nil {
+			return nil, err
+		}
+		return parseAgentToolResponse(data, wire)
 	}
 	body, err := executeDeclarativeAgentWithGeminiCache(ctx, input, spec)
 	if err != nil {
@@ -384,6 +385,21 @@ func isAgentToolChoiceCompatibilityError(err error) bool {
 func isAutoAgentToolChoice(value interface{}) bool {
 	choice, ok := value.(string)
 	return ok && strings.EqualFold(strings.TrimSpace(choice), "auto")
+}
+
+func parseAgentToolResponse(data []byte, wire string) (map[string]interface{}, error) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("文本接口返回格式无效：%w", err)
+	}
+	parsed, err := parseAgentToolPayload(payload, wire)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(stringField(parsed, "text")) == "" && len(interfaceSlice(parsed["toolCalls"])) == 0 {
+		return nil, errors.New("声明式文本接口没有返回内容")
+	}
+	return parsed, nil
 }
 
 func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map[string]interface{}, error) {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"yingce/backend/internal/model"
+	providerprotocol "yingce/backend/internal/protocol"
 	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -173,6 +174,10 @@ func authorizeSystemProxy(channel *model.ModelChannel, protocol model.ChannelInt
 	if err != nil {
 		return err
 	}
+	if mapped, wangsu := providerprotocol.WangsuProxyPath(string(protocol), requestPath); wangsu && mapped == "" {
+		return errors.New("当前接口类型不允许访问该上游接口")
+	}
+	protocol = model.ChannelInterfaceType(providerprotocol.WangsuBaseProtocol(string(protocol)))
 	if method == http.MethodGet && requestPath == "/models" {
 		return nil
 	}
@@ -210,7 +215,7 @@ func authorizeSystemProxy(channel *model.ModelChannel, protocol model.ChannelInt
 		}
 		return nil
 	}
-	if protocol == model.ChannelInterfaceGeminiVeo || protocol == model.ChannelInterfaceGeminiImage {
+	if protocol == model.ChannelInterfaceGeminiVeo || protocol == model.ChannelInterfaceGeminiImage || protocol == "gemini-generate-content" {
 		matches := geminiGeneratePath.FindStringSubmatch(requestPath)
 		if method != http.MethodPost || len(matches) != 3 {
 			return errors.New("系统渠道不允许访问该上游接口")

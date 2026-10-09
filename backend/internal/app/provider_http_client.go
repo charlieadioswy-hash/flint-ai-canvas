@@ -22,6 +22,7 @@ import (
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/platform"
+	"yingce/backend/internal/protocol"
 )
 
 func postGeminiJSON(ctx context.Context, config providerConfig, path string, body interface{}, target interface{}) error {
@@ -568,6 +569,16 @@ func ChannelAPIURL(baseURL string, path string) string {
 // ChannelAPIURLForProtocol 把协议默认版本收敛在传输边界：Gemini 默认 v1beta，
 // OpenAI 兼容协议默认 v1；baseURL 或 path 中显式出现的版本始终优先。
 func ChannelAPIURLForProtocol(baseURL string, path string, interfaceType model.ChannelInterfaceType) string {
+	if mapped, wangsu := protocol.WangsuProxyPath(string(interfaceType), path); wangsu {
+		if mapped == "" {
+			return ""
+		}
+		target, err := protocolRequestURL(baseURL, protocol.RequestSpec{Path: mapped, BasePath: true})
+		if err != nil {
+			return ""
+		}
+		return target
+	}
 	if interfaceType == model.ChannelInterfaceAgnesVideo && strings.HasPrefix(strings.TrimSpace(path), "/agnesapi") {
 		base, err := url.Parse(strings.TrimSpace(baseURL))
 		requestPath, pathErr := url.Parse(strings.TrimSpace(path))

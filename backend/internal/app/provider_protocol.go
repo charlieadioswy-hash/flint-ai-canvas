@@ -64,12 +64,12 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 		if err != nil {
 			return nil, err
 		}
-		body, streamedResult, err := executeProtocolCreateRequest(withProviderRequestKind(ctx, "create"), input, spec)
+		body, parsedResult, err := executeProtocolCreateRequest(withProviderRequestKind(ctx, "create"), input, spec)
 		if err != nil {
 			return nil, err
 		}
-		if streamedResult != nil {
-			created = protocol.CreateResult{Status: protocol.StatusSucceeded, Result: streamedResult}
+		if parsedResult != nil {
+			created = protocol.CreateResult{Status: protocol.StatusSucceeded, Result: parsedResult}
 		} else {
 			if parser, ok := adapter.(protocol.RequestAwareCreateParser); ok {
 				created, err = parser.ParseCreateWithRequest(ctx, request, body)
