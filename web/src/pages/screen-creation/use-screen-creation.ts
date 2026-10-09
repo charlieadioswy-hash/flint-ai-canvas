@@ -102,6 +102,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         void (async () => {
             const loaded = await loadCanvasProjectForEditing(canvasId);
             session.assertActive();
+            if (!loaded) throw new Error("场景读取失败，请重新打开场景");
             if (!isIrregularScreenScene(loaded.creationScene)) throw new Error("这个画布没有异形屏设置，请从新建场景开始");
             const ids = loaded.creationScene.nodeIds;
             const node = loaded.nodes.find((item) => item.id === ids.generation);
