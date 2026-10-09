@@ -41,10 +41,10 @@ export type CanvasLibrarySummary = Pick<CanvasProject, "id" | "projectId" | "tit
     previewNodes: CanvasProject["nodes"];
 };
 
-export function listRemoteCanvasProjectsPage(options: { page: number; pageSize: number; projectId?: string; query?: string; sort?: string; signal?: AbortSignal }) {
+export function listRemoteCanvasProjectsPage(options: { page: number; pageSize: number; projectId?: string; query?: string; sort?: string; sceneKind?: "irregular-screen"; signal?: AbortSignal }) {
     return http.get<{ projects: CanvasLibrarySummary[]; page: number; pageSize: number; total: number; hasMore: boolean }>("/canvas-projects", {
         signal: options.signal,
-        params: compactApiParams({ page: options.page, pageSize: options.pageSize, projectId: options.projectId, q: options.query, sort: options.sort }),
+        params: compactApiParams({ page: options.page, pageSize: options.pageSize, projectId: options.projectId, q: options.query, sort: options.sort, sceneKind: options.sceneKind }),
     });
 }
 
@@ -116,13 +116,14 @@ export function listRemoteCanvasProjects() {
     return http.get<{ projects: RemoteUserDataSummary[] }>("/canvas-projects");
 }
 
-export function getRemoteCanvasProject(id: string, knownProject?: CanvasProject) {
+export function getRemoteCanvasProject(id: string, knownProject?: CanvasProject, signal?: AbortSignal) {
     if (!knownProject || knownProject.id !== id || !Number.isSafeInteger(knownProject.revision)) {
-        return http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`).then((result) => ({ ...result, notModified: false }));
+        return http.get<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}`, { signal }).then((result) => ({ ...result, notModified: false }));
     }
     const etag = `"canvas-${knownProject.revision}"`;
     return http
         .get<{ project: CanvasProject } | { notModified: true }>(`/canvas-projects/${encodeURIComponent(id)}`, {
+            signal,
             headers: { "If-None-Match": etag },
             validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
             allowNotModified: true,

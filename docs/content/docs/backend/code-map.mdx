@@ -21,6 +21,7 @@ description: 从产品功能快速定位主要代码入口
 ## 结构控制与输出蒙版
 
 - 异形屏快捷入口：`web/src/pages/screen-creation/`，路由与侧栏分别在 `web/src/router.tsx`、`components/layout/workspace-sidebar-nav.tsx`；`screen-creation-workspace.tsx` 组织上传、预览与结果，`screen-creation-advanced.tsx` 负责默认折叠的参数面板。
+- 场景恢复与列表隔离：`use-screen-creation-scenes.ts` 等待当前账号同步就绪并加载场景摘要，`screen-creation-session.ts` 选择最近场景，入口页区分恢复与显式新建；`internal/canvas/user_data_page.go` 和 `repository/project_workbench_read.go` 在计数、分页前区分快捷场景与自由画布。
 - 异形屏纯计算与画布模板：`web/src/lib/canvas/irregular-screen-mask.ts` 派生有效区域，`irregular-screen-domain.ts` 创建／更新标准图片节点与引用，`irregular-screen-model.ts` 选择可用模型和平台默认参数；`stores/canvas/use-canvas-store.ts` 保存和导入 `creationScene`。专项测试位于 `web/test/irregular-screen-*.test.ts`。
 - 画布引用与参数：`web/src/lib/canvas/controlnet.ts`、`generation-contract.ts`；生成执行继续使用 `canvas-image-generation-executor.ts` 和 `services/api/generation-task.ts`。
 - 共享合同：`backend/internal/canvas/contract/controlnet.go` 生成前端类型；`internal/generation/controlnet.go` 与 `internal/protocol/controlnet.go` 定义媒体和协议参数。

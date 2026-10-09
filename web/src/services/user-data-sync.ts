@@ -36,6 +36,26 @@ let activeRemoteUserId = "";
 type RemoteUserDataPhase = "inactive" | "hydrating" | "ready" | "failed";
 
 let remoteUserDataPhase: RemoteUserDataPhase = "inactive";
+let remoteSessionSnapshot: Readonly<{ userId: string; phase: RemoteUserDataPhase }> = { userId: "", phase: "inactive" };
+const remoteSessionListeners = new Set<() => void>();
+
+export function getRemoteUserDataSyncSessionSnapshot() {
+    return remoteSessionSnapshot;
+}
+
+export function subscribeRemoteUserDataSyncSession(listener: () => void) {
+    remoteSessionListeners.add(listener);
+    return () => {
+        remoteSessionListeners.delete(listener);
+    };
+}
+
+function publishRemoteUserDataSession() {
+    if (remoteSessionSnapshot.userId === activeRemoteUserId && remoteSessionSnapshot.phase === remoteUserDataPhase) return;
+    remoteSessionSnapshot = { userId: activeRemoteUserId, phase: remoteUserDataPhase };
+    for (const listener of remoteSessionListeners) listener();
+}
+
 let syncTimer: number | null = null;
 let syncPromise: Promise<void> | null = null;
 let syncQueued = false;
@@ -59,6 +79,7 @@ export async function initializeRemoteUserDataSession(userId: string) {
         acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
         acknowledgedAssets = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
         remoteUserDataPhase = "ready";
+        publishRemoteUserDataSession();
     });
 }
 
@@ -344,9 +365,11 @@ export async function syncRemoteUserData(userId?: string | null) {
         acknowledgedAssets.clear();
         if (!activeRemoteUserId) {
             remoteUserDataPhase = "inactive";
+            publishRemoteUserDataSession();
             return;
         }
         remoteUserDataPhase = "hydrating";
+        publishRemoteUserDataSession();
         try {
             // 登录只拉一次聚合快照。摘要列表再逐条请求详情会把 N 条数据放大成 2N+2 个请求，
             // 并且会在登录阶段同时触发大量媒体解析，任何一项失败都会污染登录结果。
@@ -373,8 +396,10 @@ export async function syncRemoteUserData(userId?: string | null) {
             acknowledgedProjects = new Map(projects.map((project) => [project.id, project]));
             acknowledgedAssets = new Map(parseAssetRecordList(snapshot.assets).map((asset) => [asset.id, asset]));
             remoteUserDataPhase = "ready";
+            publishRemoteUserDataSession();
         } catch (error) {
             remoteUserDataPhase = "failed";
+            publishRemoteUserDataSession();
             throw error;
         }
     });
@@ -419,6 +444,7 @@ export function resetRemoteUserDataSync() {
     syncRetryAttempt = 0;
     syncQueued = false;
     useSyncProgressStore.getState().clearAll();
+    publishRemoteUserDataSession();
 }
 
 export function hasRemoteUserDataSyncSession() {

@@ -79,6 +79,10 @@ export type ScreenCreationWorkspaceProps = {
     recentScenes: ScreenCreationScene[];
     recentLoading?: boolean;
     recentError?: string;
+    recentHasMore?: boolean;
+    recentLoadingMore?: boolean;
+    loadMoreScenes?: () => void;
+    retryRecentScenes?: () => void;
     openScene: (id: string) => void;
     newScene: () => void;
     openCanvas: () => void;

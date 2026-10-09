@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 import { useEffectiveConfig, modelOptionName } from "@/stores/use-config-store";
@@ -17,6 +17,7 @@ import { readScreenImage, deriveScreenOutputMask, persistScreenImage, screenImag
 import { saveScreenCanvas, submitScreenGeneration, recoverScreenGeneration } from "@/services/irregular-screen-generation";
 import { createScreenCreationSession, type ScreenCreationSession } from "./screen-creation-session";
 import type { ScreenCreationWorkspaceProps, ScreenCreationResult, ScreenMaskMode } from "./screen-creation-types";
+import { useScreenCreationScenes } from "./use-screen-creation-scenes";
 
 export function screenTaskNeedsRecovery(project?: CanvasProject | null) {
     if (!project || !isIrregularScreenScene(project.creationScene)) return false;
@@ -28,6 +29,8 @@ export function screenTaskNeedsRecovery(project?: CanvasProject | null) {
 export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const navigate = useNavigate();
     const { canvasId } = useParams();
+    const [searchParams] = useSearchParams();
+    const sceneLibrary = useScreenCreationScenes();
     const userId = useUserStore((state) => state.user?.id);
     const baseConfig = useEffectiveConfig();
     const config = useMemo(() => screenPickerConfig(baseConfig), [baseConfig]);
@@ -492,11 +495,20 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         quoteLabel: needsRecovery ? "继续读取原任务，不会重新提交" : credit === null ? "费用以后台模型配置为准" : `本次消耗 ${credit.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`,
         canvasId: canvasId || draftId.current,
         sceneName: project?.title,
-        recentScenes: projects.filter((item) => isIrregularScreenScene(item.creationScene)).map((item) => ({ id: item.id, name: item.title, updatedAt: item.updatedAt })),
+        recentScenes: sceneLibrary.scenes.map((item) => ({ id: item.id, name: item.title, updatedAt: item.updatedAt })),
+        recentLoading: Boolean(userId) && sceneLibrary.query.isPending,
+        recentError: sceneLibrary.query.isError ? errorText(sceneLibrary.query.error) : undefined,
+        recentHasMore: sceneLibrary.query.hasNextPage,
+        recentLoadingMore: sceneLibrary.query.isFetchingNextPage,
+        loadMoreScenes: () => { void sceneLibrary.query.fetchNextPage({ cancelRefetch: false }); },
+        retryRecentScenes: () => {
+            if (sceneLibrary.query.isFetchNextPageError) void sceneLibrary.query.fetchNextPage({ cancelRefetch: false });
+            else void sceneLibrary.query.refetch();
+        },
         newScene: () => {
             lifetime.current?.dispose();
-            if (!canvasId) setNewVersion((value) => value + 1);
-            else navigate("/screen-creation");
+            if (!canvasId && searchParams.get("new") === "1") setNewVersion((value) => value + 1);
+            else navigate("/screen-creation?new=1");
         },
         openScene: (id) => {
             lifetime.current?.dispose();

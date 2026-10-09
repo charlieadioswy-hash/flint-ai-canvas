@@ -698,6 +698,75 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+  /canvas-projects:
+    get:
+      tags: [canvas]
+      summary: 读取当前用户的画布摘要或分页画布列表
+      description: |
+        page 或 sceneKind 非空时返回分页列表；两者均未提供或为空时返回全部摘要，
+        不应用分页、搜索、项目和场景筛选。所有结果仅包含当前用户的画布。
+        分页列表默认排除 creationScene.kind 为 irregular-screen 的内部画布；
+        sceneKind=irregular-screen 时仅返回该场景，用于恢复最近的异形屏创作。
+        场景筛选在总数统计及分页之前执行，不影响非分页摘要、快照或按 ID 读取。
+      parameters:
+        - in: query
+          name: page
+          schema: {type: integer, minimum: 1, maximum: 1000000, default: 1}
+          description: 提供非空值时启用分页；仅传 sceneKind 时默认第 1 页。
+        - in: query
+          name: pageSize
+          schema: {type: integer, minimum: 1, default: 40}
+          description: 仅分页模式生效，超过 50 时按 50 返回。
+        - in: query
+          name: projectId
+          schema: {type: string}
+          description: 仅分页模式生效；缺省、空值或 all 表示全部项目，independent 表示独立画布，其他值按项目 ID 精确筛选。
+        - in: query
+          name: q
+          schema: {type: string}
+          description: 仅分页模式生效；去除首尾空白后，按标题进行不区分大小写的 LIKE 搜索。
+        - in: query
+          name: sort
+          schema: {type: string, default: updated}
+          description: 仅分页模式生效；name 按标题升序，nodes 按节点数降序，其他值含缺省按更新时间降序；相同值按 ID 升序。
+        - in: query
+          name: sceneKind
+          allowEmptyValue: true
+          schema: {type: string, enum: ["", irregular-screen]}
+          description: 唯一支持的非空值是 irregular-screen；缺省或空值的分页列表排除该场景，其他非空值返回 HTTP 400、code 400、reason invalid_argument。
+      responses:
+        "200":
+          description: 标准信封；分页 data 含 projects、page、pageSize、total、hasMore，非分页 data 仅含 projects 摘要数组。均不返回完整画布正文。
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - type: object
+                            required: [projects, page, pageSize, total, hasMore]
+                            additionalProperties: false
+                            properties:
+                              projects:
+                                type: array
+                                items: {$ref: "#/components/schemas/CanvasLibrarySummary"}
+                              page: {type: integer, minimum: 1}
+                              pageSize: {type: integer, minimum: 1, maximum: 50}
+                              total: {type: integer, format: int64, minimum: 0}
+                              hasMore: {type: boolean}
+                          - type: object
+                            required: [projects]
+                            additionalProperties: false
+                            properties:
+                              projects:
+                                type: array
+                                items: {$ref: "#/components/schemas/CanvasProjectSummary"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
   /canvas-projects/{id}:
     parameters:
       - in: path
@@ -712,6 +781,8 @@ paths:
           description: 信封 data.project 包含完整画布及服务端 revision
         "404":
           description: 画布不存在或不属于当前用户
+        "500":
+          description: 数据库或画布内容读取失败，reason 为 internal
     put:
       tags: [canvas]
       summary: 按 revision 保存画布内容
@@ -1659,6 +1730,30 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    CanvasProjectSummary:
+      type: object
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        revision: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    CanvasLibrarySummary:
+      allOf:
+        - $ref: "#/components/schemas/CanvasProjectSummary"
+        - type: object
+          required: [revision, nodeCount, previewNodes]
+          properties:
+            projectId: {type: string}
+            nodeCount: {type: integer, minimum: 0}
+            previewNodes:
+              type: array
+              maxItems: 4
+              description: 图片或视频节点的精简预览，仅含位置、ID、类型、标题、尺寸和 metadata.storageKey（存在时）。
+              items:
+                type: object
+                additionalProperties: true
     Model3DProviderRequest:
       type: object
       required: [name, type, baseUrl, enabled, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay]

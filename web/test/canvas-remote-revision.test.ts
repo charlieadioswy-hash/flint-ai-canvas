@@ -8,11 +8,13 @@ import {
     applyAgentCanvasPatches,
     deleteCanvasProjectsWithRemoteSync,
     refreshCanvasAfterAgent,
+    getRemoteUserDataSyncSessionSnapshot,
     initializeRemoteUserDataSession,
     installRemoteUserDataAutoSync,
     loadCanvasProjectForEditing,
     resetRemoteUserDataSync,
     saveRemoteUserDataNow,
+    subscribeRemoteUserDataSyncSession,
     syncRemoteUserData,
 } from "../src/services/user-data-sync";
 import { createAgentCanvasSync } from "../src/services/agent-canvas-sync";
@@ -163,6 +165,46 @@ afterEach(async () => {
     localforage.setItem = originalSet;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
+
+test("remote session observers wait for readiness and reset across accounts", async () => {
+    const snapshots: ReturnType<typeof getRemoteUserDataSyncSessionSnapshot>[] = [];
+    const unsubscribe = subscribeRemoteUserDataSyncSession(() => snapshots.push(getRemoteUserDataSyncSessionSnapshot()));
+    try {
+        const ready = getRemoteUserDataSyncSessionSnapshot();
+        expect(ready).toEqual({ userId: scope, phase: "ready" });
+        expect(getRemoteUserDataSyncSessionSnapshot()).toBe(ready);
+        resetRemoteUserDataSync();
+        await initializeRemoteUserDataSession("second-account");
+        expect(snapshots).toEqual([
+            { userId: "", phase: "inactive" },
+            { userId: "second-account", phase: "ready" },
+        ]);
+        expect(ready).toEqual({ userId: scope, phase: "ready" });
+        unsubscribe();
+        resetRemoteUserDataSync();
+        expect(snapshots).toHaveLength(2);
+    } finally {
+        unsubscribe();
+    }
+});
+
+test("remote session observers distinguish snapshot failure from readiness", async () => {
+    const snapshots: ReturnType<typeof getRemoteUserDataSyncSessionSnapshot>[] = [];
+    const unsubscribe = subscribeRemoteUserDataSyncSession(() => snapshots.push(getRemoteUserDataSyncSessionSnapshot()));
+    apiClient.defaults.adapter = async () => {
+        throw new Error("snapshot unavailable");
+    };
+    try {
+        await expect(syncRemoteUserData(scope)).rejects.toThrow("snapshot unavailable");
+        expect(snapshots).toEqual([
+            { userId: scope, phase: "hydrating" },
+            { userId: scope, phase: "failed" },
+        ]);
+        expect(getRemoteUserDataSyncSessionSnapshot()).toBe(snapshots[1]!);
+    } finally {
+        unsubscribe();
+    }
 });
 
 test("deletion skips editing and invalid MIME assets, including an uncached canvas", async () => {

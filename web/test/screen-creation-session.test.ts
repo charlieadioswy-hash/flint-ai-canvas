@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { buildIrregularScreenTemplate } from "../src/lib/canvas/irregular-screen-domain";
-import { createScreenCreationSession } from "../src/pages/screen-creation/screen-creation-session";
+import { createScreenCreationSession, resolveScreenCreationEntry, screenCreationScenes } from "../src/pages/screen-creation/screen-creation-session";
 import { screenTaskNeedsRecovery } from "../src/pages/screen-creation/use-screen-creation";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
 import type { CanvasNodeMetadata } from "../src/types/canvas";
@@ -115,4 +115,73 @@ test("confirmed failure and cancellation allow a new generation while completed 
     }
     expect(screenTaskNeedsRecovery(undefined)).toBe(false);
     expect(screenTaskNeedsRecovery({ ...project(), creationScene: undefined })).toBe(false);
+});
+
+function entryOptions() {
+    return { projects: [project()], userId: "account-a", activeScope: "account-a", userHydrated: true, canvasHydrated: true, newScene: false, remoteScenes: [] };
+}
+
+test("the shortcut resumes the most recently updated screen scene regardless of storage order", () => {
+    const original = project();
+    const projects = [
+        { ...original, id: "older", updatedAt: "2026-01-01T00:00:00Z" },
+        { ...original, id: "ordinary", updatedAt: "2026-01-03T00:00:00Z", creationScene: undefined },
+        { ...original, id: "recent", updatedAt: "2026-01-02T00:00:00Z" },
+    ];
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects })).toEqual({ canvasId: "recent" });
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects: [...projects].reverse() })).toEqual({ canvasId: "recent" });
+    expect(projects.map((item) => item.id)).toEqual(["older", "ordinary", "recent"]);
+});
+
+test("the shortcut waits for the current account and local storage before choosing a scene", () => {
+    expect(resolveScreenCreationEntry({ ...entryOptions(), userHydrated: false })).toBeNull();
+    expect(resolveScreenCreationEntry({ ...entryOptions(), canvasHydrated: false })).toBeNull();
+    expect(resolveScreenCreationEntry({ ...entryOptions(), activeScope: "account-b" })).toBeNull();
+    expect(resolveScreenCreationEntry({ ...entryOptions(), userId: "account-b" })).toBeNull();
+});
+
+test("a new device waits for remote scenes and resumes the newest remote scene", () => {
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects: [], remoteScenes: undefined })).toBeNull();
+    expect(
+        resolveScreenCreationEntry({
+            ...entryOptions(),
+            projects: [],
+            remoteScenes: [
+                { id: "remote-old", title: "旧场景", updatedAt: "2026-01-01T00:00:00Z" },
+                { id: "remote-new", title: "最近场景", updatedAt: "2026-01-02T00:00:00Z" },
+            ],
+        }),
+    ).toEqual({ canvasId: "remote-new" });
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects: [], remoteScenes: [] })).toEqual({});
+});
+
+test("explicit new scenes bypass automatic resume while an unresolved remote read stays pending", () => {
+    expect(resolveScreenCreationEntry({ ...entryOptions(), newScene: true, remoteScenes: undefined })).toEqual({});
+    expect(resolveScreenCreationEntry({ ...entryOptions(), remoteScenes: undefined })).toBeNull();
+    expect(resolveScreenCreationEntry({ ...entryOptions(), userId: undefined, activeScope: "guest", remoteScenes: undefined })).toEqual({ canvasId: "screen-canvas" });
+});
+
+test("local saved scenes remain resumable after a failed first submission", () => {
+    const saved = { ...project({ status: "error", taskClientOperationId: "uncertain-submit" }), id: "saved-draft", updatedAt: "2026-01-03T00:00:00Z" };
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects: [saved] })).toEqual({ canvasId: "saved-draft" });
+    expect(screenTaskNeedsRecovery(saved)).toBe(true);
+    // Loading the selected ID must report missing nodes instead of silently making a replacement.
+    expect(resolveScreenCreationEntry({ ...entryOptions(), projects: [{ ...saved, nodes: [] }] })).toEqual({ canvasId: "saved-draft" });
+});
+
+test("recent scenes merge remote and local copies once and use a stable tie break", () => {
+    const original = project();
+    const scenes = screenCreationScenes(
+        [
+            { ...original, id: "b", updatedAt: "2026-01-03T00:00:00Z" },
+            { ...original, id: "a", updatedAt: "2026-01-03T00:00:00Z" },
+            { ...original, id: "shared", title: "本地最新", updatedAt: "2026-01-02T00:00:00Z" },
+        ],
+        [
+            { id: "shared", title: "远端旧版", updatedAt: "2026-01-01T00:00:00Z" },
+            { id: "remote", title: "远端场景", updatedAt: "2026-01-01T00:00:00Z" },
+        ],
+    );
+    expect(scenes.map((item) => item.id)).toEqual(["a", "b", "shared", "remote"]);
+    expect(scenes.find((item) => item.id === "shared")?.title).toBe("本地最新");
 });

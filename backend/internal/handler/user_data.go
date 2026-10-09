@@ -16,6 +16,7 @@ import (
 	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -510,13 +511,13 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		if c.Query("page") != "" {
+		if c.Query("page") != "" || c.Query("sceneKind") != "" {
 			page, pageSize, pageErr := parsePaginationQuery(c, 40)
 			if pageErr != nil {
 				fail(c, http.StatusBadRequest, pageErr)
 				return
 			}
-			result, pageErr := svc.UserCanvasProjectsPage(user.ID, page, pageSize, c.Query("projectId"), c.Query("q"), c.Query("sort"))
+			result, pageErr := svc.UserCanvasProjectsPage(user.ID, page, pageSize, c.Query("projectId"), c.Query("q"), c.Query("sort"), c.Query("sceneKind"))
 			if pageErr != nil {
 				failService(c, pageErr)
 				return
@@ -539,7 +540,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		metadata, err := svc.UserCanvasProjectMetadata(user.ID, c.Param("id"))
 		if err != nil {
-			fail(c, http.StatusNotFound, err)
+			failCanvasProjectRead(c, err)
 			return
 		}
 		etag := canvasProjectResponseETag(metadata)
@@ -552,7 +553,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		project, err := svc.UserCanvasProject(user.ID, c.Param("id"))
 		if err != nil {
-			fail(c, http.StatusNotFound, err)
+			failCanvasProjectRead(c, err)
 			return
 		}
 		okCanvasProject(c, project)
@@ -694,6 +695,13 @@ func hasUserAssetPageFilters(c *gin.Context) bool {
 		}
 	}
 	return false
+}
+
+func failCanvasProjectRead(c *gin.Context, err error) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		err = service.NotFound("画布不存在")
+	}
+	failService(c, err)
 }
 
 func okCanvasProject(c *gin.Context, project json.RawMessage) {

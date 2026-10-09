@@ -232,11 +232,13 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 ## 画布保存、历史与恢复
 
+`GET /canvas-projects` 带非空 `page` 或 `sceneKind` 时返回画布库分页摘要，`pageSize` 控制每页条数。分页默认排除 `creationScene.kind = "irregular-screen"` 的快捷入口内部画布；传 `sceneKind=irregular-screen` 时只返回当前用户的异形屏场景，用于最近场景与快捷入口恢复。`q`、`projectId`、`sort` 可组合使用，筛选先于总数与分页计算。其他非空 `sceneKind` 返回 400 / `invalid_argument`。不带 `page` 和 `sceneKind` 的摘要列表、用户快照和按 ID 读取仍保留内部场景，所有路径继续校验用户归属。
+
 画布内容使用数据库递增的 `revision` 做乐观并发校验；`updatedAt` 仅用于展示，不作为版本依据。新建 `PUT /canvas-projects/:id` 的 `project.revision` 为 0，已有画布必须带上读取到的版本。数据库在同一次条件更新中匹配 ID、用户与版本，成功后返回 `data.project` 摘要及递增后的版本；缺失版本返回 428，陈旧版本返回 409，非法版本返回 400。客户端不能获取新版号后直接重发旧内容。
 
 | 接口 | 行为 |
 | --- | --- |
-| `GET /canvas-projects/:id` | 返回当前内容及权威版本号；响应包含基于数据库 `revision` 的弱 `ETag` 和 `Cache-Control: private, no-cache`。请求可用 `If-None-Match` 做条件读取，版本未变化时返回无正文的 `304`。 |
+| `GET /canvas-projects/:id` | 返回当前内容及权威版本号；响应包含基于数据库 `revision` 的弱 `ETag` 和 `Cache-Control: private, no-cache`。请求可用 `If-None-Match` 做条件读取，版本未变化时返回无正文的 `304`。当前用户范围内不存在时返回 `404 / not_found`；数据库或内容解析失败返回 `500 / internal`，不得当作已删除。 |
 | `GET /canvas-projects/:id/history` | 返回 `snapshots` 摘要与 `currentRevision`，不批量读取历史正文 |
 | `GET /canvas-projects/:id/history/:snapshotId` | 按需返回 `snapshot` 摘要和 `project` 历史正文 |
 | `POST /canvas-projects/:id/history/:snapshotId/restore` | 请求 `{ revision }` 为当前画布版本，成功返回新版本摘要；恢复前强制备份当前内容 |

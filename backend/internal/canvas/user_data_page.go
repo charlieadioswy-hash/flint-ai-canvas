@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessage, error) {
@@ -55,7 +56,10 @@ type CanvasLibraryPage struct {
 	HasMore  bool                   `json:"hasMore"`
 }
 
-func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string) (CanvasLibraryPage, error) {
+func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string, sceneKind string) (CanvasLibraryPage, error) {
+	if sceneKind != "" && sceneKind != "irregular-screen" {
+		return CanvasLibraryPage{}, kernel.BadAuthRequest("画布场景类型无效")
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -68,7 +72,8 @@ func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, 
 	if pageSize > 50 {
 		pageSize = 50
 	}
-	projects, total, err := s.repo.UserCanvasProjectsPage(userID, page, pageSize, projectID, search, sort)
+	sceneFilter := repository.CanvasProjectSceneFilter{Kind: "irregular-screen", Exclude: sceneKind == ""}
+	projects, total, err := s.repo.UserCanvasProjectsPage(userID, page, pageSize, projectID, search, sort, sceneFilter)
 	if err != nil {
 		return CanvasLibraryPage{}, err
 	}

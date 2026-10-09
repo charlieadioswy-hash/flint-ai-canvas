@@ -334,10 +334,6 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
             <AppDrawer title="最近的异形屏场景" size={400} open={historyOpen} onClose={() => setHistoryOpen(false)}>
                 {props.recentLoading ? (
                     <WorkspaceLoadingState label="正在读取最近场景" rows={1} />
-                ) : props.recentError ? (
-                    <Callout tone="error" title="场景列表暂时无法读取">
-                        {props.recentError}
-                    </Callout>
                 ) : props.recentScenes.length ? (
                     <div className="screen-creation-scene-list">
                         {props.recentScenes.map((scene) => (
@@ -362,9 +358,17 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                             </button>
                         ))}
                     </div>
-                ) : (
+                ) : !props.recentError ? (
                     <WorkspaceState compact title="还没有异形屏场景" description="生成后的场景会保存在这里，随时继续创作。" />
-                )}
+                ) : null}
+                {props.recentError ? (
+                    <Callout tone="error" title="场景列表暂时无法读取">
+                        <p>{props.recentError}</p>
+                        <Button onClick={props.retryRecentScenes} loading={props.recentLoading || props.recentLoadingMore}>重试读取场景</Button>
+                    </Callout>
+                ) : props.recentHasMore ? (
+                    <Button block disabled={disabled} loading={props.recentLoadingMore} onClick={props.loadMoreScenes}>加载更多场景</Button>
+                ) : null}
             </AppDrawer>
         </WorkspacePage>
     );
