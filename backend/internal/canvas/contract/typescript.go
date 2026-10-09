@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/protocol"
 )
 
 // TypeScriptDeclaration is generated from the public Go contract, never from

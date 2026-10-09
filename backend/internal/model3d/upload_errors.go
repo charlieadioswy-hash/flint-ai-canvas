@@ -11,8 +11,8 @@ import (
 	"strings"
 	"syscall"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/outbound"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/outbound"
 )
 
 // Retain only error categories; URLs, addresses and the original error chain

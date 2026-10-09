@@ -19,7 +19,7 @@ import (
 	"github.com/alibabacloud-go/tea/dara"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/google/uuid"
-	"infinite-canvas/backend/internal/outbound"
+	"yingce/backend/internal/outbound"
 )
 
 type aliyunProvider struct {

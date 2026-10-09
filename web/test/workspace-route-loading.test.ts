@@ -21,7 +21,7 @@ describe("workspace route loading", () => {
         const modules = source("../src/lib/workspace-route-modules.ts");
         const navigation = source("../src/components/layout/workspace-sidebar-nav.tsx");
 
-        for (const route of ["projects", "canvas", "assets", "create"]) {
+        for (const route of ["projects", "canvas", "assets", "create", "inspirations"]) {
             expect(modules).toContain(`${route}: () => import`);
         }
         expect(modules).toContain('projectDetail: () => import("@/pages/projects/detail")');
@@ -38,6 +38,11 @@ describe("workspace route loading", () => {
         expect(router).toContain('{ path: "/", element: deferred(<CreatePage />) }');
         expect(router).toContain('{ path: "/create", element: deferred(<CreatePage />) }');
         expect(router).toContain("<RequireAuth allowAnonymous={isGuestWorkspacePath(pathname)}>");
+        expect(router).toContain('{ path: "/assets", element: <RequireAuth>{deferred(<AssetsPage />)}</RequireAuth> }');
+        expect(router).toContain('{ path: "/canvas/:id", element: <RequireAuth><CanvasProjectPage /></RequireAuth> }');
+        expect(router).toContain('{ path: "/screen-creation", element: <RequireAuth>{deferred(<ScreenCreationPage />)}</RequireAuth> }');
+        expect(router).toContain('{ path: "/screen-creation/:canvasId", element: <RequireAuth>{deferred(<ScreenCreationPage />)}</RequireAuth> }');
+        expect(router).toContain('{ path: "/inspirations", element: deferred(<InspirationsPage />) }');
         expect(router).not.toContain('path: "/home"');
         expect(router).not.toContain("HomePage");
         expect(navigation).toContain('{ ...toolItem("create", "/"), id: "home", title: "创作" }');

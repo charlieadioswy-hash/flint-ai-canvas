@@ -1,6 +1,6 @@
 package service
 
-import "infinite-canvas/backend/internal/app"
+import "yingce/backend/internal/app"
 
 type Model3DParameters = app.Model3DParameters
 type Model3DProviderRequest = app.Model3DProviderRequest

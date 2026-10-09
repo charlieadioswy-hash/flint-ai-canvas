@@ -539,8 +539,9 @@ export function CanvasPrevisWorkbench({
                 mask: { closable: false },
                 keyboard: false,
                 onOk: () => onClose(),
-                onCancel: () => {
+                onCancel: (close) => {
                     closingRef.current = false;
+                    close();
                 },
             });
         })();

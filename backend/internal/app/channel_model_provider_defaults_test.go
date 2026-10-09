@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 func verifiedLiblibChannelModel(t *testing.T) model.ChannelModel {

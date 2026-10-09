@@ -7,9 +7,9 @@ import (
 	"errors"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/model3d"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/model3d"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) model3DProvider() model3d.Provider {

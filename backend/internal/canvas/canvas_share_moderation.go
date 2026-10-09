@@ -3,7 +3,7 @@ package canvas
 import (
 	"encoding/json"
 
-	"infinite-canvas/backend/internal/assets"
+	"yingce/backend/internal/assets"
 )
 
 type publicCanvasModerationTag struct {

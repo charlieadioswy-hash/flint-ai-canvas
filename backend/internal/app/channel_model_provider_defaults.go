@@ -6,8 +6,8 @@ import (
 	"math"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 const verifiedLiblibSDCheckpoint = "0ea388c7eb854be3ba3c6f65aac6bfd3"

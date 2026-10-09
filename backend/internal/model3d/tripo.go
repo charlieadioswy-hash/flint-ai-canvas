@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/outbound"
+	"yingce/backend/internal/outbound"
 )
 
 var errTripoRedirect = errors.New("Tripo API redirects are not allowed")

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestModel3DBaseURLMigration49BackfillsAndPreservesSnapshots(t *testing.T) {

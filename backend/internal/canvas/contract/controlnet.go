@@ -3,7 +3,7 @@ package contract
 import (
 	"fmt"
 
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/protocol"
 )
 
 type ControlNetBinding struct {

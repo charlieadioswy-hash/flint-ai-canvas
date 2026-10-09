@@ -15,10 +15,10 @@ import (
 
 	_ "golang.org/x/image/webp"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/model3d"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/model3d"
+	"yingce/backend/internal/repository"
 )
 
 type Model3DParameters = model3d.Parameters

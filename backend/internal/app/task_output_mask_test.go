@@ -22,9 +22,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/generation"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 func outputMaskPNG(t *testing.T, picture image.Image) []byte {

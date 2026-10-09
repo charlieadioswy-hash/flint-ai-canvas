@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/generation"
+	"yingce/backend/internal/model"
 )
 
 // Compressed image size does not bound decoder memory. Both the source and the

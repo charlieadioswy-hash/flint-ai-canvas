@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"testing"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/outbound"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/outbound"
 )
 
 func TestTripoUploadTransportDiagnostics(t *testing.T) {

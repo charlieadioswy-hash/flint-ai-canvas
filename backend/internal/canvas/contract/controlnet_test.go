@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/protocol"
 )
 
 func controlSpec() GenerationSpec {

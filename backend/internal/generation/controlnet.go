@@ -1,6 +1,6 @@
 package generation
 
-import "infinite-canvas/backend/internal/protocol"
+import "yingce/backend/internal/protocol"
 
 type ControlNetParameters = protocol.ControlNetParameters
 type CannyParameters = protocol.CannyParameters

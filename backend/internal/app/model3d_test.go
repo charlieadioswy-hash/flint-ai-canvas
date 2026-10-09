@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/model3d"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/model3d"
+	"yingce/backend/internal/repository"
 )
 
 type model3DMock struct {

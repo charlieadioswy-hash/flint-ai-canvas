@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/generation"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
