@@ -38,7 +38,7 @@ export function deriveIrregularScreenMask(source: IrregularScreenPixels, request
     }
     const hasColor = colorPixels >= Math.max(1, Math.ceil(pixels * 0.0005));
     const hasAlphaShape = transparentPixels > 0 && visiblePixels > 0;
-    const mode = requestedMode === "auto" ? hasColor ? "color" : hasAlphaShape ? "alpha" : "luminance" : requestedMode;
+    const mode = requestedMode === "auto" ? (hasColor ? "color" : hasAlphaShape ? "alpha" : "luminance") : requestedMode;
     const output = new Uint8ClampedArray(data.length);
     let activePixels = 0;
     let total = 0;
@@ -49,26 +49,24 @@ export function deriveIrregularScreenMask(source: IrregularScreenPixels, request
     let maxY = -1;
     for (let index = 0; index < data.length; index += 4) {
         const alpha = data[index + 3];
-        const value = mode === "color"
-            ? coloredPixel(data[index], data[index + 1], data[index + 2], alpha) ? 255 : 0
-            : mode === "alpha"
-              ? denoise(alpha)
-              : denoise((0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) * alpha / 255);
+        const value =
+            mode === "color" ? (coloredPixel(data[index], data[index + 1], data[index + 2], alpha) ? 255 : 0) : mode === "alpha" ? denoise(alpha) : denoise(((0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) * alpha) / 255);
         output[index] = output[index + 1] = output[index + 2] = value;
         output[index + 3] = 255;
         minimum = Math.min(minimum, value);
         total += value;
         if (value > 0) {
             activePixels++;
-            const x = index / 4 % width;
+            const x = (index / 4) % width;
             const y = Math.floor(index / 4 / width);
-            minX = Math.min(minX, x); minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
         }
     }
-    const reason = activePixels === 0
-        ? mode === "color" ? "未识别到彩色有效区域，请切换为黑白灰或透明度模式" : "蒙版没有有效区域，请检查图片或切换识别模式"
-        : minimum > BLACK_TOLERANCE ? "蒙版覆盖整张图片，未识别到屏幕外区域，请检查预览并切换识别模式" : undefined;
+    const reason =
+        activePixels === 0 ? (mode === "color" ? "未识别到彩色有效区域，请切换为黑白灰或透明度模式" : "蒙版没有有效区域，请检查图片或切换识别模式") : minimum > BLACK_TOLERANCE ? "蒙版覆盖整张图片，未识别到屏幕外区域，请检查预览并切换识别模式" : undefined;
     const warnings: string[] = [];
     if (mode === "color") warnings.push("彩色区域合并为一个有效区域；黑底和白色边框不参与输出，颜色不对应独立提示词。");
     if (mode === "luminance" && hasColor) warnings.push("当前按亮度读取彩色图片，白色边框也会保留；可切换彩色区域模式。");

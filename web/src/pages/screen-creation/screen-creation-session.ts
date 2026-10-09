@@ -20,7 +20,10 @@ export function createScreenCreationSession(readScope = getActiveUserScope, revo
         isActive,
         assertActive,
         ownUrl(url: string) {
-            if (!isActive()) { releaseUrl(url); assertActive(); }
+            if (!isActive()) {
+                releaseUrl(url);
+                assertActive();
+            }
             if (url.startsWith("blob:")) urls.add(url);
             return url;
         },

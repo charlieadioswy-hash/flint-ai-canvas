@@ -21,20 +21,56 @@ const noop = () => {};
 const controlId = "b6806516962f4e1599a93ac4483c3d23";
 const initialUserState = useUserStore.getInitialState();
 let restoreUserSnapshot: (() => void) | undefined;
-afterEach(() => { restoreUserSnapshot?.(); restoreUserSnapshot = undefined; });
+afterEach(() => {
+    restoreUserSnapshot?.();
+    restoreUserSnapshot = undefined;
+});
 
 function fixture(): ScreenCreationWorkspaceProps {
     const profile = defaultImageCapabilityConfig("liblib-image");
     profile.controlNet = { supported: true, maxUnits: 4, preprocessors: ["canny"], models: [controlId] };
-    const channel = createModelChannel({ id: "screen-ui-test", name: "屏幕模型", scope: "system", models: ["screen"], modelCosts: [{ model: "screen", capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 1_000_000, capabilityConfig: { version: 1, image: profile }, defaultOptions: { controlNetModel: controlId } }] });
+    const channel = createModelChannel({
+        id: "screen-ui-test",
+        name: "屏幕模型",
+        scope: "system",
+        models: ["screen"],
+        modelCosts: [{ model: "screen", capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 1_000_000, capabilityConfig: { version: 1, image: profile }, defaultOptions: { controlNetModel: controlId } }],
+    });
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "screen-ui-test::screen", imageModel: "screen-ui-test::screen" } }).config;
     return {
-        config, model: "screen-ui-test::screen", setModel: noop, profile, size: "1600x900", setSize: noop,
-        mask: null, reference: null, uploadMask: noop, uploadReference: noop, clearMask: noop, clearReference: noop,
-        maskMode: "auto", setMaskMode: noop, prompt: "", setPrompt: noop,
+        config,
+        model: "screen-ui-test::screen",
+        setModel: noop,
+        profile,
+        size: "1600x900",
+        setSize: noop,
+        mask: null,
+        reference: null,
+        uploadMask: noop,
+        uploadReference: noop,
+        clearMask: noop,
+        clearReference: noop,
+        maskMode: "auto",
+        setMaskMode: noop,
+        prompt: "",
+        setPrompt: noop,
         advanced: { controlModel: controlId, strength: 0.9, start: 0, end: 0.9, lowThreshold: 100, highThreshold: 200, resolution: 1024, steps: 20, sampler: 15, cfgScale: 7, seed: -1, denoisingStrength: 0.75, negativePrompt: "" },
-        setAdvanced: noop, results: [], selectedResultId: "", setSelectedResultId: noop, busy: false, uploading: false, loading: false,
-        canGenerate: false, disabledReason: "请先上传屏幕蒙版", quoteLabel: "预计 1 积分", generate: noop, recentScenes: [], openScene: noop, newScene: noop, openCanvas: noop, downloadResult: noop,
+        setAdvanced: noop,
+        results: [],
+        selectedResultId: "",
+        setSelectedResultId: noop,
+        busy: false,
+        uploading: false,
+        loading: false,
+        canGenerate: false,
+        disabledReason: "请先上传屏幕蒙版",
+        quoteLabel: "预计 1 积分",
+        generate: noop,
+        recentScenes: [],
+        openScene: noop,
+        newScene: noop,
+        openCanvas: noop,
+        downloadResult: noop,
     };
 }
 
@@ -106,7 +142,7 @@ test("available models have a readable recommendation while unknown saved models
     const markup = render();
     expect(markup).toContain("推荐轮廓模型");
     expect(markup).not.toContain('placeholder="控制模型 UUID / 标识"');
-    expect(markup).toContain('<summary>查看模型标识</summary><code>' + controlId + "</code>");
+    expect(markup).toContain("<summary>查看模型标识</summary><code>" + controlId + "</code>");
     const unavailable = render({ advanced: { ...fixture().advanced, controlModel: "unlisted-control" } });
     expect(unavailable).toContain("原轮廓模型已不可用，请重新选择");
     expect(unavailable).not.toContain("当前场景的轮廓模型");
@@ -124,7 +160,10 @@ test("the real ModelPicker accepts only the screen-specific system catalog", () 
     const renderPicker = (value: string) => renderToStaticMarkup(<ModelPicker config={config} value={value} capability="image" requirements={{ capability: "image", controlNetUnits: 1 }} onChange={noop} showSelectedPrice={false} />);
 
     expect(renderPicker("screen-ui-test::screen")).toContain("有效屏幕模型");
-    for (const [value, label] of [["screen-ui-test::missing-template", "缺少模板模型"], ["personal::personal-model", "个人图片模型"]]) {
+    for (const [value, label] of [
+        ["screen-ui-test::missing-template", "缺少模板模型"],
+        ["personal::personal-model", "个人图片模型"],
+    ]) {
         const markup = renderPicker(value);
         expect(markup).toContain("选择模型");
         expect(markup).not.toContain(label);
@@ -166,7 +205,13 @@ test("screen creation stays directly below canvas and remains selected when shor
     for (const shortDramaEnabled of [false, true]) {
         const snapshot = spyOn(useUserStore, "getInitialState").mockImplementation(() => ({ ...initialUserState, user: null, features: { ...initialUserState.features, shortDramaEnabled } }));
         restoreUserSnapshot = () => snapshot.mockRestore();
-        const markup = renderToStaticMarkup(<App><MemoryRouter initialEntries={["/screen-creation/canvas-test"]}><WorkspaceSidebarNav collapsed={false} onNavigate={noop} onOpenSearch={noop} onExpand={noop} onCollapse={noop} /></MemoryRouter></App>);
+        const markup = renderToStaticMarkup(
+            <App>
+                <MemoryRouter initialEntries={["/screen-creation/canvas-test"]}>
+                    <WorkspaceSidebarNav collapsed={false} onNavigate={noop} onOpenSearch={noop} onExpand={noop} onCollapse={noop} />
+                </MemoryRouter>
+            </App>,
+        );
         const links = [...markup.matchAll(/<a\b([^>]*data-nav-id="([^"]+)"[^>]*)>/g)];
         const canvasIndex = links.findIndex((link) => link[2] === "canvas");
         expect(canvasIndex).toBeGreaterThanOrEqual(0);

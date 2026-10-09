@@ -8,11 +8,16 @@ import type { CanvasNodeMetadata } from "../src/types/canvas";
 
 test("a disposed form cannot navigate or publish a late upload and leaves the next form active", async () => {
     const revoked: string[] = [];
-    const previous = createScreenCreationSession(() => "account-a", (url) => revoked.push(url));
+    const previous = createScreenCreationSession(
+        () => "account-a",
+        (url) => revoked.push(url),
+    );
     const capturedSignal = previous.signal;
     previous.ownUrl("blob:original");
     let finish!: (url: string) => void;
-    const deferred = new Promise<string>((resolve) => { finish = resolve; });
+    const deferred = new Promise<string>((resolve) => {
+        finish = resolve;
+    });
     let navigations = 0;
     const pending = deferred.then((url) => {
         previous.ownUrl(url);
@@ -20,7 +25,10 @@ test("a disposed form cannot navigate or publish a late upload and leaves the ne
         navigations++;
     });
     previous.dispose();
-    const next = createScreenCreationSession(() => "account-a", (url) => revoked.push(url));
+    const next = createScreenCreationSession(
+        () => "account-a",
+        (url) => revoked.push(url),
+    );
     next.ownUrl("blob:next-form");
     finish("blob:late-derived-mask");
 
@@ -39,9 +47,14 @@ test("account changes invalidate callbacks before component cleanup runs", async
     let scope = "account-a";
     const session = createScreenCreationSession(() => scope);
     let finish!: () => void;
-    const deferred = new Promise<void>((resolve) => { finish = resolve; });
+    const deferred = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
     let writes = 0;
-    const pending = deferred.then(() => { session.assertActive(); writes++; });
+    const pending = deferred.then(() => {
+        session.assertActive();
+        writes++;
+    });
     scope = "account-b";
     expect(session.signal.aborted).toBe(false);
     expect(session.isActive()).toBe(false);
@@ -53,7 +66,10 @@ test("account changes invalidate callbacks before component cleanup runs", async
 
 test("form-owned blob URLs are released once without revoking saved resource URLs", () => {
     const revoked: string[] = [];
-    const session = createScreenCreationSession(() => "account-a", (url) => revoked.push(url));
+    const session = createScreenCreationSession(
+        () => "account-a",
+        (url) => revoked.push(url),
+    );
     session.ownUrl("blob:unused-mask");
     session.releaseUrl("blob:unused-mask");
     session.ownUrl("/api/resources/saved/file");
@@ -67,7 +83,8 @@ function project(metadata: CanvasNodeMetadata = {}): CanvasProject {
     const template = buildIrregularScreenTemplate({
         controlImage: { storageKey: "resource:original", width: 1024, height: 1024 },
         outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
-        prompt: "水下世界", size: "1024x1024",
+        prompt: "水下世界",
+        size: "1024x1024",
         modelSelection: { kind: "channel", channelId: "screen-channel", modelKey: "screen" },
         controlParameters: { preprocessor: "canny", model: "control-model", strength: 0.9, start: 0, end: 0.9, pixelPerfect: true, controlMode: "balanced", resizeMode: "stretch", canny: { resolution: 1024, lowThreshold: 100, highThreshold: 200 } },
     });

@@ -13,27 +13,35 @@ export async function readScreenImage(blob: Blob) {
     try {
         if (bitmap.width > 4096 || bitmap.height > 4096) throw new Error("图片宽高不能超过 4096 像素");
         const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width; canvas.height = bitmap.height;
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
         const context = canvas.getContext("2d", { willReadFrequently: true });
         if (!context) throw new Error("浏览器无法读取图片");
         context.drawImage(bitmap, 0, 0);
         return context.getImageData(0, 0, canvas.width, canvas.height);
-    } finally { bitmap.close(); }
+    } finally {
+        bitmap.close();
+    }
 }
 
 export async function deriveScreenOutputMask(image: ScreenImage, mode: IrregularScreenMaskMode) {
-    const blob = image.blob || await getImageBlob(image.storageKey);
+    const blob = image.blob || (await getImageBlob(image.storageKey));
     if (!blob) throw new Error("蒙版原图读取失败，请重新上传");
     const pixels = await readScreenImage(blob);
     const result = deriveIrregularScreenMask(pixels, mode);
     if (!result.valid) throw new Error(result.reason || "没有识别到有效屏幕区域");
     const canvas = document.createElement("canvas");
-    canvas.width = pixels.width; canvas.height = pixels.height;
+    canvas.width = pixels.width;
+    canvas.height = pixels.height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("浏览器无法生成输出蒙版");
     context.putImageData(new ImageData(new Uint8ClampedArray(result.data), pixels.width, pixels.height), 0, 0);
-    const output = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("输出蒙版生成失败")), "image/png"));
-    return { image: { storageKey: "", url: URL.createObjectURL(output), blob: output, width: pixels.width, height: pixels.height, name: "屏幕输出蒙版.png", mimeType: "image/png", bytes: output.size } satisfies ScreenImage, warnings: result.warnings, mode: result.mode };
+    const output = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("输出蒙版生成失败"))), "image/png"));
+    return {
+        image: { storageKey: "", url: URL.createObjectURL(output), blob: output, width: pixels.width, height: pixels.height, name: "屏幕输出蒙版.png", mimeType: "image/png", bytes: output.size } satisfies ScreenImage,
+        warnings: result.warnings,
+        mode: result.mode,
+    };
 }
 
 export async function persistScreenImage(image: ScreenImage, idempotencyKey: string, signal?: AbortSignal): Promise<ScreenImage> {

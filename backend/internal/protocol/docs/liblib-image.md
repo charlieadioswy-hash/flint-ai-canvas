@@ -12,7 +12,11 @@
 
 ## 参数
 
-`providerOptions.liblib-image` 提供 family、templateUuid、checkPointId、steps、sampler、cfgScale、seed、negativePrompt、denoisingStrength以及可选输出width/height。统一输出合同提供像素宽高和图片数量。首版只处理一张普通参考图，图生图必须给出0–1的重绘幅度。采样步数须是正整数，随机种子-1表示随机，其余为非负整数。
+{{PARAMETERS}}
+
+上表列出宿主可配置字段；渠道默认值合并后，最终请求还须通过组合校验：`family` 必须为 `f1` 或 `sd`，`templateUuid` 必须是有效 UUID，`steps` 必须是正整数。`family=sd` 还要求有效的 `checkPointId`（缺省取渠道上游模型）、非负整数 `sampler` 和非负数 `cfgScale`；`family=f1` 不发送这三个 SD 专用字段。`seed` 缺省为 -1，表示随机，显式值须为 -1 或非负整数。`negativePrompt` 为可选负向提示词。首版只处理一张普通参考图；有普通参考图时必须提供 0–1 的 `denoisingStrength`。
+
+输出尺寸优先使用统一输出合同中的像素宽高，其次使用 `providerOptions.liblib-image` 中成对的 `width`、`height`，最后读取明确的像素尺寸字符串（如 `1024x576`）。宿主要求每边为 1–4096 的整数；这不替代上游模型或模板的尺寸限制。图片数量优先取统一输出合同，其次取图片数量字段，缺省为 1，最多为 4。
 
 文生图将输出尺寸写入 `generateParams.width/height`；图生图使用 `resizedWidth/resizedHeight`，并发送 `sourceImage`、`mode: 0` 与 `resizeMode: 0`。这些尺寸来自统一输出合同，不是参考图真实尺寸；ControlNet 的 `width/height` 仍是控制图真实尺寸。`mode: 4` 是局部重绘，不用于普通内容参考图或后处理输出蒙版。映射依据 [LiblibAI SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image)。插件 1.0.2 需要同步升级后端内置适配器。
 

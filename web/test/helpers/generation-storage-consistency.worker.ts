@@ -680,7 +680,8 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         };
         if (screen) node.metadata = { taskId: "task-http-recovery", taskStatus: "succeeded", status: "loading", size: "640x480" };
         useCanvasStore.getState().updateProject(projectId, {
-            nodes: [node], revision: 1,
+            nodes: [node],
+            revision: 1,
             ...(screen ? { creationScene: { kind: "irregular-screen" as const, version: 1 as const, nodeIds: { controlImage: "screen-control", outputMask: "screen-mask", generation: node.id } } } : {}),
         });
         await flushCanvasStorePersistence();
@@ -771,24 +772,24 @@ self.onmessage = async (event: MessageEvent<Scenario>) => {
                   : event.data === "http-screen-generation-missing"
                     ? await runHTTPRegisteredGeneration("missing", true)
                     : event.data === "http-generation-mismatch"
-                ? await runHTTPRegisteredGeneration("mismatch")
-                : event.data === "http-generation-missing"
-                  ? await runHTTPRegisteredGeneration("missing")
-                  : event.data === "http-registered-generation"
-                    ? await runHTTPRegisteredGeneration()
-                    : event.data === "image-cleanup"
-                      ? await runImageCleanup()
-                      : event.data === "scope-cleanup-switch"
-                        ? await runScopeCleanupAfterSwitch()
-                        : event.data === "scope-cleanup-late-canvas-reference"
-                          ? await runScopeCleanupAfterLateCanvasReference()
-                          : event.data === "canvas-multi-output"
-                            ? await runCanvasBatchCommitRace(true)
-                            : event.data === "canvas-copy-generation"
-                              ? await runCanvasCopyGeneration()
-                              : event.data === "canvas-batch-commit-race"
-                                ? await runCanvasBatchCommitRace()
-                                : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
+                      ? await runHTTPRegisteredGeneration("mismatch")
+                      : event.data === "http-generation-missing"
+                        ? await runHTTPRegisteredGeneration("missing")
+                        : event.data === "http-registered-generation"
+                          ? await runHTTPRegisteredGeneration()
+                          : event.data === "image-cleanup"
+                            ? await runImageCleanup()
+                            : event.data === "scope-cleanup-switch"
+                              ? await runScopeCleanupAfterSwitch()
+                              : event.data === "scope-cleanup-late-canvas-reference"
+                                ? await runScopeCleanupAfterLateCanvasReference()
+                                : event.data === "canvas-multi-output"
+                                  ? await runCanvasBatchCommitRace(true)
+                                  : event.data === "canvas-copy-generation"
+                                    ? await runCanvasCopyGeneration()
+                                    : event.data === "canvas-batch-commit-race"
+                                      ? await runCanvasBatchCommitRace()
+                                      : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
         self.postMessage({ ok: true, result });
     } catch (error) {
         self.postMessage({ ok: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });

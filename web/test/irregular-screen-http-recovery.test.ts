@@ -8,14 +8,23 @@ type Result = { rejection: string; saved?: CanvasNodeData; restored: CanvasNodeD
 function runScenario(scenario: Scenario): Promise<Result> {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL("./helpers/generation-storage-consistency.worker.ts", import.meta.url).href, { type: "module" });
-        const finish = () => { clearTimeout(timer); worker.terminate(); };
-        const timer = setTimeout(() => { finish(); reject(new Error("HTTP screen recovery timed out")); }, 15_000);
+        const finish = () => {
+            clearTimeout(timer);
+            worker.terminate();
+        };
+        const timer = setTimeout(() => {
+            finish();
+            reject(new Error("HTTP screen recovery timed out"));
+        }, 15_000);
         worker.onmessage = (event: MessageEvent<{ ok: boolean; result: Result; error?: string }>) => {
             finish();
             if (event.data.ok) resolve(event.data.result);
             else reject(new Error(event.data.error));
         };
-        worker.onerror = (event) => { finish(); reject(new Error(event.message)); };
+        worker.onerror = (event) => {
+            finish();
+            reject(new Error(event.message));
+        };
         worker.postMessage(scenario);
     });
 }
@@ -34,11 +43,12 @@ test("screen recovery on HTTP reads the registered resource without creating ano
     expect(result.requests.some((request) => request.includes("generation-effects") || request === "post:/tasks" || request === "post:/assets" || request === "post:/resources/upload")).toBe(false);
 });
 
-for (const variant of ["mismatch", "missing"] as const) test(`HTTP screen recovery refuses a ${variant} registered asset`, async () => {
-    const result = await runScenario(`http-screen-generation-${variant}`);
-    expect(result.rejection).not.toBe("");
-    expect(result.saved).toBeUndefined();
-    expect(result.restored.metadata?.assetId).toBeUndefined();
-    expect(result.restored.metadata?.status).not.toBe("success");
-    expect(result.requests.every((request) => request === "get:/tasks/task-http-recovery" || request === "post:/assets/batch" || request === "post:/resources/access")).toBe(true);
-});
+for (const variant of ["mismatch", "missing"] as const)
+    test(`HTTP screen recovery refuses a ${variant} registered asset`, async () => {
+        const result = await runScenario(`http-screen-generation-${variant}`);
+        expect(result.rejection).not.toBe("");
+        expect(result.saved).toBeUndefined();
+        expect(result.restored.metadata?.assetId).toBeUndefined();
+        expect(result.restored.metadata?.status).not.toBe("success");
+        expect(result.requests.every((request) => request === "get:/tasks/task-http-recovery" || request === "post:/assets/batch" || request === "post:/resources/access")).toBe(true);
+    });

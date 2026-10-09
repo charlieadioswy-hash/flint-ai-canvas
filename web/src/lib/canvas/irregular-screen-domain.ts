@@ -63,7 +63,7 @@ export function resolveIrregularScreenOutputSize(source: { width: number; height
     // Upload resolution describes the screen coordinates, not the default generation budget.
     const preferred = pixelSize(profile.size.default) || source;
     const preferredPixels = preferred.width * preferred.height;
-    candidates.sort((a, b) => Math.abs(Math.log(a.width * a.height / preferredPixels)) - Math.abs(Math.log(b.width * b.height / preferredPixels)));
+    candidates.sort((a, b) => Math.abs(Math.log((a.width * a.height) / preferredPixels)) - Math.abs(Math.log((b.width * b.height) / preferredPixels)));
     const selected = candidates[0];
     if (!selected) {
         if (profile.size.parameter === "size" && profile.size.allowCustom) return { ...source, size: originalSize, scaled: false, aspectRatioAdjusted: false };
@@ -102,7 +102,10 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
     const existing = input.existingProject;
     const scene = isIrregularScreenScene(existing?.creationScene) ? existing.creationScene : undefined;
     const byId = new Map(existing?.nodes.map((node) => [node.id, node]));
-    const owned = (id?: string) => { const node = id ? byId.get(id) : undefined; return node?.type === CanvasNodeType.Image ? node : undefined; };
+    const owned = (id?: string) => {
+        const node = id ? byId.get(id) : undefined;
+        return node?.type === CanvasNodeType.Image ? node : undefined;
+    };
     const control = imageNode(owned(scene?.nodeIds.controlImage), "屏幕结构原图", { x: 200, y: 200 }, input.controlImage);
     const mask = imageNode(owned(scene?.nodeIds.outputMask), "屏幕输出蒙版", { x: 200, y: 620 }, input.outputMask);
     const reference = input.contentReference ? imageNode(owned(scene?.nodeIds.contentReference), "内容参考图", { x: 200, y: 1040 }, input.contentReference) : undefined;
@@ -114,12 +117,28 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
         ...(reference ? [{ id: "screen-content-reference", nodeId: reference.id, mediaType: "image" as const, role: "reference" as const, order: 2, resolution: "latest" as const }] : []),
     ];
     const spec: GenerationSpec = validateGenerationSpec({
-        version: GENERATION_CONTRACT_VERSION, mode: "image", prompt: input.prompt, modelSelection: input.modelSelection,
-        options: { count: 1, size: input.size, ...(input.quality ? { quality: input.quality } : {}), controlNet: [{ id: "screen-control-unit", imageBindingId: "screen-control", parameters: input.controlParameters }], outputMask: { bindingId: "screen-output-mask", mode: "luminance", resizeMode: "stretch" } },
-        referenceBindings, textInputMode: "prompt-only",
+        version: GENERATION_CONTRACT_VERSION,
+        mode: "image",
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        options: {
+            count: 1,
+            size: input.size,
+            ...(input.quality ? { quality: input.quality } : {}),
+            controlNet: [{ id: "screen-control-unit", imageBindingId: "screen-control", parameters: input.controlParameters }],
+            outputMask: { bindingId: "screen-output-mask", mode: "luminance", resizeMode: "stretch" },
+        },
+        referenceBindings,
+        textInputMode: "prompt-only",
     });
     const generationScale = 320 / Math.max(output.width, output.height);
-    const generationNode: CanvasNodeData = { ...generation, ...(!previousGeneration ? { width: output.width * generationScale, height: output.height * generationScale } : {}), title: previousGeneration?.title || "异形屏画面", updatedAt: new Date().toISOString(), metadata: { ...generation.metadata, ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}), structureControl: true, ...generationSpecMetadata(spec) } };
+    const generationNode: CanvasNodeData = {
+        ...generation,
+        ...(!previousGeneration ? { width: output.width * generationScale, height: output.height * generationScale } : {}),
+        title: previousGeneration?.title || "异形屏画面",
+        updatedAt: new Date().toISOString(),
+        metadata: { ...generation.metadata, ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}), structureControl: true, ...generationSpecMetadata(spec) },
+    };
     const managed = [control, mask, ...(reference ? [reference] : []), generationNode];
     const replacements = new Map(managed.map((node) => [node.id, node]));
     const nodes = (existing?.nodes || []).map((node) => replacements.get(node.id) || node);
@@ -130,5 +149,10 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
         const old = existing?.connections.find((connection) => connection.fromNodeId === source.id && connection.toNodeId === generationNode.id);
         connections.push(old || { id: `screen-${source.id}-${generationNode.id}`, fromNodeId: source.id, toNodeId: generationNode.id });
     }
-    return { nodes, connections, creationScene: { kind: "irregular-screen", version: 1, nodeIds: { controlImage: control.id, outputMask: mask.id, ...(reference ? { contentReference: reference.id } : {}), generation: generationNode.id }, maskMode: input.maskMode }, generationNodeId: generationNode.id };
+    return {
+        nodes,
+        connections,
+        creationScene: { kind: "irregular-screen", version: 1, nodeIds: { controlImage: control.id, outputMask: mask.id, ...(reference ? { contentReference: reference.id } : {}), generation: generationNode.id }, maskMode: input.maskMode },
+        generationNodeId: generationNode.id,
+    };
 }

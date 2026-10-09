@@ -9,9 +9,11 @@ function input(): IrregularScreenTemplateInput {
     return {
         controlImage: { storageKey: "resource:control", width: 1600, height: 900, assetId: "asset-control" },
         outputMask: { storageKey: "resource:mask", width: 1600, height: 900 },
-        prompt: "A colorful landscape", modelSelection: { kind: "channel", channelId: "channel", modelKey: "image-model" },
+        prompt: "A colorful landscape",
+        modelSelection: { kind: "channel", channelId: "channel", modelKey: "image-model" },
         controlParameters: { ...defaultControlNetBinding("unit").parameters, model: "canny-model", resizeMode: "stretch" },
-        size: "1600x900", maskMode: "color",
+        size: "1600x900",
+        maskMode: "color",
     };
 }
 
@@ -47,7 +49,9 @@ describe("irregular screen canvas template", () => {
     test("updating inputs retains node IDs, previous results, user placement and unrelated nodes/edges", () => {
         const first = buildIrregularScreenTemplate(input());
         const foreign: CanvasNodeData = { id: "unrelated", title: "Untouched", type: CanvasNodeType.Image, position: { x: 7, y: 9 }, width: 100, height: 100, metadata: { storageKey: "resource:unrelated" } };
-        const nodes = first.nodes.map((node) => node.id === first.generationNodeId ? { ...node, position: { x: 1400, y: 300 }, metadata: { ...node.metadata, storageKey: "resource:previous-result", content: "cached-result", naturalWidth: 1600, naturalHeight: 900 } } : node);
+        const nodes = first.nodes.map((node) =>
+            node.id === first.generationNodeId ? { ...node, position: { x: 1400, y: 300 }, metadata: { ...node.metadata, storageKey: "resource:previous-result", content: "cached-result", naturalWidth: 1600, naturalHeight: 900 } } : node,
+        );
         const extraConnection = { id: "unrelated-edge", fromNodeId: foreign.id, toNodeId: first.generationNodeId };
         const second = buildIrregularScreenTemplate({ ...input(), prompt: "Updated prompt", existingProject: { ...first, nodes: [...nodes, foreign], connections: [...first.connections, extraConnection] } });
         expect(second.creationScene.nodeIds).toEqual(first.creationScene.nodeIds);

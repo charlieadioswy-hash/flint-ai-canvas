@@ -62,22 +62,41 @@ export async function submitScreenGeneration(project: CanvasProject, config: AiC
     if (context.referenceImages.length !== expectedReferences) throw new Error("画布增加了其他内容参考输入，请在完整画布生成，或移除额外连线后使用快捷设置");
     const controls = resolveCanvasControlNetInputs(node, project.nodes);
     const operationId = nanoid();
-    const oldResult = node.metadata?.assetId && node.metadata?.storageKey && node.metadata?.status === "success"
-        ? { ...node, id: nanoid(), title: `${node.title} · 上次结果`, position: { x: node.position.x + node.width + 80, y: node.position.y }, metadata: { ...node.metadata } }
-        : undefined;
+    const oldResult =
+        node.metadata?.assetId && node.metadata?.storageKey && node.metadata?.status === "success"
+            ? { ...node, id: nanoid(), title: `${node.title} · 上次结果`, position: { x: node.position.x + node.width + 80, y: node.position.y }, metadata: { ...node.metadata } }
+            : undefined;
     // 原节点的提交标记不属于新副本，保留会使普通持久化过滤掉上次结果。
     if (oldResult) delete oldResult.metadata.generationEffectKeys;
     const pending: CanvasNodeData = { ...node, metadata: { ...node.metadata, status: "loading", errorDetails: undefined, taskId: undefined, taskClientOperationId: operationId, taskStatus: "queued", taskStage: "submission_unconfirmed" } };
-    useCanvasStore.getState().updateProject(project.id, { nodes: [...project.nodes.map((item) => item.id === nodeId ? pending : item), ...(oldResult ? [oldResult] : [])] });
+    useCanvasStore.getState().updateProject(project.id, { nodes: [...project.nodes.map((item) => (item.id === nodeId ? pending : item)), ...(oldResult ? [oldResult] : [])] });
     let dispatched = false;
     let accepted = false;
     try {
         await saveRemoteUserDataNow(project.id);
         assertScope(scope, signal);
-        const task = await submitBackendGenerationTask({ projectId: project.id, mode: "image", prompt: context.prompt, config, referenceImages: context.referenceImages, ...controls, clientOperationId: operationId, signal, metadata: { nodeId, source: "irregular-screen", providerOptions: node.metadata?.providerOptions } }, {
-            createId: nanoid, waitTask: waitForGenerationTask,
-            createTask: (input) => { assertScope(scope, signal); dispatched = true; return createGenerationTask(input); },
-        });
+        const task = await submitBackendGenerationTask(
+            {
+                projectId: project.id,
+                mode: "image",
+                prompt: context.prompt,
+                config,
+                referenceImages: context.referenceImages,
+                ...controls,
+                clientOperationId: operationId,
+                signal,
+                metadata: { nodeId, source: "irregular-screen", providerOptions: node.metadata?.providerOptions },
+            },
+            {
+                createId: nanoid,
+                waitTask: waitForGenerationTask,
+                createTask: (input) => {
+                    assertScope(scope, signal);
+                    dispatched = true;
+                    return createGenerationTask(input);
+                },
+            },
+        );
         accepted = true;
         assertScope(scope, signal);
         bindScreenTask(project.id, nodeId, task);
@@ -90,8 +109,19 @@ export async function submitScreenGeneration(project: CanvasProject, config: AiC
         if (!accepted && (!dispatched || rejected) && scope === getActiveUserScope()) {
             const current = useCanvasStore.getState().openProject(project.id);
             // 失败仅重置本次提交；上次成功结果仍作为独立副本保留，供查看和下载。
-            if (current) useCanvasStore.getState().updateProject(project.id, { nodes: current.nodes.map((item) => item.id === nodeId && item.metadata?.taskClientOperationId === operationId ? { ...item, metadata: { ...resetGenerationTaskMetadata(item.metadata), status: "error", errorDetails: error instanceof Error ? error.message : "提交失败" } } : item) });
-            try { await saveRemoteUserDataNow(project.id); } catch { /* Local retryable state remains pending cloud sync. */ }
+            if (current)
+                useCanvasStore.getState().updateProject(project.id, {
+                    nodes: current.nodes.map((item) =>
+                        item.id === nodeId && item.metadata?.taskClientOperationId === operationId
+                            ? { ...item, metadata: { ...resetGenerationTaskMetadata(item.metadata), status: "error", errorDetails: error instanceof Error ? error.message : "提交失败" } }
+                            : item,
+                    ),
+                });
+            try {
+                await saveRemoteUserDataNow(project.id);
+            } catch {
+                /* Local retryable state remains pending cloud sync. */
+            }
         }
         throw error;
     }
@@ -100,7 +130,11 @@ export async function submitScreenGeneration(project: CanvasProject, config: AiC
 export function bindScreenTask(projectId: string, nodeId: string, task: GenerationTask) {
     const project = useCanvasStore.getState().openProject(projectId);
     if (!project) return;
-    useCanvasStore.getState().updateProject(projectId, { nodes: project.nodes.map((node) => node.id !== nodeId ? node : { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(task), status: task.status === "failed" || task.status === "cancelled" ? "error" : "loading", errorDetails: task.error } }) });
+    useCanvasStore.getState().updateProject(projectId, {
+        nodes: project.nodes.map((node) =>
+            node.id !== nodeId ? node : { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(task), status: task.status === "failed" || task.status === "cancelled" ? "error" : "loading", errorDetails: task.error } },
+        ),
+    });
 }
 
 export async function recoverScreenGeneration(projectId: string, signal: AbortSignal, onUpdate: (task: GenerationTask) => void) {
@@ -119,13 +153,23 @@ export async function recoverScreenGeneration(projectId: string, signal: AbortSi
         taskId = matching.id;
     }
     if (!taskId) return;
-    const task = await waitForGenerationTask(taskId, { signal, onTaskUpdate: (task) => { assertScope(scope, signal); bindScreenTask(projectId, nodeId, task); onUpdate(task); } }).catch(async (error: unknown) => {
+    const task = await waitForGenerationTask(taskId, {
+        signal,
+        onTaskUpdate: (task) => {
+            assertScope(scope, signal);
+            bindScreenTask(projectId, nodeId, task);
+            onUpdate(task);
+        },
+    }).catch(async (error: unknown) => {
         assertScope(scope, signal);
         await saveRemoteUserDataNow(projectId);
         throw error;
     });
     assertScope(scope, signal);
-    if (task.status !== "succeeded") { await saveRemoteUserDataNow(projectId); throw new Error(task.error || "生成未完成"); }
+    if (task.status !== "succeeded") {
+        await saveRemoteUserDataNow(projectId);
+        throw new Error(task.error || "生成未完成");
+    }
     const nodesRef = { current: useCanvasStore.getState().openProject(projectId)!.nodes };
     const setNodes = (update: SetStateAction<CanvasNodeData[]>) => {
         assertScope(scope, signal);
@@ -150,7 +194,9 @@ export async function recoverScreenGeneration(projectId: string, signal: AbortSi
         const before = current?.nodes.find((item) => item.id === nodeId);
         // HTTP 环境无法确认 attach effect；只回填已登记的不可变资源，不重建素材或执行合成。
         if (!before || before.metadata?.emotionEdit || !storedTask.outputs?.length || storedTask.outputs.some((output) => !output.providerArtifactRef?.startsWith("resource:"))) throw error;
-        const applied = await applyGenerationTaskResultToNodes(current!.nodes, storedTask, nodeId).catch(() => { throw error; });
+        const applied = await applyGenerationTaskResultToNodes(current!.nodes, storedTask, nodeId).catch(() => {
+            throw error;
+        });
         assertScope(scope, signal);
         if (!applied.updated || !applied.node || [applied.node, ...(applied.additionalNodes || [])].some(shouldRecoverCanvasMediaAsset)) throw error;
         setNodes((nodes) => commitCanvasGenerationResult(nodes, before, applied.node!, task.id, applied.additionalNodes));

@@ -9,7 +9,8 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
         const child = Bun.spawn([process.execPath, "test", import.meta.path], {
             cwd: new URL("..", import.meta.url).pathname,
             env: { ...process.env, IRREGULAR_SCREEN_GENERATION_TEST_CHILD: "1" },
-            stdout: "pipe", stderr: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
         });
         const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
         expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
@@ -26,10 +27,13 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
         import("../src/lib/model-capabilities"),
     ]);
     const localValues = new Map<string, string>();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: Object.assign(new EventTarget(), {
-        localStorage: { getItem: (key: string) => localValues.get(key) ?? null, setItem: (key: string, value: string) => localValues.set(key, value), removeItem: (key: string) => localValues.delete(key) },
-        location: { pathname: "/screen-creation" },
-    }) });
+    Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: Object.assign(new EventTarget(), {
+            localStorage: { getItem: (key: string) => localValues.get(key) ?? null, setItem: (key: string, value: string) => localValues.set(key, value), removeItem: (key: string) => localValues.delete(key) },
+            location: { pathname: "/screen-creation" },
+        }),
+    });
 
     let project: CanvasProject;
     let config: AiConfig;
@@ -44,8 +48,10 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
     spyOn(useCanvasStore, "getState").mockImplementation(() => ({
         ...canvasState,
         projects: [project],
-        openProject: (id) => id === project.id ? project : undefined,
-        updateProject: (id, changes) => { if (id === project.id) project = { ...project, ...changes }; },
+        openProject: (id) => (id === project.id ? project : undefined),
+        updateProject: (id, changes) => {
+            if (id === project.id) project = { ...project, ...changes };
+        },
     }));
     spyOn(useAssetStore, "getState").mockImplementation(() => ({ ...assetState, assets: [] }));
     spyOn(sync, "saveRemoteUserDataNow").mockImplementation(async () => {
@@ -75,11 +81,25 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
         const modelName = configModule.encodeChannelModel(channelId, modelKey);
         const profile = capabilities.defaultImageCapabilityConfig("liblib-image");
         const channel = configModule.createModelChannel({
-            id: channelId, name: "Screen", scope: "system", apiKey: "system", baseUrl: "https://provider.example", interfaceType: "liblib-image", models: [modelKey],
-            modelCosts: [{ model: modelKey, protocol: "liblib-image", capability: "image", available: true, billingMode: "fixed_request", unitPriceMicrocredits: 1,
-                defaultOptions: { family: "sd", controlNetModel: "b6806516962f4e1599a93ac4483c3d23", textToImageTemplateUuid: "e10adc3949ba59abbe56e057f20f883e", imageToImageTemplateUuid: "9c7d531dc75f476aa833b3d452b8f7ad" },
-                capabilityConfig: { version: 1, image: { ...profile, controlNet: { supported: true, maxUnits: 1, preprocessors: ["canny"], models: ["b6806516962f4e1599a93ac4483c3d23"] } } },
-            }],
+            id: channelId,
+            name: "Screen",
+            scope: "system",
+            apiKey: "system",
+            baseUrl: "https://provider.example",
+            interfaceType: "liblib-image",
+            models: [modelKey],
+            modelCosts: [
+                {
+                    model: modelKey,
+                    protocol: "liblib-image",
+                    capability: "image",
+                    available: true,
+                    billingMode: "fixed_request",
+                    unitPriceMicrocredits: 1,
+                    defaultOptions: { family: "sd", controlNetModel: "b6806516962f4e1599a93ac4483c3d23", textToImageTemplateUuid: "e10adc3949ba59abbe56e057f20f883e", imageToImageTemplateUuid: "9c7d531dc75f476aa833b3d452b8f7ad" },
+                    capabilityConfig: { version: 1, image: { ...profile, controlNet: { supported: true, maxUnits: 1, preprocessors: ["canny"], models: ["b6806516962f4e1599a93ac4483c3d23"] } } },
+                },
+            ],
         });
         config = { ...configModule.defaultConfig, channels: [channel], model: modelName, imageModel: modelName, size: "1024x1024", count: "1" };
         const settings = model.screenDefaultSettings(config, modelName);
@@ -87,15 +107,20 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
             outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
             contentReference: contentReference ? { storageKey: "resource:content", width: 1024, height: 1024 } : undefined,
-            prompt: "A colorful landscape", modelSelection: { kind: "channel", channelId, modelKey },
-            size: "1024x1024", maskMode: "color", controlParameters: model.screenControlParameters(settings),
+            prompt: "A colorful landscape",
+            modelSelection: { kind: "channel", channelId, modelKey },
+            size: "1024x1024",
+            maskMode: "color",
+            controlParameters: model.screenControlParameters(settings),
             providerOptions: model.screenProviderOptions(config, modelName, settings, contentReference),
         });
         nodeId = template.generationNodeId;
         project = { id: "screen-canvas", title: "Screen", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", ...template };
     }
 
-    function node() { return project.nodes.find((item) => item.id === nodeId)!; }
+    function node() {
+        return project.nodes.find((item) => item.id === nodeId)!;
+    }
     function assertRetryable() {
         expect(node().metadata?.status).toBe("error");
         expect(node().metadata?.taskId).toBeUndefined();
@@ -113,18 +138,19 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
     });
 
     describe("real generation preparation", () => {
-        for (const withContent of [false, true]) test(`keeps control/mask separate and chooses ${withContent ? "img2img" : "txt2img"} defaults`, async () => {
-            setup(withContent);
-            await submitScreenGeneration(project, config);
-            expect(submitted).toHaveLength(1);
-            const input = submitted[0].input!;
-            expect(input.referenceImages).toMatchObject(withContent ? [{ storageKey: "resource:content" }] : []);
-            expect(input.referenceImages).toHaveLength(Number(withContent));
-            expect(input.controlNet).toMatchObject([{ image: { storageKey: "resource:control" }, parameters: { model: "b6806516962f4e1599a93ac4483c3d23", preprocessor: "canny" } }]);
-            expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance", resizeMode: "stretch" });
-            expect(input.metadata).toMatchObject({ nodeId, providerOptions: { "liblib-image": { family: "sd", templateUuid: withContent ? "9c7d531dc75f476aa833b3d452b8f7ad" : "e10adc3949ba59abbe56e057f20f883e" } } });
-            expect(node().metadata?.taskId).toBe("screen-task");
-        });
+        for (const withContent of [false, true])
+            test(`keeps control/mask separate and chooses ${withContent ? "img2img" : "txt2img"} defaults`, async () => {
+                setup(withContent);
+                await submitScreenGeneration(project, config);
+                expect(submitted).toHaveLength(1);
+                const input = submitted[0].input!;
+                expect(input.referenceImages).toMatchObject(withContent ? [{ storageKey: "resource:content" }] : []);
+                expect(input.referenceImages).toHaveLength(Number(withContent));
+                expect(input.controlNet).toMatchObject([{ image: { storageKey: "resource:control" }, parameters: { model: "b6806516962f4e1599a93ac4483c3d23", preprocessor: "canny" } }]);
+                expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance", resizeMode: "stretch" });
+                expect(input.metadata).toMatchObject({ nodeId, providerOptions: { "liblib-image": { family: "sd", templateUuid: withContent ? "9c7d531dc75f476aa833b3d452b8f7ad" : "e10adc3949ba59abbe56e057f20f883e" } } });
+                expect(node().metadata?.taskId).toBe("screen-task");
+            });
 
         test("rejects unexpected ordinary canvas input before persisting pending state", async () => {
             const extra = { ...project.nodes[0], id: "extra-content" };
@@ -141,8 +167,12 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             const effectKeys = [`attach:previous-task:node:${nodeId}:0`];
             previous.metadata = {
                 ...previous.metadata,
-                status: "success", taskId: "previous-task", taskStatus: "succeeded",
-                content: "/previous.png", storageKey: "resource:previous-result", assetId: "previous-asset",
+                status: "success",
+                taskId: "previous-task",
+                taskStatus: "succeeded",
+                content: "/previous.png",
+                storageKey: "resource:previous-result",
+                assetId: "previous-asset",
                 generationEffectKeys: effectKeys,
             };
 
@@ -159,38 +189,43 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
     });
 
     describe("submission failure identity", () => {
-        for (const failure of ["save", "validation", 422, 429] as const) test(`regeneration preserves the previous result after ${failure} rejection and retry`, async () => {
-            node().metadata = {
-                ...node().metadata,
-                status: "success", taskId: "previous-task", taskStatus: "succeeded",
-                content: "/previous.png", storageKey: "resource:previous-result", assetId: "previous-asset",
-                generationEffectKeys: [`attach:previous-task:node:${nodeId}:0`],
-            };
-            if (failure === "save") saveErrorAt = 1;
-            else if (failure === "validation") config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!.supported = false;
-            else postError = new ApiError("generation rejected", { status: failure });
+        for (const failure of ["save", "validation", 422, 429] as const)
+            test(`regeneration preserves the previous result after ${failure} rejection and retry`, async () => {
+                node().metadata = {
+                    ...node().metadata,
+                    status: "success",
+                    taskId: "previous-task",
+                    taskStatus: "succeeded",
+                    content: "/previous.png",
+                    storageKey: "resource:previous-result",
+                    assetId: "previous-asset",
+                    generationEffectKeys: [`attach:previous-task:node:${nodeId}:0`],
+                };
+                if (failure === "save") saveErrorAt = 1;
+                else if (failure === "validation") config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!.supported = false;
+                else postError = new ApiError("generation rejected", { status: failure });
 
-            await expect(submitScreenGeneration(project, config)).rejects.toThrow();
-            assertRetryable();
-            expect(submitted).toHaveLength(typeof failure === "number" ? 1 : 0);
+                await expect(submitScreenGeneration(project, config)).rejects.toThrow();
+                assertRetryable();
+                expect(submitted).toHaveLength(typeof failure === "number" ? 1 : 0);
 
-            // Reopen the saved scene, then retry: the completed image must remain
-            // independently addressable while the generation node is reused.
-            project = structuredClone(saved.at(-1)!);
-            const previousResults = project.nodes.filter((item) => item.metadata?.taskId === "previous-task");
-            expect(previousResults).toHaveLength(1);
-            const previousResult = previousResults[0];
-            expect(previousResult.id).not.toBe(nodeId);
-            expect(previousResult.metadata).toMatchObject({ status: "success", content: "/previous.png", storageKey: "resource:previous-result", assetId: "previous-asset" });
-            expect(previousResult.metadata?.generationEffectKeys).toBeUndefined();
+                // Reopen the saved scene, then retry: the completed image must remain
+                // independently addressable while the generation node is reused.
+                project = structuredClone(saved.at(-1)!);
+                const previousResults = project.nodes.filter((item) => item.metadata?.taskId === "previous-task");
+                expect(previousResults).toHaveLength(1);
+                const previousResult = previousResults[0];
+                expect(previousResult.id).not.toBe(nodeId);
+                expect(previousResult.metadata).toMatchObject({ status: "success", content: "/previous.png", storageKey: "resource:previous-result", assetId: "previous-asset" });
+                expect(previousResult.metadata?.generationEffectKeys).toBeUndefined();
 
-            saveErrorAt = undefined;
-            postError = undefined;
-            config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!.supported = true;
-            await submitScreenGeneration(project, config);
-            expect(node().metadata?.taskId).toBe("screen-task");
-            expect(saved.at(-1)!.nodes.filter((item) => item.metadata?.taskId === "previous-task")).toEqual([previousResult]);
-        });
+                saveErrorAt = undefined;
+                postError = undefined;
+                config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!.supported = true;
+                await submitScreenGeneration(project, config);
+                expect(node().metadata?.taskId).toBe("screen-task");
+                expect(saved.at(-1)!.nodes.filter((item) => item.metadata?.taskId === "previous-task")).toEqual([previousResult]);
+            });
 
         test("a save failure before dispatch restores retryable state", async () => {
             saveErrorAt = 1;

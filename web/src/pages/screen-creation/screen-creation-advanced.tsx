@@ -10,7 +10,13 @@ type Props = Pick<ScreenCreationWorkspaceProps, "advanced" | "setAdvanced" | "ma
 type NumericSetting = Exclude<keyof ScreenAdvancedSettings, "controlModel" | "negativePrompt">;
 
 function SettingField({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
-    return <label className="screen-creation-field"><span>{label}</span>{children}{hint ? <small>{hint}</small> : null}</label>;
+    return (
+        <label className="screen-creation-field">
+            <span>{label}</span>
+            {children}
+            {hint ? <small>{hint}</small> : null}
+        </label>
+    );
 }
 
 export function ScreenCreationAdvanced({ advanced, setAdvanced, maskMode, setMaskMode, profile, config, model, disabled }: Props) {
@@ -22,31 +28,69 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, maskMode, setMas
     if (advanced.controlModel && !catalogModels.includes(advanced.controlModel)) controlModels.push({ value: advanced.controlModel, label: "原轮廓模型已不可用，请重新选择", title: advanced.controlModel, disabled: true });
     const numberField = (key: NumericSetting, label: string, min: number, max?: number, step = 1, hint?: string) => (
         <SettingField label={label} hint={hint}>
-            <InputNumber aria-label={label} value={advanced[key]} min={min} max={max} step={step} precision={step === 1 ? 0 : undefined} disabled={disabled} onChange={(value) => { if (value !== null) setAdvanced({ [key]: Number(value) }); }} />
+            <InputNumber
+                aria-label={label}
+                value={advanced[key]}
+                min={min}
+                max={max}
+                step={step}
+                precision={step === 1 ? 0 : undefined}
+                disabled={disabled}
+                onChange={(value) => {
+                    if (value !== null) setAdvanced({ [key]: Number(value) });
+                }}
+            />
         </SettingField>
     );
 
     return (
         <details className="screen-creation-advanced">
-            <summary><span><SlidersHorizontal className="size-4" />高级设置</span><ChevronDown className="screen-creation-disclosure size-4" /></summary>
+            <summary>
+                <span>
+                    <SlidersHorizontal className="size-4" />
+                    高级设置
+                </span>
+                <ChevronDown className="screen-creation-disclosure size-4" />
+            </summary>
             <div className="screen-creation-advanced-body">
                 <section className="screen-creation-settings-section" aria-label="蒙版解释设置">
                     <h3>可见范围</h3>
                     <SettingField label="蒙版识别方式" hint="在右侧切换到“有效区域”，确认哪些部分会显示画面。">
-                        <Select ariaLabel="蒙版识别方式" value={maskMode} disabled={disabled} onChange={setMaskMode} options={[
-                            { value: "auto", label: "自动识别" },
-                            { value: "color", label: "彩色区域作为屏幕" },
-                            { value: "luminance", label: "黑白蒙版 · 白色可见" },
-                            { value: "alpha", label: "透明通道 · 不透明区域可见" },
-                        ]} />
+                        <Select
+                            ariaLabel="蒙版识别方式"
+                            value={maskMode}
+                            disabled={disabled}
+                            onChange={setMaskMode}
+                            options={[
+                                { value: "auto", label: "自动识别" },
+                                { value: "color", label: "彩色区域作为屏幕" },
+                                { value: "luminance", label: "黑白蒙版 · 白色可见" },
+                                { value: "alpha", label: "透明通道 · 不透明区域可见" },
+                            ]}
+                        />
                     </SettingField>
                 </section>
                 <section className="screen-creation-settings-section" aria-label="ControlNet 设置">
-                    <div><h3>轮廓控制 · ControlNet</h3><p className="screen-creation-hint">Canny 提取屏幕轮廓，按完整画幅对齐输出。</p></div>
+                    <div>
+                        <h3>轮廓控制 · ControlNet</h3>
+                        <p className="screen-creation-hint">Canny 提取屏幕轮廓，按完整画幅对齐输出。</p>
+                    </div>
                     <SettingField label="控制模型" hint={!catalogModels.length ? "请联系管理员补充轮廓模型配置。" : undefined}>
-                        <Select ariaLabel="控制模型" value={advanced.controlModel || undefined} placeholder="暂无可用的轮廓模型" disabled={disabled || !catalogModels.length} onChange={(controlModel) => setAdvanced({ controlModel })} options={controlModels} />
+                        <Select
+                            ariaLabel="控制模型"
+                            value={advanced.controlModel || undefined}
+                            placeholder="暂无可用的轮廓模型"
+                            disabled={disabled || !catalogModels.length}
+                            onChange={(controlModel) => setAdvanced({ controlModel })}
+                            options={controlModels}
+                        />
                     </SettingField>
-                    {advanced.controlModel ? <details className="screen-creation-model-detail"><summary>查看模型标识</summary><code>{advanced.controlModel}</code></details> : null}
+                    {advanced.controlModel ? (
+                        <details className="screen-creation-model-detail">
+                            <summary>查看模型标识</summary>
+                            <code>{advanced.controlModel}</code>
+                        </details>
+                    ) : null}
                     <div className="screen-creation-settings-grid">
                         {numberField("strength", "控制强度", 0, 2, 0.05)}
                         {numberField("resolution", "检测分辨率", 64, 2048, 64)}
@@ -66,7 +110,14 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, maskMode, setMas
                     </div>
                     {numberField("denoisingStrength", "参考图重绘强度", 0, 1, 0.05, "使用内容参考图时生效")}
                     <SettingField label="负向提示词">
-                        <Input.TextArea aria-label="负向提示词" placeholder="希望画面避免出现的内容" value={advanced.negativePrompt} autoSize={{ minRows: 2, maxRows: 5 }} disabled={disabled} onChange={(event) => setAdvanced({ negativePrompt: event.target.value })} />
+                        <Input.TextArea
+                            aria-label="负向提示词"
+                            placeholder="希望画面避免出现的内容"
+                            value={advanced.negativePrompt}
+                            autoSize={{ minRows: 2, maxRows: 5 }}
+                            disabled={disabled}
+                            onChange={(event) => setAdvanced({ negativePrompt: event.target.value })}
+                        />
                     </SettingField>
                 </section>
             </div>

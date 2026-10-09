@@ -8,11 +8,33 @@ function setup(options: { id?: string; scope?: "system" | "user"; enabled?: bool
     const model = encodeChannelModel(id, "screen-model");
     const profile = defaultImageCapabilityConfig("liblib-image");
     const channel = createModelChannel({
-        id, scope: options.scope || "system", enabled: options.enabled, name: id, baseUrl: "https://provider.example", apiKey: "system", interfaceType: "liblib-image", models: ["screen-model"],
-        modelCosts: [{ model: "screen-model", capability: "image", protocol: "liblib-image", available: options.available, billingMode: "fixed_request", unitPriceMicrocredits: 1,
-            defaultOptions: options.defaults || { family: "sd", controlNetModel: "canny-model", textToImageTemplateUuid: "text-template", imageToImageTemplateUuid: "image-template", steps: 20, sampler: 15, cfgScale: 7 },
-            capabilityConfig: { version: 1, image: { ...profile, references: { ...profile.references, maxImages: options.maxImages ?? 1 }, controlNet: { supported: options.supported ?? true, maxUnits: 1, preprocessors: options.preprocessors || ["canny"], models: options.controlModels || ["canny-model"] } } },
-        }],
+        id,
+        scope: options.scope || "system",
+        enabled: options.enabled,
+        name: id,
+        baseUrl: "https://provider.example",
+        apiKey: "system",
+        interfaceType: "liblib-image",
+        models: ["screen-model"],
+        modelCosts: [
+            {
+                model: "screen-model",
+                capability: "image",
+                protocol: "liblib-image",
+                available: options.available,
+                billingMode: "fixed_request",
+                unitPriceMicrocredits: 1,
+                defaultOptions: options.defaults || { family: "sd", controlNetModel: "canny-model", textToImageTemplateUuid: "text-template", imageToImageTemplateUuid: "image-template", steps: 20, sampler: 15, cfgScale: 7 },
+                capabilityConfig: {
+                    version: 1,
+                    image: {
+                        ...profile,
+                        references: { ...profile.references, maxImages: options.maxImages ?? 1 },
+                        controlNet: { supported: options.supported ?? true, maxUnits: 1, preprocessors: options.preprocessors || ["canny"], models: options.controlModels || ["canny-model"] },
+                    },
+                },
+            },
+        ],
     });
     const config: AiConfig = { ...defaultConfig, channels: [channel], model, imageModel: model };
     return { config, channel, model };
@@ -21,8 +43,12 @@ function setup(options: { id?: string; scope?: "system" | "user"; enabled?: bool
 describe("irregular screen model settings", () => {
     test("lists only enabled available system image models with usable Canny controls", () => {
         const entries = [
-            setup({ id: "usable" }), setup({ id: "user", scope: "user" }), setup({ id: "disabled", enabled: false }),
-            setup({ id: "unavailable", available: false }), setup({ id: "unsupported", supported: false }), setup({ id: "depth", preprocessors: ["depth"] }),
+            setup({ id: "usable" }),
+            setup({ id: "user", scope: "user" }),
+            setup({ id: "disabled", enabled: false }),
+            setup({ id: "unavailable", available: false }),
+            setup({ id: "unsupported", supported: false }),
+            setup({ id: "depth", preprocessors: ["depth"] }),
             setup({ id: "missing-template", defaults: { controlNetModel: "canny-model", family: "sd" } }),
         ];
         const config = { ...entries[0].config, channels: entries.map((entry) => entry.channel) };
@@ -31,8 +57,11 @@ describe("irregular screen model settings", () => {
 
     test("the actual picker catalog excludes rejected channels and models without changing the shared config", () => {
         const entries = [
-            setup({ id: "usable" }), setup({ id: "user", scope: "user" }), setup({ id: "disabled", enabled: false }),
-            setup({ id: "unavailable", available: false }), setup({ id: "unsupported", supported: false }),
+            setup({ id: "usable" }),
+            setup({ id: "user", scope: "user" }),
+            setup({ id: "disabled", enabled: false }),
+            setup({ id: "unavailable", available: false }),
+            setup({ id: "unsupported", supported: false }),
             setup({ id: "missing-template", defaults: { controlNetModel: "canny-model", family: "sd" } }),
         ];
         const usable = entries[0];
@@ -122,6 +151,16 @@ describe("irregular screen model settings", () => {
     test("maps Canny settings with full-frame coordinates and no crop", () => {
         const { config, model } = setup();
         const settings = { ...screenDefaultSettings(config, model), strength: 1.1, start: 0.1, end: 0.8, lowThreshold: 80, highThreshold: 160, resolution: 768 };
-        expect(screenControlParameters(settings)).toEqual({ preprocessor: "canny", model: "canny-model", strength: 1.1, start: 0.1, end: 0.8, pixelPerfect: true, controlMode: "balanced", resizeMode: "stretch", canny: { lowThreshold: 80, highThreshold: 160, resolution: 768 } });
+        expect(screenControlParameters(settings)).toEqual({
+            preprocessor: "canny",
+            model: "canny-model",
+            strength: 1.1,
+            start: 0.1,
+            end: 0.8,
+            pixelPerfect: true,
+            controlMode: "balanced",
+            resizeMode: "stretch",
+            canny: { lowThreshold: 80, highThreshold: 160, resolution: 768 },
+        });
     });
 });

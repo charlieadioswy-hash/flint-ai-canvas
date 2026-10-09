@@ -4,10 +4,19 @@ import { encodeChannelModel, modelOptionName, resolveModelChannel, selectableMod
 import type { ControlNetParameters } from "./generation-contract.generated";
 
 export type ScreenGenerationSettings = {
-    controlModel: string; strength: number; start: number; end: number;
-    lowThreshold: number; highThreshold: number; resolution: number;
-    steps: number; sampler: number; cfgScale: number; seed: number;
-    denoisingStrength: number; negativePrompt: string;
+    controlModel: string;
+    strength: number;
+    start: number;
+    end: number;
+    lowThreshold: number;
+    highThreshold: number;
+    resolution: number;
+    steps: number;
+    sampler: number;
+    cfgScale: number;
+    seed: number;
+    denoisingStrength: number;
+    negativePrompt: string;
 };
 
 export function screenModelDefaults(config: AiConfig, model: string) {
@@ -51,20 +60,39 @@ export function screenPickerConfig(config: AiConfig): AiConfig {
 
 export function screenDefaultSettings(config: AiConfig, model: string): ScreenGenerationSettings {
     const { defaults } = screenModelDefaults(config, model);
-    const number = (key: string, fallback: number) => typeof defaults[key] === "number" && Number.isFinite(defaults[key]) ? defaults[key] as number : fallback;
+    const number = (key: string, fallback: number) => (typeof defaults[key] === "number" && Number.isFinite(defaults[key]) ? (defaults[key] as number) : fallback);
     const controls = modelCapabilityConfigFor(config, model).image?.controlNet?.models;
     const defaultControl = typeof defaults.controlNetModel === "string" ? defaults.controlNetModel.trim() : "";
     const controlModel = defaultControl && (!controls?.length || controls.includes(defaultControl)) ? defaultControl : defaultControl ? "" : controls?.[0] || "";
     return {
         controlModel,
-        strength: 0.9, start: 0, end: 0.9, lowThreshold: 100, highThreshold: 200, resolution: 1024,
-        steps: number("steps", 20), sampler: number("sampler", 15), cfgScale: number("cfgScale", 7), seed: number("seed", -1),
-        denoisingStrength: number("denoisingStrength", 0.75), negativePrompt: String(defaults.negativePrompt ?? "text, watermark, logo, blurry, low quality"),
+        strength: 0.9,
+        start: 0,
+        end: 0.9,
+        lowThreshold: 100,
+        highThreshold: 200,
+        resolution: 1024,
+        steps: number("steps", 20),
+        sampler: number("sampler", 15),
+        cfgScale: number("cfgScale", 7),
+        seed: number("seed", -1),
+        denoisingStrength: number("denoisingStrength", 0.75),
+        negativePrompt: String(defaults.negativePrompt ?? "text, watermark, logo, blurry, low quality"),
     };
 }
 
 export function screenControlParameters(settings: ScreenGenerationSettings): ControlNetParameters {
-    return { preprocessor: "canny", model: settings.controlModel, strength: settings.strength, start: settings.start, end: settings.end, pixelPerfect: true, controlMode: "balanced", resizeMode: "stretch", canny: { resolution: settings.resolution, lowThreshold: settings.lowThreshold, highThreshold: settings.highThreshold } };
+    return {
+        preprocessor: "canny",
+        model: settings.controlModel,
+        strength: settings.strength,
+        start: settings.start,
+        end: settings.end,
+        pixelPerfect: true,
+        controlMode: "balanced",
+        resizeMode: "stretch",
+        canny: { resolution: settings.resolution, lowThreshold: settings.lowThreshold, highThreshold: settings.highThreshold },
+    };
 }
 
 export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, hasReference: boolean) {

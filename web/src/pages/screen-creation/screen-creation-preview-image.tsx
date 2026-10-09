@@ -19,5 +19,15 @@ export function ScreenCreationPreviewImage({ storageKey, src, eager, ...props }:
 function LocalPreviewImage({ src, fallback, onError, ...props }: Omit<ScreenCreationPreviewImageProps, "storageKey" | "eager">) {
     const [failed, setFailed] = useState(false);
     if (failed) return <>{fallback}</>;
-    return <img {...props} src={src} decoding="async" onError={(event) => { setFailed(true); onError?.(event); }} />;
+    return (
+        <img
+            {...props}
+            src={src}
+            decoding="async"
+            onError={(event) => {
+                setFailed(true);
+                onError?.(event);
+            }}
+        />
+    );
 }
