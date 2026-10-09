@@ -11,7 +11,32 @@ type Scenario =
     | "canvas-copy-generation"
     | "http-registered-generation"
     | "http-generation-mismatch"
+    | "http-creation-generation"
+    | "http-creation-generation-mismatch"
+    | "http-creation-generation-missing"
     | "http-generation-missing";
+
+test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建素材或生成任务", async () => {
+    type Message = import("../src/pages/create/creation-types").CreationMessage;
+    const result = await runScenario<{ rejection: string; applied: number; message: Message; restored: Array<{ title: string; messages: Message[] }>; assets: unknown[]; requests: string[] }>("http-creation-generation");
+    expect(result.rejection).toBe("");
+    expect(result.applied).toBe(1);
+    expect(result.message).toMatchObject({ status: "done", error: undefined, resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] });
+    expect(result.restored[0]).toMatchObject({ title: "保留标题", messages: [{ status: "done", resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] }] });
+    expect(result.restored[0]?.messages[0]?.resultUrls).toBeUndefined();
+    expect(result.assets).toHaveLength(1);
+    expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+});
+
+test("HTTP 创作回填拒绝不匹配或未登记的素材，不能无锁创建或完成消息", async () => {
+    for (const variant of ["mismatch", "missing"] as const) {
+        const result = await runScenario<{ rejection: string; applied: number; message: { status: string }; requests: string[] }>(`http-creation-generation-${variant}`);
+        expect(result.rejection).toContain(variant === "mismatch" ? "生成素材与任务资源不一致" : "跨页面生成副作用互斥");
+        expect(result.applied).toBe(0);
+        expect(result.message.status).toBe("error");
+        expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+    }
+});
 
 test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Crypto 仍复用素材并保存", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;

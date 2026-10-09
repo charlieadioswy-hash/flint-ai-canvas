@@ -2,6 +2,7 @@ import { createClientId } from "@/lib/client-id";
 import { generationErrorMessage } from "@/lib/generation-error";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { GenerationTask } from "@/services/api/task-center";
+import { isRecoverableCreationMessage } from "@/services/creation-conversation-store";
 import { creationAttachmentKind, type CreationAttachment } from "./creation-assets";
 import type { CreationConversation, CreationMessage, CreationShotRailEntry } from "./creation-types";
 
@@ -102,13 +103,15 @@ export function reconcileCreationTaskMessages(runtime: CreationRuntime, conversa
                 changed = true;
                 return { ...message, ...recovery };
             }
-            if (message.role !== "assistant" || message.status !== "pending") return message;
+            const recoveringError = message.status === "error" && isRecoverableCreationMessage(message);
+            if (message.role !== "assistant" || (message.status !== "pending" && !recoveringError)) return message;
             const expectedTaskCount = Math.max(0, ...matches.map((task) => task.clientContext?.batchCount || 0));
             if (!matches.length || (expectedTaskCount > 0 && matches.length < expectedTaskCount) || matches.some((task) => task.status === "queued" || task.status === "running")) return message;
 
             const succeeded = matches.filter((task) => task.status === "succeeded");
             const resultUrls = Array.from(new Set(succeeded.flatMap(creationTaskResultUrls)));
             const resultStorageKeys = Array.from(new Set(succeeded.flatMap(creationTaskResultStorageKeys)));
+            if (recoveringError && !resultUrls.length && !resultStorageKeys.length) return message;
             const failedCount = matches.filter((task) => task.status !== "succeeded" || Boolean(task.creationError)).length;
             const nextTaskIds = Array.from(new Set([...(message.taskIds || []), ...matches.map((task) => task.id)]));
             completedAt = matches.reduce((latest, task) => conversationTimestamp(task.updatedAt) > conversationTimestamp(latest) ? task.updatedAt : latest, completedAt);
@@ -117,7 +120,7 @@ export function reconcileCreationTaskMessages(runtime: CreationRuntime, conversa
 
             if (resultUrls.length || resultStorageKeys.length) {
                 const content = message.mode === "video" ? "视频已生成" : failedCount ? `${resultStorageKeys.length || resultUrls.length} 张图片已生成，${failedCount} 张失败` : "图片已生成";
-                return { ...message, status: "done" as const, content, ...(resultUrls.length ? { resultUrls } : {}), ...(resultStorageKeys.length ? { resultStorageKeys } : {}), error: undefined, taskIds: nextTaskIds };
+                return { ...message, status: "done" as const, content, ...(resultUrls.length ? { resultUrls } : {}), ...(resultStorageKeys.length ? { resultStorageKeys } : {}), error: undefined, generationErrorCode: undefined, taskIds: nextTaskIds };
             }
             if (matches.every((task) => task.status === "cancelled")) {
                 return { ...message, status: "cancelled" as const, content: "已停止", error: undefined, taskIds: nextTaskIds };

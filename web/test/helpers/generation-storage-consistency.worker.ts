@@ -16,6 +16,9 @@ type Scenario =
     | "http-registered-generation"
     | "http-generation-mismatch"
     | "http-generation-missing"
+    | "http-creation-generation"
+    | "http-creation-generation-mismatch"
+    | "http-creation-generation-missing"
     | "http-screen-generation"
     | "http-screen-generation-mismatch"
     | "http-screen-generation-missing";
@@ -597,7 +600,7 @@ async function runCanvasCopyGeneration() {
     }
 }
 
-async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | "missing" = "registered", screen = false) {
+async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | "missing" = "registered", screen = false, creation = false) {
     const harness = installStorageHarness();
     const previousScope = getActiveUserScope();
     const originalCrypto = globalThis.crypto;
@@ -662,7 +665,7 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         const { useCanvasStore, flushCanvasStorePersistence, CANVAS_STORE_KEY } = await import("../../src/stores/canvas/use-canvas-store");
         const { useAssetStore } = await import("../../src/stores/use-asset-store");
         const { initializeRemoteUserDataSession, saveRemoteUserDataNow, resetRemoteUserDataSync } = await import("../../src/services/user-data-sync");
-        const { materializeGenerationTaskAssets, consumeGenerationTaskNode, projectGenerationTaskResult } = await import("../../src/services/project-asset-sync");
+        const { materializeGenerationTaskAssets, consumeGenerationTaskNode, consumeGenerationTaskMessage, projectGenerationTaskResult } = await import("../../src/services/project-asset-sync");
         const { applyGenerationTaskResultToNodes, generationTaskOutputsApplied, shouldRecoverCanvasMediaAsset } = await import("../../src/lib/canvas/canvas-generation-task-sync");
         const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
         const { parseCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
@@ -699,6 +702,39 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             resultJson: JSON.stringify({ images: [{ dataUrl: "/api/resources/http-image/file", storageKey, width: 640, height: 480, bytes: 100, mimeType: "image/png" }] }),
         };
         polledTask = task;
+        if (creation) {
+            const { applyGenerationConsumerEffect } = await import("../../src/services/generation-consumer-dedupe");
+            const { saveCreationConversations, loadCreationConversations } = await import("../../src/services/creation-conversation-store");
+            let message: import("../../src/pages/create/creation-types").CreationMessage = {
+                id: "http-message",
+                role: "assistant",
+                mode: "image",
+                content: "生成失败",
+                status: "error",
+                taskIds: [task.id],
+                createdAt: "",
+                error: "当前浏览器不支持跨页面生成副作用互斥",
+            };
+            let applied = 0;
+            const consume = () =>
+                consumeGenerationTaskMessage(task, message.id, async ({ effectKey, resultUrls, resultStorageKeys }) => {
+                    const update = applyGenerationConsumerEffect(message, effectKey, (current) => ({ ...current, status: "done" as const, content: "图片已生成", error: undefined, resultUrls, resultStorageKeys }));
+                    message = update.value;
+                    if (update.applied) applied++;
+                    await saveCreationConversations([{ id: "http-conversation", title: "保留标题", updatedAt: "", messages: [message] }]);
+                });
+            let rejection = "";
+            try {
+                await consume();
+                await Promise.all([consume(), consume()]);
+            } catch (error) {
+                rejection = error instanceof Error ? error.message : String(error);
+            }
+            const restored = await loadCreationConversations<import("../../src/pages/create/creation-types").CreationConversation>();
+            const result = { rejection, applied, message, restored, assets: useAssetStore.getState().assets, requests };
+            resetRemoteUserDataSync();
+            return result;
+        }
         if (screen) {
             const { recoverScreenGeneration } = await import("../../src/services/irregular-screen-generation");
             let rejection = "";
@@ -765,31 +801,37 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
 self.onmessage = async (event: MessageEvent<Scenario>) => {
     try {
         const result =
-            event.data === "http-screen-generation"
-                ? await runHTTPRegisteredGeneration("registered", true)
-                : event.data === "http-screen-generation-mismatch"
-                  ? await runHTTPRegisteredGeneration("mismatch", true)
-                  : event.data === "http-screen-generation-missing"
-                    ? await runHTTPRegisteredGeneration("missing", true)
-                    : event.data === "http-generation-mismatch"
-                      ? await runHTTPRegisteredGeneration("mismatch")
-                      : event.data === "http-generation-missing"
-                        ? await runHTTPRegisteredGeneration("missing")
-                        : event.data === "http-registered-generation"
-                          ? await runHTTPRegisteredGeneration()
-                          : event.data === "image-cleanup"
-                            ? await runImageCleanup()
-                            : event.data === "scope-cleanup-switch"
-                              ? await runScopeCleanupAfterSwitch()
-                              : event.data === "scope-cleanup-late-canvas-reference"
-                                ? await runScopeCleanupAfterLateCanvasReference()
-                                : event.data === "canvas-multi-output"
-                                  ? await runCanvasBatchCommitRace(true)
-                                  : event.data === "canvas-copy-generation"
-                                    ? await runCanvasCopyGeneration()
-                                    : event.data === "canvas-batch-commit-race"
-                                      ? await runCanvasBatchCommitRace()
-                                      : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
+            event.data === "http-creation-generation"
+                ? await runHTTPRegisteredGeneration("registered", false, true)
+                : event.data === "http-creation-generation-mismatch"
+                  ? await runHTTPRegisteredGeneration("mismatch", false, true)
+                  : event.data === "http-creation-generation-missing"
+                    ? await runHTTPRegisteredGeneration("missing", false, true)
+                    : event.data === "http-screen-generation"
+                      ? await runHTTPRegisteredGeneration("registered", true)
+                      : event.data === "http-screen-generation-mismatch"
+                        ? await runHTTPRegisteredGeneration("mismatch", true)
+                        : event.data === "http-screen-generation-missing"
+                          ? await runHTTPRegisteredGeneration("missing", true)
+                          : event.data === "http-generation-mismatch"
+                            ? await runHTTPRegisteredGeneration("mismatch")
+                            : event.data === "http-generation-missing"
+                              ? await runHTTPRegisteredGeneration("missing")
+                              : event.data === "http-registered-generation"
+                                ? await runHTTPRegisteredGeneration()
+                                : event.data === "image-cleanup"
+                                  ? await runImageCleanup()
+                                  : event.data === "scope-cleanup-switch"
+                                    ? await runScopeCleanupAfterSwitch()
+                                    : event.data === "scope-cleanup-late-canvas-reference"
+                                      ? await runScopeCleanupAfterLateCanvasReference()
+                                      : event.data === "canvas-multi-output"
+                                        ? await runCanvasBatchCommitRace(true)
+                                        : event.data === "canvas-copy-generation"
+                                          ? await runCanvasCopyGeneration()
+                                          : event.data === "canvas-batch-commit-race"
+                                            ? await runCanvasBatchCommitRace()
+                                            : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
         self.postMessage({ ok: true, result });
     } catch (error) {
         self.postMessage({ ok: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });

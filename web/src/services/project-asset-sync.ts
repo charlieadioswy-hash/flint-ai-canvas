@@ -7,7 +7,7 @@ import { ApiError } from "@/services/api/request";
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
 import type { GenerationTask, GenerationTaskOutput } from "@/services/api/task-center";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
-import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
+import { attachMessageEffectKey, createGenerationTaskMaterializer, createIdempotentMaterializeOutput, materializeEffectKey, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { withGenerationArtifactCommitLock } from "@/services/generation-asset-repository";
 import { uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
@@ -567,12 +567,32 @@ export async function consumeGenerationTaskMessage(
     if (!dependencies.managed) {
         return runGenerationConsumer(dependencies.signal, (signal) => consumeGenerationTaskMessage(task, messageId, consumer, { ...dependencies, signal, managed: true }));
     }
+    const scope = getActiveUserScope();
     const materialized = await (dependencies.materialize ?? materializeGenerationTaskAssets)(task, dependencies.signal);
+    throwIfAborted(dependencies.signal);
+    if (getActiveUserScope() !== scope) throw new DOMException("The operation was aborted", "AbortError");
     const resultUrls = (dependencies.materializedUrls ?? generationTaskMaterializedUrls)(materialized);
     const resultStorageKeys = (dependencies.materializedStorageKeys ?? generationTaskMaterializedStorageKeys)(materialized);
     const attach = dependencies.attachMessage ?? attachGenerationTaskMessage;
     const outputs = materialized.outputs?.filter((output) => output.materializedAssetId) ?? [];
+    const projectRegisteredResult = !dependencies.attachMessage && typeof window !== "undefined" && !globalThis.navigator?.locks;
+    if (projectRegisteredResult) {
+        const assets = useAssetStore.getState().assets;
+        if (materialized.status !== "succeeded" || materialized.resultState !== "READY" || !outputs.length || outputs.length !== materialized.outputs?.length) throw new Error("生成任务输出尚未物化");
+        for (const output of outputs) {
+            const asset = assets.find((candidate) => candidate.id === output.materializedAssetId);
+            if (!output.providerArtifactRef?.startsWith("resource:") || !asset || asset.kind !== output.mediaType || asset.data.storageKey !== output.providerArtifactRef) throw new Error("生成素材与任务资源不一致，请重新读取生成结果");
+        }
+    }
     for (const output of outputs) {
+        if (projectRegisteredResult) {
+            // HTTP 下只投影后端已登记、校验过身份的结果，消息沿用稳定 effect key 去重。
+            // 不创建素材、不上传外部来源，也不放宽生成/Agent 的跨页面写锁。
+            throwIfAborted(dependencies.signal);
+            if (getActiveUserScope() !== scope) throw new DOMException("The operation was aborted", "AbortError");
+            await consumer({ task: materialized, resultUrls, resultStorageKeys, effectKey: attachMessageEffectKey(materialized.id, messageId, output.outputIndex), signal: dependencies.signal });
+            continue;
+        }
         await attach(
             materialized,
             messageId,
