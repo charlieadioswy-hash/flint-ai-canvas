@@ -32,8 +32,6 @@ import { creationAttachmentFromAsset, creationAttachmentFromAudio, creationAttac
 import { defaultCreationMode, modeLabels, type CreationConversation, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationSettings, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
 import { CreationComposer, CreationEmptySuggest, CreationHistoryDrawer, CreationMessageView, CreationModeTabs, CreationWorkspaceToolbar, creationAssetCategoryLabels } from "./creation-workspace";
-import { CreationInspirationTunnel } from "./creation-inspiration-tunnel";
-import { declaredInspirationSources } from "@/lib/inspirations/catalog";
 import { CreationAgentEntry } from "./creation-agent-entry";
 import { createCreationSubmitGate } from "./creation-submit-gate";
 import { creationVideoConfig } from "./creation-generation-config";
@@ -1064,10 +1062,6 @@ export default function CreatePage() {
                         }}><Maximize2 /></button></Tooltip>
                     </motion.div> : null}
                 </AnimatePresence>
-                <CreationInspirationTunnel
-                    mode={mode}
-                    onStartPrompt={(nextMode, prompt) => { setAgentMode(false); selectMode(nextMode); setPrompt(prompt); window.requestAnimationFrame(() => composerFocusRef.current?.focus()); }}
-                />
                 <main ref={threadScrollRef} onScroll={handleThreadScroll} className="creation-empty-workspace creation-scrollbar">
                 <div className="creation-home-heading">
                     <h1>和{brandName}聊聊创作想法</h1>
@@ -1084,24 +1078,6 @@ export default function CreatePage() {
                     />
                 </section>
                 </main>
-                <div className="creation-inspiration-credit">
-                    <details>
-                        <summary>素材来源</summary>
-                        {declaredInspirationSources().map((source) => (
-                            <p key={source.name ?? source.label}>
-                                {source.notice}
-                                {source.repository ? (
-                                    <>
-                                        {" "}
-                                        <a href={source.repository} target="_blank" rel="noreferrer">
-                                            {source.name} · {source.license}
-                                        </a>
-                                    </>
-                                ) : null}
-                            </p>
-                        ))}
-                    </details>
-                </div>
             </> : <div className="creation-thread-workbench">
                 <CreationWorkspaceToolbar onNewConversation={startNewConversation} onOpenHistory={() => setHistoryOpen(true)} shots={videoShots} onJumpToShot={jumpToShot} onContinueCanvas={() => void continueOnCanvas()} openingCanvas={openingCanvas} />
                 <main ref={threadScrollRef} onScroll={handleThreadScroll} className="creation-thread-scroll creation-scrollbar">
