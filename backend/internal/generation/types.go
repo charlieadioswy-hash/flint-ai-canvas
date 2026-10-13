@@ -99,6 +99,8 @@ type Media struct {
 	DataURL    string `json:"dataUrl"`
 	URL        string `json:"url"`
 	StorageKey string `json:"storageKey"`
+	Role       string `json:"role,omitempty"`
+	SlotKey    string `json:"slotKey,omitempty"`
 	MimeType   string `json:"mimeType"`
 	Bytes      int64  `json:"bytes"`
 	Width      int    `json:"width"`

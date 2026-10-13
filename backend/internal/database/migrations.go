@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"yingce/backend/internal/model"
@@ -11,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 51
+const CurrentSchemaVersion int64 = 58
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -31,6 +32,9 @@ const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-2026
 const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
 const canvasModel3DChecksum = "sha256:canvas-model3d-v45-20261005"
 const uploadReservationsChecksum = "sha256:upload-reservations-v45-20261005"
+const workbenchToolsMigrationName = "workbench_tools_and_presets"
+const workbenchToolsMigrationChecksum = "sha256:workbench-tools-presets-v54-20261014"
+const legacyWorkbenchToolsMigrationChecksum = "sha256:workbench-tools-presets-v51-20261014"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -161,6 +165,36 @@ var schemaMigrations = []migration{
 	{version: 49, name: "model3d_base_url", checksum: "sha256:model3d-base-url-v49-20261007", apply: migrateModel3DBaseURL},
 	{version: 50, name: "model3d_asset_timestamps", checksum: "sha256:model3d-asset-timestamps-v50-20261007", apply: migrateModel3DAssetTimestamps},
 	{version: 51, name: "channel_model_provider_defaults", checksum: "sha256:channel-model-provider-defaults-v51", apply: migrateChannelModelProviderDefaults},
+	{version: 52, name: "channel_proxy_url", checksum: "sha256:channel-proxy-url-v48-20261009", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasColumn(&model.ModelChannel{}, "ProxyURL") {
+			return tx.Migrator().AddColumn(&model.ModelChannel{}, "ProxyURL")
+		}
+		return nil
+	}},
+	{version: 53, name: "banner_sort_order", checksum: "sha256:banner-sort-order-v49-20261010", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasColumn(&model.BannerAnnouncement{}, "SortOrder") {
+			return tx.Migrator().AddColumn(&model.BannerAnnouncement{}, "SortOrder")
+		}
+		return nil
+	}},
+	{version: 54, name: "canvas_mutation_receipts", checksum: "sha256:canvas-mutation-receipts-v50-20261011", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CanvasMutationReceipt{})
+	}},
+	{version: 55, name: "personal_profile_security", checksum: "sha256:personal-profile-security-v51-20261012", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.User{}, &model.AuthSession{}, &model.OAuthState{}, &model.AuthVerification{}, &model.UserAvatar{})
+	}},
+	{version: 56, name: "user_avatar_presets", checksum: "sha256:user-avatar-presets-v52-20261012", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.User{}, "AvatarPreset") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.User{}, "AvatarPreset")
+	}},
+	{version: 57, name: "user_login_logs", checksum: "sha256:user-login-logs-v53", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.LoginLog{})
+	}},
+	{version: 58, name: workbenchToolsMigrationName, checksum: workbenchToolsMigrationChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.WorkbenchTool{}, &model.WorkbenchPreset{}, &model.Task{})
+	}},
 }
 
 func migrateChannelModelProviderDefaults(tx *gorm.DB) error {
@@ -332,8 +366,8 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			}
 		}
 	}
-	// Both branches shipped v45. Preserve its recorded identity and apply the
-	// other branch's schema at v48, without rewriting deployed migration history.
+	// Branches shipped different identities at v45 and v48-v51. Select the
+	// matching plan without changing the versions or checksums already recorded.
 	var version45 schemaMigration
 	err = db.First(&version45, "version = ?", 45).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -346,6 +380,50 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 		legacy := migration{version: 45, name: "upload_reservations", checksum: uploadReservationsChecksum}
 		if err := validateMigrationRecord(version45, legacy); err != nil {
 			return nil, err
+		}
+		var version48 schemaMigration
+		err := db.First(&version48, "version = ?", 48).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("读取数据库迁移 48：%w", err)
+		}
+		if err == nil && version48.Name == "channel_proxy_url" {
+			var version51 schemaMigration
+			err := db.First(&version51, "version = ?", 51).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("读取数据库迁移 51：%w", err)
+			}
+			legacyWorkbench := err == nil && version51.Name == workbenchToolsMigrationName
+			if legacyWorkbench {
+				if err := validateMigrationRecord(version51, migration{version: 51, name: workbenchToolsMigrationName, checksum: legacyWorkbenchToolsMigrationChecksum}); err != nil {
+					return nil, err
+				}
+				if !db.Migrator().HasTable(&model.WorkbenchTool{}) || !db.Migrator().HasTable(&model.WorkbenchPreset{}) {
+					return nil, fmt.Errorf("数据库迁移 51 记录为旧工作台迁移，但工作台表不完整；请从备份恢复后再升级")
+				}
+			}
+			for index, item := range plan {
+				switch item.version {
+				case 45:
+					plan[index].version = 55
+				case 48:
+					plan[index].version = 45
+				case 49, 50, 51:
+					plan[index].version = item.version + 7
+				case 52, 53, 54, 55, 56, 57, 58:
+					plan[index].version = item.version - 4
+				}
+				if legacyWorkbench {
+					switch item.name {
+					case "personal_profile_security":
+						plan[index].version = 54
+					case workbenchToolsMigrationName:
+						plan[index].version = 51
+						plan[index].checksum = legacyWorkbenchToolsMigrationChecksum
+					}
+				}
+			}
+			sort.Slice(plan, func(i, j int) bool { return plan[i].version < plan[j].version })
+			return plan, nil
 		}
 		var model3D, uploads migration
 		for _, item := range plan {

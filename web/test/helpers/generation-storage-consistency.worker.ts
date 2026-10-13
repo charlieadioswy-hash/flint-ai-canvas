@@ -649,10 +649,33 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
                 ],
             };
         else if (config.method === "get" && config.url?.startsWith("/canvas-projects/")) data = { project: remoteProject };
-        else if (config.method === "put" && config.url?.startsWith("/canvas-projects/")) {
-            savedProject = body.project;
+        else if (config.method === "patch" && config.url === `/canvas-projects/${remoteProject.id}/operations`) {
+            const request = body as import("../../src/services/api/user-data").CanvasOperationsRequest;
+            if (!request.mutationId || request.baseRevision !== remoteProject.revision || !request.operations.length) throw new Error("保存请求缺少操作身份或正确版本基线");
+            const next = structuredClone(remoteProject);
+            for (const operation of request.operations) {
+                if (operation.type !== "patch_node") throw new Error(`恢复已有节点不应提交 ${operation.type}`);
+                const target = next.nodes.find((node) => node.id === operation.id);
+                if (!target || JSON.stringify(Object.keys(operation.patch).sort()) !== JSON.stringify(Object.keys(operation.before || {}).sort())) throw new Error("节点补丁缺少完整基线");
+                for (const [path, value] of Object.entries(operation.patch)) {
+                    const segments = path.split(".");
+                    let cursor = target as unknown as Record<string, unknown>;
+                    for (const segment of segments.slice(0, -1)) {
+                        const child = cursor[segment];
+                        if (child === undefined) cursor[segment] = {};
+                        else if (!child || typeof child !== "object" || Array.isArray(child)) throw new Error("节点补丁路径无效");
+                        cursor = cursor[segment] as Record<string, unknown>;
+                    }
+                    const key = segments.at(-1)!;
+                    if (JSON.stringify(cursor[key] ?? null) !== JSON.stringify(operation.before![path] ?? null)) throw new Error("节点补丁基线与服务端不一致");
+                    if (value === null) delete cursor[key];
+                    else cursor[key] = value;
+                }
+            }
+            savedProject = { ...next, revision: (remoteProject.revision || 0) + 1 };
             if (savedProject?.nodes[0]?.metadata?.assetId !== assetId || savedProject.nodes[0].metadata.storageKey !== storageKey) throw new Error("保存 payload 没有引用已登记素材");
-            data = { project: { ...savedProject, revision: 2 } };
+            remoteProject = structuredClone(savedProject);
+            data = { project: { id: savedProject.id, title: savedProject.title, createdAt: savedProject.createdAt, updatedAt: savedProject.updatedAt, revision: savedProject.revision }, mutationId: request.mutationId };
         } else throw new Error(`不应调用 ${config.method}:${config.url}`);
         return { config, status: 200, statusText: "OK", headers: {}, data: { code: 0, data, msg: "ok" } };
     };

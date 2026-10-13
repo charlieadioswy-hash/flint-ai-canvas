@@ -15,6 +15,7 @@
     "system-update",
     "protocol-plugins",
     "controlnet",
-    "canvas-data-structure"
+    "canvas-data-structure",
+    "canvas-operations-sync"
   ]
 }

@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,15 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 	if !db.Migrator().HasTable(&model.UploadReservation{}) {
 		t.Fatal("upload reservation migration missing")
+	}
+	if !db.Migrator().HasTable(&model.WorkbenchTool{}) || !db.Migrator().HasTable(&model.WorkbenchPreset{}) {
+		t.Fatal("schema migration v58 did not create workbench tool and preset tables")
+	}
+	if !db.Migrator().HasIndex(&model.WorkbenchTool{}, "idx_workbench_tools_kind_enabled_sort") {
+		t.Fatal("schema migration v58 did not create the workbench catalog index")
+	}
+	if !db.Migrator().HasIndex(&model.WorkbenchPreset{}, "idx_workbench_presets_tool_enabled_sort") {
+		t.Fatal("schema migration v58 did not create the workbench preset index")
 	}
 	if !db.Migrator().HasIndex(&schemaMigration{}, "idx_schema_migrations_applied_at") {
 		t.Fatal("schema migration v2 did not create the applied_at index")
@@ -86,6 +96,164 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 	if err := MigrateSchema(db); err != nil {
 		t.Fatalf("migration should be idempotent: %v", err)
+	}
+}
+
+func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.DB {
+	t.Helper()
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:" + t.Name() + "?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&schemaMigration{}); err != nil {
+		t.Fatal(err)
+	}
+	upstreamVersions := map[string]int64{
+		"upload_reservations": 45, "channel_proxy_url": 48, "banner_sort_order": 49,
+		"canvas_mutation_receipts": 50, "personal_profile_security": 51,
+		"user_avatar_presets": 52, "user_login_logs": 53, workbenchToolsMigrationName: 54,
+	}
+	applied := map[string]bool{}
+	for _, item := range schemaMigrations {
+		switch lineage {
+		case "upstream", "legacy_workbench":
+			if item.version >= 44 && item.version != 46 && item.version != 47 {
+				version, ok := upstreamVersions[item.name]
+				if !ok {
+					continue
+				}
+				item.version = version
+			}
+			if lineage == "legacy_workbench" {
+				if item.name == "personal_profile_security" {
+					continue
+				}
+				if item.name == workbenchToolsMigrationName {
+					item.version = 51
+					item.checksum = legacyWorkbenchToolsMigrationChecksum
+				}
+			}
+		case "merged_uploads":
+			if item.version == 45 {
+				item.version = 48
+			} else if item.version == 48 {
+				item.version = 45
+			}
+		}
+		if item.version > lastVersion {
+			continue
+		}
+		if err := item.apply(db); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&schemaMigration{Version: item.version, Name: item.name, Checksum: item.checksum, AppliedAt: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)}).Error; err != nil {
+			t.Fatal(err)
+		}
+		applied[item.name] = true
+	}
+	// The baseline uses current models; remove structures absent in each actual
+	// release so the upgrade must install them, not just add migration records.
+	for name, tables := range map[string][]any{
+		"image_content_moderation":  {&model.ImageModerationProvider{}, &model.ImageModerationConfig{}, &model.ImageModerationPolicy{}, &model.ImageModerationCheck{}, &model.ImageModerationItem{}, &model.ImageModerationDailyUsage{}},
+		"canvas_model3d":            {&model.Model3DProvider{}, &model.Model3DConfig{}, &model.Model3DPolicy{}, &model.Model3DSubmission{}, &model.Model3DDailyUsage{}},
+		"canvas_mutation_receipts":  {&model.CanvasMutationReceipt{}},
+		"personal_profile_security": {&model.UserAvatar{}},
+		"user_login_logs":           {&model.LoginLog{}},
+		workbenchToolsMigrationName: {&model.WorkbenchPreset{}, &model.WorkbenchTool{}},
+	} {
+		if !applied[name] {
+			for _, table := range tables {
+				if err := db.Migrator().DropTable(table); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	for _, column := range []struct {
+		migration string
+		model     any
+		field     string
+	}{
+		{"channel_proxy_url", &model.ModelChannel{}, "ProxyURL"},
+		{"channel_model_provider_defaults", &model.ChannelModel{}, "ProviderDefaults"},
+		{"user_avatar_presets", &model.User{}, "AvatarPreset"},
+	} {
+		if !applied[column.migration] {
+			if err := db.Migrator().DropColumn(column.model, column.field); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return db
+}
+
+func TestMigrateSchemaPreservesReleasedBranchHistories(t *testing.T) {
+	for _, tc := range []struct {
+		lineage string
+		version int64
+	}{
+		{"local", 51}, {"merged_uploads", 51}, {"upstream", 48}, {"upstream", 49},
+		{"upstream", 50}, {"upstream", 51}, {"upstream", 54}, {"legacy_workbench", 51},
+	} {
+		t.Run(fmt.Sprintf("%s-v%d", tc.lineage, tc.version), func(t *testing.T) {
+			db := schemaBranchFixture(t, tc.lineage, tc.version)
+			var before []schemaMigration
+			if err := db.Order("version").Find(&before).Error; err != nil {
+				t.Fatal(err)
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				if err := MigrateSchema(db); err != nil {
+					t.Fatal(err)
+				}
+				status, err := ReadSchemaStatus(db)
+				if err != nil || !status.Ready || status.Current != CurrentSchemaVersion {
+					t.Fatalf("schema status: %+v, %v", status, err)
+				}
+			}
+			for _, record := range before {
+				var after schemaMigration
+				if err := db.First(&after, "version = ?", record.Version).Error; err != nil || record.Name != after.Name || record.Checksum != after.Checksum || !record.AppliedAt.Equal(after.AppliedAt) {
+					t.Fatalf("historical migration changed: before=%+v after=%+v err=%v", record, after, err)
+				}
+			}
+			for _, table := range Models() {
+				if !db.Migrator().HasTable(table) {
+					t.Errorf("missing table %T", table)
+				}
+			}
+			if !db.Migrator().HasColumn(&model.ModelChannel{}, "ProxyURL") || !db.Migrator().HasColumn(&model.ChannelModel{}, "ProviderDefaults") || !db.Migrator().HasColumn(&model.User{}, "AvatarPreset") {
+				t.Fatal("branch upgrade did not restore new columns")
+			}
+		})
+	}
+}
+
+func TestMigrateSchemaRejectsChangedUpstreamHistory(t *testing.T) {
+	for _, tc := range []struct {
+		version int64
+		field   string
+	}{{48, "name"}, {48, "checksum"}, {51, "checksum"}, {54, "name"}} {
+		t.Run(fmt.Sprintf("v%d-%s", tc.version, tc.field), func(t *testing.T) {
+			db := schemaBranchFixture(t, "upstream", 54)
+			if err := db.Model(&schemaMigration{}).Where("version = ?", tc.version).Update(tc.field, "unknown").Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := MigrateSchema(db); err == nil || !strings.Contains(err.Error(), "不一致") {
+				t.Fatalf("expected corrupt history rejection, got %v", err)
+			}
+			var count int64
+			if err := db.Model(&schemaMigration{}).Where("version = 44 OR version > 54").Count(&count).Error; err != nil || count != 0 {
+				t.Fatalf("rejected migration wrote records: %d, %v", count, err)
+			}
+			if db.Migrator().HasTable(&model.ImageModerationProvider{}) || db.Migrator().HasTable(&model.Model3DProvider{}) {
+				t.Fatal("rejected migration left new tables")
+			}
+		})
 	}
 }
 

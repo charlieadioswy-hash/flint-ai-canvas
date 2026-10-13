@@ -137,22 +137,23 @@ export function CanvasNodePanelOverlay({
         let liveViewport = viewport;
         let liveDragOffset = dragOffset;
         let viewportSize = { width: container.clientWidth, height: container.clientHeight };
+        let measuredPanelHeight = constrainToViewport ? panel.getBoundingClientRect().height || panelHeight : panelHeight;
         const update = (nextViewport: ViewportTransform) => {
             liveViewport = nextViewport;
             const nextWidth = constrainToViewport ? Math.min(resolveNodePanelWidth(node, nextViewport, panelWidth), viewportSize.width - 24) : resolveNodePanelWidth(node, nextViewport, panelWidth);
             panel.style.width = `${nextWidth}px`;
             if (constrainToViewport) panel.style.setProperty("--canvas-node-panel-max-height", `${Math.max(120, viewportSize.height - 84)}px`);
-            const nodeElement = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`);
+            // 视口预览直接使用世界坐标计算位置，避免读取节点布局触发同步 layout。
             const position = constrainToViewport
-                ? getConstrainedNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panel.getBoundingClientRect().height || panelHeight, liveDragOffset)
-                : nodeElement
-                  ? getAttachedNodePanelPosition(nodeElement, container, nextWidth)
-                  : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
+                ? getConstrainedNodePanelPosition(node, nextViewport, viewportSize, nextWidth, measuredPanelHeight, liveDragOffset)
+                : getNodePanelPosition(node, nextViewport, viewportSize, nextWidth, panelHeight, liveDragOffset);
             panel.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
         };
         update(viewport);
-        const resizeObserver = new ResizeObserver(() => {
+        const resizeObserver = new ResizeObserver((entries) => {
             viewportSize = { width: container.clientWidth, height: container.clientHeight };
+            const panelEntry = entries.find((entry) => entry.target === panel);
+            if (panelEntry) measuredPanelHeight = panelEntry.borderBoxSize?.[0]?.blockSize || panelEntry.contentRect.height || panelHeight;
             update(liveViewport);
         });
         resizeObserver.observe(container);
@@ -256,8 +257,7 @@ export function CanvasConnectionCreateMenu({
         const menu = menuRef.current;
         if (!container || !menu) return;
         const update = (nextViewport: ViewportTransform) => {
-            const containerBounds = container.getBoundingClientRect();
-            const position = getConnectionMenuPosition(pending.position, nextViewport, { width: containerBounds.width, height: containerBounds.height }, menu.offsetWidth || menuWidth, menu.offsetHeight || menuHeight, gap);
+            const position = getConnectionMenuPosition(pending.position, nextViewport, { width: container.clientWidth, height: container.clientHeight }, menu.offsetWidth || menuWidth, menu.offsetHeight || menuHeight, gap);
             menu.style.left = `${position.left}px`;
             menu.style.top = `${position.top}px`;
         };
@@ -462,17 +462,6 @@ function getConnectionMenuPosition(position: Position, viewport: ViewportTransfo
     return {
         left: clamp(screenX, gap, Math.max(gap, viewportSize.width - menuWidth - gap)),
         top: clamp(screenY, 72, Math.max(72, viewportSize.height - menuHeight - gap)),
-    };
-}
-
-function getAttachedNodePanelPosition(nodeElement: HTMLElement, container: HTMLElement, panelWidth: number) {
-    const gap = 10;
-    const nodeRect = nodeElement.getBoundingClientRect();
-    const containerRect = container.getBoundingClientRect();
-    return {
-        left: nodeRect.left - containerRect.left + nodeRect.width / 2 - panelWidth / 2,
-        top: nodeRect.bottom - containerRect.top + gap,
-        placement: "below" as const,
     };
 }
 

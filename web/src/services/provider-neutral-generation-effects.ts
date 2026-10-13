@@ -51,7 +51,7 @@ function effectStorage(scope: string): EffectStorage {
 
 function effectLock(): AsyncLock {
     if (typeof window !== "undefined") {
-        const locks = navigator.locks;
+        const locks = globalThis.navigator?.locks;
         if (!locks) throw new Error("当前浏览器不支持跨页面生成副作用互斥");
         return locks;
     }

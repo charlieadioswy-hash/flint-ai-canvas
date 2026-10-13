@@ -25,7 +25,7 @@ test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建
     expect(result.restored[0]).toMatchObject({ title: "保留标题", messages: [{ status: "done", resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] }] });
     expect(result.restored[0]?.messages[0]?.resultUrls).toBeUndefined();
     expect(result.assets).toHaveLength(1);
-    expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+    expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
 });
 
 test("HTTP 创作回填拒绝不匹配或未登记的素材，不能无锁创建或完成消息", async () => {
@@ -34,7 +34,7 @@ test("HTTP 创作回填拒绝不匹配或未登记的素材，不能无锁创建
         expect(result.rejection).toContain(variant === "mismatch" ? "生成素材与任务资源不一致" : "跨页面生成副作用互斥");
         expect(result.applied).toBe(0);
         expect(result.message.status).toBe("error");
-        expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+        expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
     }
 });
 
@@ -52,7 +52,8 @@ test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Cr
     expect(result.assets).toHaveLength(1);
     expect(result.assets[0]).toMatchObject({ id: assetId, title: "用户已修改标题", tags: ["精选"] });
     expect(result.requests.filter((request) => request.startsWith("put:/assets/"))).toEqual([]);
-    expect(result.requests.some((request) => request.startsWith("put:/canvas-projects/"))).toBe(true);
+    expect(result.requests.some((request) => request.startsWith("patch:/canvas-projects/") && request.endsWith("/operations"))).toBe(true);
+    expect(result.requests.some((request) => request.startsWith("put:/canvas-projects/"))).toBe(false);
     expect(result.requests.some((request) => request.includes("/tasks"))).toBe(false);
 });
 
@@ -63,7 +64,7 @@ test("HTTP 恢复拒绝资源不匹配的登记身份，缺失素材也不能绕
     const missing = await runScenario<{ rejection: string; boundAssetId?: string; requests: string[] }>("http-generation-missing");
     expect(missing.rejection).toContain("跨页面生成副作用互斥");
     expect(missing.boundAssetId).toBeUndefined();
-    for (const result of [mismatch, missing]) expect(result.requests.some((request) => request.startsWith("put:") || request.includes("/tasks"))).toBe(false);
+    for (const result of [mismatch, missing]) expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
 });
 
 test("一次任务四图经真实消费链路堆叠并保存，刷新和重放保留四个独立资源", async () => {

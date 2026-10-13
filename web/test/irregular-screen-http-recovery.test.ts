@@ -40,6 +40,8 @@ test("screen recovery on HTTP reads the registered resource without creating ano
     expect(result.assets[0]).toMatchObject({ id: identity, title: "用户已修改标题", tags: ["精选"] });
     expect(result.requests).toContain("post:/assets/batch");
     expect(result.requests).toContain("get:/tasks/task-http-recovery");
+    expect(result.requests.some((request) => request.startsWith("patch:/canvas-projects/") && request.endsWith("/operations"))).toBe(true);
+    expect(result.requests.some((request) => request.startsWith("put:/canvas-projects/"))).toBe(false);
     expect(result.requests.some((request) => request.includes("generation-effects") || request === "post:/tasks" || request === "post:/assets" || request === "post:/resources/upload")).toBe(false);
 });
 
