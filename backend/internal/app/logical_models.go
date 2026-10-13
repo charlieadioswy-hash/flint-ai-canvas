@@ -700,7 +700,9 @@ func channelModelDefaultOptions(channelModel model.ChannelModel, spec Capability
 		case "video":
 			if config.Video != nil {
 				defaults["videoSeconds"] = config.Video.Duration.Default
-				defaults["vquality"] = normalizeChannelModelTierResolution(config.Video.DefaultResolution)
+				if len(config.Video.Resolutions) > 0 {
+					defaults["vquality"] = normalizeChannelModelTierResolution(config.Video.DefaultResolution)
+				}
 				if len(config.Video.Ratios) > 0 {
 					defaults["size"] = config.Video.DefaultRatio
 				}

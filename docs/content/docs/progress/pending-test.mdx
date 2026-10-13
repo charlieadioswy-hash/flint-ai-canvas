@@ -33,6 +33,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 ## Wangsu 网宿渠道
 
 - 已实现：14 个独立生成协议；保留完整 Base URL，按模型选择兼容/OpenAI/Anthropic/Gemini 路径；图片生成编辑、视频轮询下载和模型参数约束分别适配。配置见 [Wangsu](/docs/backend/wangsu)。
+- [x] 修复未声明分辨率的视频模型被创作目录遗漏：仅在能力声明分辨率时发布默认值，保留 Kling 的空分辨率配置。真实 `ModelCatalog` 回归先复现遗漏，再通过修复后的目录、价格可用性与分辨率专项；尚未进行真实供应商生成验证。
 - [x] `internal/protocol`、`internal/app`、`internal/handler` 完整包测试通过，包括 14 个插件入口与鉴权、JSON/SSE/工具调用、嵌套 Responses 文本、图片 multipart 与 DataURL、视频参数/状态/下载、系统代理权限和原协议回归；无真实供应商调用。
 - [x] 前端五个专项文件 39 项测试、TypeScript 检查通过；协议与模型变化同步默认能力，并保留管理员修改值。
 - [x] 开发环境前端、后端、独立 Agent 镜像构建与 Compose 更新通过；更新前备份数据库和数据目录，旧镜像保留。版本、健康状态、schema、真实路由资源及 1584 个静态资源哈希验证通过。
