@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 58
+const CurrentSchemaVersion int64 = 61
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -195,6 +195,19 @@ var schemaMigrations = []migration{
 	{version: 58, name: workbenchToolsMigrationName, checksum: workbenchToolsMigrationChecksum, apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.WorkbenchTool{}, &model.WorkbenchPreset{}, &model.Task{})
 	}},
+	{version: 59, name: "provider_catalog_source", checksum: "sha256:provider-catalog-source-v55", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasColumn(&model.ModelChannel{}, "CatalogProviderID") {
+			if err := tx.Migrator().AddColumn(&model.ModelChannel{}, "CatalogProviderID"); err != nil {
+				return err
+			}
+		}
+		if !tx.Migrator().HasColumn(&model.ChannelModel{}, "CatalogModelKey") {
+			return tx.Migrator().AddColumn(&model.ChannelModel{}, "CatalogModelKey")
+		}
+		return nil
+	}},
+	{version: 60, name: "sql_perf_indexes", checksum: "sha256:sql-perf-indexes-v56-20261016", apply: migrateSchemaV56},
+	{version: 61, name: "canvas_multi_session_sync", checksum: "sha256:canvas-multi-session-sync-v57", apply: migrateCanvasCollaboration},
 }
 
 func migrateChannelModelProviderDefaults(tx *gorm.DB) error {
@@ -401,6 +414,15 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 					return nil, fmt.Errorf("数据库迁移 51 记录为旧工作台迁移，但工作台表不完整；请从备份恢复后再升级")
 				}
 			}
+			// Native upstream releases used v55-v57 for the catalog, indexes and
+			// collaboration. Earlier merged releases used v55-v58 for 3D and
+			// provider defaults. Preserve whichever ledger was already shipped.
+			var version55 schemaMigration
+			err = db.First(&version55, "version = ?", 55).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("读取数据库迁移 55：%w", err)
+			}
+			nativeUpstream := errors.Is(err, gorm.ErrRecordNotFound) || version55.Name == "provider_catalog_source"
 			for index, item := range plan {
 				switch item.version {
 				case 45:
@@ -419,6 +441,24 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 					case workbenchToolsMigrationName:
 						plan[index].version = 51
 						plan[index].checksum = legacyWorkbenchToolsMigrationChecksum
+					}
+				}
+				if nativeUpstream {
+					switch item.name {
+					case "provider_catalog_source":
+						plan[index].version = 55
+					case "sql_perf_indexes":
+						plan[index].version = 56
+					case "canvas_multi_session_sync":
+						plan[index].version = 57
+					case "canvas_model3d":
+						plan[index].version = 58
+					case "model3d_base_url":
+						plan[index].version = 59
+					case "model3d_asset_timestamps":
+						plan[index].version = 60
+					case "channel_model_provider_defaults":
+						plan[index].version = 61
 					}
 				}
 			}
@@ -599,6 +639,21 @@ func migrateSchemaV12(tx *gorm.DB) error {
 	}
 	if err := tx.Migrator().AddColumn(&model.BillingOrder{}, "ChargeLimitMicrocredits"); err != nil {
 		return fmt.Errorf("增加 Agent Token 扣费上限列：%w", err)
+	}
+	return nil
+}
+
+func migrateSchemaV56(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.ApiCallLog{}, &model.Task{}, &model.CreditLedgerEntry{}); err != nil {
+		return fmt.Errorf("迁移 SQL 性能索引：%w", err)
+	}
+	if tx.Dialector.Name() == "sqlite" {
+		if err := tx.Exec("UPDATE api_call_logs SET created_at_epoch = unixepoch(created_at) WHERE created_at_epoch = 0 OR created_at_epoch IS NULL").Error; err != nil {
+			return fmt.Errorf("回填 api_call_logs 时间戳：%w", err)
+		}
+		if err := tx.Exec("UPDATE tasks SET created_at_epoch = unixepoch(created_at) WHERE created_at_epoch = 0 OR created_at_epoch IS NULL").Error; err != nil {
+			return fmt.Errorf("回填 tasks 时间戳：%w", err)
+		}
 	}
 	return nil
 }

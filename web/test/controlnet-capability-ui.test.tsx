@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ModelCapabilityEditor } from "../src/components/model-capability-editor";
 import { CanvasControlNetPopover } from "../src/components/canvas/canvas-controlnet-popover";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
+import { projectImageParameters, type ImageParameter } from "../src/lib/image-parameters";
 import { structureControlNodeMetadata } from "../src/lib/canvas/controlnet";
 import { createModelChannel, defaultConfig } from "../src/stores/use-config-store";
 import { channelValidationError } from "../src/pages/settings/channel-settings-pane";
@@ -27,6 +28,17 @@ test("the dedicated image has a discoverable structural settings command", () =>
     expect(markup).toContain('aria-label="结构控制生图设置"');
     expect(markup).toContain("结构控制");
     expect(markup).toContain('aria-expanded="false"');
+});
+
+test("plugin image schemas preserve structural controls in personal and admin editors", () => {
+    const parameters: ImageParameter[] = [{ name: "steps", label: "生成步数", type: "integer", min: 1, max: 50, default: 20 }];
+    const profile = { version: 1, image: projectImageParameters(defaultImageCapabilityConfig("liblib-image"), parameters) };
+    const personal = renderToStaticMarkup(<ModelCapabilityEditor value={profile} capability="image" protocol="liblib-image" supportsControlNet imageParameters={parameters} />);
+    expect(personal).toContain("生成步数");
+    expect(personal).toContain("允许提交独立控制图及 ControlNet 参数");
+    expect(personal).toContain("控制模型标识");
+    const admin = renderToStaticMarkup(<ModelCapabilityEditor value={profile} capability="image" protocol="liblib-image" supportsControlNet imageParameters={parameters} section="references" />);
+    expect(admin).toContain("最大控制组数");
 });
 
 test("personal Liblib channel configuration requires both signing credentials", () => {

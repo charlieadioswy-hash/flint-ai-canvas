@@ -1,6 +1,6 @@
 import localforage from "localforage";
 
-import { getActiveUserScope, setActiveUserScope } from "../../src/lib/user-scope";
+import { getActiveUserScope, scopedStorageKey, setActiveUserScope } from "../../src/lib/user-scope";
 
 type InstanceHook = (storeName: string, key: string, value: unknown) => Promise<void> | void;
 
@@ -21,7 +21,9 @@ type Scenario =
     | "http-creation-generation-missing"
     | "http-screen-generation"
     | "http-screen-generation-mismatch"
-    | "http-screen-generation-missing";
+    | "http-screen-generation-missing"
+    | "canvas-mask-batch"
+    | "canvas-asset-preparation";
 
 function installStorageHarness() {
     const originalCreateInstance = localforage.createInstance.bind(localforage);
@@ -411,7 +413,7 @@ async function runMediaCommitRace(mediaType: "video" | "audio") {
     }
 }
 
-async function runCanvasBatchCommitRace(multiOutput = false) {
+async function runCanvasBatchCommitRace(multiOutput = false, mask = false) {
     const harness = installStorageHarness();
     const previousScope = getActiveUserScope();
     const { apiClient } = await import("../../src/services/api/request");
@@ -455,12 +457,28 @@ async function runCanvasBatchCommitRace(multiOutput = false) {
             position: { x: index * 400, y: 0 },
             width: 320,
             height: 240,
-            metadata: { taskId: `task-${index}`, status: index < 2 ? ("loading" as const) : ("error" as const) },
+            metadata: {
+                taskId: `task-${index}`,
+                status: index < 2 ? ("loading" as const) : ("error" as const),
+                content: undefined,
+                storageKey: undefined,
+                assetId: undefined,
+                taskProgress: undefined,
+                taskCompletedAt: undefined,
+                ...(mask ? { batchRootId: "mask-root" } : {}),
+            },
         })).filter((node) => !multiOutput || node.id !== "node-1");
         const ref: { current: import("../../src/types/canvas").CanvasNodeData[] } = { current: nodes };
+        if (mask)
+            ref.current = [
+                ...nodes,
+                { id: "mask-root", type: CanvasNodeType.Image, title: "局部重绘", position: { x: -400, y: 0 }, width: 320, height: 240, metadata: { isBatchRoot: true, batchChildIds: nodes.map((node) => node.id), status: "loading" } },
+            ];
         const setNodes = createCanvasStateWriter(ref, () => {});
-        useCanvasStore.getState().updateProject(projectId, { nodes });
+        useCanvasStore.getState().updateProject(projectId, { nodes: ref.current });
         await flushCanvasStorePersistence();
+        // 模拟任务状态已到编辑器、自动保存尚未跟上的真实生成完成窗口。
+        setNodes((current) => current.map((node) => ({ ...node, metadata: { ...node.metadata, taskStage: "正在应用结果" } })));
         useAssetStore.setState({
             assets: (multiOutput ? [0, 1, 2, 3] : [0, 1]).map((index) => ({
                 id: `asset-${index}`,
@@ -470,7 +488,7 @@ async function runCanvasBatchCommitRace(multiOutput = false) {
                 tags: [],
                 createdAt: "2026-09-21T00:00:00Z",
                 updatedAt: "2026-09-21T00:00:00Z",
-                data: { dataUrl: "/image.png", storageKey: `resource:image-${index}`, width: multiOutput ? 640 + index : 640, height: 480, bytes: 100, mimeType: "image/png" },
+                data: { dataUrl: "/image.png", storageKey: `resource:image-${index}`, width: multiOutput ? 640 + index : 640, height: mask ? 360 : 480, bytes: 100, mimeType: "image/png" },
             })),
         });
         unregister = registerCanvasGenerationLiveProject({ scope: getActiveUserScope(), projectId, adapter: { read: () => ({ nodes: ref.current, connections: [], chatSessions: [], activeChatId: null }), write: (state) => setNodes(state.nodes) } });
@@ -496,6 +514,7 @@ async function runCanvasBatchCommitRace(multiOutput = false) {
                         attempts: 1,
                         createdAt: "2026-09-21T00:00:00Z",
                         updatedAt: "2026-09-21T00:00:01Z",
+                        ...(mask ? { inputJson: JSON.stringify({ metadata: { edit: "mask" } }) } : {}),
                         resultJson: multiOutput ? JSON.stringify({ images: [0, 1, 2, 3].map((i) => ({ dataUrl: "/image.png", storageKey: `resource:image-${i}` })) }) : "{}",
                         ...(multiOutput ? { outputs: [0, 1, 2, 3].map((i) => ({ outputIndex: i, mediaType: "image" as const, materializedAssetId: `asset-${i}` })) } : {}),
                     },
@@ -585,12 +604,16 @@ async function runCanvasCopyGeneration() {
         const pendingNodes = [source, { ...copy, metadata: { ...copy.metadata, status: "loading" as const, taskId: "new-task" } }];
         useCanvasStore.getState().updateProject(projectId, { nodes: pendingNodes });
         await flushCanvasStorePersistence();
+        // Force a real same-field race: the generation snapshot also changed the
+        // title while the latest ordinary save already persisted a user rename.
+        useCanvasStore.getState().updateProject(projectId, { nodes: pendingNodes.map((node) => (node.id === "copy" ? { ...node, title: "Latest user title", position: { x: 700, y: 500 } } : node)) });
+        await flushCanvasStorePersistence();
         const copyEffect = "attach-node:new-task:copy:0";
         await persistCanvasGenerationEffect({
             projectId,
             effectKey: copyEffect,
             previousNodes: pendingNodes,
-            nodes: pendingNodes.map((node) => (node.id === "copy" ? { ...node, metadata: { ...node.metadata, content: "new-image", status: "success", generationEffectKeys: [copyEffect] } } : node)),
+            nodes: pendingNodes.map((node) => (node.id === "copy" ? { ...node, title: "Stale generation title", metadata: { ...node.metadata, content: "new-image", status: "success", generationEffectKeys: [copyEffect] } } : node)),
         });
         await flushCanvasStorePersistence();
         return { beforeGeneration, restored: await readNodes() };
@@ -682,7 +705,8 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     try {
         // 内网 HTTP 仅保留 CSPRNG；不能靠测试提供 Web Lock / subtle / randomUUID 掩盖故障。
         Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
-        Object.defineProperty(globalThis, "document", { configurable: true, value: {} });
+        const { Window } = await import("happy-dom");
+        Object.defineProperty(globalThis, "document", { configurable: true, value: new Window({ url: "http://canvas.test" }).document });
         Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto) } });
         setActiveUserScope("http-registered-generation");
         const { useCanvasStore, flushCanvasStorePersistence, CANVAS_STORE_KEY } = await import("../../src/stores/canvas/use-canvas-store");
@@ -690,6 +714,7 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         const { initializeRemoteUserDataSession, saveRemoteUserDataNow, resetRemoteUserDataSync } = await import("../../src/services/user-data-sync");
         const { materializeGenerationTaskAssets, consumeGenerationTaskNode, consumeGenerationTaskMessage, projectGenerationTaskResult } = await import("../../src/services/project-asset-sync");
         const { applyGenerationTaskResultToNodes, generationTaskOutputsApplied, shouldRecoverCanvasMediaAsset } = await import("../../src/lib/canvas/canvas-generation-task-sync");
+        const { canvasContentHash } = await import("../../src/lib/canvas/canvas-content");
         const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
         const { parseCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
         const { CanvasNodeType } = await import("../../src/types/canvas");
@@ -707,9 +732,11 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         if (screen) node.metadata = { taskId: "task-http-recovery", taskStatus: "succeeded", status: "loading", size: "640x480" };
         useCanvasStore.getState().updateProject(projectId, {
             nodes: [node],
-            revision: 1,
             ...(screen ? { creationScene: { kind: "irregular-screen" as const, version: 1 as const, nodeIds: { controlImage: "screen-control", outputMask: "screen-mask", generation: node.id } } } : {}),
         });
+        const baseline = useCanvasStore.getState().openProject(projectId)!;
+        const remoteContentHash = await canvasContentHash(baseline);
+        useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => (project.id === projectId ? { ...project, revision: 1, remoteContentHash } : project)) }));
         await flushCanvasStorePersistence();
         remoteProject = structuredClone(useCanvasStore.getState().projects.find((project) => project.id === projectId)!);
         await initializeRemoteUserDataSession("http-user");
@@ -821,8 +848,83 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     }
 }
 
+async function runCanvasAssetPreparation() {
+    const harness = installStorageHarness();
+    const previousScope = getActiveUserScope();
+    try {
+        setActiveUserScope("canvas-asset-preparation");
+        const { useCanvasStore, flushCanvasStorePersistence } = await import("../../src/stores/canvas/use-canvas-store");
+        const { useAssetStore, flushAssetStorePersistence, ASSET_STORE_KEY } = await import("../../src/stores/use-asset-store");
+        const { prepareCanvasMediaNodeAsset, isCanvasGenerationDurableAckError } = await import("../../src/services/canvas-generation-consumer");
+        const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
+        const { CanvasNodeType } = await import("../../src/types/canvas");
+        const projectId = useCanvasStore.getState().createProject("asset preparation");
+        const placeholder = { id: "result", type: CanvasNodeType.Image, position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { status: "loading" as const } };
+        useCanvasStore.getState().updateProject(projectId, { nodes: [placeholder] });
+        await flushCanvasStorePersistence();
+        const candidate = { ...placeholder, metadata: { status: "success" as const, content: "/derived.png", storageKey: "resource:derived", imageLayerGroup: { width: 640, height: 480, layers: [] } } };
+        let release!: () => void;
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        harness.hooks.onSet = async (_store, key) => {
+            if (key !== scopedStorageKey(ASSET_STORE_KEY)) return;
+            entered();
+            await gate;
+        };
+        let resolved = false;
+        const pending = prepareCanvasMediaNodeAsset(projectId, candidate).then((node) => {
+            resolved = true;
+            return node;
+        });
+        await Promise.race([
+            started,
+            pending.then(() => {
+                throw new Error("素材持久化等待被绕过");
+            }),
+        ]);
+        const resolvedBeforePersistence = resolved;
+        const nodesBeforePersistence = useCanvasStore.getState().projects.find((project) => project.id === projectId)!.nodes;
+        release();
+        const prepared = await pending;
+        harness.hooks.onSet = undefined;
+        const persisted = await localForageStorageForScope(getActiveUserScope()).getItem(ASSET_STORE_KEY);
+        const countBeforeReuse = useAssetStore.getState().assets.length;
+        const reused = await prepareCanvasMediaNodeAsset(projectId, prepared);
+        const countAfterReuse = useAssetStore.getState().assets.length;
+        let missingBindingError = false;
+        try {
+            await prepareCanvasMediaNodeAsset(projectId, { ...candidate, metadata: { content: "/original.png", storageKey: "resource:original", taskId: "task" } });
+        } catch (error) {
+            missingBindingError = isCanvasGenerationDurableAckError(error);
+        }
+        const controller = new AbortController();
+        controller.abort();
+        let aborted = false;
+        try {
+            await prepareCanvasMediaNodeAsset(projectId, candidate, controller.signal);
+        } catch (error) {
+            aborted = error instanceof Error && error.name === "AbortError";
+        }
+        await flushAssetStorePersistence();
+        return { resolvedBeforePersistence, nodesBeforePersistence, prepared, persisted, countBeforeReuse, countAfterReuse, reusedSameNode: reused === prepared, missingBindingError, aborted, finalAssetCount: useAssetStore.getState().assets.length };
+    } finally {
+        setActiveUserScope(previousScope);
+        harness.restore();
+    }
+}
+
 self.onmessage = async (event: MessageEvent<Scenario>) => {
     try {
+        if (event.data === "canvas-mask-batch" || event.data === "canvas-asset-preparation") {
+            const result = event.data === "canvas-mask-batch" ? await runCanvasBatchCommitRace(false, true) : await runCanvasAssetPreparation();
+            self.postMessage({ ok: true, result });
+            return;
+        }
         const result =
             event.data === "http-creation-generation"
                 ? await runHTTPRegisteredGeneration("registered", false, true)
@@ -857,6 +959,6 @@ self.onmessage = async (event: MessageEvent<Scenario>) => {
                                             : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
         self.postMessage({ ok: true, result });
     } catch (error) {
-        self.postMessage({ ok: false, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
+        self.postMessage({ ok: false, error: error instanceof Error ? error.stack || `${error.name}: ${error.message}` : String(error) });
     }
 };

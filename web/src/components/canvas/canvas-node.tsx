@@ -4,6 +4,7 @@ import { AlertCircle, BookOpenCheck, Box, CheckCircle2, ChevronRight, Clapperboa
 
 import { useCanvasNodeActions } from "./canvas-node-action-context";
 import { CanvasImageLayerControls } from "./canvas-image-layer-controls";
+import { CanvasTextLeaseIndicator } from "./use-canvas-text-lease";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
@@ -227,11 +228,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                 editing={isEditingTitle}
                 draft={titleDraft}
                 theme={theme}
-                onDraftChange={setTitleDraft}
+                onDraftChange={(value) => { setTitleDraft(value); onTitleChange?.(data.id, value); }}
                 onEdit={() => setIsEditingTitle(true)}
                 onCommit={commitTitle}
                 onCancel={() => { setTitleDraft(data.title); setIsEditingTitle(false); }}
             /> : null}
+            {showChrome ? <div className="pointer-events-none absolute left-0 top-full pt-1"><CanvasTextLeaseIndicator nodeId={data.id} canvasId={drawingProjectId} /></div> : null}
             <div
                 className="canvas-node-shell relative h-full w-full overflow-visible rounded-[var(--node-radius)]"
                 data-node-state={nodeState}
@@ -279,7 +281,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onOpenTextEditor?.(data);
                         return;
                     }
-                    if (readOnly || data.type !== CanvasNodeType.Text) return;
+                    if (readOnly || data.metadata?.locked || data.type !== CanvasNodeType.Text) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
                 }}
@@ -307,6 +309,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         renderLOD={effectiveRenderLOD}
                         readOnly={readOnly}
                         isEditingContent={isEditingContent}
+                        contentReadOnly={readOnly || Boolean(data.metadata?.locked)}
                         textareaRef={textareaRef}
                         isBatchRoot={isBatchRoot}
                         batchCount={batchCount}
@@ -599,6 +602,7 @@ function NodeExternalHeader({ node, scale, dimensionLabel, active, editable, edi
                     <input
                         autoFocus
                         value={draft}
+                        readOnly={!editable}
                         className="h-6 min-w-20 max-w-[190px] flex-1 truncate rounded bg-transparent px-1.5 text-xs font-medium outline-none"
                         style={{ background: "transparent", color: theme.node.text }}
                         onChange={(event) => onDraftChange(event.target.value)}

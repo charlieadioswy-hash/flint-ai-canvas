@@ -14,7 +14,9 @@ type Scenario =
     | "http-creation-generation"
     | "http-creation-generation-mismatch"
     | "http-creation-generation-missing"
-    | "http-generation-missing";
+    | "http-generation-missing"
+    | "canvas-mask-batch"
+    | "canvas-asset-preparation";
 
 test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建素材或生成任务", async () => {
     type Message = import("../src/pages/create/creation-types").CreationMessage;
@@ -67,6 +69,50 @@ test("HTTP 恢复拒绝资源不匹配的登记身份，缺失素材也不能绕
     for (const result of [mismatch, missing]) expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
 });
 
+test("局部重绘并发完成时根节点复用主图资源和素材，重载后保持完整绑定", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    const result = await runScenario<{ live: Node[]; restored: Node[] }>("canvas-mask-batch");
+    for (const nodes of [result.live, result.restored]) {
+        const root = nodes.find((node) => node.id === "mask-root")!;
+        const primary = nodes.find((node) => node.id === root.metadata?.primaryImageId)!;
+        expect(root.metadata).toMatchObject({ status: "success", assetId: primary.metadata!.assetId, storageKey: primary.metadata!.storageKey, batchFailedCount: 3 });
+        expect(root.position).toEqual({ x: -400, y: 0 });
+        expect(root.width).toBe(primary.width);
+        expect(root.height).toBe(primary.height);
+        expect(root.width / root.height).toBeCloseTo(640 / 360);
+        expect(nodes.find((node) => node.id === "node-1")?.position).toEqual({ x: 400, y: 0 });
+        expect(nodes.find((node) => node.id === "node-0")).toMatchObject({ title: "用户改名", position: { x: 700, y: 500 }, metadata: { assetId: "asset-0" } });
+        expect(nodes.find((node) => node.id === "node-1")?.metadata?.assetId).toBe("asset-1");
+    }
+});
+
+test("派生结果等待素材持久化且不提前发布，原始结果缺绑定及取消均阻止交付", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    const result = await runScenario<{
+        resolvedBeforePersistence: boolean;
+        nodesBeforePersistence: Node[];
+        prepared: Node;
+        persisted: string;
+        countBeforeReuse: number;
+        countAfterReuse: number;
+        reusedSameNode: boolean;
+        missingBindingError: boolean;
+        aborted: boolean;
+        finalAssetCount: number;
+    }>("canvas-asset-preparation");
+    expect(result.resolvedBeforePersistence).toBe(false);
+    expect(result.nodesBeforePersistence[0].metadata).toEqual({ status: "loading" });
+    expect(result.prepared.metadata?.assetId).toBeTruthy();
+    expect(result.persisted).toContain(result.prepared.metadata!.assetId!);
+    expect(result.persisted).toContain("resource:derived");
+    expect(result.reusedSameNode).toBe(true);
+    expect(result.countBeforeReuse).toBe(1);
+    expect(result.countAfterReuse).toBe(1);
+    expect(result.finalAssetCount).toBe(1);
+    expect(result.missingBindingError).toBe(true);
+    expect(result.aborted).toBe(true);
+});
+
 test("一次任务四图经真实消费链路堆叠并保存，刷新和重放保留四个独立资源", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;
     const result = await runScenario<{ edited: boolean; live: Node[]; restored: Node[]; replayed: Node[] }>("canvas-multi-output");
@@ -94,6 +140,7 @@ test("已生成图片的副本在普通保存和新生成结果持久化后仍�
     expect(result.restored.map((node) => node.id)).toEqual(["source", "copy"]);
     expect(result.restored.find((node) => node.id === "source")?.metadata).toMatchObject({ content: "original-image", generationEffectKeys: ["attach-node:old-task:source:0"] });
     expect(result.restored.find((node) => node.id === "copy")?.metadata).toMatchObject({ content: "new-image", status: "success", generationEffectKeys: ["attach-node:new-task:copy:0"] });
+    expect(result.restored.find((node) => node.id === "copy")).toMatchObject({ title: "Latest user title", position: { x: 700, y: 500 } });
 });
 
 test("并发生成结果经真实持久化消费链路及重新读取后保留成功、失败和用户编辑", async () => {

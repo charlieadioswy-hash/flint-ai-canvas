@@ -90,6 +90,8 @@ export type ModelChannel = {
     hasSecretKey?: boolean;
     concurrencyLimit?: number;
     proxyUrl?: string;
+    // 仅管理端：渠道由哪个目录服务商一键接入，空表示自定义渠道。
+    catalogProviderId?: string;
     modelCosts?: Array<{
         model: string;
         displayName?: string;
@@ -158,6 +160,8 @@ export type AiConfig = {
     textModels: string[];
     audioModels: string[];
     quality: string;
+    imageResolution: string;
+    imageParameters?: string;
     size: string;
     transparentBackground: string;
     count: string;
@@ -212,6 +216,7 @@ export const defaultConfig: AiConfig = {
     textModels: [],
     audioModels: [],
     quality: "auto",
+    imageResolution: "auto",
     size: "1:1",
     transparentBackground: "false",
     count: "1",

@@ -3,6 +3,7 @@ import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import type { ModelProtocolDefinition } from "../src/lib/model-protocols";
 import {
     changeChannelModelCapability,
+    changeChannelModelProtocol,
     duplicateChannelModelValues,
     editorSectionForField,
     initialChannelModelValues,
@@ -18,6 +19,12 @@ const protocols = [definition("disabled-text", "text", false), definition("text"
 const protocolsWithAudio = [...protocols, definition("audio", "audio")];
 
 describe("channel model editor drafts", () => {
+    test("new drafts use 未分类 and imported drafts display the upstream ID without overwriting custom names", () => {
+        expect(initialChannelModelValues(null, protocols).displayName).toBe("未分类");
+        const imported = { modelKey: "product-id", providerModelKey: "upstream-id", displayName: "未分类", channelLabel: "", priceTiers: [] } as unknown as ChannelModel;
+        expect(initialChannelModelValues(imported, protocols)).toMatchObject({ displayName: "未分类", channelLabel: "upstream-id" });
+        expect(initialChannelModelValues({ ...imported, displayName: "product-id", channelLabel: "手动命名" }, protocols)).toMatchObject({ displayName: "product-id", channelLabel: "手动命名" });
+    });
     test("Kemei Seedream selection initializes the image profile and preserves pricing", () => {
         const draft = initialChannelModelValues(null, protocols);
         draft.priceTiers[0].unitPrice = 19;
@@ -132,6 +139,25 @@ describe("channel model editor drafts", () => {
     test("audio does not retain image/video configuration", () => {
         const draft = initialChannelModelValues(null, protocols);
         expect(changeChannelModelCapability({ ...draft, capability: "audio" }, protocols).capabilityConfig).toBeUndefined();
+    });
+    test("protocol switches reset provider options and initialize plugin pricing parameters", () => {
+        const imageProtocol: ModelProtocolDefinition = {
+            ...definition("liblib-image", "image"),
+            supportsControlNet: true,
+            imageParameters: [{ name: "steps", label: "生成步数", type: "integer", min: 1, max: 50, default: 20, pricing: true }],
+        };
+        const draft = {
+            ...initialChannelModelValues(null, protocols),
+            capability: "image" as const,
+            providerDefaults: { oldOption: 5 },
+            priceTiers: [{ ...defaultPriceTier("advanced"), quality: "high", imageResolution: "2k", imageSelector: { quality: "high" }, unitPrice: 7 }],
+        };
+        const next = changeChannelModelProtocol(draft, imageProtocol.value, [imageProtocol]);
+        expect(next.providerDefaults).toEqual({});
+        expect(next.capabilityConfig?.image?.controlNet?.supported).toBe(true);
+        expect(next.capabilityConfig?.image?.parameters).toEqual(imageProtocol.imageParameters);
+        expect(next.priceTiers[0]).toMatchObject({ unitPrice: 7, quality: "*", imageResolution: "*", imageSelector: {} });
+        expect(draft.providerDefaults).toEqual({ oldOption: 5 });
     });
     test("switching capability to a Midjourney protocol uses its image defaults without changing prices", () => {
         const draft = initialChannelModelValues(null, protocols);

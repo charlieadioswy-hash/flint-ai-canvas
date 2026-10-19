@@ -20,6 +20,7 @@ import (
 	"yingce/backend/internal/payment"
 	"yingce/backend/internal/platform"
 	"yingce/backend/internal/prompts"
+	"yingce/backend/internal/providercatalog"
 	"yingce/backend/internal/repository"
 	"yingce/backend/internal/skills"
 	"yingce/backend/internal/sms"
@@ -82,6 +83,7 @@ type Service struct {
 	auth                     *auth.Service
 	sms                      *sms.Service
 	canvas                   *canvas.Service
+	canvasRealtime           *canvas.RealtimeHub
 	workbench                *workbench.Service
 	piRunnerMu               sync.Mutex
 	piRunnerWg               sync.WaitGroup
@@ -99,6 +101,14 @@ type Service struct {
 	approvedMediaClosed            bool
 	imageModerationProviderFactory func(string) (moderation.Provider, error)
 	model3DProviderFactory         func() model3d.Provider
+	providerCatalogOnce            sync.Once
+	providerCatalog                *providercatalog.Source
+	creditPolicyMu                 sync.RWMutex
+	creditPolicyCache              *CreditPolicy
+	creditPolicyAt                 time.Time
+	modelAvailabilityMu            sync.RWMutex
+	modelAvailabilityCache         map[publicModelAvailabilityKey]*PublicModelAvailability
+	modelAvailabilityAt            time.Time
 }
 
 const taskWorkerConcurrency = 3
@@ -136,6 +146,8 @@ func New(repo *repository.Repository, dataDir string) *Service {
 
 func newService(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := platform.NewCoordinator(repo.Dialect())
+	canvasRealtime := canvas.NewRealtimeHub(coordinator.Redis())
+	repo = repo.WithCanvasChangeNotifier(canvasRealtime.Changed)
 	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
 	paymentRegistry, _ := payment.NewRegistry()
 	if pluginRuntime != nil {
@@ -156,6 +168,7 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	service.sms = service.newSMSDomain()
 	service.auth.SetSMSDelivery(service.sms)
 	service.canvas = canvas.New(service.repo, canvasHost{svc: service})
+	service.canvasRealtime = canvasRealtime
 	service.workbench = workbench.New(service.repo, workbenchAdminGate{svc: service}, workbenchAdminGate{svc: service})
 	service.platform = platform.New(service.repo, coordinator, platformHost{svc: service})
 	return service

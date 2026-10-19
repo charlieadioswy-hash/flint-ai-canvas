@@ -183,6 +183,7 @@ export function ChannelModelSettings({ channel, onChange }: { channel: ModelChan
                                     protocol={activeProtocol}
                                     workflows={modelProtocolDefinition(activeProtocol, availableProtocols)?.workflows}
                                     supportsControlNet={modelProtocolDefinition(activeProtocol, availableProtocols)?.supportsControlNet}
+                                    imageParameters={modelProtocolDefinition(activeProtocol, availableProtocols)?.imageParameters}
                                     onChange={(capabilityConfig) => updateCost(activeModel, { capabilityConfig })}
                                 />
                             ) : <p className="text-xs text-foreground/50">当前模型类型无需额外配置引用与参数。</p>}

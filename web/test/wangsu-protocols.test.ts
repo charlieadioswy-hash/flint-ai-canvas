@@ -119,8 +119,18 @@ describe("Wangsu independent protocols", () => {
         const selected = changeChannelModelCapability({ ...draft, capability: "video", protocol: "wangsu-videos", modelKey: "MiniMax-Hailuo-02" }, [definition]);
         expect(selected.capabilityConfig?.video?.duration.values).toEqual([6, 10]);
         const changed = { ...selected, providerModelKey: "doubao-seedance-2-5-260628" };
-        expect(updateChannelModelUpstreamCapabilities(changed, "MiniMax-Hailuo-02").capabilityConfig?.video?.duration.max).toBe(30);
+        expect(updateChannelModelUpstreamCapabilities(changed, [definition], "MiniMax-Hailuo-02").capabilityConfig?.video?.duration.max).toBe(30);
         changed.capabilityConfig!.video!.references.promptMaxChars = 1234;
-        expect(updateChannelModelUpstreamCapabilities(changed, "MiniMax-Hailuo-02")).toBe(changed);
+        expect(updateChannelModelUpstreamCapabilities(changed, [definition], "MiniMax-Hailuo-02")).toBe(changed);
+    });
+    test("reopened image defaults still refresh after legacy resolution normalization", () => {
+        const definition: ModelProtocolDefinition = { value: "wangsu-openai-images", capability: "image", label: "Wangsu 图片", create: "POST /openai/images/generations", contentType: "application/json", media: "image" };
+        const draft = initialChannelModelValues({ modelKey: "qwen-image", capability: "image", protocol: definition.value } as Parameters<typeof initialChannelModelValues>[0], [definition]);
+        const changed = { ...draft, providerModelKey: "gpt-image-2.5-flare" };
+        const next = updateChannelModelUpstreamCapabilities(changed, [definition], "qwen-image");
+        expect(next.capabilityConfig?.image).toMatchObject({ references: { maxImages: 1, maskSupported: true }, maxOutputs: 10 });
+        expect(next.capabilityConfig?.image?.quality.values).toContain("xhigh");
+        changed.capabilityConfig!.image!.references.promptMaxChars = 1234;
+        expect(updateChannelModelUpstreamCapabilities(changed, [definition], "qwen-image")).toBe(changed);
     });
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { deselectVisibleModels, filterImportModels, selectVisibleModels } from "../src/pages/admin/components/channel-model-import-selection";
+import { deselectVisibleModels, filterImportModels, selectExistingImportModels, selectVisibleModels } from "../src/pages/admin/components/channel-model-import-selection";
 
 const MODELS = ["MiniMax-H3", "004系列/MiniMax-H3(933/10-15秒768P)", "004系列/sd2.5(30--0-10卡脸4-30秒/720P)", "gpt-image-1", "doubao-seedream-4"];
 
@@ -43,4 +43,10 @@ test("取消选中只移除可见的，隐藏的勾选不动", () => {
 
 test("无关键字时取消选中等于清空，与旧行为一致", () => {
     expect(deselectVisibleModels(MODELS, filterImportModels(MODELS, ""))).toEqual([]);
+});
+
+test("已有模型默认勾选，新模型默认不勾选，沿用上游标识匹配规则", () => {
+    const available = ["models/gpt-a", "new-model", " GPT-B ", "gpt-c"];
+    expect(selectExistingImportModels(available, ["gpt-a", "models/gpt-b", "gpt-c"])).toEqual(["models/gpt-a", " GPT-B ", "gpt-c"]);
+    expect(selectExistingImportModels(available, [])).toEqual([]);
 });

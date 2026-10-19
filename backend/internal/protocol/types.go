@@ -96,6 +96,7 @@ type GenerationRequest struct {
 	Operation       string                    `json:"operation,omitempty"`
 	Output          OutputOptions             `json:"output,omitempty"`
 	ProviderOptions map[string]map[string]any `json:"providerOptions,omitempty"`
+	ImageParameters map[string]any            `json:"imageParameters,omitempty"`
 	Extra           map[string]any            `json:"extra,omitempty"`
 }
 
@@ -165,26 +166,27 @@ type Parameter struct {
 }
 
 type Metadata struct {
-	SupportsControlNet      bool         `json:"supportsControlNet,omitempty"`
-	ID                      string       `json:"id"`
-	Version                 string       `json:"version"`
-	Name                    string       `json:"name"`
-	Vendor                  string       `json:"vendor"`
-	Description             string       `json:"description,omitempty"`
-	Categories              []Capability `json:"categories"`
-	Scopes                  []Surface    `json:"scopes"`
-	Parameters              []Parameter  `json:"parameters,omitempty"`
-	Create                  string       `json:"-"`
-	Poll                    string       `json:"-"`
-	Cancel                  string       `json:"-"`
-	ContentType             string       `json:"-"`
-	Documentation           string       `json:"documentation,omitempty"`
-	LegacyAliases           []string     `json:"-"`
-	Enabled                 bool         `json:"enabled"`
-	Installable             bool         `json:"installable"`
-	Execution               string       `json:"-"`
-	RequiresPublicMediaURLs bool         `json:"-"`
-	UnavailableReason       string       `json:"-"`
+	SupportsControlNet      bool             `json:"supportsControlNet,omitempty"`
+	ID                      string           `json:"id"`
+	Version                 string           `json:"version"`
+	Name                    string           `json:"name"`
+	Vendor                  string           `json:"vendor"`
+	Description             string           `json:"description,omitempty"`
+	Categories              []Capability     `json:"categories"`
+	Scopes                  []Surface        `json:"scopes"`
+	Parameters              []Parameter      `json:"parameters,omitempty"`
+	ImageParameters         []ImageParameter `json:"imageParameters,omitempty"`
+	Create                  string           `json:"-"`
+	Poll                    string           `json:"-"`
+	Cancel                  string           `json:"-"`
+	ContentType             string           `json:"-"`
+	Documentation           string           `json:"documentation,omitempty"`
+	LegacyAliases           []string         `json:"-"`
+	Enabled                 bool             `json:"enabled"`
+	Installable             bool             `json:"installable"`
+	Execution               string           `json:"-"`
+	RequiresPublicMediaURLs bool             `json:"-"`
+	UnavailableReason       string           `json:"-"`
 }
 
 // Manifest is the single plugin contract. A plugin may contribute providers,
@@ -342,6 +344,7 @@ type ManifestProvider struct {
 	RequiresPublicMediaURLs bool                   `json:"requiresPublicMediaUrls,omitempty"`
 	Auth                    ManifestAuth           `json:"auth,omitempty"`
 	Parameters              []Parameter            `json:"parameters,omitempty"`
+	ImageParameters         []ImageParameter       `json:"imageParameters,omitempty"`
 	Validations             []ManifestValidation   `json:"validations,omitempty"`
 	Create                  ManifestOperation      `json:"create"`
 	Agent                   *ManifestOperation     `json:"agent,omitempty"`

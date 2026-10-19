@@ -99,6 +99,88 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaSQLPerformanceIndexes(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-sql-perf-v56?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var catalogMigration schemaMigration
+	if err := db.First(&catalogMigration, "name = ?", "provider_catalog_source").Error; err != nil {
+		t.Fatal(err)
+	}
+	if catalogMigration.Name != "provider_catalog_source" || catalogMigration.Checksum != "sha256:provider-catalog-source-v55" {
+		t.Fatalf("provider catalog migration identity changed: %#v", catalogMigration)
+	}
+	for _, item := range []struct {
+		entity any
+		index  string
+	}{
+		{&model.ApiCallLog{}, "idx_api_logs_created_epoch"},
+		{&model.ApiCallLog{}, "idx_api_logs_user_created"},
+		{&model.Task{}, "idx_tasks_created_epoch"},
+		{&model.Task{}, "idx_tasks_user_project_created"},
+		{&model.CreditLedgerEntry{}, "idx_credit_ledger_user_type"},
+	} {
+		if err := db.Migrator().DropIndex(item.entity, item.index); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, entity := range []any{&model.ApiCallLog{}, &model.Task{}} {
+		if err := db.Migrator().DropColumn(entity, "CreatedAtEpoch"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Where("name = ?", "sql_perf_indexes").Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 15, 12, 30, 0, 0, time.UTC)
+	for _, table := range []string{"api_call_logs", "tasks"} {
+		if err := db.Table(table).Create(map[string]any{"id": "legacy-" + table, "created_at": createdAt}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("upgrade from provider catalog v55: %v", err)
+	}
+	for _, table := range []string{"api_call_logs", "tasks"} {
+		var epoch int64
+		if err := db.Table(table).Select("created_at_epoch").Where("id = ?", "legacy-"+table).Scan(&epoch).Error; err != nil {
+			t.Fatal(err)
+		}
+		if epoch != createdAt.Unix() {
+			t.Fatalf("%s legacy timestamp = %d, want %d", table, epoch, createdAt.Unix())
+		}
+	}
+	for _, item := range []struct {
+		entity any
+		index  string
+	}{
+		{&model.ApiCallLog{}, "idx_api_logs_user_created"},
+		{&model.Task{}, "idx_tasks_user_project_created"},
+		{&model.CreditLedgerEntry{}, "idx_credit_ledger_user_type"},
+	} {
+		if !db.Migrator().HasIndex(item.entity, item.index) {
+			t.Fatalf("v56 did not restore %s", item.index)
+		}
+	}
+	var after schemaMigration
+	if err := db.First(&after, "name = ?", "provider_catalog_source").Error; err != nil {
+		t.Fatal(err)
+	}
+	if after != catalogMigration {
+		t.Fatalf("v56 rewrote provider catalog migration: before=%#v after=%#v", catalogMigration, after)
+	}
+	if !db.Migrator().HasColumn(&model.ModelChannel{}, "CatalogProviderID") || !db.Migrator().HasColumn(&model.ChannelModel{}, "CatalogModelKey") {
+		t.Fatal("provider catalog columns missing after v56 upgrade")
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("v56 upgrade should be idempotent: %v", err)
+	}
+}
+
 func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.DB {
 	t.Helper()
 	db, err := Open(Config{Driver: "sqlite", DSN: "file:" + t.Name() + "?mode=memory&cache=shared"})
@@ -117,11 +199,21 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		"upload_reservations": 45, "channel_proxy_url": 48, "banner_sort_order": 49,
 		"canvas_mutation_receipts": 50, "personal_profile_security": 51,
 		"user_avatar_presets": 52, "user_login_logs": 53, workbenchToolsMigrationName: 54,
+		"provider_catalog_source": 55, "sql_perf_indexes": 56, "canvas_multi_session_sync": 57,
+	}
+	if lineage == "merged_upstream" {
+		upstreamVersions["canvas_model3d"] = 55
+		upstreamVersions["model3d_base_url"] = 56
+		upstreamVersions["model3d_asset_timestamps"] = 57
+		upstreamVersions["channel_model_provider_defaults"] = 58
+		delete(upstreamVersions, "provider_catalog_source")
+		delete(upstreamVersions, "sql_perf_indexes")
+		delete(upstreamVersions, "canvas_multi_session_sync")
 	}
 	applied := map[string]bool{}
 	for _, item := range schemaMigrations {
 		switch lineage {
-		case "upstream", "legacy_workbench":
+		case "upstream", "legacy_workbench", "merged_upstream":
 			if item.version >= 44 && item.version != 46 && item.version != 47 {
 				version, ok := upstreamVersions[item.name]
 				if !ok {
@@ -182,6 +274,8 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		{"channel_proxy_url", &model.ModelChannel{}, "ProxyURL"},
 		{"channel_model_provider_defaults", &model.ChannelModel{}, "ProviderDefaults"},
 		{"user_avatar_presets", &model.User{}, "AvatarPreset"},
+		{"provider_catalog_source", &model.ModelChannel{}, "CatalogProviderID"},
+		{"provider_catalog_source", &model.ChannelModel{}, "CatalogModelKey"},
 	} {
 		if !applied[column.migration] {
 			if err := db.Migrator().DropColumn(column.model, column.field); err != nil {
@@ -197,8 +291,10 @@ func TestMigrateSchemaPreservesReleasedBranchHistories(t *testing.T) {
 		lineage string
 		version int64
 	}{
-		{"local", 51}, {"merged_uploads", 51}, {"upstream", 48}, {"upstream", 49},
-		{"upstream", 50}, {"upstream", 51}, {"upstream", 54}, {"legacy_workbench", 51},
+		{"local", 51}, {"local", 58}, {"merged_uploads", 51}, {"merged_uploads", 58},
+		{"upstream", 48}, {"upstream", 49}, {"upstream", 50}, {"upstream", 51},
+		{"upstream", 54}, {"upstream", 55}, {"upstream", 56}, {"upstream", 57},
+		{"merged_upstream", 58}, {"legacy_workbench", 51},
 	} {
 		t.Run(fmt.Sprintf("%s-v%d", tc.lineage, tc.version), func(t *testing.T) {
 			db := schemaBranchFixture(t, tc.lineage, tc.version)
@@ -228,6 +324,9 @@ func TestMigrateSchemaPreservesReleasedBranchHistories(t *testing.T) {
 			}
 			if !db.Migrator().HasColumn(&model.ModelChannel{}, "ProxyURL") || !db.Migrator().HasColumn(&model.ChannelModel{}, "ProviderDefaults") || !db.Migrator().HasColumn(&model.User{}, "AvatarPreset") {
 				t.Fatal("branch upgrade did not restore new columns")
+			}
+			if !db.Migrator().HasColumn(&model.ModelChannel{}, "CatalogProviderID") || !db.Migrator().HasColumn(&model.ChannelModel{}, "CatalogModelKey") {
+				t.Fatal("branch upgrade did not restore provider catalog columns")
 			}
 		})
 	}

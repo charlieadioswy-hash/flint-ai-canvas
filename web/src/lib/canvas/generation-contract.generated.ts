@@ -39,6 +39,8 @@ export type Options = {
     controlNet?: ControlNetBinding[];
     outputMask?: OutputMaskBinding;
     size?: string;
+    imageResolution?: string;
+    imageParameters?: string;
     quality?: string;
     count?: number;
     transparentBackground?: boolean;
@@ -103,6 +105,24 @@ export const GENERATION_OPTION_FIELDS = [
         "name": "size",
         "node": "size",
         "task": "size"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "image"
+        ],
+        "name": "imageResolution",
+        "node": "imageResolution",
+        "task": "imageResolution"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "image"
+        ],
+        "name": "imageParameters",
+        "node": "imageParameters",
+        "task": "imageParameters"
     },
     {
         "kind": "string",
