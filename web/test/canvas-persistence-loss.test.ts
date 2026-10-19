@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { rebaseCanvasProjects, parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { commitCanvasGenerationResult } from "@/lib/canvas/canvas-generation-result";
+import { canvasContentHash } from "@/lib/canvas/canvas-content";
 import { buildCanvasOperations, mergeRemoteAssetsWithLocalPending, remoteUserDataRetryDelay } from "@/services/user-data-sync";
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -43,6 +44,35 @@ test("storage rebase keeps durable-only and local-only nodes when project revisi
     const result = rebased.document.state.projects[0]!;
 
     expect(result.nodes.map((item) => item.id).sort()).toEqual(["base", "local", "remote"]);
+});
+
+test("storage rebase retains the cloud content hash when persisting a fetched snapshot", async () => {
+    const base = project([node("base")], 30);
+    const cloud = project([node("base"), node("A"), node("B")], 33);
+    cloud.remoteContentHash = await canvasContentHash(cloud);
+    const document = parseCanvasStorageDocument(null, [base]);
+
+    const rebased = rebaseCanvasProjects({ document, baseProjects: [base], localProjects: [cloud], baseRevision: 1 });
+    const persisted = rebased.document.state.projects[0]!;
+
+    expect(persisted.remoteContentHash).toBe(cloud.remoteContentHash);
+    expect(persisted.remoteContentHash).toBe(await canvasContentHash(persisted));
+});
+
+test("storage rebase does not mark a merge of local edits and cloud additions clean", async () => {
+    const base = project([node("base")]);
+    base.remoteContentHash = await canvasContentHash(base);
+    const local = { ...base, title: "local edit" };
+    const cloud = project([node("base"), node("A"), node("B")], 33);
+    cloud.remoteContentHash = await canvasContentHash(cloud);
+    const document = parseCanvasStorageDocument(null, [cloud]);
+
+    const rebased = rebaseCanvasProjects({ document, baseProjects: [base], localProjects: [local], baseRevision: 1 });
+    const persisted = rebased.document.state.projects[0]!;
+
+    expect(persisted.nodes).toHaveLength(3);
+    expect(persisted.title).toBe("local edit");
+    expect(persisted.remoteContentHash).toBeUndefined();
 });
 
 test("storage rebase preserves a local node recreated after a concurrent deletion", () => {

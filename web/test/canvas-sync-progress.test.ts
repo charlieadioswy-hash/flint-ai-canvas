@@ -107,7 +107,7 @@ export async function applyRemoteCanvasOperations(id, request) {
     }
     fixture.checkLeases?.(before, project, request);
     project.revision++;
-    const response = { project };
+    const response = { project, mutationId: request.mutationId };
     setRemote(id, project);
     receipts.set(key, { digest, response: structuredClone(response) });
     await fixture.afterPostHook?.(id, request, writes.length);
@@ -653,14 +653,18 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
         });
         expect(displayed?.nodes.map((node) => node.id)).toEqual(["image"]);
         expect(live().nodes.map((node) => node.id)).toEqual(["image"]);
-        await sync.saveRemoteUserDataNow("canvas");
+        await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("自动保存已暂停");
         expect(fixture.writes).toHaveLength(0);
         expect(fixture.remote.nodes).toHaveLength(1);
-        const recovery = JSON.parse(fixture.data.get("yingce:canvas-unverified-recovery:canvas"));
-        expect(recovery.at(-1).project.nodes).toEqual([]);
+        expect(journal()[0].conflict.draft.nodes).toEqual([]);
+        await sync.exportCanvasSyncConflictDraftAndResume("canvas", async (draft) => {
+            expect(draft.nodes).toEqual([]);
+        });
+        await sync.saveRemoteUserDataNow("canvas");
+        expect(fixture.writes).toHaveLength(0);
     });
 
-    test("打开期间的标题修改与云端新增节点三方合并，只提交真实标题修改", async () => {
+    test("无可信基线旧缓存的标题保留在草稿中，导出后可继续编辑云端画布", async () => {
         fixture.manualTimers = true;
         const cached = { ...base(), nodes: [], revision: 7 };
         useCanvasStore.setState({ projects: [cached] });
@@ -669,11 +673,18 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
         delete fixture.remote.nodes[0].metadata.assetId;
         edit({ title: "Local title" });
         const displayed = await sync.loadCanvasProjectForEditing("canvas");
-        expect(displayed?.title).toBe("Local title");
+        expect(displayed?.title).toBe("Canvas");
         expect(displayed?.nodes.map((node) => node.id)).toEqual(["image"]);
+        await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("自动保存已暂停");
+        expect(fixture.writes).toHaveLength(0);
+        await sync.exportCanvasSyncConflictDraftAndResume("canvas", async (draft) => {
+            expect(draft.title).toBe("Local title");
+            expect(draft.nodes).toEqual([]);
+        });
+        edit({ title: "Reviewed title" });
         await sync.saveRemoteUserDataNow("canvas");
         expect(fixture.writes).toHaveLength(1);
-        expect(fixture.writes[0].operations).toEqual([{ type: "set_field", field: "title", beforeValue: "Canvas", value: "Local title" }]);
+        expect(fixture.writes[0].operations).toEqual([{ type: "set_field", field: "title", beforeValue: "Canvas", value: "Reviewed title" }]);
         expect(fixture.remote.nodes).toHaveLength(1);
     });
 
@@ -695,6 +706,38 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
         expect(fixture.writes).toHaveLength(0);
     });
 
+    test("旧冲突草稿导出先确认原批次，确认失败保留草稿且不发送剩余批次", async () => {
+        fixture.manualTimers = true;
+        delete fixture.remote.nodes[0].metadata.assetId;
+        edit({ title: "Accepted title" });
+        fixture.afterPostHook = () => {
+            throw new Error("response lost");
+        };
+        await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("response lost");
+        fixture.afterPostHook = undefined;
+        const pending = journal()[0];
+        const original = structuredClone(pending.request);
+        pending.remainingOperations = [{ type: "set_field", field: "title", beforeValue: "Accepted title", value: "Unsent draft" }];
+        pending.conflict = { message: "自动保存已暂停", draft: { ...live(), title: "Unsent draft" } };
+        fixture.data.set(journalKey, JSON.stringify([pending]));
+        await reloadSession();
+        await sync.loadCanvasProjectForEditing("canvas");
+        fixture.errors.set("canvas:2", new Error("receipt unavailable"));
+        const exportDraft = async (draft: CanvasProject) => {
+            expect(draft.title).toBe("Unsent draft");
+        };
+        await expect(sync.exportCanvasSyncConflictDraftAndResume("canvas", exportDraft)).rejects.toThrow("receipt unavailable");
+        expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(true);
+        expect(journal()[0].request).toEqual(original);
+        expect(journal()[0].remainingOperations).toEqual(pending.remainingOperations);
+        await sync.exportCanvasSyncConflictDraftAndResume("canvas", exportDraft);
+        expect(fixture.writes).toEqual([original, original, original]);
+        expect(fixture.remote.title).toBe("Accepted title");
+        expect(fixture.remote.revision).toBe(8);
+        expect(journal()).toEqual([]);
+        expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(false);
+    });
+
     test("旧缓存恢复副本写入失败时不覆盖本地、不向云端发送删除请求", async () => {
         fixture.manualTimers = true;
         useCanvasStore.setState({ projects: [{ ...base(), nodes: [] }] });
@@ -711,13 +754,14 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
     test("冲突新 journal 已落盘但缓存 flush 失败，刷新按新基线重放且不覆盖后续云端字段", async () => {
         fixture.manualTimers = true;
         edit({ title: "Local title" });
-        fixture.remote = { ...base(), title: "Remote title", revision: 8, nodes: base().nodes.map((node) => ({ ...node, height: 200 })) };
+        fixture.remote = { ...base(), revision: 8, nodes: base().nodes.map((node) => ({ ...node, height: 200 })) };
+        fixture.errors.set("canvas:1", new ApiError("conflict", { status: 409, reason: "canvas_field_conflict" }));
         fixture.flushError = new Error("cache flush unavailable");
         await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("cache flush unavailable");
         const replacement = journal()[0];
         expect(replacement.request.mutationId).not.toBe(fixture.writes[0].mutationId);
         expect(replacement.baseline.nodes[0].height).toBe(200);
-        expect(replacement.request.operations).toEqual([{ type: "set_field", field: "title", beforeValue: "Remote title", value: "Local title" }]);
+        expect(replacement.request.operations).toEqual([{ type: "set_field", field: "title", beforeValue: "Canvas", value: "Local title" }]);
         fixture.remote = { ...fixture.remote, revision: 9, nodes: fixture.remote.nodes.map((node: any) => ({ ...node, height: 300 })) };
         fixture.flushError = undefined;
         await reloadSession();
@@ -731,7 +775,8 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
     test("冲突替换 journal 写入失败保留旧请求与本地编辑，恢复后直接保存原画布", async () => {
         fixture.manualTimers = true;
         edit({ title: "Local title" });
-        fixture.remote = { ...base(), title: "Remote title", revision: 8 };
+        fixture.remote = { ...base(), revision: 8, nodes: base().nodes.map((node) => ({ ...node, height: 200 })) };
+        fixture.errors.set("canvas:1", new ApiError("conflict", { status: 409, reason: "canvas_field_conflict" }));
         fixture.saveHook = (key: string, value: string) => {
             if (key !== journalKey || !fixture.writes.length) return;
             if (JSON.parse(value)[0]?.request.mutationId !== fixture.writes[0].mutationId) throw new Error("replacement disk full");
@@ -762,17 +807,22 @@ describe("定向保存与旧 journal 的真实同步集成", () => {
         expect(fixture.remote.title).toBe("Local title");
     });
 
-    test("本地与云端修改同一标题时保留当前标题并保存到原画布", async () => {
+    test("本地与云端修改同一业务标题时保留草稿，不自动覆盖云端", async () => {
         fixture.manualTimers = true;
         edit({ title: "Local title" });
         fixture.remote = { ...base(), revision: 8, title: "Remote title" };
         delete fixture.remote.nodes[0].metadata.assetId;
         await sync.loadCanvasProjectForEditing("canvas");
-        expect(live().title).toBe("Local title");
+        expect(live().title).toBe("Remote title");
         expect(fixture.remote.title).toBe("Remote title");
         expect(fixture.writes).toHaveLength(0);
+        await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("自动保存已暂停");
+        await sync.exportCanvasSyncConflictDraftAndResume("canvas", async (draft) => {
+            expect(draft.title).toBe("Local title");
+        });
         await sync.saveRemoteUserDataNow("canvas");
-        expect(fixture.remote.title).toBe("Local title");
+        expect(fixture.writes).toHaveLength(0);
+        expect(fixture.remote.title).toBe("Remote title");
     });
 
     test("A 全局后台 409 失败不复用给已排队 B，B 自己的新编辑必须提交", async () => {

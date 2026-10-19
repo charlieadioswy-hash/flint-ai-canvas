@@ -3,6 +3,7 @@ import { ArrowUpRight, ChevronDown, Download, History, ImagePlus, LoaderCircle, 
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { ImageSizePicker } from "@/components/image-size-picker";
+import { CanvasSyncConflict } from "@/components/canvas/canvas-sync-conflict";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { ModelPicker } from "@/components/model-picker";
@@ -148,6 +149,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                         </>
                     }
                 />
+                {props.canvasId ? <CanvasSyncConflict projectId={props.canvasId} /> : null}
                 {props.loading ? (
                     <WorkspaceLoadingState label="正在打开异形屏场景" detail="读取蒙版、生成设置与历史结果" />
                 ) : (

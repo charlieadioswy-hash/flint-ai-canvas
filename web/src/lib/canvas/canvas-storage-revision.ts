@@ -376,7 +376,9 @@ function mergeProject(base: CanvasProject | undefined, local: CanvasProject, dur
     });
     merged.revision = local.revision ?? durable.revision;
     merged.viewport = local.viewport;
-    merged.remoteContentHash = undefined;
+    // A cloud snapshot written to IndexedDB is still a clean snapshot. Preserve
+    // its proof only when merging did not introduce content from another branch.
+    merged.remoteContentHash = (sameCanvasContent(merged, local) && local.remoteContentHash) || (sameCanvasContent(merged, durable) && durable.remoteContentHash) || undefined;
     return merged;
 }
 
