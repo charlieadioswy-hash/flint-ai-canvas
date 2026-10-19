@@ -29,6 +29,7 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
     }, [identity]);
     const editable = Boolean(context && !readOnly);
     const pending = isModel3DPending(run);
+    const saving = run?.status === "running" && run.stage === "保存 3D 模型文件";
     const unknown = run?.status === "submission_unknown" || run?.submissionOutcome === "unknown";
     const changed = Boolean(context && state.resultFingerprint && state.resultFingerprint !== model3DSourceFingerprint(state.draft, context.nodes, context.inputNodes(node.id)));
     const version = context?.capabilities?.modelVersions.find((model) => model.id === state.draft.parameters.model)?.label || state.draft.parameters.model || "选择模型";
@@ -38,7 +39,9 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
             : run?.status === "queued"
               ? "排队中"
               : run?.status === "running"
-                ? "生成中"
+                ? saving
+                    ? "正在保存模型"
+                    : "生成中"
                 : unknown
                   ? "提交待确认"
                   : run?.status === "failed"
@@ -140,7 +143,7 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
                     <span className="flex items-center gap-1.5" style={{ color: run?.status === "failed" || unknown ? "var(--status-warning)" : theme.node.muted }}>
                         {pending ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : null}
                         {status}
-                        {pending && typeof run?.progress === "number" ? ` · ${Math.round(run.progress)}%` : ""}
+                        {run?.status === "running" && run.stage === "3D 模型生成中" && typeof run.progress === "number" && run.progress > 0 && run.progress < 100 ? ` · ${Math.round(run.progress)}%` : ""}
                     </span>
                     <div className="flex gap-2">
                         {editable && run?.requestId ? (

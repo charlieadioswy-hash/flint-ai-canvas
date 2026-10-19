@@ -138,7 +138,12 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		if time.Since(task.CreatedAt) > 2*time.Hour {
 			return fail("model_poll_timeout", "原 3D 任务仍未结束，请稍后继续查询原任务", "accepted")
 		}
-		if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, "3D 模型生成中", state.Progress); err != nil {
+		progress := state.Progress
+		// Provider completion does not mean the owned model resource is ready.
+		if progress >= 100 {
+			progress = 0
+		}
+		if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, "3D 模型生成中", progress); err != nil {
 			return err
 		}
 		return s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "3D 模型生成中", 15*time.Second)
@@ -156,9 +161,6 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		return fail("model_storage_failed", "模型交付信息保存失败，可恢复原任务", "storing")
 	}
 	if err := s.repo.SaveModel3DDelivery(task.ID, task.LeaseOwner, encrypted); err != nil {
-		return err
-	}
-	if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, "保存 3D 模型文件", 100); err != nil {
 		return err
 	}
 	call, cancel = model3DCallContext(ctx, config)

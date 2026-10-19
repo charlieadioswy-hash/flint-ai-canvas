@@ -86,24 +86,46 @@ export function useCanvasModel3D({ projectId, projectLoaded, nodes, nodesRef, co
         [currentNode, projectId, setNodes],
     );
 
+    const readTaskWithRetry = useCallback(
+        async (nodeId: string, operation: Operation, read: () => Promise<Model3DTaskView | null>) => {
+            let failures = 0;
+            for (;;) {
+                if (!currentNode(nodeId, operation)) throw new DOMException("Aborted", "AbortError");
+                try {
+                    return await read();
+                } catch (error) {
+                    if (!currentNode(nodeId, operation) || (error instanceof DOMException && error.name === "AbortError")) throw error;
+                    if (!(error instanceof ApiError) || !error.retryable) throw error;
+                    patchRun(nodeId, operation, { error: "暂时无法读取任务进度，正在自动重试；不会重复提交生成。" });
+                    const backoff = Math.min(30_000, 2500 * 2 ** Math.min(failures++, 4));
+                    await delay(Math.max(backoff, error.retryAfterMs || 0), operation.controller.signal);
+                }
+            }
+        },
+        [currentNode, patchRun],
+    );
+
     const poll = useCallback(
         async (nodeId: string, operation: Operation, initial: Model3DTaskView) => {
             operation.kind = "poll";
+            restored.current.add(`${nodeId}:${operation.requestId}`);
             let task = initial;
             try {
                 while ((task.status === "queued" || task.status === "running") && currentNode(nodeId, operation)) {
                     await delay(2500, operation.controller.signal);
                     if (!currentNode(nodeId, operation)) break;
-                    task = await getModel3DTask(task.id, operation.controller.signal);
-                    if (!writeTask(nodeId, operation, task)) break;
+                    const next = await readTaskWithRetry(nodeId, operation, () => getModel3DTask(task.id, operation.controller.signal));
+                    if (!next || !writeTask(nodeId, operation, next)) break;
+                    task = next;
                 }
-            } catch {
-                patchRun(nodeId, operation, { error: "暂时无法读取任务进度，请刷新状态；不会重复提交生成。" });
+            } catch (error) {
+                if (error instanceof DOMException && error.name === "AbortError") return;
+                patchRun(nodeId, operation, { error: error instanceof ApiError ? `任务状态读取已停止：${error.message}` : "无法读取任务状态，请稍后刷新；不会重复提交生成。" });
             } finally {
                 if (operations.current.get(nodeId) === operation) operations.current.delete(nodeId);
             }
         },
-        [currentNode, patchRun, writeTask],
+        [currentNode, patchRun, readTaskWithRetry, writeTask],
     );
 
     const reloadCapabilities = useCallback(
@@ -156,14 +178,13 @@ export function useCanvasModel3D({ projectId, projectLoaded, nodes, nodesRef, co
             if (recover && !run.canRetryStorage) return;
             const operation: Operation = { context, requestId: run.requestId, fingerprint: run.sourceFingerprint, controller: new AbortController(), kind: recover ? "recover" : "poll" };
             operations.current.set(nodeId, operation);
+            restored.current.add(`${nodeId}:${run.requestId}`);
             let polling = false;
             try {
                 const task =
                     recover && run.taskId
                         ? await recoverModel3DTask(run.taskId, operation.controller.signal)
-                        : run.taskId
-                          ? await getModel3DTask(run.taskId, operation.controller.signal)
-                          : await getModel3DTaskByRequest(run.requestId, operation.controller.signal);
+                        : await readTaskWithRetry(nodeId, operation, () => (run.taskId ? getModel3DTask(run.taskId, operation.controller.signal) : getModel3DTaskByRequest(run.requestId, operation.controller.signal)));
                 if (!task) {
                     patchRun(nodeId, operation, { status: "submission_unknown", error: "暂未找到此请求的任务，请稍后刷新核实；不会自动重新提交。" });
                     return;
@@ -172,13 +193,16 @@ export function useCanvasModel3D({ projectId, projectLoaded, nodes, nodesRef, co
                     polling = true;
                     void poll(nodeId, operation, task);
                 }
-            } catch {
-                patchRun(nodeId, operation, { error: recover ? "结果保存恢复失败，请稍后重试；未重新生成模型。" : "无法读取任务状态，请稍后刷新；未提交新的生成。" });
+            } catch (error) {
+                if (error instanceof DOMException && error.name === "AbortError") return;
+                patchRun(nodeId, operation, {
+                    error: recover ? "结果保存恢复失败，请稍后重试；未重新生成模型。" : error instanceof ApiError ? `任务状态读取已停止：${error.message}` : "无法读取任务状态，请稍后刷新；未提交新的生成。",
+                });
             } finally {
                 if (!polling && operations.current.get(nodeId) === operation) operations.current.delete(nodeId);
             }
         },
-        [context, nodesRef, patchRun, poll, userId, writeTask],
+        [context, nodesRef, patchRun, poll, readTaskWithRetry, userId, writeTask],
     );
 
     useEffect(() => {

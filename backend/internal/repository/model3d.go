@@ -291,7 +291,10 @@ func (r *Repository) SaveModel3DDelivery(taskID, owner, encrypted string) error 
 		if err := requireModel3DLease(tx, taskID, owner); err != nil {
 			return err
 		}
-		return tx.Model(&model.Model3DSubmission{}).Where("task_id = ?", taskID).Updates(map[string]any{"state": "storing", "delivery_encrypted": encrypted, "error_code": "", "updated_at": time.Now()}).Error
+		if err := tx.Model(&model.Model3DSubmission{}).Where("task_id = ?", taskID).Updates(map[string]any{"state": "storing", "delivery_encrypted": encrypted, "error_code": "", "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"stage": "保存 3D 模型文件", "progress": 0, "updated_at": time.Now()}).Error
 	})
 }
 
@@ -321,7 +324,7 @@ func (r *Repository) FailModel3DTask(taskID, owner, code, message, state string)
 		if err := tx.Model(&model.Model3DSubmission{}).Where("task_id = ?", taskID).Updates(updates).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusFailed, "stage": "3D 生成失败", "error": message, "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil}).Error
+		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusFailed, "stage": "3D 生成失败", "progress": 0, "error": message, "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil}).Error
 	})
 }
 
@@ -351,7 +354,7 @@ func (r *Repository) RecoverModel3DTask(userID, taskID string, activeLimit int) 
 		if err := enforceActiveTaskLimit(tx, userID, activeLimit); err != nil {
 			return err
 		}
-		return tx.Model(&task).Updates(map[string]any{"status": model.TaskStatusQueued, "stage": "恢复原 3D 任务", "error": "", "completed_at": nil, "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil}).Error
+		return tx.Model(&task).Updates(map[string]any{"status": model.TaskStatusQueued, "stage": "恢复原 3D 任务", "progress": 0, "error": "", "completed_at": nil, "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil}).Error
 	})
 }
 

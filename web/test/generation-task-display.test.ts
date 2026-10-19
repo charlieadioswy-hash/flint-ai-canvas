@@ -3,6 +3,18 @@ import { canCancelGenerationTask, generationTaskShowsProgress, generationTaskSta
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-task-state";
 
 describe("作品保存阶段", () => {
+    test("3D 保存、失败和恢复阶段不展示遗留的完成百分比", () => {
+        for (const [status, stage] of [
+            ["running", "保存 3D 模型文件"],
+            ["failed", "3D 生成失败"],
+            ["queued", "恢复原 3D 任务"],
+            ["running", "3D 模型生成中"],
+        ] as const) {
+            expect(generationTaskShowsProgress({ status, stage, progress: 100 })).toBe(false);
+        }
+        expect(generationTaskShowsProgress({ status: "running", stage: "3D 模型生成中", progress: 37 })).toBe(true);
+        expect(generationTaskShowsProgress({ status: "succeeded", stage: "3D 模型已保存", progress: 100 })).toBe(true);
+    });
     test("分别表达生成、下载、上传和登记，不把保存失败当成生成失败", () => {
         expect(mediaDeliverySummary("failed", "download")).toBe("生成成功 · 下载失败");
         expect(mediaDeliverySummary("failed", "upload")).toBe("生成成功 · 下载成功 · 上传 OSS失败");

@@ -17,15 +17,17 @@ import (
 )
 
 type model3DMock struct {
-	submits     int
-	uploads     []string
-	polls       []string
-	configs     []model3d.Config
-	uploadErr   error
-	submitErr   error
-	downloadErr error
-	state       model3d.State
-	data        []byte
+	submits         int
+	uploads         []string
+	polls           []string
+	configs         []model3d.Config
+	uploadErr       error
+	submitErr       error
+	downloadErr     error
+	downloadStarted chan<- struct{}
+	downloadRelease <-chan struct{}
+	state           model3d.State
+	data            []byte
 }
 
 func (m *model3DMock) Upload(_ context.Context, _ model3d.Config, image model3d.Image) (string, error) {
@@ -41,7 +43,15 @@ func (m *model3DMock) Poll(_ context.Context, _ model3d.Config, id string, _ boo
 	m.polls = append(m.polls, id)
 	return m.state, nil
 }
-func (m *model3DMock) Download(_ context.Context, _ model3d.Artifact) ([]byte, error) {
+func (m *model3DMock) Download(ctx context.Context, _ model3d.Artifact) ([]byte, error) {
+	if m.downloadStarted != nil {
+		m.downloadStarted <- struct{}{}
+		select {
+		case <-m.downloadRelease:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return m.data, m.downloadErr
 }
 
@@ -267,6 +277,79 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 	}
 }
 
+func TestModel3DSavingDoesNotReportCompletionUntilOwnedResultIsReady(t *testing.T) {
+	s, _, mock, admin := setupModel3DTest(t)
+	enableModel3DTest(t, s, admin)
+	view := createModel3DTest(t, s, model3DTextRequest())
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	mock.downloadStarted, mock.downloadRelease = started, release
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	finished := make(chan error, 1)
+	go func() { finished <- s.ProcessNextTask() }()
+	select {
+	case <-started:
+	case err := <-finished:
+		t.Fatalf("worker ended before download: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not start download")
+	}
+	saving, err := s.Model3DTask("3d-user", view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.repo.Task(view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission, err := s.repo.Model3DSubmission(view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saving.Status != model.TaskStatusRunning || saving.Stage != "保存 3D 模型文件" || saving.Progress != 0 || saving.Result != nil || stored.Progress != 0 || stored.ResultJSON != "" || submission.State != "storing" {
+		t.Errorf("download is still blocked but task claims completion: view=%+v storedProgress=%d submission=%s", saving, stored.Progress, submission.State)
+	}
+	close(release)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.Model3DTask("3d-user", view.ID)
+	if err != nil || done.Status != model.TaskStatusSucceeded || done.Progress != 100 || done.Result == nil {
+		t.Fatalf("completion: %v %+v", err, done)
+	}
+	resource, resourceErr := s.repo.ResourceForUser("3d-user", done.Result.ResourceID)
+	asset, assetErr := s.repo.AssetForUser("3d-user", done.Result.AssetID)
+	if resourceErr != nil || assetErr != nil || resource.Status != model.ResourceStatusReady || asset.Kind != "model" || mock.submits != 1 {
+		t.Fatalf("completion did not own a ready resource and registered asset: %v %v", resourceErr, assetErr)
+	}
+}
+
+func TestModel3DPendingAndFailedTasksClearPrematureCompletionProgress(t *testing.T) {
+	for _, status := range []string{"running", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			s, db, mock, admin := setupModel3DTest(t)
+			enableModel3DTest(t, s, admin)
+			mock.state = model3d.State{Status: "running", Progress: 37}
+			view := createModel3DTest(t, s, model3DTextRequest())
+			processModel3DTest(t, s)
+			if err := db.Model(&model.Task{}).Where("id = ?", view.ID).Updates(map[string]any{"progress": 100, "next_poll_at": time.Now().Add(-time.Second)}).Error; err != nil {
+				t.Fatal(err)
+			}
+			mock.state = model3d.State{Status: status, Progress: 100}
+			processModel3DTest(t, s)
+			result, err := s.Model3DTask("3d-user", view.ID)
+			if err != nil || result.Progress != 0 || result.Result != nil || string(result.Status) != status || mock.submits != 1 {
+				t.Fatalf("premature completion persisted: %v %+v", err, result)
+			}
+		})
+	}
+}
+
 func TestModel3DProviderBaseURLIsRequiredNormalizedAndVersioned(t *testing.T) {
 	s, db, _, admin := setupModel3DTest(t)
 	for _, value := range []string{"", "http://example.com/v3", "https://user:secret@example.com/v3", "https://example.com/v3?token=secret", "https://example.com/v2"} {
@@ -335,7 +418,7 @@ func TestModel3DUnknownSubmissionNeverRepostsAfterRestart(t *testing.T) {
 }
 
 func TestModel3DStorageRecoveryPollsOriginalWithoutPost(t *testing.T) {
-	s, _, mock, admin := setupModel3DTest(t)
+	s, db, mock, admin := setupModel3DTest(t)
 	enableModel3DTest(t, s, admin)
 	mock.downloadErr = errors.New("download unavailable")
 	view := createModel3DTest(t, s, model3DTextRequest())
@@ -344,19 +427,24 @@ func TestModel3DStorageRecoveryPollsOriginalWithoutPost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !failed.CanRetryStorage || failed.SubmissionOutcome != "submitted" {
+	if !failed.CanRetryStorage || failed.SubmissionOutcome != "submitted" || failed.Progress != 0 || failed.Result != nil {
 		t.Fatalf("not recoverable: %+v", failed)
 	}
 	if _, err := s.CancelTask(context.Background(), "3d-user", view.ID); err == nil {
 		t.Fatal("failed billed task cancelled")
 	}
 	mock.downloadErr = nil
-	if _, err := s.RecoverModel3DTask("3d-user", view.ID); err != nil {
+	// Also cover recovery of a failure saved by an older worker with progress 100.
+	if err := db.Model(&model.Task{}).Where("id = ?", view.ID).Update("progress", 100).Error; err != nil {
 		t.Fatal(err)
+	}
+	recovered, err := s.RecoverModel3DTask("3d-user", view.ID)
+	if err != nil || recovered.Status != model.TaskStatusQueued || recovered.Progress != 0 || recovered.Result != nil {
+		t.Fatalf("recovery retained completion progress: %v %+v", err, recovered)
 	}
 	processModel3DTest(t, s)
 	done, err := s.Model3DTask("3d-user", view.ID)
-	if err != nil || done.Status != model.TaskStatusSucceeded {
+	if err != nil || done.Status != model.TaskStatusSucceeded || done.Progress != 100 || done.Result == nil {
 		t.Fatalf("recovery: %v %+v", err, done)
 	}
 	if mock.submits != 1 || len(mock.polls) != 2 || mock.polls[0] != mock.polls[1] {

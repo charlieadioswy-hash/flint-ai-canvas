@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import { createDefaultModel3DState, model3DSourceFingerprint } from "@/lib/canvas/model3d";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { Model3DCapabilities, Model3DCreateRequest, Model3DTaskView } from "@/services/api/model3d";
+import { ApiError } from "@/services/api/request";
 
 const modules: Record<string, string> = {
     react: "export const { useState, useRef, useEffect, useCallback } = globalThis.env.hooks;",
@@ -69,16 +70,13 @@ function deferred<T>() {
     });
     return { promise, resolve, reject };
 }
-class TestApiError extends Error {
-    constructor(
-        public status: number,
-        public reason: string,
-    ) {
-        super("admission error");
+class TestApiError extends ApiError {
+    constructor(status: number | undefined, reason: string, retryAfterMs?: number) {
+        super("admission error", { status, reason, retryAfterMs, retryable: status === undefined ? true : undefined });
     }
 }
 
-function harness(initial = node(), initialTask: Model3DTaskView | null = null, browserCrypto: Pick<Crypto, "getRandomValues"> = crypto) {
+function harness(initial = node(), initialTask: Model3DTaskView | null = null, browserCrypto: Pick<Crypto, "getRandomValues"> = crypto, initialRead?: () => Promise<Model3DTaskView>) {
     const cells: any[] = [];
     let cursor = 0;
     let dirty = false;
@@ -102,11 +100,12 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
     let lastTask: Model3DTaskView | null = initialTask;
     const behavior = {
         create: async (payload: Model3DCreateRequest): Promise<Model3DTaskView> => task(payload),
-        get: async (): Promise<Model3DTaskView> => lastTask!,
+        get: initialRead || (async (): Promise<Model3DTaskView> => lastTask!),
         request: async (): Promise<Model3DTaskView | null> => lastTask,
         recover: async (): Promise<Model3DTaskView> => ({ ...lastTask!, status: "succeeded", canRetryStorage: false }),
     };
-    const timers = new Map<number, () => void>();
+    const timers = new Map<number, { callback: () => void; delay: number }>();
+    const querySignals: AbortSignal[] = [];
     let timerId = 0;
     const dependenciesChanged = (before?: unknown[], after: unknown[] = []) => !before || before.length !== after.length || before.some((value, index) => !Object.is(value, after[index]));
     const useUserStore = Object.assign((selector: (state: typeof userState) => any) => selector(userState), { getState: () => userState });
@@ -141,7 +140,7 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
             },
         },
         useUserStore,
-        ApiError: TestApiError,
+        ApiError,
         api: {
             getModel3DCapabilities: async () => capabilities,
             createModel3DTask: async (payload: Model3DCreateRequest) => {
@@ -150,8 +149,9 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
                 lastTask = await behavior.create(payload);
                 return lastTask;
             },
-            getModel3DTask: async () => {
+            getModel3DTask: async (_id: string, signal: AbortSignal) => {
                 counters.gets++;
+                querySignals.push(signal);
                 return behavior.get();
             },
             getModel3DTaskByRequest: async () => {
@@ -192,8 +192,8 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
         fetch: () => {
             throw new Error("unexpected network fetch");
         },
-        setTimeout: (callback: () => void) => {
-            timers.set(++timerId, callback);
+        setTimeout: (callback: () => void, delay: number) => {
+            timers.set(++timerId, { callback, delay });
             return timerId;
         },
         clearTimeout: (id: number) => timers.delete(id),
@@ -213,6 +213,10 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
     return {
         counters,
         behavior,
+        querySignals,
+        get timerDelays() {
+            return [...timers.values()].map((timer) => timer.delay);
+        },
         get state() {
             return output;
         },
@@ -243,7 +247,7 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
         advancePoll() {
             const pending = [...timers.values()];
             timers.clear();
-            pending.forEach((callback) => callback());
+            pending.forEach(({ callback }) => callback());
         },
         unmount() {
             cells.forEach((cell) => cell?.cleanup?.());
@@ -341,25 +345,176 @@ test("lost submission response uses read-only request discovery and does not res
     h.unmount();
 });
 
-test("polling failure preserves task id and refresh retries only the status query", async () => {
-    const h = harness();
-    await h.flush();
-    h.behavior.create = async (payload) => task(payload, { status: "running", result: undefined });
-    await h.generate();
-    await h.flush();
-    h.behavior.get = async () => {
-        throw new Error("offline");
+test("temporary polling errors automatically recover the original task with bounded backoff", async () => {
+    for (const failures of [1, 8]) {
+        const h = harness();
+        await h.flush();
+        h.behavior.create = async (payload) => task(payload, { status: "running", result: undefined });
+        await h.generate();
+        await h.flush();
+        h.behavior.get = async () => {
+            throw new TestApiError(undefined, "network_error");
+        };
+        let previousDelay = 0;
+        for (let attempt = 0; attempt < failures; attempt++) {
+            h.advancePoll();
+            await h.flush();
+            expect(h.counters.gets).toBe(attempt + 1);
+            expect(h.timerDelays).toHaveLength(1);
+            expect(h.timerDelays[0]).toBeGreaterThanOrEqual(previousDelay);
+            expect(h.timerDelays[0]).toBeLessThanOrEqual(30_000);
+            previousDelay = h.timerDelays[0];
+            expect(h.nodes[0].metadata?.model3d?.run?.error).toContain("自动重试");
+        }
+        expect(h.nodes[0].metadata?.model3d?.run?.taskId).toBe("task");
+        h.behavior.get = async () => task(h.payload!, { status: "running", result: undefined, progress: 60 });
+        h.advancePoll();
+        await h.flush();
+        expect(h.nodes[0].metadata?.model3d?.run?.error).toBeUndefined();
+        expect(h.timerDelays).toEqual([2500]);
+        h.behavior.get = async () => {
+            throw new TestApiError(503, "unavailable");
+        };
+        h.advancePoll();
+        await h.flush();
+        expect(h.timerDelays).toEqual([2500]);
+        h.behavior.get = async () => task(h.payload!);
+        h.advancePoll();
+        await h.flush();
+        expect(h.nodes[0].metadata?.model3d?.run?.status).toBe("succeeded");
+        expect(h.nodes[0].metadata?.model3d?.result?.resourceId).toBe("result");
+        expect(h.counters.creates).toBe(1);
+        expect(h.counters.recovers).toBe(0);
+        expect(h.timerDelays).toEqual([]);
+        h.unmount();
+    }
+});
+
+test("restoring a task retries its first GET and respects Retry-After without another POST", async () => {
+    const initial = node();
+    const state = initial.metadata!.model3d!;
+    const request: Model3DCreateRequest = {
+        requestId: "restored",
+        canvasId: "canvas",
+        nodeId: "node",
+        sourceFingerprint: model3DSourceFingerprint(state.draft, [initial]),
+        mode: "text",
+        prompt: state.draft.prompt,
+        parameters: state.draft.parameters,
+        expectedPolicyRevision: 8,
     };
+    state.run = { requestId: request.requestId, taskId: "task", sourceFingerprint: request.sourceFingerprint, snapshot: structuredClone(state.draft), status: "running" };
+    const h = harness(initial, task(request), crypto, async () => {
+        throw new TestApiError(429, "rate_limited", 45_000);
+    });
+    await h.flush();
+    expect(h.counters.gets).toBe(1);
+    expect(h.timerDelays).toEqual([45_000]);
+    h.behavior.get = async () => task(request);
     h.advancePoll();
     await h.flush();
-    expect(h.nodes[0].metadata?.model3d?.run?.taskId).toBe("task");
-    expect(h.counters.creates).toBe(1);
-    h.behavior.get = async () => task(h.payload!);
-    await h.state.refreshTask("node");
-    await h.flush();
-    expect(h.nodes[0].metadata?.model3d?.run?.status).toBe("succeeded");
-    expect(h.counters.creates).toBe(1);
+    expect(h.nodes[0].metadata?.model3d?.result?.resourceId).toBe("result");
+    expect(h.nodes[0].metadata?.model3d?.run?.error).toBeUndefined();
+    expect(h.counters.creates).toBe(0);
+    expect(h.counters.recovers).toBe(0);
     h.unmount();
+});
+
+test("non-retryable status errors stop observation without changing the task to failed", async () => {
+    for (const status of [401, 403, 404]) {
+        const h = harness();
+        await h.flush();
+        h.behavior.create = async (payload) => task(payload, { status: "running", result: undefined });
+        await h.generate();
+        await h.flush();
+        h.behavior.get = async () => {
+            throw new TestApiError(status, "not_accessible");
+        };
+        h.advancePoll();
+        await h.flush();
+        expect(h.nodes[0].metadata?.model3d?.run?.status).toBe("running");
+        expect(h.nodes[0].metadata?.model3d?.run?.error).toBeTruthy();
+        expect(h.timerDelays).toEqual([]);
+        h.advancePoll();
+        await h.flush();
+        expect(h.counters.gets).toBe(1);
+        expect(h.counters.creates).toBe(1);
+        h.unmount();
+    }
+});
+
+test("lost submission discovery retries GET while a failed recovery POST is never retried", async () => {
+    const h = harness();
+    await h.flush();
+    h.behavior.create = async () => {
+        throw new TestApiError(undefined, "network_error");
+    };
+    h.behavior.request = async () => {
+        throw new TestApiError(503, "unavailable");
+    };
+    await h.generate();
+    await h.flush();
+    expect(h.counters.requests).toBe(1);
+    expect(h.timerDelays).toEqual([2500]);
+    h.behavior.request = async () => task(h.payload!, { status: "failed", result: undefined, canRetryStorage: true });
+    h.advancePoll();
+    await h.flush();
+    expect(h.nodes[0].metadata?.model3d?.run?.canRetryStorage).toBe(true);
+    h.behavior.recover = async () => {
+        throw new TestApiError(503, "unavailable");
+    };
+    await h.state.refreshTask("node", true);
+    await h.flush();
+    h.advancePoll();
+    await h.flush();
+    expect(h.counters.creates).toBe(1);
+    expect(h.counters.recovers).toBe(1);
+    expect(h.counters.requests).toBe(2);
+    expect(h.timerDelays).toEqual([]);
+    expect(h.nodes[0].metadata?.model3d?.run?.status).toBe("failed");
+    h.unmount();
+});
+
+test("retry delays and in-flight GETs are cancelled when their node or context is retired", async () => {
+    for (const phase of ["waiting", "reading"] as const) {
+        for (const change of ["unmount", "canvas", "user", "delete", "request"] as const) {
+            const h = harness();
+            await h.flush();
+            h.behavior.create = async (payload) => task(payload, { status: "running", result: undefined });
+            await h.generate();
+            await h.flush();
+            const response = deferred<Model3DTaskView>();
+            h.behavior.get =
+                phase === "waiting"
+                    ? async () => {
+                          throw new TestApiError(503, "unavailable");
+                      }
+                    : () => response.promise;
+            h.advancePoll();
+            await h.flush();
+            const oldSignal = h.querySignals[0];
+            h.behavior.get = () => new Promise(() => {});
+            if (change === "unmount") h.unmount();
+            else if (change === "canvas") h.setProject("other-canvas");
+            else if (change === "user") h.setUser("other-user");
+            else if (change === "delete") h.mutate(() => []);
+            else h.mutate((nodes) => nodes.map((node) => ({ ...node, metadata: { ...node.metadata, model3d: { ...node.metadata!.model3d!, run: { ...node.metadata!.model3d!.run!, requestId: "replacement", error: undefined } } } })));
+            await h.flush();
+            expect(oldSignal.aborted).toBe(true);
+            expect(h.timerDelays).toEqual([]);
+            const retiredState = structuredClone(h.nodes);
+            response.resolve(task(h.payload!));
+            await h.flush();
+            expect(h.nodes).toEqual(retiredState);
+            const reads = h.counters.gets;
+            h.advancePoll();
+            await h.flush();
+            expect(h.counters.gets).toBe(reads);
+            expect(h.counters.creates).toBe(1);
+            expect(h.counters.recovers).toBe(0);
+            h.unmount();
+        }
+    }
 });
 
 test("HTTP 408 remains uncertain while explicit admission rejection allows another manual request", async () => {
