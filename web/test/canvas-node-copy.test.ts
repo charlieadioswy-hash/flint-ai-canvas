@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
+import { imageGenerationTargetsForSource, reconcileImageGenerationNodes } from "@/lib/canvas/canvas-image-batch-retry";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
+import { useCanvasStore, withCanvasStorePersistenceSuppressed } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 describe("canvas node copy title", () => {
@@ -29,6 +31,40 @@ describe("canvas node copy title", () => {
 });
 
 describe("canvas generation copy metadata", () => {
+    for (const includeOutput of [false, true]) {
+        test(`Config 副本清除原生成批次身份（${includeOutput ? "连同输出复制" : "单独复制"}）`, () => {
+            const source: CanvasNodeData = { id: "source", type: CanvasNodeType.Config, title: "配置", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { status: "loading", imageGenerationRootId: "output", prompt: "原提示词" } };
+            const output: CanvasNodeData = { ...source, id: "output", type: CanvasNodeType.Image, metadata: { status: "loading", generationType: "generation", taskId: "original-task" } };
+            const idMap = new Map([[source.id, "source-copy"], ...(includeOutput ? [[output.id, "output-copy"]] : [])]);
+            const copy = { ...source, id: "source-copy", metadata: isolateCopiedNodeMetadata(source, idMap) };
+            expect(copy.metadata).toMatchObject({ status: "idle", prompt: "原提示词" });
+            expect(copy.metadata.imageGenerationRootId).toBeUndefined();
+            expect(imageGenerationTargetsForSource(copy, [source, output, copy])).toEqual([]);
+            expect(source.metadata?.imageGenerationRootId).toBe(output.id);
+        });
+    }
+
+    test("整画布导入保留本图节点 ID，生成身份仅解析导入画布内的输出", () => {
+        const originalProjects = useCanvasStore.getState().projects;
+        const source: CanvasNodeData = { id: "source", type: CanvasNodeType.Config, title: "配置", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { status: "loading", imageGenerationRootId: "output" } };
+        const output: CanvasNodeData = { ...source, id: "output", type: CanvasNodeType.Image, metadata: { status: "loading", generationType: "generation" } };
+        try {
+            const originalId = withCanvasStorePersistenceSuppressed(() => useCanvasStore.getState().importProject({ nodes: [source, output] }));
+            const original = useCanvasStore.getState().openProject(originalId)!;
+            const importedId = withCanvasStorePersistenceSuppressed(() => useCanvasStore.getState().importProject(structuredClone(original)));
+            const imported = useCanvasStore.getState().openProject(importedId)!;
+            expect(importedId).not.toBe(originalId);
+            expect(imageGenerationTargetsForSource(imported.nodes[0], imported.nodes)).toEqual([imported.nodes[1]]);
+            const completed = imported.nodes.map((node) => (node.id === output.id ? { ...node, metadata: { ...node.metadata, status: "success" as const, content: "/imported.png" } } : node));
+            withCanvasStorePersistenceSuppressed(() => useCanvasStore.getState().updateProject(importedId, { nodes: reconcileImageGenerationNodes(completed) }));
+            expect(useCanvasStore.getState().openProject(importedId)?.nodes[0].metadata?.status).toBe("success");
+            expect(useCanvasStore.getState().openProject(originalId)?.nodes[0].metadata?.status).toBe("loading");
+            expect(original.nodes[1].metadata?.content).toBeUndefined();
+        } finally {
+            withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: originalProjects }));
+        }
+    });
+
     test("预演副本只保留本次复制的预览、深度和法线节点引用", () => {
         const source: CanvasNodeData = {
             id: "previs",

@@ -13,7 +13,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { loadAssetsForUse } from "@/services/user-data-sync";
 import { canvasAssetHandoffIds } from "@/lib/canvas/canvas-asset-handoff";
 import { useEffectiveConfig } from "@/stores/use-config-store";
-import { createCanvasGenerationLiveProjectAdapter, registerCanvasGenerationLiveProject } from "@/services/canvas-generation-consumer";
+import { createCanvasGenerationLiveProjectAdapter, isCanvasGenerationDurableAckError, registerCanvasGenerationLiveProject } from "@/services/canvas-generation-consumer";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { getResource, getResourceAccess, resolveResourceAccessURL, resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsset } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
@@ -105,7 +105,7 @@ import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/compo
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
 import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
-import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
+import { failedImageBatchChildren, hasImageBatchResult, markImageBatchRetrying, reconcileImageBatchRoot, reconcileImageGenerationNodes, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { cinematicStoryboardColumns, createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { bindStoryboardKeyframes, storyboardKeyframeTime, storyboardRowsFromBatchTable } from "@/lib/canvas/canvas-batch-storyboard";
 import { stampCanvasNodeChanges, updateCanvasNode, updateCanvasNodes } from "@/lib/canvas/canvas-node-timestamps";
@@ -2122,9 +2122,15 @@ function CanvasViewportPage() {
                 if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，无法重新加载资源");
                 await applyGenerationTaskResult(node.id, task);
             } catch (error) {
-                setNodes((current) =>
-                    current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: "error", errorDetails: error instanceof Error ? error.message : "资源重新加载失败", resourceReloadAvailable: true } } : item)),
-                );
+                setNodes((current) => current.map((item) => {
+                    if (item.id !== node.id || item.metadata?.taskId !== taskId) return item;
+                    if (item.type === CanvasNodeType.Image && isCanvasGenerationDurableAckError(error)) {
+                        return { ...item, metadata: { ...item.metadata, status: item.metadata.status === "success" && hasImageBatchResult(item) ? "success" : "loading", resourceReloadAvailable: true } };
+                    }
+                    return { ...item, metadata: { ...item.metadata, status: "error", errorDetails: error instanceof Error ? error.message : "资源重新加载失败", resourceReloadAvailable: true } };
+                }));
+            } finally {
+                setNodes(reconcileImageGenerationNodes);
             }
         },
         [applyGenerationTaskResult, setNodes],

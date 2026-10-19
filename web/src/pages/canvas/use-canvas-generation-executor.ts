@@ -147,6 +147,7 @@ export function useCanvasGenerationExecutor({
                     const isPreparingEmptyImage = mode === "image" && sourceNode?.type === CanvasNodeType.Image && !sourceNode.metadata?.content;
                     const preparationController = startGenerationRequest(nodeId, nodeId, nodeId, options?.controller);
                     setRunningNodeId(nodeId);
+                    if (sourceNode?.type === CanvasNodeType.Config) setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, imageGenerationRootId: undefined } } : node));
                     if (markSourceStatus)
                         setNodes((current) =>
                             current.map((node) =>

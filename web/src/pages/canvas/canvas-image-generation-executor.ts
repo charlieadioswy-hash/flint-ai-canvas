@@ -12,6 +12,9 @@ import { isStructureControlNode, nodeControlNet, nodeOutputMask, resolveCanvasCo
 import { generationSpecMetadata, readNodeGenerationSpec, specFromConfig } from "@/lib/canvas/generation-contract";
 import { commitProducedModel } from "@/lib/canvas/produced-model";
 import { CONTENT_MODERATION_ERROR_CODE, generationFailureMetadata, type GenerationFailureMetadata } from "@/lib/generation-error";
+import { markCanvasTaskRecoveryUnconfirmed } from "@/lib/canvas/canvas-task-state";
+import { isCanvasGenerationDurableAckError } from "@/services/canvas-generation-consumer";
+import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
@@ -166,7 +169,7 @@ export async function executeImageGeneration({
     const nextNodes: CanvasNodeData[] = [
         ...workingNodes.map((node) => {
             if (node.id !== nodeId) return node;
-            if (isConfigNode) return { ...node, metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, effectivePrompt), status: NODE_STATUS_LOADING, errorDetails: undefined } };
+            if (isConfigNode) return { ...node, metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, effectivePrompt), imageGenerationRootId: rootId, status: NODE_STATUS_LOADING, errorDetails: undefined } };
             if (reuseSourceNode) return { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: rootNode.metadata };
             if (isImageNode) return node;
             return {
@@ -200,9 +203,11 @@ export async function executeImageGeneration({
     let hasSuccess = false;
     let hasFailure = false;
     let failureCount = 0;
+    let pendingCount = 0;
     let representativeFailure: GenerationFailureMetadata | undefined;
     await Promise.all(
         targetIds.map(async (targetId) => {
+            let latestTask: GenerationTask | undefined;
             try {
                 await runCanvasGenerationTaskToConsumer(
                     {
@@ -227,7 +232,10 @@ export async function executeImageGeneration({
                         },
                     },
                     {
-                        bindTask: (task) => bindGenerationTask(targetId, task),
+                        bindTask: (task) => {
+                            latestTask = task;
+                            bindGenerationTask(targetId, task);
+                        },
                         consumeTask: (task) => applyGenerationTaskResult(targetId, task),
                     },
                 );
@@ -272,11 +280,41 @@ export async function executeImageGeneration({
                     });
                 }
                 hasSuccess = true;
-                if (isConfigNode) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                 return true;
             } catch (error) {
                 if (isGenerationCanceled(error)) return false;
                 const failure = generationFailureMetadata(error, prompt);
+                const waitingForTask = latestTask?.status === "queued" || latestTask?.status === "running";
+                const waitingForDelivery = latestTask?.status === "succeeded" && isCanvasGenerationDurableAckError(error);
+                if (latestTask && (waitingForTask || waitingForDelivery)) {
+                    pendingCount += 1;
+                    const taskId = latestTask.id;
+                    const detail = waitingForTask
+                        ? `任务已提交，状态同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}`
+                        : `结果已生成，结果同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}`;
+                    setNodes((current) => {
+                        const next = current.map((node) => {
+                            if (node.id !== targetId || node.metadata?.taskId !== taskId) return node;
+                            // 查询或保存确认失败不能改变模型终态，也不能让重试入口重新计费。
+                            const applied = node.metadata.status === NODE_STATUS_SUCCESS && hasImageBatchResult(node);
+                            if (applied && waitingForTask) return node;
+                            const recovery = markCanvasTaskRecoveryUnconfirmed(node, taskId, node.metadata.errorDetails || detail);
+                            return {
+                                ...recovery,
+                                metadata: {
+                                    ...recovery.metadata,
+                                    status: applied ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING,
+                                    errorDetails: node.metadata.errorDetails || detail,
+                                    ...(waitingForDelivery ? { resourceReloadAvailable: true } : {}),
+                                    ...(!applied ? { taskStage: waitingForTask ? "任务状态同步中断，请刷新画布恢复" : "结果已生成，等待恢复同步" } : {}),
+                                },
+                            };
+                        });
+                        if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: next });
+                        return next;
+                    });
+                    return false;
+                }
                 if (!representativeFailure || failure.generationErrorCode === CONTENT_MODERATION_ERROR_CODE) representativeFailure = failure;
                 hasFailure = true;
                 failureCount += 1;
@@ -299,25 +337,28 @@ export async function executeImageGeneration({
                 const removed = new Set(cancelled.removedIds);
                 setConnections((connections) => connections.filter((connection) => !removed.has(connection.fromNodeId) && !removed.has(connection.toNodeId)));
             }
-            return cancelled.nodes.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node));
+            return cancelled.nodes.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.imageGenerationRootId === rootId && node.metadata.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node));
         });
         return;
     }
-    if (hasFailure) showError(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+    const pendingMessage = pendingCount ? `${pendingCount} 张图片的任务状态或结果待同步，请刷新画布恢复原任务；已有图片已保留，请勿重复生成` : "";
+    if (hasFailure) showError(`${hasSuccess || pendingCount ? "部分图片生成失败" : "全部图片生成失败"}${pendingMessage ? `；${pendingMessage}` : ""}`);
+    else if (pendingMessage) showError(pendingMessage);
     setNodes((current) => {
         const next = current.map((node) => {
-            if (node.id === nodeId && isConfigNode) {
+            if (node.id === nodeId && isConfigNode && node.metadata?.imageGenerationRootId === rootId) {
                 return {
                     ...node,
                     metadata: {
                         ...node.metadata,
-                        status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
-                        ...(hasSuccess ? { errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } : representativeFailure || { errorDetails: "全部图片生成失败" }),
+                        status: pendingCount ? NODE_STATUS_LOADING : hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
+                        ...(pendingCount ? { errorDetails: pendingMessage } : hasSuccess ? { errorDetails: hasFailure ? "部分图片生成失败" : undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } : representativeFailure || { errorDetails: "全部图片生成失败" }),
                     },
                 };
             }
             if (node.id === rootId) {
                 if (count > 1) return reconcileImageBatchRoot(node, current);
+                if (pendingCount) return node;
                 return {
                     ...node,
                     metadata: {

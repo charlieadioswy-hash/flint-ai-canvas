@@ -130,6 +130,8 @@ export function markImageBatchRetrying(rootId: string, childIds: string[], nodes
 
 export function restoreUnsubmittedImageBatchChild(current: CanvasNodeData, original: CanvasNodeData): CanvasNodeData {
     if (current.metadata?.status !== "loading") return current;
+    // 已确认的原任务仍可恢复；轮询或交付中断不等于重试未提交。
+    if (current.metadata.taskId && ["queued", "running", "succeeded"].includes(current.metadata.taskStatus || "")) return current;
     return {
         ...current,
         metadata: {
@@ -141,6 +143,36 @@ export function restoreUnsubmittedImageBatchChild(current: CanvasNodeData, origi
             failedPromptFingerprint: original.metadata?.failedPromptFingerprint,
         },
     };
+}
+
+export function imageGenerationTargetsForSource(source: CanvasNodeData, nodes: CanvasNodeData[]) {
+    if (source.type !== CanvasNodeType.Config || !source.metadata?.imageGenerationRootId) return [];
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const output = nodeById.get(source.metadata.imageGenerationRootId);
+    if (!output || output.type !== CanvasNodeType.Image || !output.metadata?.generationType || output.metadata.imageLayerGroup || output.metadata.experimentalLayerPlan) return [];
+    if (!output.metadata.isBatchRoot) return [output];
+    return (output.metadata.batchChildIds || [])
+        .map((id) => nodeById.get(id))
+        .filter((node): node is CanvasNodeData => Boolean(node && node.type === CanvasNodeType.Image && node.metadata?.batchRootId === output.id));
+}
+
+export function reconcileImageGenerationNodes(nodes: CanvasNodeData[]) {
+    return reconcileImageGenerationSources(nodes.map((node) => reconcileImageBatchRoot(node, nodes)));
+}
+
+export function reconcileImageGenerationSources(nodes: CanvasNodeData[]) {
+    return nodes.map((source) => {
+        if (!source.metadata?.status || source.metadata.status === "idle") return source;
+        const targets = imageGenerationTargetsForSource(source, nodes);
+        if (!targets.length) return source;
+        const pending = targets.some((node) => node.metadata?.status === "loading" || (node.metadata?.status === "success" && node.metadata.taskStatus === "succeeded" && node.metadata.resourceReloadAvailable));
+        const failed = targets.find((node) => node.metadata?.status === "error");
+        const succeeded = targets.some((node) => node.metadata?.status === "success" && hasImageBatchResult(node));
+        const status: CanvasNodeMetadata["status"] = pending ? "loading" : succeeded ? "success" : failed ? "error" : "idle";
+        const errorDetails = pending ? source.metadata.errorDetails : failed ? (succeeded ? "部分图片生成失败" : failed.metadata?.errorDetails) : undefined;
+        if (source.metadata.status === status && source.metadata.errorDetails === errorDetails) return source;
+        return { ...source, metadata: { ...source.metadata, status, errorDetails } };
+    });
 }
 
 export function reconcileImageBatchRoot(root: CanvasNodeData, nodes: CanvasNodeData[]) {

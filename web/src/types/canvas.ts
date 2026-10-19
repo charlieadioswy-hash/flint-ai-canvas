@@ -324,6 +324,8 @@ export type CanvasNodeMetadata = {
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
+    /** Config 当前图片生成的输出根节点；批次身份不随用户编辑连线变化。 */
+    imageGenerationRootId?: string;
     isBatchRoot?: boolean;
     batchRootId?: string;
     batchChildIds?: string[];

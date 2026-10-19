@@ -12,6 +12,8 @@ import { buildSourceImageLayerNodeResult } from "@/lib/canvas/canvas-generation-
 import { isCanvasGenerationDurableAckError, prepareCanvasMediaNodeAsset } from "@/services/canvas-generation-consumer";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { commitCanvasGenerationResult } from "@/lib/canvas/canvas-generation-result";
+import { hasImageBatchResult, reconcileImageGenerationNodes } from "@/lib/canvas/canvas-image-batch-retry";
+import { markCanvasTaskRecoveryUnconfirmed } from "@/lib/canvas/canvas-task-state";
 import { resolveImageRequestSize } from "@/services/api/image-validation";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
@@ -217,6 +219,39 @@ export function useCanvasGenerationRetry({
                 } finally { finishGenerationRequest(node.id, controller); }
                 return;
             }
+            if (sourceTask && (sourceTask.status === "queued" || sourceTask.status === "running" || sourceTask.status === "succeeded")) {
+                // 旧画布可能把查询/交付中断记作 error。先恢复已提交任务，不能再次付费生成。
+                const controller = startGenerationRequest(node.id, node.id, node.id);
+                let latestTask = sourceTask;
+                setRunningNodeId(node.id);
+                try {
+                    bindGenerationTask(node.id, sourceTask);
+                    const completed = sourceTask.status === "succeeded" ? sourceTask : await waitForGenerationTask(sourceTask.id, {
+                        initialTask: sourceTask, signal: controller.signal, timeoutMs: 25 * 60_000,
+                        onTaskUpdate: (task) => { latestTask = task; bindGenerationTask(node.id, task); },
+                    });
+                    latestTask = completed;
+                    await applyGenerationTaskResult(node.id, completed);
+                } catch (error) {
+                    if (controller.signal.aborted || isGenerationCanceled(error)) return;
+                    const failure = generationFailureMetadata(error, nodeGenerationPrompt(node));
+                    const pending = latestTask.status === "queued" || latestTask.status === "running" || (latestTask.status === "succeeded" && isCanvasGenerationDurableAckError(error));
+                    const details = pending ? `原任务状态或结果待同步，请刷新画布恢复，勿重复生成：${failure.errorDetails}` : failure.errorDetails;
+                    message.error(details);
+                    setNodes((current) => current.map((item) => {
+                        if (item.id !== node.id || item.metadata?.taskId !== latestTask.id) return item;
+                        if (!pending) return { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } };
+                        const applied = item.metadata.status === NODE_STATUS_SUCCESS && hasImageBatchResult(item);
+                        const recovery = markCanvasTaskRecoveryUnconfirmed(item, latestTask.id, details);
+                        return { ...recovery, metadata: { ...recovery.metadata, status: applied ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING, errorDetails: latestTask.status === "succeeded" ? item.metadata.errorDetails || details : details, ...(latestTask.status === "succeeded" ? { resourceReloadAvailable: true } : {}) } };
+                    }));
+                } finally {
+                    finishGenerationRequest(node.id, controller);
+                    setRunningNodeId((current) => current === node.id ? null : current);
+                    if (!controller.signal.aborted) setNodes(reconcileImageGenerationNodes);
+                }
+                return;
+            }
             const retryMode = retryModeForNode(node.type);
             if (!retryMode) {
                 message.warning("当前节点不能使用通用生成重试");
@@ -370,11 +405,12 @@ export function useCanvasGenerationRetry({
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined } } : item)));
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
             const retryContext = node.metadata?.taskId ? await createGenerationRetryContext(node.metadata.taskId, node.metadata.attemptGroupId) : {};
+            let retryTask: GenerationTask | undefined;
             const runAndConsumeRetry = async (input: Parameters<typeof runBackendCanvasGenerationTask>[0]) => {
                 await runCanvasGenerationTaskToConsumer(
                     { ...input, ...retryContext },
                     {
-                        bindTask: (task) => bindGenerationTask(node.id, task),
+                        bindTask: (task) => { retryTask = task; bindGenerationTask(node.id, task); },
                         consumeTask: (task) => applyGenerationTaskResult(node.id, task),
                     },
                 );
@@ -550,11 +586,20 @@ export function useCanvasGenerationRetry({
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const failure = generationFailureMetadata(error, retryPromptSource);
-                message.error(failure.errorDetails);
-                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
+                const pending = retryTask?.status === "queued" || retryTask?.status === "running" || (retryTask?.status === "succeeded" && isCanvasGenerationDurableAckError(error));
+                const details = pending ? `任务已提交，状态或结果待同步，请刷新画布恢复，勿重复生成：${failure.errorDetails}` : failure.errorDetails;
+                message.error(details);
+                setNodes((current) => current.map((item) => {
+                    if (item.id !== node.id || (retryTask && item.metadata?.taskId !== retryTask.id)) return item;
+                    if (!pending || !retryTask) return { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } };
+                    const applied = item.metadata?.status === NODE_STATUS_SUCCESS && hasImageBatchResult(item);
+                    const recovery = markCanvasTaskRecoveryUnconfirmed(item, retryTask.id, details);
+                    return { ...recovery, metadata: { ...recovery.metadata, status: applied ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING, errorDetails: retryTask.status === "succeeded" ? item.metadata?.errorDetails || details : details, ...(retryTask.status === "succeeded" ? { resourceReloadAvailable: true } : {}) } };
+                }));
             } finally {
                 finishGenerationRequest(node.id, controller);
                 setRunningNodeId(null);
+                if (!controller.signal.aborted) setNodes(reconcileImageGenerationNodes);
             }
         },
         [addedSkills, applyGenerationTaskResult, assets, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, projectId, setNodes, setRunningNodeId, startGenerationRequest],

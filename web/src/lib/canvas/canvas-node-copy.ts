@@ -57,6 +57,7 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     // 原节点的提交标记不能证明副本已保存；继承后，普通保存会把新副本误判为未确认结果并排除。
     delete metadata.generationEffectKeys;
     delete metadata.generationBatches;
+    delete metadata.imageGenerationRootId;
     delete metadata.batchRootId;
     delete metadata.batchChildIds;
     delete metadata.batchFailedCount;
