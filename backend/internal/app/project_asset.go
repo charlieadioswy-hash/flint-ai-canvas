@@ -376,6 +376,21 @@ func (s *Service) CreateProjectAssetVersion(userID string, projectID string, ass
 	if !json.Valid([]byte(definition)) {
 		return model.AssetVersion{}, BadAuthRequest("资产版本设定必须是有效 JSON")
 	}
+	if projectVisualCategory(asset.Category) {
+		var requested map[string]any
+		if json.Unmarshal([]byte(definition), &requested) == nil && requested != nil && len(requested) == 0 {
+			for _, current := range versions {
+				if current.ID != asset.PrimaryVersionID {
+					continue
+				}
+				definition, _, err = projectVisualDefinition(current, versions)
+				if err != nil {
+					return model.AssetVersion{}, err
+				}
+				break
+			}
+		}
+	}
 	now := time.Now()
 	version := model.AssetVersion{ID: newID(), AssetID: assetID, Version: nextVersion, Status: model.AssetVersionStatusDraft, DefinitionJSON: definition, Prompt: strings.TrimSpace(req.Prompt), Note: strings.TrimSpace(req.Note), CreatedAt: now, UpdatedAt: now}
 	if err := s.repo.CreateAssetVersion(&version); err != nil {
@@ -588,8 +603,8 @@ func (s *Service) projectAssetSummary(userID string, projectID string, asset *mo
 			if version.ID != asset.PrimaryVersionID {
 				continue
 			}
-			var definition map[string]any
-			if err := json.Unmarshal([]byte(version.DefinitionJSON), &definition); err != nil {
+			_, definition, err := projectVisualDefinition(version, versions)
+			if err != nil {
 				return ProjectAssetSummary{}, err
 			}
 			// 普通上传图片仍走媒体卡；有提取设定的场景、道具提供出图流程。

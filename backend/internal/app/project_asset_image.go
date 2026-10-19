@@ -24,6 +24,35 @@ func projectVisualCategory(category model.AssetCategory) bool {
 	return category == model.AssetCategoryEnvironment || category == model.AssetCategoryProp
 }
 
+// projectVisualDefinition recovers the prompt lost by legacy empty versions.
+// versions is ordered newest first; an explicit definition stops recovery even without a prompt.
+func projectVisualDefinition(current model.AssetVersion, versions []model.AssetVersion) (string, map[string]any, error) {
+	var definition map[string]any
+	if err := json.Unmarshal([]byte(current.DefinitionJSON), &definition); err != nil {
+		return "", nil, err
+	}
+	if definition == nil || len(definition) != 0 {
+		return current.DefinitionJSON, definition, nil
+	}
+	for _, previous := range versions {
+		if previous.AssetID != current.AssetID || previous.Version >= current.Version {
+			continue
+		}
+		var candidate map[string]any
+		if err := json.Unmarshal([]byte(previous.DefinitionJSON), &candidate); err != nil || candidate == nil {
+			break
+		}
+		if len(candidate) == 0 {
+			continue
+		}
+		if prompt, ok := candidate["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+			return previous.DefinitionJSON, candidate, nil
+		}
+		break
+	}
+	return current.DefinitionJSON, definition, nil
+}
+
 // BindProjectAssetImage validates the project, image and version before promoting a reference.
 func (s *Service) BindProjectAssetImage(userID, projectID, assetID string, req BindProjectAssetImageRequest) (ProjectAssetSummary, error) {
 	_, err := s.bindProjectAssetImage(userID, projectID, assetID, req, newID())
@@ -92,8 +121,12 @@ func (s *Service) bindProjectAssetImage(userID, projectID, assetID string, req B
 	if len(versions) > 0 {
 		nextNumber = versions[0].Version + 1
 	}
+	definition, _, err := projectVisualDefinition(*current, versions)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now()
-	version := model.AssetVersion{ID: newID(), AssetID: asset.ID, Version: nextNumber, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: current.DefinitionJSON, Prompt: current.Prompt, Note: current.Note, CreatedAt: now, UpdatedAt: now}
+	version := model.AssetVersion{ID: newID(), AssetID: asset.ID, Version: nextNumber, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: definition, Prompt: current.Prompt, Note: current.Note, CreatedAt: now, UpdatedAt: now}
 	// 在已有 payload 上更新媒体字段，保留标签、来源及其他非媒体元数据。
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(asset.PayloadJSON), &payload); err != nil || payload == nil {

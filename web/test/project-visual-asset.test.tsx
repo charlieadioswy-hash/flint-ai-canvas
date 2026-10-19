@@ -37,6 +37,23 @@ describe("场景与道具参考图片", () => {
         expect(input.prompt).toContain("完整展示");
         expect(input.prompt).not.toContain("场景全景");
     });
+    test("旧文本道具恢复设定后显示生图入口，并提交当前空版本身份", () => {
+        const legacyAsset: ProjectAsset = {
+            ...asset,
+            category: "prop",
+            mediaType: "text",
+            status: "draft",
+            primaryVersionId: "legacy-empty-version-3",
+            versionCount: 3,
+            visual: { status: "missing", definition: { description: "磨损铜印", prompt: "古代铜印特写" } },
+        };
+        const html = renderToStaticMarkup(<ProjectVisualAssetCard asset={legacyAsset} generating={false} busy={false} folderItems={[]} onOpen={() => {}} onGenerate={() => {}} onBind={() => {}} onMove={() => {}} onRemove={() => {}} />);
+        expect(html).toContain("生成图片");
+        expect(html).not.toContain("新建版本");
+        const input = projectVisualImageRequest({ projectId: "project", asset: legacyAsset, config: defaultConfig });
+        expect(input.prompt).toContain("古代铜印特写");
+        expect(input.metadata).toMatchObject({ operation: "project_asset_image", projectAssetId: legacyAsset.id, projectAssetVersionId: "legacy-empty-version-3" });
+    });
     test("缺少项目、版本、设定或分类不符时拒绝收费请求", () => {
         const build =
             (patch: Partial<ProjectAsset>, projectId = "project") =>
