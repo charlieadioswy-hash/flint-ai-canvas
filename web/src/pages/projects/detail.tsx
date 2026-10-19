@@ -24,10 +24,10 @@ type DetailView = "overview" | "chapters" | "workflow" | "canvases" | "editor" |
 const views: Array<{ key: DetailView; label: string }> = [
     { key: "overview", label: "制作概览" },
     { key: "chapters", label: "剧情章节" },
+    { key: "assets", label: "角色与资产" },
     { key: "workflow", label: "分镜制作" },
     { key: "canvases", label: "项目画布" },
     { key: "editor", label: "剪辑成片" },
-    { key: "assets", label: "角色与资产" },
     { key: "settings", label: "项目设置" },
 ];
 
