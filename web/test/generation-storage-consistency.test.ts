@@ -16,7 +16,36 @@ type Scenario =
     | "http-creation-generation-missing"
     | "http-generation-missing"
     | "canvas-mask-batch"
-    | "canvas-asset-preparation";
+    | "canvas-asset-preparation"
+    | "canvas-reentry-observation"
+    | "canvas-video-reentry";
+
+test("视频退出后重进可恢复已完成结果，并保留保存期间的新节点和编辑", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    const result = await runScenario<{ live: Node[]; restored: Node[] }>("canvas-video-reentry");
+    for (const nodes of [result.live, result.restored]) {
+        const node = nodes.find((item) => item.id === "node-0")!;
+        expect(node.metadata).toMatchObject({ status: "success", taskStatus: "succeeded", assetId: "asset-0", storageKey: "resource:image-0" });
+        expect(node.metadata?.errorDetails).toBeUndefined();
+        expect(node.metadata?.resourceReloadAvailable).not.toBe(true);
+        expect(node.title).toBe("用户改名");
+        expect(node.position).toEqual({ x: 700, y: 500 });
+        expect(nodes.some((item) => item.id === "new-during-save")).toBe(true);
+    }
+});
+
+test("重新进入画布后的加载状态不阻止同一已完成任务恢复结果", async () => {
+    type Node = import("../src/types/canvas").CanvasNodeData;
+    const result = await runScenario<{ live: Node[]; restored: Node[] }>("canvas-reentry-observation");
+    for (const nodes of [result.live, result.restored]) {
+        const node = nodes.find((item) => item.id === "node-0")!;
+        expect(node.metadata).toMatchObject({ status: "success", taskId: "task-0", taskStatus: "succeeded", assetId: "asset-0", storageKey: "resource:image-0" });
+        expect(node.metadata?.errorDetails).toBeUndefined();
+        expect(node.metadata?.resourceReloadAvailable).not.toBe(true);
+        expect(node.position).toEqual({ x: 700, y: 500 });
+        expect(nodes.some((item) => item.id === "new-during-save")).toBe(true);
+    }
+});
 
 test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建素材或生成任务", async () => {
     type Message = import("../src/pages/create/creation-types").CreationMessage;

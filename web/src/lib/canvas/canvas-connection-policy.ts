@@ -23,6 +23,7 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         if (count > (mode === "image" ? 1 : 4)) return mode === "image" ? "单图模式最多连接一张图片。" : "多视图模式最多连接四张图片，请明确分配视角。";
         return "";
     }
+    if (target.type === CanvasNodeType.BatchTable && target.metadata?.locked) return "批量创作表已锁定";
     const acceptedInputKinds = getNodeAcceptedInputKinds(target.type);
     if (acceptedInputKinds.length) {
         const source = nodes.find((node) => node.id === candidate.fromNodeId);
