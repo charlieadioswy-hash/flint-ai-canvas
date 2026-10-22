@@ -30,6 +30,7 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
     const [bundleManifest, setBundleManifest] = useState<AgentAvatarBundleManifest | null>(null);
     const [bundleLoading, setBundleLoading] = useState(false);
     const [bundleError, setBundleError] = useState("");
+    const [failedBundlePreview, setFailedBundlePreview] = useState("");
     const [selectedAvatarState, setSelectedAvatarState] = useState<AgentAvatarState>("idle");
     const url = value.live2dResourceId ? live2DModelURL(value.live2dResourceId, value.live2dEntry, true) : "";
     const bundleID = value.avatarBundleResourceId;
@@ -37,6 +38,8 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
     const previewClip = bundleManifest ? agentAvatarClipForState(value, selectedAvatarState, bundleManifest) : "";
     const previewFile = bundleManifest?.clips[previewClip] || "";
     const previewBundleURL = previewFile ? (bundleID ? agentAvatarBundleFileURL(bundleID, previewFile, true) : `/doll/${encodeURIComponent(previewFile)}`) : "";
+    const previewKey = `${attempt}:${previewBundleURL}`;
+    const bundlePreviewFailed = failedBundlePreview === previewKey;
     const change = (patch: Partial<CanvasAppearance>) => onChange({ ...value, ...patch });
     useEffect(() => {
         if (value.avatarType !== "bundle") return;
@@ -209,12 +212,12 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                                 {Object.keys(bundleManifest.clips).length} 个动画 · {bundleManifest.width} × {bundleManifest.height}
                             </p>
                         ) : null}
-                        {bundleError ? (
+                        {bundleError || bundlePreviewFailed ? (
                             <Alert
                                 type="warning"
                                 showIcon
                                 title="动画包预览失败"
-                                description={bundleError}
+                                description={bundleError || "无法播放动画，请检查视频格式及资源访问权限后重试。"}
                                 action={
                                     <Button size="small" onClick={() => setAttempt((current) => current + 1)}>
                                         重试
@@ -290,7 +293,7 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                                 setError(reason);
                             }}
                         />
-                    ) : value.avatarType === "bundle" && previewBundleURL && bundleManifest ? (
+                    ) : value.avatarType === "bundle" && previewBundleURL && bundleManifest && !bundlePreviewFailed ? (
                         <div
                             className="relative mx-auto overflow-hidden"
                             style={{
@@ -298,7 +301,7 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                                 height: Math.round(bundleManifest.height * Math.min(1, 220 / Math.max(bundleManifest.width, bundleManifest.height))),
                             }}
                         >
-                            <AgentAvatarVideo src={previewBundleURL} loop={!["completed", "failed"].includes(selectedAvatarState)} />
+                            <AgentAvatarVideo key={previewKey} src={previewBundleURL} loop={!["completed", "failed"].includes(selectedAvatarState)} onError={() => setFailedBundlePreview(previewKey)} />
                         </div>
                     ) : (
                         <FluidOrb size={60} color="#7164f6" />

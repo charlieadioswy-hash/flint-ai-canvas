@@ -3,7 +3,9 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"yingce/backend/internal/model"
@@ -69,6 +71,64 @@ func TestAgentAvatarBundleArchiveValidation(t *testing.T) {
 			data := agentAvatarBundleTestZIP(t, test.manifest, test.files)
 			if _, err := validateAgentAvatarBundleArchive(bytes.NewReader(data), int64(len(data))); err == nil {
 				t.Fatal("invalid bundle accepted")
+			}
+		})
+	}
+}
+
+func TestAgentAvatarBundleFilenameContract(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     string
+		accepted bool
+	}{
+		{"ASCII", "idle.mp4", true},
+		{"space", "idle loop.mp4", true},
+		{"Chinese", "待机.mp4", true},
+		{"emoji and uppercase extension", "动画 🎬.MP4", true},
+		{"leading space", " leading space.mp4", true},
+		{"extension only", ".mp4", true},
+		{"dots in filename", "idle..loop.mp4", true},
+		{"Unicode separator", "idle\u2028loop.mp4", true},
+		{"ASCII at 128 bytes", strings.Repeat("a", 124) + ".mp4", true},
+		{"ASCII at 129 bytes", strings.Repeat("a", 125) + ".mp4", false},
+		{"Chinese at 128 bytes", strings.Repeat("待", 41) + "x.mp4", true},
+		{"Chinese at 129 bytes", strings.Repeat("待", 41) + "xx.mp4", false},
+		{"emoji at 128 bytes", strings.Repeat("🎬", 31) + ".mp4", true},
+		{"emoji at 129 bytes", strings.Repeat("🎬", 31) + "x.mp4", false},
+		{"empty", "", false},
+		{"missing extension", "idle", false},
+		{"other format", "idle.webm", false},
+		{"trailing space", "idle.mp4 ", false},
+		{"traversal", "../idle.mp4", false},
+		{"relative path", "./idle.mp4", false},
+		{"absolute path", "/idle.mp4", false},
+		{"directory", "clips/idle.mp4", false},
+		{"backslash", "clips\\idle.mp4", false},
+		{"colon", "drive:idle.mp4", false},
+		{"percent encoding", "idle%20loop.mp4", false},
+		{"query delimiter", "idle?loop.mp4", false},
+		{"fragment delimiter", "idle#loop.mp4", false},
+		{"NUL", "idle\x00loop.mp4", false},
+		{"newline", "idle\nloop.mp4", false},
+		{"DEL", "idle\x7floop.mp4", false},
+		{"C1 control", "idle\u0085loop.mp4", false},
+		{"last C1 control", "idle\u009floop.mp4", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(AgentAvatarBundleManifest{Version: 1, Width: 480, Height: 432, Clips: map[string]string{"idle": test.file}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseAgentAvatarManifest(data); (err == nil) != test.accepted {
+				t.Fatalf("filename %q: accepted=%t, error=%v", test.file, test.accepted, err)
+			}
+			if test.accepted {
+				archive := agentAvatarBundleTestZIP(t, string(data), map[string][]byte{test.file: agentAvatarTestMP4()})
+				if _, err := validateAgentAvatarBundleArchive(bytes.NewReader(archive), int64(len(archive))); err != nil {
+					t.Fatalf("supported filename %q rejected on upload: %v", test.file, err)
+				}
 			}
 		})
 	}

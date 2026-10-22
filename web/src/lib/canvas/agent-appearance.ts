@@ -43,6 +43,11 @@ export const DEFAULT_AGENT_AVATAR_CLIP_STATES: Record<AgentAvatarState, string> 
     rejected: "think",
 };
 
+function isAgentAvatarClipFile(file: unknown): file is string {
+    // Match the backend's root MP4 path rules and UTF-8 byte limit.
+    return typeof file === "string" && file.toLowerCase().endsWith(".mp4") && !file.includes("/") && !/[\\:%?#]|\p{Cc}/u.test(file) && new TextEncoder().encode(file).byteLength <= 128;
+}
+
 export function isAgentAvatarBundleManifest(value: unknown): value is AgentAvatarBundleManifest {
     if (typeof value !== "object" || value === null) return false;
     const manifest = value as Record<string, unknown>;
@@ -51,7 +56,7 @@ export function isAgentAvatarBundleManifest(value: unknown): value is AgentAvata
     const height = Number(manifest.height);
     if (width < 1 || width > 4096 || height < 1 || height > 4096 || typeof manifest.clips !== "object" || manifest.clips === null) return false;
     const clips = manifest.clips as Record<string, unknown>;
-    return Object.keys(clips).length > 0 && Object.keys(clips).length <= 64 && Object.entries(clips).every(([id, file]) => /^[A-Za-z0-9_-]{1,64}$/.test(id) && typeof file === "string" && /^[A-Za-z0-9._-]{1,124}\.mp4$/i.test(file));
+    return Object.keys(clips).length > 0 && Object.keys(clips).length <= 64 && Object.entries(clips).every(([id, file]) => /^[A-Za-z0-9_-]{1,64}$/.test(id) && isAgentAvatarClipFile(file));
 }
 
 export function agentAvatarClipForState(appearance: CanvasAppearance, state: AgentAvatarState, manifest: AgentAvatarBundleManifest) {
