@@ -32,6 +32,7 @@ export type WorkspaceNavItem = {
 
 type WorkspaceNavGroup = {
     heading?: string;
+    bottom?: boolean;
     items: WorkspaceNavItem[];
 };
 
@@ -49,23 +50,19 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
                 { ...toolItem("projects", "/projects"), title: "短剧制作" },
                 { ...toolItem("canvas", "/canvas"), title: "自由画布" },
                 { id: "screen-creation", title: "异形屏创作", icon: Scan, to: "/screen-creation" },
-            ],
-        },
-        {
-            heading: "资源与工具",
-            items: [
                 ...(features.imageWorkbenchEnabled ? [{ id: "toolbox-image", title: "图片生成", icon: ImageIcon, to: "/toolbox/image" }] : []),
                 ...(features.videoWorkbenchEnabled ? [{ id: "toolbox-video", title: "视频生成", icon: Video, to: "/toolbox/video" }] : []),
-                { ...toolItem("skills", "/skills"), title: "技能" },
-                /* fork 定制（ef4fae61）：隐藏插件入口，保留上游条件写法便于将来同步 */
-                // ...(features.pluginCenterEnabled ? [{ ...toolItem("plugins", "/plugins"), title: "插件" }] : []),
             ],
         },
         {
-            heading: "资产与历史",
+            heading: "资产与工具",
+            bottom: true,
             items: [
                 { ...toolItem("assets", "/assets"), title: "资产" },
+                { ...toolItem("skills", "/skills"), title: "技能" },
                 ...(features.taskCenterEnabled ? [{ id: "tasks", title: "创作历史", icon: ImageIcon, to: "/tasks" }] : []),
+                /* fork 定制（ef4fae61）：隐藏插件入口，保留上游条件写法便于将来同步 */
+                // ...(features.pluginCenterEnabled ? [{ ...toolItem("plugins", "/plugins"), title: "插件" }] : []),
             ],
         },
     ];
@@ -315,14 +312,14 @@ function NavGroup({ group, activeId, onNavigate, onOpenSearch, onLogout, collaps
     // 无标题分组（核心导航入口）常驻展示，不做折叠。
     if (!group.heading || collapsed) {
         return (
-            <div className="app-workspace-nav-group flex shrink-0 flex-col" data-nav-group-heading={group.heading || ""}>
+            <div className={cn("app-workspace-nav-group flex shrink-0 flex-col", group.bottom && "mt-auto")} data-nav-group-heading={group.heading || ""}>
                 {content}
             </div>
         );
     }
 
     return (
-        <div className="app-workspace-nav-group flex shrink-0 flex-col" data-nav-group-heading={group.heading}>
+        <div className={cn("app-workspace-nav-group flex shrink-0 flex-col", group.bottom && "mt-auto")} data-nav-group-heading={group.heading}>
             <button type="button" onClick={() => setIsOpen((open) => !open)} aria-expanded={isOpen} className="app-workspace-nav-group-toggle select-none">
                 <span className="app-workspace-nav-group-label">{group.heading}</span>
                 <ChevronRight className={cn("size-3.5 shrink-0 text-foreground/35 transition-transform duration-200", isOpen && "rotate-90")} strokeWidth={2} />

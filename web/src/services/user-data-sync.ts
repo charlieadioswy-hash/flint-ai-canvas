@@ -972,7 +972,7 @@ export function localSavedRemotePendingMessage(localAction: string, error: unkno
     return formatLocalSavedRemotePending(localAction, error);
 }
 
-export async function createCanvasProjectWithRemoteSync(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>) {
+export async function createCanvasProjectWithRemoteSync(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "starterMode">>) {
     const id = useCanvasStore.getState().createProject(title, projectId);
     if (initialContent) useCanvasStore.getState().updateProject(id, initialContent);
     remoteDeletedProjects.delete(id);

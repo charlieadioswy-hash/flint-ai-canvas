@@ -12,6 +12,8 @@ type ProjectUiState = {
 };
 
 type CanvasUiStore = ProjectUiState & {
+    isMiniMapOpen: boolean;
+    toggleMiniMap: () => void;
     startEditingProject: (id: string, title: string) => void;
     setEditingProjectTitle: (title: string) => void;
     stopEditingProject: () => void;
@@ -40,6 +42,8 @@ function dropProjects(ids: readonly string[], removed: readonly string[]): strin
 
 export const useCanvasUiStore = create<CanvasUiStore>((set) => ({
     ...emptyProjectUi,
+    isMiniMapOpen: true,
+    toggleMiniMap: () => set((state) => ({ isMiniMapOpen: !state.isMiniMapOpen })),
     startEditingProject: (id, title) => {
         set({ editingProjectId: id, editingProjectTitle: title });
     },

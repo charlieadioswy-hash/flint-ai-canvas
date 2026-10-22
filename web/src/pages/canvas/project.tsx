@@ -5,7 +5,7 @@ import { useCanvasImageLayerGroups } from "./use-canvas-image-layer-groups";
 import { useCanvasImageLayerMaterials } from "./use-canvas-image-layer-materials";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { createCanvasStateWriter } from "@/lib/canvas/canvas-editor-state";
-import { useCanvasImageWheelResize } from "./use-canvas-image-wheel-resize";
+import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { canCancelGenerationTask } from "@/lib/generation-task-display";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -258,7 +258,8 @@ function CanvasViewportPage() {
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     // 每次发送带递增 id：重复发送同一节点时文本相同，仍需触发一次追加。
     const [agentPrefillRequest, setAgentPrefillRequest] = useState<(CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean }) | null>(null);
-    const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
+    const isMiniMapOpen = useCanvasUiStore((state) => state.isMiniMapOpen);
+    const toggleMiniMap = useCanvasUiStore((state) => state.toggleMiniMap);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
     const [showImageInfo, setShowImageInfo] = useState(false);
@@ -636,14 +637,13 @@ function CanvasViewportPage() {
         setSearchParams(next, { replace: true });
     }, [projectLoaded, searchParams, setSearchParams, openAgent]);
 
-    // 沉浸专注进入时收起智能体与小地图、重置 Dock 唤出态；仅响应「进入」瞬间，避免关闭专注内主动唤出的面板。
+    // 专注模式临时隐藏小地图，保留本次会话的展开选择；进入时收起智能体并重置 Dock 唤出态。
     const prevFocusModeRef = useRef(focusMode);
     useEffect(() => {
         const enteredFocus = focusMode && !prevFocusModeRef.current;
         prevFocusModeRef.current = focusMode;
         if (!enteredFocus) return;
         closeAgent();
-        setIsMiniMapOpen(false);
         setFocusDockRevealed(false);
     }, [closeAgent, focusMode]);
 
@@ -1478,7 +1478,6 @@ function CanvasViewportPage() {
         dialogNodeId,
     });
 
-    const handleSelectedImageWheel = useCanvasImageWheelResize({ projectId, nodesRef, selectedNodeIdsRef, historyPausedRef, setNodes, onResize: handleNodeResize });
     const visibleDisplayConnections = useMemo(
         () =>
             filterBatchCellConnections(
@@ -2564,7 +2563,7 @@ function CanvasViewportPage() {
     });
     const emptyCanvasState =
         emptyStateKind === "freeform" ? (
-            <CanvasFreeformEmptyState commands={freeformCreateCommands} />
+            <CanvasFreeformEmptyState commands={freeformCreateCommands} onOpenAgent={openAgent} onUpload={() => handleUploadRequest()} />
         ) : emptyStateKind === "linked" ? (
             <CanvasLinkedProjectEmptyState
                 projectName={linkedProjectQuery.data?.project.name || currentProject?.title || "项目画布"}
@@ -2718,7 +2717,6 @@ function CanvasViewportPage() {
                                 <div className="relative min-w-0 flex-1 overflow-clip">
                                     <CanvasViewport
                                         interactive
-                                        onSelectedImageWheel={handleSelectedImageWheel}
                                         containerRef={containerRef}
                                         viewport={viewport}
                                         appearance={canvasAppearance}
@@ -3157,7 +3155,7 @@ function CanvasViewportPage() {
                                         hideNodeConnections={hideNodeConnections}
                                         onHideNodeConnectionsChange={setHideNodeConnections}
                                         isMiniMapOpen={isMiniMapOpen}
-                                        onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)}
+                                        onToggleMiniMap={toggleMiniMap}
                                         onOpenShortcuts={() => setShortcutRequestNonce((value) => value + 1)}
                                     />
                                 </CanvasOverlayLayerContainer>

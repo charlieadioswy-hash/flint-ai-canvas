@@ -17,6 +17,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
+import { CanvasImageCountControl } from "./canvas-image-count-control";
 import { CanvasControlNetPopover } from "./canvas-controlnet-popover";
 import { isStructureControlNode, nodeControlNet, structureControlBindingNodeIds } from "@/lib/canvas/controlnet";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
@@ -433,7 +434,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const renderComposerControls = (expanded: boolean) =>
         simpleMode ? (
-            <div className="canvas-node-composer-footer">
+            <div className={`canvas-node-composer-footer ${mode === "image" ? "flex-wrap" : ""}`}>
                 <span className="min-w-0 truncate px-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                     {activeReferenceCount ? `已连接 ${activeReferenceCount} 个素材` : "将使用默认模型与参数"}
                 </span>
@@ -445,10 +446,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     accent={monochromeAccent}
                     compact
                 />
+                {mode === "image" ? <CanvasImageCountControl config={config} disabled={Boolean(node.metadata?.locked)} onChange={(count) => onConfigChange(node.id, { count })} /> : null}
                 {renderSubmitButton(expanded)}
             </div>
         ) : (
-            <div className="canvas-node-composer-footer">
+            <div className={`canvas-node-composer-footer ${mode === "image" ? "flex-wrap" : ""}`}>
                 <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
                     <ModelPicker
                         className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
@@ -465,7 +467,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         showConfiguredModelName
                     />
                 </div>
-                <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+                <div className={`ml-auto flex min-w-0 shrink-0 items-center gap-1 ${mode === "image" ? "max-w-full flex-wrap justify-end" : ""}`}>
                     <ReferenceToolsPopover
                         canAutoMention={canAutoMention}
                         autoLinkEnabled={autoLinkEnabled}
@@ -516,12 +518,14 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             />
                             <CanvasImageSettingsPopover
                                 config={config}
+                                showCount={false}
                                 placement={expanded ? "topRight" : "topLeft"}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
                                 onMissingConfig={() => navigateToSettings({ continueCreation: true })}
                                 onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                             />
+                            <CanvasImageCountControl config={config} disabled={Boolean(node.metadata?.locked)} onChange={(count) => onConfigChange(node.id, { count })} />
                         </>
                     ) : mode === "video" ? (
                         <CanvasVideoSettingsPopover

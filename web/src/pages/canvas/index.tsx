@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
-import { ArrowDownAZ, Clock3, Download, FileUp, History, ListFilter, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowDownAZ, Clapperboard, Clock3, Download, FileUp, History, ListFilter, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 
 import { CollectionGrid, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { CollectionToolbar } from "@/components/layout/collection-toolbar";
@@ -30,6 +30,7 @@ import { primeResourceBlobCache } from "@/services/resource-blob-cache";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
+import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
 
 const CanvasDeleteProjectsDialog = lazy(() => import("@/components/canvas/canvas-delete-projects-dialog").then((module) => ({ default: module.CanvasDeleteProjectsDialog })));
 
@@ -51,6 +52,7 @@ export default function CanvasPage() {
     const localProjects = useCanvasStore((state) => state.projects);
     const userId = useUserStore((state) => state.user?.id);
     const sessionHydrated = useUserStore((state) => state.hydrated);
+    const shortDramaEnabled = useUserStore((state) => state.features.shortDramaEnabled);
     const [debouncedKeyword, setDebouncedKeyword] = useState("");
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedKeyword(keyword.trim()), 250);
@@ -94,8 +96,9 @@ export default function CanvasPage() {
         },
         [forwardedQuery, navigate, preloadProject],
     );
-    const createAndEnter = () => {
-        void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
+    const createAndEnter = (starterMode: CanvasStarterMode = "freeform") => {
+        const title = starterMode === "guided" ? "短剧画布" : "自由画布";
+        void createCanvasProjectWithRemoteSync(`${title} ${projects.length + 1}`, undefined, { starterMode }).then(({ id, syncError }) => {
             if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
             enterProject(id);
         });
@@ -415,9 +418,14 @@ export default function CanvasPage() {
                     meta={<span className="app-projects-header-meta">{totalProjects} 个</span>}
                     actions={
                         <div className="collection-header-actions">
-                            <Button type="primary" disabled={!hydrated} icon={<Plus />} onClick={createAndEnter}>
+                            <Button type="primary" disabled={!hydrated} icon={<Plus />} onClick={() => createAndEnter()}>
                                 新建画布
                             </Button>
+                            {shortDramaEnabled ? (
+                                <Button disabled={!hydrated} icon={<Clapperboard />} onClick={() => createAndEnter("guided")}>
+                                    新建短剧画布
+                                </Button>
+                            ) : null}
                             {projects.length ? (
                                 <Dropdown
                                     menu={{
@@ -507,7 +515,7 @@ export default function CanvasPage() {
                         ))}
                     </CollectionGrid>
                 ) : (
-                    <WorkspaceState icon="canvas" title={keyword || projectFilter !== "all" ? "没有匹配的画布" : "让第一个想法落在画布上"} description={keyword || projectFilter !== "all" ? "换一个画布名称或重置筛选条件。" : "图片、分镜和灵感，都可以在这里自由组织。"} action={!keyword && projectFilter === "all" ? <Button type="primary" icon={<Plus />} disabled={!hydrated} onClick={createAndEnter}>新建画布</Button> : undefined} />
+                    <WorkspaceState icon="canvas" title={keyword || projectFilter !== "all" ? "没有匹配的画布" : "让第一个想法落在画布上"} description={keyword || projectFilter !== "all" ? "换一个画布名称或重置筛选条件。" : "图片、分镜和灵感，都可以在这里自由组织。"} action={!keyword && projectFilter === "all" ? <Button type="primary" icon={<Plus />} disabled={!hydrated} onClick={() => createAndEnter()}>新建画布</Button> : undefined} />
                 )}
                 {hydrated && visibleProjects.length ? (
                     <div ref={loadMoreRef} className="library-load-more" aria-live="polite">

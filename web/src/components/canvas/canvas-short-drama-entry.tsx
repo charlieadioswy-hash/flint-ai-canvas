@@ -97,7 +97,7 @@ function CanvasEntryFilmMark() {
     );
 }
 
-export function CanvasFreeformEmptyState({ commands }: { commands: CanvasCreateCommand[] }) {
+export function CanvasFreeformEmptyState({ commands, onOpenAgent, onUpload }: { commands: CanvasCreateCommand[]; onOpenAgent: () => void; onUpload: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     const [createOpen, setCreateOpen] = useState(false);
     const createCommands = commands.map((command) => ({
@@ -109,27 +109,51 @@ export function CanvasFreeformEmptyState({ commands }: { commands: CanvasCreateC
     }));
     return (
         <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center px-4 pb-20 pt-24">
-            <div className="pointer-events-auto flex min-h-[260px] w-full max-w-[520px] flex-col items-center justify-center rounded-2xl border border-dashed px-8 py-10 text-center backdrop-blur" data-canvas-no-zoom style={{ background: theme.node.fill, borderColor: theme.node.edge, boxShadow: theme.node.shadow, color: theme.node.text }}>
-                <h2 className="text-base font-semibold">自由空白画布</h2>
-                <p className="mt-1 text-xs" style={{ color: theme.node.muted }}>不预设流程，从任意一种素材开始创作。</p>
-                <Popover
-                    arrow={false}
-                    open={createOpen}
-                    onOpenChange={setCreateOpen}
-                    placement="bottom"
-                    trigger="click"
-                    content={<div className="w-[420px] max-w-[calc(100vw-48px)] p-1" onWheel={(event) => event.stopPropagation()}><CanvasCreateMenu commands={createCommands} /></div>}
-                >
+            <div className="pointer-events-auto flex w-full max-w-[520px] flex-col items-center px-4 py-6 text-center" data-canvas-no-zoom style={{ color: theme.node.text }}>
+                <h2 className="text-base font-semibold">从一个想法开始</h2>
+                <p className="mt-2 text-xs" style={{ color: theme.node.muted }}>
+                    交给 Agent，或添加第一个节点。
+                </p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                     <button
                         type="button"
-                        aria-label="添加第一项"
-                        className="mt-7 grid size-14 place-items-center rounded-full border outline-none transition-transform hover:scale-105 focus-visible:ring-2 motion-reduce:transition-none motion-reduce:hover:scale-100"
-                        style={{ background: theme.toolbar.panel, borderColor: theme.node.edge, color: theme.node.text, boxShadow: theme.node.shadow, "--tw-ring-color": theme.accent.primary } as CSSProperties}
+                        onClick={onOpenAgent}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium outline-none focus-visible:ring-2"
+                        style={{ background: theme.toolbar.activeBg, color: theme.toolbar.activeText }}
                     >
-                        <Plus className="size-6" />
+                        <Sparkles className="size-3.5" />
+                        交给 Agent
                     </button>
-                </Popover>
-                <p className="mt-4 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>点击 + 添加文本、图片、视频、音频或导入素材</p>
+                    <Popover
+                        arrow={false}
+                        open={createOpen}
+                        onOpenChange={setCreateOpen}
+                        placement="bottom"
+                        trigger="click"
+                        content={
+                            <div className="w-[420px] max-w-[calc(100vw-48px)] p-1" onWheel={(event) => event.stopPropagation()}>
+                                <CanvasCreateMenu commands={createCommands} />
+                            </div>
+                        }
+                    >
+                        <button
+                            type="button"
+                            aria-expanded={createOpen}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium outline-none focus-visible:ring-2"
+                            style={{ background: theme.toolbar.itemHover, color: theme.node.text }}
+                        >
+                            <Plus className="size-3.5" />
+                            直接创作
+                        </button>
+                    </Popover>
+                    <button type="button" onClick={onUpload} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-medium outline-none focus-visible:ring-2" style={{ background: theme.toolbar.itemHover, color: theme.node.text }}>
+                        <Upload className="size-3.5" />
+                        导入素材
+                    </button>
+                </div>
+                <p className="mt-4 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
+                    也可以把素材拖到画布上
+                </p>
             </div>
         </div>
     );

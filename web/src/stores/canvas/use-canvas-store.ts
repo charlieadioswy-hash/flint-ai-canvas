@@ -686,6 +686,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     connections: [],
                     chatSessions: [],
                     activeChatId: null,
+                    starterMode: "freeform",
                     appearance: appearanceDefault?.appearance ?? canvasAppearanceForPreset(useThemeStore.getState().theme),
                     backgroundMode: appearanceDefault?.backgroundMode || NEW_CANVAS_BACKGROUND_MODE,
                     showImageInfo: false,
