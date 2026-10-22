@@ -8,6 +8,7 @@ function snapshotMetadata(metadata: CanvasNodeMetadata | undefined, rootId: stri
     delete snapshot.taskId;
     delete snapshot.taskStatus;
     delete snapshot.taskProgress;
+    delete snapshot.taskProviderProgress;
     delete snapshot.taskStage;
     delete snapshot.taskCreatedAt;
     delete snapshot.taskUpdatedAt;

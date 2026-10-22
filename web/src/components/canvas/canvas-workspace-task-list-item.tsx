@@ -20,7 +20,7 @@ export const TaskListItem = memo(function TaskListItem({ task, onCancelTask }: {
     }, [task.status]);
 
     const showsProgress = generationTaskShowsProgress(task);
-    const progress = showsProgress && typeof task.progress === "number" ? Math.max(0, Math.min(100, Math.round(task.progress))) : undefined;
+    const progress = showsProgress ? task.providerProgress : undefined;
     const startedAt = task.startedAt || task.createdAt;
     const elapsedMs = Math.max(0, (task.completedAt ? parseTime(task.completedAt) : now) - parseTime(startedAt));
     const durationLabel = `${task.status === "queued" ? "已等待" : "已运行"} ${formatDuration(elapsedMs)}`;

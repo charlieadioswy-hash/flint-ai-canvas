@@ -69,6 +69,7 @@
 - [功能](content/docs/overview/features.mdx)
 - [本地开发](content/docs/backend/local-development.mdx)
 - [HTTP API 合同](content/docs/backend/http-api.mdx)
+- [模型参数与生成进度合同](content/docs/backend/model-capabilities-progress.mdx)：模型能力来源、已配置图片/视频参数、供应商组合限制、3D 参数与验证边界。
 - [图片合规检测](content/docs/backend/image-moderation.mdx)：手动节点入口、后台多 Provider 与唯一生效版本、统一报告、调用预算和恢复边界。
 - [后端数据库](content/docs/backend/backend-database.mdx)
 - [代码地图](content/docs/backend/code-map.mdx)

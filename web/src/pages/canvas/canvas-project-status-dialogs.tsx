@@ -37,7 +37,7 @@ export function CanvasProjectStatusDialogs({ theme, task, taskLogs, taskLoading,
                     <div className="space-y-4 text-sm">
                         <div className="grid grid-cols-2 gap-3 rounded-lg border p-3" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
                             <TaskDetailItem label="当前阶段" value={generationTaskStageLabel(task)} />
-                            {generationTaskShowsProgress(task) ? <TaskDetailItem label="进度" value={`${task.progress ?? 0}%`} /> : null}
+                            {generationTaskShowsProgress(task) ? <TaskDetailItem label="进度" value={`${task.providerProgress}%`} /> : null}
                             <TaskDetailItem label="模型" value={task.model ? modelDisplayName(config, task.model) : "默认模型"} />
                             <TaskDetailItem label="任务 ID" value={task.id} />
                             <TaskDetailItem label="创建时间" value={formatTaskTime(task.createdAt)} />

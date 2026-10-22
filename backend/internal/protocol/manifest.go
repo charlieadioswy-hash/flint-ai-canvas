@@ -32,16 +32,17 @@ type ManifestFilePart struct {
 }
 
 type ManifestResponse struct {
-	TaskIDPaths     []string `json:"taskIdPaths,omitempty"`
-	StatusPaths     []string `json:"statusPaths,omitempty"`
-	ErrorPaths      []string `json:"errorPaths,omitempty"`
-	MessagePaths    []string `json:"messagePaths,omitempty"`
-	TextPaths       []string `json:"textPaths,omitempty"`
-	ReasoningPaths  []string `json:"reasoningPaths,omitempty"`
-	ResultURLPaths  []string `json:"resultUrlPaths,omitempty"`
-	ResultPaths     []string `json:"resultPaths,omitempty"`
-	ResultKind      string   `json:"resultKind,omitempty"`
-	ResultEphemeral bool     `json:"resultEphemeral,omitempty"`
+	Progress        *ManifestProgress `json:"progress,omitempty"`
+	TaskIDPaths     []string          `json:"taskIdPaths,omitempty"`
+	StatusPaths     []string          `json:"statusPaths,omitempty"`
+	ErrorPaths      []string          `json:"errorPaths,omitempty"`
+	MessagePaths    []string          `json:"messagePaths,omitempty"`
+	TextPaths       []string          `json:"textPaths,omitempty"`
+	ReasoningPaths  []string          `json:"reasoningPaths,omitempty"`
+	ResultURLPaths  []string          `json:"resultUrlPaths,omitempty"`
+	ResultPaths     []string          `json:"resultPaths,omitempty"`
+	ResultKind      string            `json:"resultKind,omitempty"`
+	ResultEphemeral bool              `json:"resultEphemeral,omitempty"`
 	// BinaryPayload 表示 create 同步返回二进制媒体（如 /audio/speech 的音频流）。
 	// 声明式解析会把整个响应体包装为对应能力的单个媒体结果，不做 JSON 路径提取。
 	BinaryPayload bool `json:"binaryPayload,omitempty"`
@@ -57,6 +58,13 @@ type ManifestResponse struct {
 	Videos            any  `json:"videos,omitempty"`
 	Audios            any  `json:"audios,omitempty"`
 	Usage             any  `json:"usage,omitempty"`
+}
+
+// Progress reads one documented response field. Scale is the upstream maximum,
+// never inferred from a value: 1 means a fraction, 100 means a percentage.
+type ManifestProgress struct {
+	Path  string `json:"path"`
+	Scale int    `json:"scale"`
 }
 
 // ManifestAgentResponse describes the provider response shape for a
@@ -293,6 +301,11 @@ func ValidateManifest(manifest Manifest) error {
 			return fmt.Errorf("duplicate provider contribution %q", provider.ID)
 		}
 		providerIDs[provider.ID] = struct{}{}
+		if progress := provider.Response.Progress; progress != nil {
+			if strings.TrimSpace(progress.Path) == "" || (progress.Scale != 1 && progress.Scale != 100) {
+				return fmt.Errorf("provider %q progress requires a response path and scale 1 or 100", provider.ID)
+			}
+		}
 		if err := ValidateImageParameters(provider.ImageParameters); err != nil {
 			return fmt.Errorf("provider %q image parameters: %w", provider.ID, err)
 		}

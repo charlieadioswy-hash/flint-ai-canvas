@@ -63,10 +63,10 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                     </span>
                 </div>
                 {isActive && !showsProgress ? <p>{stageLabel}</p> : isActive ? (
-                    <div className="task-grid-progress" role="progressbar" aria-label={stageLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.progress || 0}>
+                    <div className="task-grid-progress" role="progressbar" aria-label={stageLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.providerProgress}>
                         <span>{stageLabel}</span>
-                        <strong>{task.progress || 0}%</strong>
-                        <i><b style={{ width: `${task.progress || 0}%` }} /></i>
+                        <strong>{task.providerProgress}%</strong>
+                        <i><b style={{ width: `${task.providerProgress}%` }} /></i>
                     </div>
                 ) : null}
                 {isFailed ? <p className="task-grid-error" title={task.error || undefined}>{taskAttentionReason(task)}</p> : null}

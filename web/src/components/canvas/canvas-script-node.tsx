@@ -164,6 +164,8 @@ export function CanvasScriptNodeContent({
               provider: node.metadata.taskProvider,
               status: displayStatus,
               stage: node.metadata.taskStage,
+              mediaStage: node.metadata.taskMediaStage,
+              providerProgress: node.metadata.taskProviderProgress,
               officialStatus: node.metadata.taskOfficialStatus,
               errorCode: node.metadata.taskErrorCode,
           }
@@ -171,7 +173,7 @@ export function CanvasScriptNodeContent({
     const taskFeedback =
         node.metadata?.status === "loading"
             ? displayTask
-                ? `${generationTaskStageLabel(displayTask)}${generationTaskShowsProgress(displayTask) && typeof node.metadata.taskProgress === "number" ? ` · ${node.metadata.taskProgress}%` : ""}`
+                ? `${generationTaskStageLabel(displayTask)}${generationTaskShowsProgress(displayTask) ? ` · ${displayTask.providerProgress}%` : ""}`
                 : "正在创建任务"
             : node.metadata?.status === "error"
               ? generationErrorMessage(node.metadata.errorDetails)

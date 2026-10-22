@@ -5,6 +5,12 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
+## 供应商进度（标准迁移版本 62）
+
+迁移 `task_provider_progress` 只在 `tasks` 新增可空整数 `provider_progress`。NULL 表示供应商未提供可展示的百分比，真实返回的 0% 保存为 0；历史任务保留 NULL，不从旧 `progress` 推断或回填。旧 `progress` 仍是内部任务阶段权重，图片、视频和 3D 界面的百分比以 `providerProgress` 为准。
+
+声明式协议仅从显式配置的 `response.progress.path` 读取进度，并按 `scale: 1` 或 `scale: 100` 转成百分比；缺失、非法值及未声明进度的插件只更新状态。写入受当前 worker 租约约束，已知百分比在同一生成阶段不回退。上游报告 100% 不代表平台文件已保存，进入保存、失败、取消或成功阶段时清空百分比，以 `stage` / `status` 表示结果。Tripo 同样保留原任务恢复与保存完成后才宣告成功的边界。
+
 ## 结构控制图片合同
 
 ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。画布节点 `GenerationSpec.options` 保存控制单元及输出蒙版绑定；模型能力 JSON 新增 `image.controlNet`。任务 `input_json` 保存已校验的顶层 `controlNet`、`outputMask`、资源引用及平台参数；资源引用继续参与归属和删除检查。
@@ -53,7 +59,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 ## 结构迁移与版本
 
-当前结构版本为 61。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
+当前结构版本为 62。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力，并在 62 增加供应商进度字段。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
 
 | 迁移 | 新库及本分支顺序 | 既有上游合并账本 | 原生上游账本 |
 | --- | --- | --- | --- |
@@ -71,6 +77,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 | 服务商目录来源 | 59 | 59 | 55 |
 | SQL 性能索引 | 60 | 60 | 56 |
 | 画布多端协作 | 61 | 61 | 57 |
+| 可选供应商真实进度 | 62 | 62 | 62 |
 
 另有早期仅交换 3D 与上传容量预占编号的合并账本：保留 45 的上传预占和 48 的 3D，其余沿用新库顺序。升级按实际账本识别，不能仅凭当前版本号选取迁移路径。
 
@@ -92,7 +99,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 61 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 62 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 ### 生成成功后的作品保存恢复
 

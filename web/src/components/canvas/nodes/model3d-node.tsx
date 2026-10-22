@@ -6,6 +6,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import { isModel3DPending, MODEL3D_MODE_LABELS, model3DDownloadName, model3DSourceFingerprint, readModel3DState } from "@/lib/canvas/model3d";
 import { downloadBrowserMedia } from "@/services/browser-download";
 import { formatBytes } from "@/lib/image-utils";
+import { generationTaskProgress } from "@/lib/generation-task-display";
 import type { CanvasNodeData } from "@/types/canvas";
 
 const Viewer = lazy(() => import("@/components/assets/model3d-viewer").then((module) => ({ default: module.Model3DViewer })));
@@ -31,6 +32,7 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
     const pending = isModel3DPending(run);
     const saving = run?.status === "running" && run.stage === "保存 3D 模型文件";
     const unknown = run?.status === "submission_unknown" || run?.submissionOutcome === "unknown";
+    const progress = run && (run.status === "queued" || run.status === "running") && !unknown ? generationTaskProgress({ status: run.status, stage: run.stage, providerProgress: run.providerProgress }) : undefined;
     const changed = Boolean(context && state.resultFingerprint && state.resultFingerprint !== model3DSourceFingerprint(state.draft, context.nodes, context.inputNodes(node.id)));
     const version = context?.capabilities?.modelVersions.find((model) => model.id === state.draft.parameters.model)?.label || state.draft.parameters.model || "选择模型";
     const status =
@@ -143,7 +145,7 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
                     <span className="flex items-center gap-1.5" style={{ color: run?.status === "failed" || unknown ? "var(--status-warning)" : theme.node.muted }}>
                         {pending ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" /> : null}
                         {status}
-                        {run?.status === "running" && run.stage === "3D 模型生成中" && typeof run.progress === "number" && run.progress > 0 && run.progress < 100 ? ` · ${Math.round(run.progress)}%` : ""}
+                        {progress !== undefined ? ` · ${progress}%` : ""}
                     </span>
                     <div className="flex gap-2">
                         {editable && run?.requestId ? (

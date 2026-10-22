@@ -7,6 +7,7 @@ import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-s
 import { useUserStore } from "@/stores/use-user-store";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { requestCreditCost } from "@/lib/model-pricing";
+import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
 import { isIrregularScreenScene, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize } from "@/lib/canvas/irregular-screen-domain";
 import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions } from "@/lib/canvas/irregular-screen-model";
@@ -170,7 +171,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         await recoverScreenGeneration(id, signal, (task) => {
             session.assertActive();
             if (signal.aborted) return;
-            setStatusText(task.status === "succeeded" ? "正在保存生成结果…" : `${task.stage || "生成中"}${typeof task.progress === "number" ? ` · ${task.progress}%` : ""}`);
+            setStatusText(task.status === "succeeded" ? "正在保存生成结果…" : `${generationTaskStageLabel(task)}${generationTaskShowsProgress(task) ? ` · ${task.providerProgress}%` : ""}`);
         });
         session.assertActive();
         if (signal.aborted) return;

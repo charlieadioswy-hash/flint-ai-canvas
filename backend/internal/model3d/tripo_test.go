@@ -65,6 +65,28 @@ func TestTripoOfficialCreateResponse(t *testing.T) {
 	}
 }
 
+func TestTripoProgressDistinguishesAbsentZeroAndInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		want        int
+		present     bool
+	}{
+		{"absent", "", 0, false}, {"null", `,"progress":null`, 0, false}, {"zero", `,"progress":0`, 0, true},
+		{"running", `,"progress":37`, 37, true}, {"supplier complete", `,"progress":100`, 100, true},
+		{"negative", `,"progress":-1`, 0, false}, {"out of range", `,"progress":101`, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &tripoProvider{client: &http.Client{Transport: tripoRoundTrip(func(*http.Request) (*http.Response, error) {
+				return tripoResponse(200, `{"code":0,"data":{"status":"running"`+tc.field+`}}`), nil
+			})}}
+			state, err := provider.Poll(context.Background(), Config{BaseURL: tripoTestBaseURL}, "task", false)
+			if err != nil || (state.ReportedProgress != nil) != tc.present || (state.ReportedProgress != nil && *state.ReportedProgress != tc.want) {
+				t.Fatalf("state=%+v err=%v", state, err)
+			}
+		})
+	}
+}
+
 func TestTripoSuccessEnvelopeRequiresExplicitIntegerCodeAndData(t *testing.T) {
 	for _, test := range []struct {
 		name string

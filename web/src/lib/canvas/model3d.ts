@@ -28,6 +28,7 @@ export type Model3DRun = {
     snapshot: Model3DDraft;
     status: Model3DTaskView["status"] | "submitting" | "submission_unknown";
     progress?: number;
+    providerProgress?: number;
     stage?: string;
     error?: string;
     canRetryStorage?: boolean;
@@ -193,7 +194,7 @@ export function applyModel3DTask(node: CanvasNodeData, task: Model3DTaskView, ca
             ...(result ? { content: result.url, storageKey: result.storageKey, assetId: result.assetId, bytes: result.bytes, mimeType: result.mimeType, model3dFormat: result.format, status: "success" as const } : {}),
             model3d: {
                 ...state,
-                run: { ...state.run, taskId: task.id, status: task.status, stage: task.stage, progress: task.progress, submissionOutcome: task.submissionOutcome, error: task.error?.message, canRetryStorage: task.canRetryStorage },
+                run: { ...state.run, taskId: task.id, status: task.status, stage: task.stage, progress: task.progress, providerProgress: task.providerProgress, submissionOutcome: task.submissionOutcome, error: task.error?.message, canRetryStorage: task.canRetryStorage },
                 ...(result ? { result, resultFingerprint: state.run.sourceFingerprint } : {}),
             },
         },

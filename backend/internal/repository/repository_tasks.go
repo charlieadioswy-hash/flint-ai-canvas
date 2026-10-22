@@ -194,15 +194,23 @@ func taskLeaseWriter(db *gorm.DB, owner string) *gorm.DB {
 	return db.Where("lease_owner = ? AND lease_expires_at > ?", owner, time.Now())
 }
 
-// UpdateTaskProviderProgress records upstream-reported progress without allowing
-// a delayed or out-of-order poll response to move the public percentage backwards.
-func (r *Repository) UpdateTaskProviderProgress(id string, progress int) error {
-	progress = max(0, min(100, progress))
-	return r.db.Model(&model.Task{}).Where("id = ? AND status = ?", id, model.TaskStatusRunning).Updates(map[string]any{
-		"stage":      "上游生成中",
-		"progress":   gorm.Expr("CASE WHEN progress < ? THEN ? ELSE progress END", progress, progress),
-		"updated_at": time.Now(),
-	}).Error
+// Only the current worker may publish an observation. NULL distinguishes an
+// absent percentage from a genuine 0%; local stage weights never enter it.
+func (r *Repository) UpdateTaskProviderProgress(id, owner, stage string, progress *int) error {
+	var value any
+	if progress != nil && *progress >= 0 && *progress < 100 {
+		value = gorm.Expr("CASE WHEN provider_progress IS NULL OR provider_progress < ? THEN ? ELSE provider_progress END", *progress, *progress)
+	}
+	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
+		Where("id = ? AND status = ? AND (media_stage IS NULL OR media_stage = '')", id, model.TaskStatusRunning).
+		Updates(map[string]any{"stage": stage, "provider_progress": value, "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskStateConflict
+	}
+	return nil
 }
 
 func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskStatus, results []model.Result) error {
@@ -212,6 +220,7 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 // Registration and terminal success commit together; a failed asset write leaves
 // the task recoverable and never exposes a false success to the canvas.
 func (r *Repository) SaveTaskCompletionWithRegistration(task *model.Task, expected model.TaskStatus, results []model.Result, register func(*Repository) error) error {
+	task.ProviderProgress = nil
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		storedResultJSON := task.ResultJSON
@@ -247,7 +256,8 @@ func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected m
 		Where("id = ? AND status = ?", id, expected).
 		Updates(map[string]any{
 			"status": status, "stage": stage, "error": errorText, "completed_at": &completedAt,
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": completedAt,
+			"provider_progress": nil,
+			"lease_owner":       "", "lease_expires_at": nil, "updated_at": completedAt,
 		})
 	return result.RowsAffected == 1, result.Error
 }
@@ -257,6 +267,7 @@ func (r *Repository) UpdateTaskTerminalDiagnostic(task *model.Task, completedAt 
 		Where("id = ? AND status = ?", task.ID, model.TaskStatusRunning).
 		Updates(map[string]any{
 			"status": task.Status, "stage": task.Stage, "error": task.Error, "completed_at": &completedAt,
+			"provider_progress":         nil,
 			"execution_diagnostic_json": task.ExecutionDiagnosticJSON,
 			"cancellation_source":       task.CancellationSource, "cancellation_actor_id": task.CancellationActorID,
 			"cancellation_requested_at": task.CancellationRequestedAt,
@@ -281,7 +292,8 @@ func (r *Repository) UpdateTaskExecutionDiagnostic(userID, taskID, diagnosticJSO
 func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model.TaskStatus, now time.Time, intents ...model.TaskCancellationIntent) (bool, error) {
 	updates := map[string]any{
 		"status": model.TaskStatusCancelled, "stage": "任务已取消", "error": "任务已取消", "completed_at": &now,
-		"lease_owner": "", "lease_expires_at": nil, "updated_at": now,
+		"provider_progress": nil,
+		"lease_owner":       "", "lease_expires_at": nil, "updated_at": now,
 	}
 	if len(intents) > 0 {
 		intent := intents[0]
@@ -387,7 +399,7 @@ func (r *Repository) TasksWithWorkbenchKind(userID string, limit int, projectID 
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	query := r.db.Select("id", "project_id", "type", "workbench_kind", "status", "stage", "media_stage", "media_recovery_json", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at", "agent_run_id", "generation_id", "approval_id", "authorized_charge_microcredits", "execution_diagnostic_json", "cancellation_source", "cancellation_actor_id", "cancellation_requested_at").
+	query := r.db.Select("id", "project_id", "type", "workbench_kind", "status", "stage", "media_stage", "media_recovery_json", "progress", "provider_progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at", "agent_run_id", "generation_id", "approval_id", "authorized_charge_microcredits", "execution_diagnostic_json", "cancellation_source", "cancellation_actor_id", "cancellation_requested_at").
 		Where("user_id = ?", userID)
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))

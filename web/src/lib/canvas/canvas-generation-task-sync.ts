@@ -745,6 +745,7 @@ function completedTaskMetadata(task: GenerationTask): CanvasNodeMetadata {
         taskId: task.id,
         taskStatus: task.status,
         taskProgress: typeof task.progress === "number" && Number.isFinite(task.progress) ? Math.max(0, Math.min(100, Math.round(task.progress))) : 100,
+        taskProviderProgress: undefined,
         taskStage: task.stage,
         taskMediaStage: task.mediaStage,
         taskCanRecoverMedia: task.canRecoverMedia,

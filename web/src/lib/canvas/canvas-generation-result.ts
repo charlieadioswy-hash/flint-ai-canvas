@@ -4,6 +4,7 @@ const completedTaskObservationKeys = [
     "status",
     "taskStatus",
     "taskProgress",
+    "taskProviderProgress",
     "taskStage",
     "taskMediaStage",
     "taskCanRecoverMedia",

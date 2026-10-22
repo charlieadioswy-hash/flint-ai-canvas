@@ -63,11 +63,11 @@ export function TaskListRow({
                     </span>
                 </div>
                 {isActive && !showsProgress ? <p>{stageLabel}</p> : isActive ? (
-                    <div className="task-record-progress" role="progressbar" aria-label={stageLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.progress || 0}>
+                    <div className="task-record-progress" role="progressbar" aria-label={stageLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.providerProgress}>
                         <span>{stageLabel}</span>
-                        <span>{task.progress || 0}%</span>
+                        <span>{task.providerProgress}%</span>
                         <i>
-                            <b style={{ width: `${task.progress || 0}%` }} />
+                            <b style={{ width: `${task.providerProgress}%` }} />
                         </i>
                     </div>
                 ) : null}

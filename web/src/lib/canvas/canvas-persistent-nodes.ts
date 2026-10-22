@@ -4,6 +4,7 @@ import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 const pollingFields: (keyof CanvasNodeMetadata)[] = [
     "taskStatus",
     "taskProgress",
+    "taskProviderProgress",
     "taskStage",
     "taskMediaStage",
     "taskCanRecoverMedia",

@@ -156,6 +156,7 @@ export function useCanvasGenerationExecutor({
                                               status: NODE_STATUS_LOADING,
                                               taskStage: "正在准备参考素材",
                                               taskProgress: 0,
+                                              taskProviderProgress: undefined,
                                               taskCreatedAt: new Date().toISOString(),
                                               errorDetails: undefined,
                                               generationErrorCode: undefined,
@@ -314,6 +315,7 @@ export function useCanvasGenerationExecutor({
                                               status: NODE_STATUS_LOADING,
                                               taskStage: "正在准备生成任务",
                                               taskProgress: 0,
+                                              taskProviderProgress: undefined,
                                               taskCreatedAt: new Date().toISOString(),
                                               errorDetails: undefined,
                                               generationErrorCode: undefined,
@@ -396,6 +398,7 @@ export function useCanvasGenerationExecutor({
                                     delete metadata.taskId;
                                     delete metadata.taskStatus;
                                     delete metadata.taskProgress;
+                                    delete metadata.taskProviderProgress;
                                     delete metadata.taskStage;
                                     delete metadata.taskCreatedAt;
                                     delete metadata.taskUpdatedAt;

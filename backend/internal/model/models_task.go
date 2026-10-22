@@ -30,6 +30,7 @@ type Task struct {
 	Status                       TaskStatus               `json:"status" gorm:"index;size:24;index:idx_tasks_status_created,priority:1;index:idx_tasks_claim,priority:1;index:idx_tasks_provider_cancel,priority:1"`
 	Stage                        string                   `json:"stage" gorm:"size:80"`
 	Progress                     int                      `json:"progress"`
+	ProviderProgress             *int                     `json:"providerProgress,omitempty"`
 	Prompt                       string                   `json:"prompt"`
 	Operation                    string                   `json:"operation" gorm:"size:64"`
 	Provider                     string                   `json:"provider" gorm:"size:64"`

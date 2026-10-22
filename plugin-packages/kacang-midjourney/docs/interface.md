@@ -61,7 +61,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "kacang-midjourney",
   "name": "卡藏 Midjourney",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "影绘",
   "description": "适配卡藏特惠、V7特惠与稳定/高速生图，按公开模型合同映射请求并查询、保存全部结果。",
   "enabled": true,
@@ -356,6 +356,10 @@
           "path": "/v1/tasks/{{taskId}}"
         },
         "response": {
+          "progress": {
+            "path": "progress",
+            "scale": 100
+          },
           "taskIdPaths": [
             "data.task_id",
             "task_id",
@@ -676,6 +680,10 @@
           "path": "/v1/tasks/{{taskId}}"
         },
         "response": {
+          "progress": {
+            "path": "progress",
+            "scale": 100
+          },
           "taskIdPaths": [
             "data.task_id",
             "task_id",
@@ -1924,6 +1932,10 @@
           "path": "/v1/tasks/{{taskId}}"
         },
         "response": {
+          "progress": {
+            "path": "progress",
+            "scale": 100
+          },
           "taskIdPaths": [
             "data.task_id",
             "task_id",

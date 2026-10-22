@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 61
+const CurrentSchemaVersion int64 = 62
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -208,6 +208,12 @@ var schemaMigrations = []migration{
 	}},
 	{version: 60, name: "sql_perf_indexes", checksum: "sha256:sql-perf-indexes-v56-20261016", apply: migrateSchemaV56},
 	{version: 61, name: "canvas_multi_session_sync", checksum: "sha256:canvas-multi-session-sync-v57", apply: migrateCanvasCollaboration},
+	{version: 62, name: "task_provider_progress", checksum: "sha256:task-provider-progress-v62", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.Task{}, "ProviderProgress") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.Task{}, "ProviderProgress")
+	}},
 }
 
 func migrateChannelModelProviderDefaults(tx *gorm.DB) error {

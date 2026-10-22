@@ -18,6 +18,7 @@ type builtinAdapter struct {
 	poll        func(PollContext) (RequestSpec, error)
 	parsePoll   func(PollContext, map[string]any) (PollResult, error)
 	cancel      func(PollContext) (RequestSpec, error)
+	progress    *ManifestProgress
 }
 
 func (a builtinAdapter) Metadata() Metadata { return a.info }
@@ -37,7 +38,11 @@ func (a builtinAdapter) ParseCreate(_ context.Context, body []byte) (CreateResul
 	if err != nil {
 		return CreateResult{}, err
 	}
-	return a.parseCreate(payload)
+	result, err := a.parseCreate(payload)
+	if err == nil {
+		result.Progress = responseProgress(payload, a.progress)
+	}
+	return result, err
 }
 
 func (a builtinAdapter) BuildPoll(_ context.Context, c PollContext) (RequestSpec, error) {
@@ -55,7 +60,11 @@ func (a builtinAdapter) ParsePoll(_ context.Context, c PollContext, body []byte)
 	if err != nil {
 		return PollResult{}, err
 	}
-	return a.parsePoll(c, payload)
+	result, err := a.parsePoll(c, payload)
+	if err == nil {
+		result.Progress = responseProgress(payload, a.progress)
+	}
+	return result, err
 }
 
 func (a builtinAdapter) BuildCancel(_ context.Context, c PollContext) (RequestSpec, error) {
@@ -202,7 +211,7 @@ func openAIVideosAdapter() Adapter {
 			body["input_reference"] = mediaValues(r.Images)
 		}
 		return RequestSpec{Method: http.MethodPost, Path: "/v1/videos", ContentType: "multipart/form-data", Body: body}, nil
-	})
+	}, &ManifestProgress{Path: "progress", Scale: 100})
 }
 
 func openAIVideoParams() []Parameter {
@@ -385,7 +394,7 @@ func novitaVideosAdapter() Adapter {
 			body["image_url"] = mediaValue(r.Images[0])
 		}
 		return jsonSpec(http.MethodPost, "/v3/video/create", body), nil
-	})
+	}, &ManifestProgress{Path: "task.progress_percent", Scale: 100})
 }
 
 func miniMaxVideosAdapter() Adapter {
@@ -408,7 +417,7 @@ func miniMaxVideosAdapter() Adapter {
 	})
 }
 
-func videoAdapter(info Metadata, create func(GenerationRequest) (RequestSpec, error)) Adapter {
+func videoAdapter(info Metadata, create func(GenerationRequest) (RequestSpec, error), progress ...*ManifestProgress) Adapter {
 	return asyncMediaAdapterWithPoll(info, CapabilityVideo, create, func(c PollContext) (RequestSpec, error) {
 		path := strings.TrimSpace(info.Poll)
 		if index := strings.IndexByte(path, ' '); index > 0 {
@@ -418,7 +427,7 @@ func videoAdapter(info Metadata, create func(GenerationRequest) (RequestSpec, er
 		path = strings.Replace(path, "{request_id}", url.PathEscape(c.TaskID), 1)
 		path = strings.Replace(path, "{id}", url.QueryEscape(c.TaskID), 1)
 		return RequestSpec{Method: http.MethodGet, Path: path}, nil
-	})
+	}, progress...)
 }
 
 func videoAdapterWithPoll(info Metadata, create func(GenerationRequest) (RequestSpec, error), poll func(PollContext) (RequestSpec, error)) Adapter {
@@ -437,13 +446,17 @@ func asyncMediaAdapter(info Metadata, capability Capability, create func(Generat
 	})
 }
 
-func asyncMediaAdapterWithPoll(info Metadata, capability Capability, create func(GenerationRequest) (RequestSpec, error), poll func(PollContext) (RequestSpec, error)) Adapter {
-	return builtinAdapter{
+func asyncMediaAdapterWithPoll(info Metadata, capability Capability, create func(GenerationRequest) (RequestSpec, error), poll func(PollContext) (RequestSpec, error), progress ...*ManifestProgress) Adapter {
+	adapter := builtinAdapter{
 		info: info, create: create, parseCreate: parseAsyncCreate, poll: poll,
 		parsePoll: func(c PollContext, payload map[string]any) (PollResult, error) {
 			return parseAsyncMediaPoll(c, payload, capability)
 		},
 	}
+	if len(progress) > 0 {
+		adapter.progress = progress[0]
+	}
+	return adapter
 }
 
 func jsonSpec(method, path string, body any) RequestSpec {
@@ -657,15 +670,15 @@ func parseAudioResponse(payload map[string]any) (CreateResult, error) {
 
 func normalizeStatus(raw string) Status {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "queued", "pending", "created", "submitted", "in_queue", "task_status_queued":
+	case "queued", "pending", "created", "submitted", "in_queue", "task_status_queued", "throttled":
 		return StatusPending
-	case "running", "processing", "in_progress", "executing", "task_status_running":
+	case "running", "processing", "in_progress", "executing", "task_status_running", "task_status_processing":
 		return StatusProcessing
 	case "succeeded", "success", "completed", "complete", "done", "task_status_succeed":
 		return StatusSucceeded
 	case "cancelled", "canceled", "aborted":
 		return StatusCancelled
-	case "failed", "failure", "error", "expired":
+	case "failed", "failure", "error", "expired", "task_status_failed":
 		return StatusFailed
 	default:
 		return ""

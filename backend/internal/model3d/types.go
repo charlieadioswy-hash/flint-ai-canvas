@@ -215,10 +215,11 @@ type Artifact struct {
 	Format string `json:"format"`
 }
 type State struct {
-	Status    string
-	Progress  int
-	Artifact  Artifact
-	ErrorCode string
+	Status           string
+	Progress         int
+	ReportedProgress *int
+	Artifact         Artifact
+	ErrorCode        string
 }
 
 // Provider has no hidden retries: Submit may create a billable task exactly once.

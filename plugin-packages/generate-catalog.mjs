@@ -657,7 +657,7 @@ add({
 });
 
 add({
-  id: "openai-videos", providerId: "newapi", name: "OpenAI Videos / Sora", vendor: "OpenAI", capability: "video",
+  id: "openai-videos", version: "2.0.1", providerId: "newapi", name: "OpenAI Videos / Sora", vendor: "OpenAI", capability: "video",
   baseUrl: "https://api.openai.com", auth: bearer, params: videoParams, requiresPublicMediaUrls: false,
   create: {
     method: "POST", path: "/v1/videos", contentType: "multipart/form-data",
@@ -671,7 +671,7 @@ add({
   poll: { method: "GET", path: "/v1/videos/{{taskId}}" },
   cancel: { method: "DELETE", path: "/v1/videos/{{taskId}}" },
   result: { method: "GET", path: "/v1/videos/{{taskId}}/content", headers: { Accept: "video/mp4" } },
-  response: asyncResponse("video", { videos: coalesce(ref("response.url"), ref("response.video_url"), ref("response.output.url")), errorPaths: ["error.code"], messagePaths: ["error.message"] })
+  response: asyncResponse("video", { progress: { path: "progress", scale: 100 }, videos: coalesce(ref("response.url"), ref("response.video_url"), ref("response.output.url")), errorPaths: ["error.code"], messagePaths: ["error.message"] })
 });
 
 add({
@@ -776,7 +776,7 @@ add({
 });
 
 add({
-  id: "novita-video", providerId: "novita-video", name: "Novita Video", vendor: "Novita", capability: "video",
+  id: "novita-video", version: "2.0.1", providerId: "novita-video", name: "Novita Video", vendor: "Novita", capability: "video",
   baseUrl: "https://api.novita.ai", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [{ assert: { $eq: [len(filter(ref("request.images"), "media", eq(ref("media.role"), "reference_image"))), 0] }, message: "Novita Video 当前 profile 只支持起始图，不支持角色参考图" }],
   create: jsonCreate("/v3/video/create", {
@@ -784,7 +784,8 @@ add({
     aspect_ratio: coalesce(ref("request.aspectRatio"), "16:9"), image_url: omit(firstMediaFieldWithRoles("request.images", ["first_frame", ""], "value")),
     seed: omit(ref("request.providerOptions.novita-video.seed")), negative_prompt: omit(ref("request.providerOptions.novita-video.negative_prompt"))
   }),
-  poll: { method: "GET", path: "/v3/async/task-result", query: { task_id: ref("taskId") } }, response: asyncResponse("video")
+  poll: { method: "GET", path: "/v3/async/task-result", query: { task_id: ref("taskId") } },
+  response: asyncResponse("video", { progress: { path: "task.progress_percent", scale: 100 }, status: coalesce(ref("response.task.status"), ...asyncResponse("video").status.$coalesce), videos: coalesce(ref("response.videos"), ...asyncResponse("video").videos.$coalesce), message: coalesce(ref("response.task.reason"), ...asyncResponse("video").message.$coalesce) })
 });
 
 add({
@@ -1292,13 +1293,13 @@ for (const [id, name, vendor, capability, baseUrl, createPath, pollPath, request
     operationExtra = { query: { "api-version": coalesce(ref(`${optionPath}.api-version`), "2024-10-21") } };
   }
   add({
-    id, providerId: id, name, vendor, capability, baseUrl, auth, params, configuration,
+    id, version: id.startsWith("runway-") ? "2.0.1" : undefined, providerId: id, name, vendor, capability, baseUrl, auth, params, configuration,
     notes: `该协议的模型级字段变化快或依赖云资源配置。插件固定线协议入口和统一字段，完整厂商对象通过 providerOptions.${id} 的 parameters/input/extra_body 传入；${requestShape}。云签名型入口在未配置对应鉴权驱动时会明确失败，不会伪装成 Bearer 成功。`,
     create: jsonCreate(createPath, standard, operationExtra),
     poll: pollPath ? { method: "GET", path: pollPath } : undefined,
     response: capability === "text"
       ? { status: "succeeded", textPaths: ["output.text", "output_text", "choices.0.message.content", "result"], reasoningPaths: ["reasoning_content"], usage: ref("response.usage"), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
-      : pollPath ? asyncResponse(capability) : { status: "succeeded", [capability + "s"]: coalesce(ref("response.data"), ref("response.output"), ref("response.url")), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
+      : pollPath ? asyncResponse(capability, id.startsWith("runway-") ? { progress: { path: "progress", scale: 1 }, [capability + "s"]: coalesce(ref("response.output"), ...asyncResponse(capability)[capability + "s"].$coalesce), message: coalesce(ref("response.failure"), ...asyncResponse(capability).message.$coalesce) } : {}) : { status: "succeeded", [capability + "s"]: coalesce(ref("response.data"), ref("response.output"), ref("response.url")), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
   });
 }
 
@@ -1333,7 +1334,7 @@ function manifestFor(spec) {
     apiVersion: "yingce.plugin/v2",
     id: spec.id,
     name: spec.name,
-    version: "2.0.0",
+    version: spec.version || "2.0.0",
     author: `${spec.vendor} / 影策`,
     description: `${spec.name} 独立请求协议插件。`,
     documentation: `# ${spec.name}\n\n完整字段、映射、响应、鉴权和兼容边界见包内 README.md 与 docs/interface.md。\n\n## 影策运行时合同\n\n用户只操作统一的文本、图片或视频能力；插件负责把统一请求转换为 ${spec.name} 上游协议。`,

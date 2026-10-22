@@ -19,7 +19,8 @@ func TestSwitchTaskLogicalRouteUpdatesCostWithoutChangingUnifiedSales(t *testing
 	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "task", UserID: "user", Status: model.TaskStatusRunning, RouteID: "old-route"}
+	percent := 45
+	task := model.Task{ID: "task", UserID: "user", Status: model.TaskStatusRunning, RouteID: "old-route", ProviderProgress: &percent}
 	order := model.BillingOrder{ID: "order", TaskID: task.ID, UserID: task.UserID, Status: model.BillingStatusRunning, ChannelID: "old-channel", AmountMicrocredits: 900_000, ReservedAmountMicrocredits: 900_000, UnitPriceMicrocredits: 900_000,
 		BillingCostSnapshot: model.BillingCostSnapshot{CostPricing: model.CreditCostPricing{Configured: true, UnitPriceMicrocredits: 500_000}, CostBillingMode: "fixed_request", CostQuantity: 1}}
 	if err := db.Create(&task).Error; err != nil {
@@ -32,6 +33,13 @@ func TestSwitchTaskLogicalRouteUpdatesCostWithoutChangingUnifiedSales(t *testing
 	cost := model.BillingCostSnapshot{CostPricing: model.CreditCostPricing{Configured: true, UnitPriceMicrocredits: 123_456}, CostBillingMode: "per_second", CostQuantity: 15}
 	if err := repo.SwitchTaskLogicalRoute(task.ID, "old-route", "new-route", "{}", order.ID, "new-channel", "new-model", nil, cost); err != nil {
 		t.Fatal(err)
+	}
+	var routedTask model.Task
+	if err := db.First(&routedTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if routedTask.ProviderProgress != nil {
+		t.Fatal("old provider percentage survived route replacement")
 	}
 	var saved model.BillingOrder
 	if err := db.First(&saved, "id = ?", order.ID).Error; err != nil {

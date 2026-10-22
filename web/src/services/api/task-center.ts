@@ -27,6 +27,7 @@ export type GenerationTask = {
     type: string;
     status: TaskStatus;
     progress?: number;
+    providerProgress?: number;
     stage?: string;
     mediaStage?: "download" | "upload" | "local_save" | "register" | "completed" | "checkpoint";
     canRecoverMedia?: boolean;

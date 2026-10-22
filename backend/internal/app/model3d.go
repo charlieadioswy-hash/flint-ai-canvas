@@ -138,6 +138,7 @@ type Model3DTaskView struct {
 	Status            model.TaskStatus     `json:"status"`
 	Stage             string               `json:"stage"`
 	Progress          int                  `json:"progress"`
+	ProviderProgress  *int                 `json:"providerProgress,omitempty"`
 	Mode              string               `json:"mode"`
 	SourceFingerprint string               `json:"sourceFingerprint"`
 	ClientContext     model3DClientContext `json:"clientContext"`
@@ -554,7 +555,7 @@ func (s *Service) Model3DTask(userID, id string) (*Model3DTaskView, error) {
 	if json.Unmarshal([]byte(task.InputJSON), &input) != nil {
 		return nil, NewAppError(503, "3D 任务输入无效")
 	}
-	view := &Model3DTaskView{ID: task.ID, Status: task.Status, Stage: task.Stage, Progress: task.Progress, Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ClientContext: input.ClientContext, SubmissionOutcome: "not_submitted", CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
+	view := &Model3DTaskView{ID: task.ID, Status: task.Status, Stage: task.Stage, Progress: task.Progress, ProviderProgress: publicProviderProgress(*task), Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ClientContext: input.ClientContext, SubmissionOutcome: "not_submitted", CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
 	if task.ProviderRequestID != "" {
 		view.SubmissionOutcome = "submitted"
 	} else if submission.State == "inflight" || submission.State == "unknown" {

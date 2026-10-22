@@ -303,6 +303,7 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 	task.ChannelModelID = selected.ChannelModel.ID
 	task.InputJSON = string(encoded)
 	task.ProviderRequestID = ""
+	task.ProviderProgress = nil
 	return s.createRouteAttempt(task, routed, len(attempts)+1)
 }
 

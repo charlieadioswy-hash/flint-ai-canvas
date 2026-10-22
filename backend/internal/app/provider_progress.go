@@ -1,109 +1,37 @@
 package app
 
 import (
-	"encoding/json"
+	"context"
 	"log"
-	"math"
-	"strconv"
-	"strings"
+
+	"yingce/backend/internal/protocol"
 )
 
-var providerProgressKeys = []string{"progress", "progresspercent", "progresspercentage", "percent", "percentage", "completion", "completionpercent"}
-
-var providerProgressContainers = []string{"data", "result", "task", "output", "operation", "response", "meta", "metadata"}
-
-// syncProviderTaskProgress 只同步观测性进度，不参与生成结果提交。
-// 因此进度解析或持久化失败只记录日志，不能把已经成功的 Provider 响应改判为生成失败。
-func (s *Service) syncProviderTaskProgress(taskID string, responseBody []byte) {
-	if s == nil || s.repo == nil || strings.TrimSpace(taskID) == "" {
+// Progress is written after protocol validation, never by inspecting log payloads.
+// A failed observation must not turn an accepted provider request into a failure.
+func syncProviderTaskProgress(ctx context.Context, status protocol.Status, progress *int) {
+	metadata, ok := ctx.Value(providerAnalyticsKey{}).(providerAnalyticsContext)
+	if !ok || metadata.Service == nil || metadata.TaskID == "" || (metadata.Capability != "image" && metadata.Capability != "video") {
 		return
 	}
-	progress, ok := providerProgressFromResponse(responseBody)
-	if !ok {
-		return
-	}
-	if err := s.repo.UpdateTaskProviderProgress(taskID, progress); err != nil {
-		log.Printf("provider progress sync failed: task_id=%s error=%v", taskID, err)
-	}
-}
-
-func providerProgressFromResponse(responseBody []byte) (int, bool) {
-	if len(responseBody) == 0 {
-		return 0, false
-	}
-	var payload any
-	if err := json.Unmarshal(responseBody, &payload); err != nil {
-		return 0, false
-	}
-	return findProviderProgress(payload, 0)
-}
-
-func findProviderProgress(value any, depth int) (int, bool) {
-	if depth > 8 {
-		return 0, false
-	}
-	switch current := value.(type) {
-	case map[string]any:
-		for _, wantedKey := range providerProgressKeys {
-			for key, candidate := range current {
-				if normalizeProviderProgressKey(key) != wantedKey {
-					continue
-				}
-				if progress, ok := normalizeProviderProgressValue(candidate); ok {
-					return progress, true
-				}
-			}
-		}
-		for _, wantedContainer := range providerProgressContainers {
-			for key, nested := range current {
-				if normalizeProviderProgressKey(key) != wantedContainer {
-					continue
-				}
-				if progress, ok := findProviderProgress(nested, depth+1); ok {
-					return progress, true
-				}
-			}
-		}
-	case []any:
-		for _, nested := range current {
-			if progress, ok := findProviderProgress(nested, depth+1); ok {
-				return progress, true
-			}
-		}
-	}
-	return 0, false
-}
-
-func normalizeProviderProgressValue(value any) (int, bool) {
-	var number float64
-	explicitPercent := false
-	switch current := value.(type) {
-	case float64:
-		number = current
-	case string:
-		text := strings.TrimSpace(current)
-		if text == "" {
-			return 0, false
-		}
-		explicitPercent = strings.HasSuffix(text, "%")
-		text = strings.TrimSpace(strings.TrimSuffix(text, "%"))
-		parsed, err := strconv.ParseFloat(text, 64)
-		if err != nil {
-			return 0, false
-		}
-		number = parsed
+	stage := ""
+	switch status {
+	case protocol.StatusPending:
+		stage = "上游排队中"
+	case protocol.StatusProcessing:
+		stage = "上游生成中"
+	case protocol.StatusSucceeded:
+		stage, progress = "作品已生成，正在保存", nil
+	case protocol.StatusFailed, protocol.StatusCancelled:
+		stage, progress = "上游生成结束", nil
 	default:
-		return 0, false
+		return
 	}
-	if math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || number > 100 {
-		return 0, false
+	// A supplier's 100% is not a delivered local resource.
+	if progress != nil && (*progress < 0 || *progress >= 100) {
+		progress = nil
 	}
-	if !explicitPercent && number > 0 && number < 1 {
-		number *= 100
+	if err := metadata.Service.repo.UpdateTaskProviderProgress(metadata.TaskID, metadata.LeaseOwner, stage, progress); err != nil {
+		log.Printf("provider progress sync failed: task_id=%s error=%v", metadata.TaskID, err)
 	}
-	return int(math.Round(number)), true
-}
-
-func normalizeProviderProgressKey(value string) string {
-	return strings.NewReplacer("_", "", "-", "", ".", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
 }

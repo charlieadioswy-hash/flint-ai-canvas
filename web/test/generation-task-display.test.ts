@@ -12,8 +12,8 @@ describe("作品保存阶段", () => {
         ] as const) {
             expect(generationTaskShowsProgress({ status, stage, progress: 100 })).toBe(false);
         }
-        expect(generationTaskShowsProgress({ status: "running", stage: "3D 模型生成中", progress: 37 })).toBe(true);
-        expect(generationTaskShowsProgress({ status: "succeeded", stage: "3D 模型已保存", progress: 100 })).toBe(true);
+        expect(generationTaskShowsProgress({ status: "running", stage: "3D 模型生成中", providerProgress: 37 })).toBe(true);
+        expect(generationTaskShowsProgress({ status: "succeeded", stage: "3D 模型已保存", progress: 100 })).toBe(false);
     });
     test("分别表达生成、下载、上传和登记，不把保存失败当成生成失败", () => {
         expect(mediaDeliverySummary("failed", "download")).toBe("生成成功 · 下载失败");
@@ -28,10 +28,11 @@ describe("作品保存阶段", () => {
         expect(generationTaskStatusLabel({ status: "failed", mediaStage: "download" })).toBe("作品保存未完成");
     });
     test("重新生成清除旧恢复信息", () => {
-        const metadata = resetGenerationTaskMetadata({ taskId: "old", taskMediaStage: "upload", taskCanRecoverMedia: true });
+        const metadata = resetGenerationTaskMetadata({ taskId: "old", taskMediaStage: "upload", taskCanRecoverMedia: true, taskProviderProgress: 37 });
         expect(metadata.taskId).toBeUndefined();
         expect(metadata.taskMediaStage).toBeUndefined();
         expect(metadata.taskCanRecoverMedia).toBeUndefined();
+        expect(metadata.taskProviderProgress).toBeUndefined();
     });
 });
 
@@ -61,6 +62,21 @@ describe("生成任务取消边界", () => {
 });
 
 describe("生成任务用户可见阶段", () => {
+    test("只显示供应商返回的有效百分比，包括真实零值", () => {
+        for (const providerProgress of [0, 1, 37, 99]) {
+            expect(generationTaskShowsProgress({ status: "running", stage: "上游生成中", progress: 35, providerProgress })).toBe(true);
+        }
+        for (const providerProgress of [undefined, -1, 100, 101, NaN, Infinity]) {
+            expect(generationTaskShowsProgress({ status: "running", stage: "上游生成中", progress: 35, providerProgress })).toBe(false);
+        }
+        for (const status of ["failed", "cancelled", "succeeded"] as const) {
+            expect(generationTaskShowsProgress({ status, stage: "上游生成中", providerProgress: 37 })).toBe(false);
+            expect(generationTaskStageLabel({ status, stage: "上游生成中" })).toBe(generationTaskStatusLabel({ status }));
+        }
+        expect(generationTaskShowsProgress({ status: "running", mediaStage: "upload", providerProgress: 99 })).toBe(false);
+        expect(generationTaskShowsProgress({ status: "running", stage: "submission_unknown", providerProgress: 0 })).toBe(false);
+        expect(generationTaskStageLabel({ status: "queued", stage: "等待队列调度" })).toBe("排队中");
+    });
     test("不向用户暴露参考素材准备和上游连接等技术阶段", () => {
         expect(generationTaskStageLabel({ status: "running", stage: "正在准备参考素材" })).toBe("作品创作中");
         expect(generationTaskStageLabel({ status: "running", stage: "正在连接上游" })).toBe("作品创作中");

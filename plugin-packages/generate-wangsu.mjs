@@ -140,6 +140,8 @@ chatImage.response = {
 chatImage.validations = [{ assert: eq(len(mask), 0), message: "Chat 图片协议不支持蒙版编辑" }];
 
 const video = await cloneProvider("openai-videos", "newapi", "wangsu-videos", "视频兼容");
+// Percentage semantics are not declared by the current Wangsu contract.
+delete video.response.progress;
 const seedance = oneOf(model, ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-5-260628"]);
 const veo = oneOf(model, ["veo-3.1-generate-001", "veo-3.1-fast-generate-001"]);
 const hailuo = oneOf(model, ["minimax-hailuo-02", "minimax-hailuo-2.3"]);
@@ -184,6 +186,7 @@ video.response.status = { $switch: { cases: [
 ], default: video.response.status } };
 
 const nativeVideo = await cloneProvider("openai-videos", "newapi", "wangsu-openai-videos", "OpenAI 视频直连", "/openai");
+delete nativeVideo.response.progress;
 delete nativeVideo.cancel;
 delete nativeVideo.create.body.resolution_name;
 nativeVideo.create.body.size = omit(coalesce(options(nativeVideo.id, "size"), {

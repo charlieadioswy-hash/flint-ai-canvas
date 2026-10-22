@@ -146,7 +146,14 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, "3D 模型生成中", progress); err != nil {
 			return err
 		}
-		return s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, "3D 模型生成中", 15*time.Second)
+		stage := "3D 模型生成中"
+		if state.Status == "queued" {
+			stage = "3D 平台排队中"
+		}
+		if err := s.repo.UpdateTaskProviderProgress(task.ID, task.LeaseOwner, stage, state.ReportedProgress); err != nil {
+			return err
+		}
+		return s.repo.DeferRunningTaskForProviderPoll(task.ID, task.LeaseOwner, stage, 15*time.Second)
 	}
 	if state.Status != "success" {
 		message := "3D 平台任务已结束（" + state.Status + "）"

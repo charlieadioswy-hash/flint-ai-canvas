@@ -196,7 +196,7 @@ func (p *tripoProvider) Submit(ctx context.Context, config Config, request Reque
 func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad bool) (State, error) {
 	var result struct {
 		Status    string          `json:"status"`
-		Progress  float64         `json:"progress"`
+		Progress  *float64        `json:"progress"`
 		ErrorCode json.RawMessage `json:"error_code"`
 		Output    struct {
 			ModelURL string `json:"model_url"`
@@ -205,7 +205,11 @@ func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad
 	if err := p.request(ctx, config, http.MethodGet, "/tasks/"+url.PathEscape(id), "", nil, &result); err != nil {
 		return State{}, err
 	}
-	state := State{Status: result.Status, Progress: max(0, min(100, int(result.Progress))), Artifact: Artifact{URL: result.Output.ModelURL, Format: "glb"}}
+	state := State{Status: result.Status, Artifact: Artifact{URL: result.Output.ModelURL, Format: "glb"}}
+	if result.Progress != nil && *result.Progress >= 0 && *result.Progress <= 100 {
+		state.Progress = int(*result.Progress)
+		state.ReportedProgress = &state.Progress
+	}
 	if quad {
 		state.Artifact.Format = "fbx"
 	}

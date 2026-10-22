@@ -2385,6 +2385,7 @@ components:
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
         stage: {type: string}
         progress: {type: integer, minimum: 0, maximum: 100}
+        providerProgress: {type: integer, minimum: 0, maximum: 99, description: "供应商明确返回的生成百分比；缺失、保存中或终态时省略，0 是有效值。"}
         mode: {type: string, enum: [text, image, multiview]}
         sourceFingerprint: {type: string}
         clientContext: {type: object, properties: {canvasId: {type: string}, nodeId: {type: string}}}

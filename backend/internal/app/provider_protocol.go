@@ -81,6 +81,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 			return nil, err
 		}
 		taskID = created.TaskID
+		syncProviderTaskProgress(ctx, created.Status, created.Progress)
 		if taskID == "" {
 			extracted, extractErr := extractProviderTaskID(body)
 			if extractErr != nil {
@@ -115,6 +116,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 		if state.TaskID != "" {
 			taskID = state.TaskID
 		}
+		syncProviderTaskProgress(ctx, state.Status, state.Progress)
 		switch state.Status {
 		case protocol.StatusSucceeded:
 			result, err := finishProtocolAdapterResult(ctx, input, adapter, request, taskID, state.Result, policy)
@@ -165,6 +167,7 @@ func queryProtocolAdapterVideoTask(ctx context.Context, input canvasGenerationIn
 		return nil, "", err
 	}
 	providerStatus := string(state.Status)
+	syncProviderTaskProgress(ctx, state.Status, state.Progress)
 	switch state.Status {
 	case protocol.StatusSucceeded:
 		result, err := finishProtocolAdapterResult(ctx, input, adapter, request, taskID, state.Result, defaultVideoPollPolicy())

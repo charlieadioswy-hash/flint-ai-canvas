@@ -80,7 +80,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "runway-image",
   "name": "Runway Image",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "Runway / 影策",
   "description": "Runway Image 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -228,6 +228,10 @@
           "path": "/v1/tasks/{{taskId}}"
         },
         "response": {
+          "progress": {
+            "path": "progress",
+            "scale": 1
+          },
           "taskId": {
             "$coalesce": [
               {
@@ -264,6 +268,9 @@
           "message": {
             "$coalesce": [
               {
+                "$ref": "response.failure"
+              },
+              {
                 "$ref": "response.error.message"
               },
               {
@@ -276,6 +283,9 @@
           },
           "images": {
             "$coalesce": [
+              {
+                "$ref": "response.output"
+              },
               {
                 "$ref": "response.image_url"
               },

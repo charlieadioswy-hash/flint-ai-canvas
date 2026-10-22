@@ -74,6 +74,7 @@ export type Model3DTaskView = {
     status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
     stage: string;
     progress?: number;
+    providerProgress?: number;
     mode: Model3DMode;
     sourceFingerprint: string;
     clientContext: { canvasId: string; nodeId: string };

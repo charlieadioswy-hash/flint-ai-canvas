@@ -278,9 +278,17 @@ func TestModel3DWorkerStoresOwnedAssetAndPinnedConfig(t *testing.T) {
 }
 
 func TestModel3DSavingDoesNotReportCompletionUntilOwnedResultIsReady(t *testing.T) {
-	s, _, mock, admin := setupModel3DTest(t)
+	s, db, mock, admin := setupModel3DTest(t)
 	enableModel3DTest(t, s, admin)
 	view := createModel3DTest(t, s, model3DTextRequest())
+	completedState := mock.state
+	percent := 37
+	mock.state = model3d.State{Status: "running", Progress: percent, ReportedProgress: &percent}
+	processModel3DTest(t, s)
+	if err := db.Model(&model.Task{}).Where("id = ?", view.ID).Update("next_poll_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	mock.state = completedState
 	started, release := make(chan struct{}, 1), make(chan struct{})
 	mock.downloadStarted, mock.downloadRelease = started, release
 	defer func() {
@@ -311,7 +319,7 @@ func TestModel3DSavingDoesNotReportCompletionUntilOwnedResultIsReady(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saving.Status != model.TaskStatusRunning || saving.Stage != "保存 3D 模型文件" || saving.Progress != 0 || saving.Result != nil || stored.Progress != 0 || stored.ResultJSON != "" || submission.State != "storing" {
+	if saving.Status != model.TaskStatusRunning || saving.Stage != "保存 3D 模型文件" || saving.Progress != 0 || saving.ProviderProgress != nil || stored.ProviderProgress != nil || saving.Result != nil || stored.Progress != 0 || stored.ResultJSON != "" || submission.State != "storing" {
 		t.Errorf("download is still blocked but task claims completion: view=%+v storedProgress=%d submission=%s", saving, stored.Progress, submission.State)
 	}
 	close(release)
@@ -319,7 +327,7 @@ func TestModel3DSavingDoesNotReportCompletionUntilOwnedResultIsReady(t *testing.
 		t.Fatal(err)
 	}
 	done, err := s.Model3DTask("3d-user", view.ID)
-	if err != nil || done.Status != model.TaskStatusSucceeded || done.Progress != 100 || done.Result == nil {
+	if err != nil || done.Status != model.TaskStatusSucceeded || done.Progress != 100 || done.ProviderProgress != nil || done.Result == nil {
 		t.Fatalf("completion: %v %+v", err, done)
 	}
 	resource, resourceErr := s.repo.ResourceForUser("3d-user", done.Result.ResourceID)
@@ -334,16 +342,18 @@ func TestModel3DPendingAndFailedTasksClearPrematureCompletionProgress(t *testing
 		t.Run(status, func(t *testing.T) {
 			s, db, mock, admin := setupModel3DTest(t)
 			enableModel3DTest(t, s, admin)
-			mock.state = model3d.State{Status: "running", Progress: 37}
+			percent := 37
+			mock.state = model3d.State{Status: "running", Progress: 37, ReportedProgress: &percent}
 			view := createModel3DTest(t, s, model3DTextRequest())
 			processModel3DTest(t, s)
 			if err := db.Model(&model.Task{}).Where("id = ?", view.ID).Updates(map[string]any{"progress": 100, "next_poll_at": time.Now().Add(-time.Second)}).Error; err != nil {
 				t.Fatal(err)
 			}
-			mock.state = model3d.State{Status: status, Progress: 100}
+			percent = 100
+			mock.state = model3d.State{Status: status, Progress: 100, ReportedProgress: &percent}
 			processModel3DTest(t, s)
 			result, err := s.Model3DTask("3d-user", view.ID)
-			if err != nil || result.Progress != 0 || result.Result != nil || string(result.Status) != status || mock.submits != 1 {
+			if err != nil || result.Progress != 0 || result.ProviderProgress != nil || result.Result != nil || string(result.Status) != status || mock.submits != 1 {
 				t.Fatalf("premature completion persisted: %v %+v", err, result)
 			}
 		})
@@ -539,14 +549,15 @@ func TestModel3DMultiviewReferencesAndCancellation(t *testing.T) {
 func TestModel3DPendingPollReleasesLeaseAndRejectsCancellation(t *testing.T) {
 	s, db, mock, admin := setupModel3DTest(t)
 	enableModel3DTest(t, s, admin)
-	mock.state = model3d.State{Status: "running", Progress: 37}
+	percent := 37
+	mock.state = model3d.State{Status: "running", Progress: 37, ReportedProgress: &percent}
 	view := createModel3DTest(t, s, model3DTextRequest())
 	processModel3DTest(t, s)
 	task, err := s.repo.Task(view.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Status != model.TaskStatusRunning || task.Progress != 37 || task.NextPollAt == nil || task.LeaseOwner != "" {
+	if task.Status != model.TaskStatusRunning || task.Progress != 37 || task.ProviderProgress == nil || *task.ProviderProgress != 37 || task.NextPollAt == nil || task.LeaseOwner != "" {
 		t.Fatalf("lease not deferred: %+v", task)
 	}
 	if _, err := s.CancelTask(context.Background(), "3d-user", view.ID); err == nil {

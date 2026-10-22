@@ -15,12 +15,13 @@ export function LoadingContent({ node, theme, onOpenTaskDetails }: Pick<CanvasNo
         status: (node.metadata?.taskStatus || "running") as GenerationTask["status"],
         stage: node.metadata?.taskStage,
         mediaStage: node.metadata?.taskMediaStage,
+        providerProgress: node.metadata?.taskProviderProgress,
         officialStatus: node.metadata?.taskOfficialStatus,
         errorCode: node.metadata?.taskErrorCode,
     };
     const submissionUncertain = Boolean(taskId) && isGenerationTaskSubmissionUncertain(displayTask);
     const showsProgress = Boolean(taskId) && generationTaskShowsProgress(displayTask);
-    const progress = showsProgress && typeof node.metadata?.taskProgress === "number" ? Math.max(0, Math.min(100, Math.round(node.metadata.taskProgress))) : null;
+    const progress = showsProgress ? displayTask.providerProgress! : null;
     const statusLabel = taskId ? generationTaskStatusLabel(displayTask) : "等待任务状态";
     const workflow = node.metadata?.imageLayerWorkflow;
     const stageLabel = workflow ? (workflow.stage === "planning" ? "拆解规划中" : `拆解中，共 ${workflow.total} 张图`) : node.metadata?.experimentalLayerPlan?.progress || (taskId ? generationTaskStageLabel(displayTask) : "正在创建任务");

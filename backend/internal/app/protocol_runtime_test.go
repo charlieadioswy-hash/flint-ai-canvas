@@ -84,8 +84,8 @@ func TestPluginViewIncludesDocumentationForEveryOfficialProtocol(t *testing.T) {
 	}
 }
 
-func TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation(t *testing.T) {
-	packagePath := filepath.Join("..", "..", "..", "plugin-packages", "openai-images.yingce-plugin")
+func TestPluginRuntimeRefreshesExistingOfficialPackageProgressAndDocumentation(t *testing.T) {
+	packagePath := filepath.Join("..", "..", "..", "plugin-packages", "openai-videos.yingce-plugin")
 	packageData, err := os.ReadFile(packagePath)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +95,8 @@ func TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation(t *testing.T
 		t.Fatal(err)
 	}
 	stale := pkg.Manifest
+	stale.Metadata.Version = "2.0.0"
+	stale.Contributes.Providers[0].Response.Progress = nil
 	stale.Metadata.Documentation = "# OpenAI Images\n\n旧版本摘要。"
 	stale.Metadata.Enabled = false
 	staleRaw, err := json.Marshal(stale)
@@ -128,12 +130,19 @@ func TestPluginRuntimeRefreshesExistingOfficialPackageDocumentation(t *testing.T
 		if plugin.Status != "disabled" {
 			t.Fatalf("official plugin enabled state was not preserved during refresh: %s", plugin.Status)
 		}
+		if plugin.Manifest.Version != "2.0.1" || len(plugin.Manifest.Contributes.Providers) != 1 {
+			t.Fatalf("existing official plugin version was not refreshed: %+v", plugin.Manifest)
+		}
+		progress := plugin.Manifest.Contributes.Providers[0].Response.Progress
+		if progress == nil || progress.Path != "progress" || progress.Scale != 100 {
+			t.Fatalf("progress declaration was not refreshed: %+v", progress)
+		}
 		if plugin.SHA256 == "" || plugin.SHA256 == "stale-package-hash" {
 			t.Fatalf("official plugin package hash was not refreshed: %q", plugin.SHA256)
 		}
 		return
 	}
-	t.Fatal("refreshed OpenAI Images plugin is missing")
+	t.Fatal("refreshed OpenAI Videos plugin is missing")
 }
 
 func TestBundledWorkflowPluginsControlAvailability(t *testing.T) {

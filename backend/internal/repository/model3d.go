@@ -282,7 +282,7 @@ func (r *Repository) AcceptModel3DSubmission(taskID, owner, providerID string) e
 		if result.RowsAffected != 1 {
 			return ErrTaskStateConflict
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"provider_request_id": providerID, "poll_stage": "model3d_generating", "stage": "3D 模型生成中", "progress": 0}).Error
+		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"provider_request_id": providerID, "poll_stage": "model3d_generating", "stage": "3D 模型生成中", "progress": 0, "provider_progress": nil}).Error
 	})
 }
 
@@ -294,7 +294,7 @@ func (r *Repository) SaveModel3DDelivery(taskID, owner, encrypted string) error 
 		if err := tx.Model(&model.Model3DSubmission{}).Where("task_id = ?", taskID).Updates(map[string]any{"state": "storing", "delivery_encrypted": encrypted, "error_code": "", "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"stage": "保存 3D 模型文件", "progress": 0, "updated_at": time.Now()}).Error
+		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"stage": "保存 3D 模型文件", "progress": 0, "provider_progress": nil, "updated_at": time.Now()}).Error
 	})
 }
 
@@ -324,7 +324,7 @@ func (r *Repository) FailModel3DTask(taskID, owner, code, message, state string)
 		if err := tx.Model(&model.Model3DSubmission{}).Where("task_id = ?", taskID).Updates(updates).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusFailed, "stage": "3D 生成失败", "progress": 0, "error": message, "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil}).Error
+		return tx.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusFailed, "stage": "3D 生成失败", "progress": 0, "provider_progress": nil, "error": message, "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil}).Error
 	})
 }
 
@@ -354,7 +354,7 @@ func (r *Repository) RecoverModel3DTask(userID, taskID string, activeLimit int) 
 		if err := enforceActiveTaskLimit(tx, userID, activeLimit); err != nil {
 			return err
 		}
-		return tx.Model(&task).Updates(map[string]any{"status": model.TaskStatusQueued, "stage": "恢复原 3D 任务", "progress": 0, "error": "", "completed_at": nil, "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil}).Error
+		return tx.Model(&task).Updates(map[string]any{"status": model.TaskStatusQueued, "stage": "恢复原 3D 任务", "progress": 0, "provider_progress": nil, "error": "", "completed_at": nil, "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil}).Error
 	})
 }
 
@@ -370,7 +370,7 @@ func (r *Repository) CancelModel3DTask(userID, taskID string) error {
 		if submission.State != "prepared" && submission.State != "uploading" {
 			return ErrModel3DConflict
 		}
-		result := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND provider_request_id = '' AND status IN ?", taskID, userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Updates(map[string]any{"status": model.TaskStatusCancelled, "stage": "任务已取消", "error": "任务已取消", "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil})
+		result := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND provider_request_id = '' AND status IN ?", taskID, userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Updates(map[string]any{"status": model.TaskStatusCancelled, "stage": "任务已取消", "provider_progress": nil, "error": "任务已取消", "completed_at": time.Now(), "lease_owner": "", "lease_expires_at": nil})
 		if result.Error != nil {
 			return result.Error
 		}

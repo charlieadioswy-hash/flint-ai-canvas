@@ -134,17 +134,19 @@ type RequestFilePart struct {
 }
 
 type CreateResult struct {
-	TaskID  string  `json:"taskId,omitempty"`
-	Status  Status  `json:"status"`
-	Result  *Result `json:"result,omitempty"`
-	Message string  `json:"message,omitempty"`
+	TaskID   string  `json:"taskId,omitempty"`
+	Status   Status  `json:"status"`
+	Progress *int    `json:"progress,omitempty"`
+	Result   *Result `json:"result,omitempty"`
+	Message  string  `json:"message,omitempty"`
 }
 
 type PollResult struct {
-	TaskID  string  `json:"taskId,omitempty"`
-	Status  Status  `json:"status"`
-	Result  *Result `json:"result,omitempty"`
-	Message string  `json:"message,omitempty"`
+	TaskID   string  `json:"taskId,omitempty"`
+	Status   Status  `json:"status"`
+	Progress *int    `json:"progress,omitempty"`
+	Result   *Result `json:"result,omitempty"`
+	Message  string  `json:"message,omitempty"`
 }
 
 type Result struct {

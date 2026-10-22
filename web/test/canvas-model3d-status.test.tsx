@@ -22,7 +22,13 @@ test("real 3D node distinguishes saving from completion and hides unmeasured pro
         state.run.progress = 100;
         expect(render()).not.toContain("100%");
         state.run.progress = 37;
+        expect(render()).not.toContain("37%");
+        state.run.providerProgress = 0;
+        expect(render()).toContain("0%");
+        state.run.providerProgress = 37;
         expect(render()).toContain("37%");
+        state.run.stage = "保存 3D 模型文件";
+        expect(render()).not.toContain("37%");
         state.run.status = "succeeded";
         state.run.stage = "3D 模型已保存";
         state.run.progress = 100;

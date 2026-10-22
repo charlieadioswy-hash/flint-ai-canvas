@@ -482,6 +482,7 @@ export type CanvasNodeMetadata = {
     attemptGroupId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
     taskProgress?: number;
+    taskProviderProgress?: number;
     taskStage?: string;
     taskMediaStage?: GenerationTask["mediaStage"];
     taskCanRecoverMedia?: boolean;

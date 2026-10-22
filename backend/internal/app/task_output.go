@@ -21,6 +21,7 @@ type TaskSummary struct {
 	MediaStage                string                     `json:"mediaStage,omitempty"`
 	CanRecoverMedia           bool                       `json:"canRecoverMedia,omitempty"`
 	Progress                  int                        `json:"progress"`
+	ProviderProgress          *int                       `json:"providerProgress,omitempty"`
 	Prompt                    string                     `json:"prompt"`
 	Operation                 string                     `json:"operation,omitempty"`
 	Provider                  string                     `json:"provider,omitempty"`
@@ -116,6 +117,7 @@ func taskSummaryForOutput(task model.Task) TaskSummary {
 		MediaStage:                task.MediaStage,
 		CanRecoverMedia:           task.MediaRecoveryJSON != "" && task.Status == model.TaskStatusFailed,
 		Progress:                  task.Progress,
+		ProviderProgress:          publicProviderProgress(task),
 		Prompt:                    truncateRunes(task.Prompt, 500),
 		Operation:                 task.Operation,
 		Provider:                  task.Provider,
@@ -293,6 +295,7 @@ func truncateRunes(value string, limit int) string {
 }
 
 func taskForOutput(task model.Task) *model.Task {
+	task.ProviderProgress = publicProviderProgress(task)
 	task.CanRecoverMedia = task.MediaRecoveryJSON != "" && task.Status == model.TaskStatusFailed
 	task.Diagnostic = taskExecutionDiagnostic(&task)
 	task.InputJSON = publicTaskInputJSON(task.InputJSON)
@@ -307,6 +310,13 @@ func taskForOutput(task model.Task) *model.Task {
 	task.RouteID = ""
 	task.ChannelModelID = ""
 	return &task
+}
+
+func publicProviderProgress(task model.Task) *int {
+	if task.Status != model.TaskStatusRunning || task.MediaStage != "" || task.ProviderProgress == nil || *task.ProviderProgress < 0 || *task.ProviderProgress >= 100 {
+		return nil
+	}
+	return task.ProviderProgress
 }
 
 func publicTaskInputJSON(raw string) string {

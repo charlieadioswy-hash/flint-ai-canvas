@@ -179,6 +179,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 			"execution_diagnostic_json": "", "cancellation_source": "", "cancellation_actor_id": "", "cancellation_requested_at": nil,
 			"text_draft": "", "started_at": nil, "completed_at": nil,
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil,
+			"provider_progress":      nil,
 			"provider_cancel_status": "", "provider_cancel_error": "", "provider_cancel_attempts": 0,
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil,
 			"route_run":                 gorm.Expr("route_run + ?", 1),

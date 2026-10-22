@@ -149,7 +149,7 @@ export function applyAgentCanvasPatch(project: CanvasProject, patch: AgentCanvas
         if (terminal(current.metadata?.taskStatus) && !terminal(change.after.metadata?.taskStatus)) return { before: current, after: current };
         if (terminal(current.metadata?.taskStatus)) return change;
         const metadata = { ...change.before!.metadata };
-        for (const key of ["status", "taskStatus", "taskProgress", "taskStage"] as const) {
+        for (const key of ["status", "taskStatus", "taskProgress", "taskProviderProgress", "taskStage"] as const) {
             if (!equal(metadata[key], change.after.metadata?.[key])) Object.assign(metadata, { [key]: current.metadata?.[key] });
         }
         return { ...change, before: { ...change.before!, metadata } };

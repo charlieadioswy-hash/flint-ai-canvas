@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -56,22 +57,56 @@ func TestUpdateTaskProviderProgressIsMonotonic(t *testing.T) {
 	if err := db.AutoMigrate(&model.Task{}); err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "task-progress", UserID: "user-1", Type: "canvas_video", Status: model.TaskStatusRunning, Stage: "正在连接上游"}
+	task := model.Task{ID: "task-progress", UserID: "user-1", Type: "canvas_video", Status: model.TaskStatusRunning, Stage: "正在连接上游", Progress: 35, LeaseOwner: "worker", LeaseExpiresAt: ptrTime(time.Now().Add(time.Minute))}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
 	repo := New(db)
-	for _, progress := range []int{12, 48, 31, 76} {
-		if err := repo.UpdateTaskProviderProgress(task.ID, progress); err != nil {
+	for _, progress := range []int{0, 12, 48, 31, 76} {
+		if err := repo.UpdateTaskProviderProgress(task.ID, task.LeaseOwner, "上游生成中", &progress); err != nil {
 			t.Fatal(err)
+		}
+		if progress == 0 {
+			var zero model.Task
+			if err := db.First(&zero, "id = ?", task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if zero.ProviderProgress == nil || *zero.ProviderProgress != 0 {
+				t.Fatal("genuine zero was lost")
+			}
 		}
 	}
 	var stored model.Task
 	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Progress != 76 || stored.Stage != "上游生成中" {
-		t.Fatalf("stored progress = %d, stage = %q", stored.Progress, stored.Stage)
+	if stored.ProviderProgress == nil || *stored.ProviderProgress != 76 || stored.Progress != 35 || stored.Stage != "上游生成中" {
+		t.Fatalf("stored task = %+v", stored)
+	}
+	if err := repo.UpdateTaskProviderProgress(task.ID, "stale-worker", "stale", nil); !errors.Is(err, ErrTaskStateConflict) {
+		t.Fatalf("stale lease accepted: %v", err)
+	}
+	if err := repo.UpdateTaskProviderProgress(task.ID, task.LeaseOwner, "上游生成中", nil); err != nil {
+		t.Fatal(err)
+	}
+	stored = model.Task{}
+	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProviderProgress != nil {
+		t.Fatal("missing observation retained old percentage")
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateTaskProviderProgress(task.ID, task.LeaseOwner, "expired", nil); !errors.Is(err, ErrTaskStateConflict) {
+		t.Fatalf("expired lease accepted: %v", err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"lease_expires_at": time.Now().Add(time.Minute), "media_stage": "saving"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateTaskProviderProgress(task.ID, task.LeaseOwner, "overwrite saving", nil); !errors.Is(err, ErrTaskStateConflict) {
+		t.Fatalf("saving stage overwritten: %v", err)
 	}
 }
 

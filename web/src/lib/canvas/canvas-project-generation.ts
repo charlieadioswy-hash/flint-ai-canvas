@@ -5,6 +5,7 @@ import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl, resolveVideoMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
+import { generationTaskProgress } from "@/lib/generation-task-display";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
@@ -165,6 +166,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         attemptGroupId: task.attemptGroupId,
         taskStatus: task.status,
         taskProgress: progress,
+        taskProviderProgress: generationTaskProgress(task),
         taskStage: task.stage,
         taskMediaStage: task.mediaStage,
         taskCanRecoverMedia: task.canRecoverMedia,

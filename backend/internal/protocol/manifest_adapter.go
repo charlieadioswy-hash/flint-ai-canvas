@@ -267,7 +267,7 @@ func (a manifestAdapter) ParsePoll(_ context.Context, c PollContext, body []byte
 		return PollResult{}, err
 	}
 	result := a.parse(payload, c)
-	return PollResult{TaskID: result.TaskID, Status: result.Status, Result: result.Result, Message: result.Message}, nil
+	return PollResult{TaskID: result.TaskID, Status: result.Status, Progress: result.Progress, Result: result.Result, Message: result.Message}, nil
 }
 
 func (a manifestAdapter) BuildCancel(_ context.Context, c PollContext) (RequestSpec, error) {
@@ -352,7 +352,7 @@ func (a manifestAdapter) parse(payload map[string]any, c PollContext) CreateResu
 	if result.Text == "" && result.Reasoning == "" && len(result.Images) == 0 && len(result.Videos) == 0 && len(result.Audios) == 0 {
 		result = nil
 	}
-	return CreateResult{TaskID: id, Status: status, Result: result, Message: message}
+	return CreateResult{TaskID: id, Status: status, Progress: responseProgress(payload, response.Progress), Result: result, Message: message}
 }
 
 func validateManifestRequest(rules []ManifestValidation, request GenerationRequest) error {

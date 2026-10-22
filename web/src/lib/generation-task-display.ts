@@ -8,7 +8,7 @@ export const statusLabel: Record<TaskStatus, string> = {
     cancelled: "已取消",
 };
 
-type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerRequestId" | "providerCancelStatus">;
+type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerProgress" | "providerRequestId" | "providerCancelStatus">;
 
 const cancellablePreSubmissionStages = new Set(["queued", "等待队列调度", "后端接管任务", "正在准备创作"]);
 
@@ -51,9 +51,11 @@ export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {
 
 export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
     if (isGenerationTaskSubmissionUncertain(task)) return "为避免重复扣费，未自动重试";
+    if (task.status === "succeeded" || task.status === "failed" || task.status === "cancelled" || task.mediaStage) return generationTaskStatusLabel(task);
     switch (task.stage) {
         case "queued":
         case "等待队列调度":
+            return "排队中";
         case "后端接管任务":
             return "正在准备创作";
         case "generating":
@@ -72,14 +74,17 @@ export function generationTaskStageLabel(task: GenerationTaskDisplayTarget) {
 }
 
 export function generationTaskShowsProgress(task: GenerationTaskDisplayTarget) {
-    if (task.mediaStage && task.mediaStage !== "completed") return false;
-    if (isGenerationTaskSubmissionUncertain(task)) return false;
-    if (["保存 3D 模型文件", "3D 生成失败", "恢复原 3D 任务"].includes(task.stage || "")) return false;
-    if (task.stage === "3D 模型生成中" && (task.progress || 0) >= 100) return false;
-    // 排队、后端接管和连接供应商都没有真实百分比。只有上游状态响应
-    // 已经写回任务后才显示进度，避免所有图片/视频长期停在同一个假数值。
-    if (["queued", "等待队列调度", "后端接管任务", "正在准备参考素材", "正在连接上游", "调用生成模型", "作品创作中", "submitting", "submitted"].includes(task.stage || "")) return false;
-    return typeof task.progress === "number" && task.progress > 0;
+    return generationTaskProgress(task) !== undefined;
+}
+
+/** 旧 progress 包含平台调度占位值，不能作为供应商百分比展示。 */
+export function generationTaskProgress(task: GenerationTaskDisplayTarget): number | undefined {
+    if (task.status !== "queued" && task.status !== "running") return undefined;
+    if (task.mediaStage || isGenerationTaskSubmissionUncertain(task)) return undefined;
+    if (["保存 3D 模型文件", "3D 生成失败", "恢复原 3D 任务"].includes(task.stage || "")) return undefined;
+    const progress = task.providerProgress;
+    if (typeof progress !== "number" || !Number.isFinite(progress) || progress < 0 || progress >= 100) return undefined;
+    return Math.floor(progress);
 }
 
 export const operationOptions = [

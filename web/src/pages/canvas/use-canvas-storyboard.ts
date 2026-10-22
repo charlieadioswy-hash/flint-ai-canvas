@@ -172,7 +172,7 @@ export function useCanvasStoryboard({
                 skills: addedSkills,
             });
             assertCurrent();
-            setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, composerContent: cleanedPrompt, status: NODE_STATUS_LOADING, taskStage: "正在创建任务", taskProgress: 0, errorDetails: undefined, ...skillExecution.metadata } } : node));
+            setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, composerContent: cleanedPrompt, status: NODE_STATUS_LOADING, taskStage: "正在创建任务", taskProgress: 0, taskProviderProgress: undefined, errorDetails: undefined, ...skillExecution.metadata } } : node));
             assertCurrent();
             // 输入框内容只是剧情，拆镜要求与镜头数、每镜时长都必须随契约一起发出去。
             const storyboardPrompt = withStoryboardOutputContract(skillExecution.prompt, { shotCount: requestedShotCount, shotDurationSeconds });

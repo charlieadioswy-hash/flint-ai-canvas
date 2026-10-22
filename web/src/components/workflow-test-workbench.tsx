@@ -5,6 +5,7 @@ import { FileAudio, FileImage, Film, Grip, Play, RotateCcw, Square, Upload, Wand
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { generationErrorMessage } from "@/lib/generation-error";
+import { generationTaskProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { runBackendGenerationTask, type BackendGenerationResult } from "@/services/api/generation-task";
 import { useConfigStore, type AiConfig, type RunningHubCapability, type WorkflowFieldMapping } from "@/stores/use-config-store";
@@ -46,7 +47,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
     const [fieldValues, setFieldValues] = useState<Record<string, unknown>>(() => initialFieldValues(fields, config));
     const [positions, setPositions] = useState<NodePositionMap>(initialPositions);
     const [running, setRunning] = useState(false);
-    const [progress, setProgress] = useState(0);
+    const [progress, setProgress] = useState<number>();
     const [stage, setStage] = useState("等待运行");
     const [result, setResult] = useState<BackendGenerationResult | null>(null);
     const [error, setError] = useState("");
@@ -68,7 +69,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
         setFieldValues(initialFieldValues(fields, config));
         setResult(null);
         setError("");
-        setProgress(0);
+        setProgress(undefined);
         setStage("等待运行");
     }, [workflowId, workflowKind, fields, config.size, config.quality, config.vquality]);
 
@@ -131,7 +132,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
         setPositions({ ...initialPositions, output: { ...initialPositions.output, x: nextOutputX } });
         setResult(null);
         setError("");
-        setProgress(0);
+        setProgress(undefined);
         setStage("等待运行");
     };
 
@@ -144,7 +145,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
         setRunning(true);
         setResult(null);
         setError("");
-        setProgress(0);
+        setProgress(undefined);
         setStage("正在提交任务");
         try {
             const testConfig = buildTestConfig(config, provider, workflowId, workflowKind, activeFields, fieldValues);
@@ -159,15 +160,16 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
                 signal: controller.signal,
                 metadata: { source: "workflow_settings_test", workflowProvider: provider, workflowId },
                 onTaskUpdate: (task) => {
-                    setProgress(Math.max(0, Math.min(100, Number(task.progress) || 0)));
-                    setStage(taskStageLabel(task.status, task.stage));
+                    setProgress(generationTaskProgress(task));
+                    setStage(generationTaskStageLabel(task));
                 },
             });
             setResult(response);
-            setProgress(100);
+            setProgress(undefined);
             setStage("测试完成");
             message.success("工作流测试完成");
         } catch (reason) {
+            setProgress(undefined);
             if (controller.signal.aborted) {
                 setStage("已停止等待");
                 return;
@@ -260,7 +262,7 @@ export function WorkflowTestWorkbench({ provider, workflowId, workflowKind = "wo
                         onMove={(point) => setPositions((current) => ({ ...current, output: point }))}
                     >
                         <div className="workflow-test-output">{resultUrls.length ? <ResultPreview capability={capability} urls={resultUrls} /> : <EmptyState size="compact" title={error || stage} />}</div>
-                        <Progress percent={progress} size="small" status={error ? "exception" : running ? "active" : undefined} showInfo={running || progress > 0} />
+                        {running && progress !== undefined ? <Progress percent={progress} size="small" status="active" /> : null}
                     </WorkflowNode>
                 </div>
             </div>
@@ -561,10 +563,4 @@ function mediaName(value: MediaKind) {
 }
 function mediaIcon(value: MediaKind) {
     return value === "video" ? <Film /> : value === "audio" ? <FileAudio /> : <FileImage />;
-}
-function taskStageLabel(status: string, stage?: string) {
-    if (status === "queued") return "任务已排队";
-    if (status === "succeeded") return "正在读取结果";
-    if (status === "failed") return "任务失败";
-    return stage ? `运行中 · ${stage}` : "工作流运行中";
 }

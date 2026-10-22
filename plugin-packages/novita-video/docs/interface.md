@@ -89,7 +89,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "novita-video",
   "name": "Novita Video",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "Novita / 影策",
   "description": "Novita Video 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -325,6 +325,10 @@
           }
         },
         "response": {
+          "progress": {
+            "path": "task.progress_percent",
+            "scale": 100
+          },
           "taskId": {
             "$coalesce": [
               {
@@ -347,6 +351,9 @@
           "status": {
             "$coalesce": [
               {
+                "$ref": "response.task.status"
+              },
+              {
                 "$ref": "response.status"
               },
               {
@@ -361,6 +368,9 @@
           "message": {
             "$coalesce": [
               {
+                "$ref": "response.task.reason"
+              },
+              {
                 "$ref": "response.error.message"
               },
               {
@@ -373,6 +383,9 @@
           },
           "videos": {
             "$coalesce": [
+              {
+                "$ref": "response.videos"
+              },
               {
                 "$ref": "response.video_url"
               },

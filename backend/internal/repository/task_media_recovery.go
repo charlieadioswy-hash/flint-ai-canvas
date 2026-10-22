@@ -10,7 +10,7 @@ import (
 func (r *Repository) SaveTaskMediaCheckpoint(task *model.Task, encrypted, stage string) error {
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusRunning, task.RouteRun).
-		Updates(map[string]any{"media_recovery_json": encrypted, "media_stage": stage, "stage": "作品已生成，正在保存", "updated_at": time.Now()})
+		Updates(map[string]any{"media_recovery_json": encrypted, "media_stage": stage, "stage": "作品已生成，正在保存", "provider_progress": nil, "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -18,6 +18,7 @@ func (r *Repository) SaveTaskMediaCheckpoint(task *model.Task, encrypted, stage 
 		return ErrTaskStateConflict
 	}
 	task.MediaRecoveryJSON, task.MediaStage = encrypted, stage
+	task.ProviderProgress = nil
 	return nil
 }
 

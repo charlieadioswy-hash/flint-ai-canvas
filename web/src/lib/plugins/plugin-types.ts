@@ -71,6 +71,7 @@ export type PluginProviderContribution = {
     poll?: PluginProviderOperation;
     cancel?: PluginProviderOperation;
     response: {
+        progress?: { path: string; scale: 1 | 100 };
         taskIdPaths?: string[];
         statusPaths?: string[];
         messagePaths?: string[];

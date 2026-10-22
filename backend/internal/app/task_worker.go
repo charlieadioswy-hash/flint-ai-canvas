@@ -290,6 +290,13 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 				stage = "后台仍在生成图片"
 				message = "前台等待结束，上游图片仍在生成，将继续回查原任务"
 			}
+			// Keep the last validated supplier state while yielding the polling lease.
+			if observed, readErr := s.repo.Task(task.ID); readErr == nil && observed.LeaseOwner == task.LeaseOwner {
+				switch observed.Stage {
+				case "上游排队中", "上游生成中", "作品已生成，正在保存":
+					stage = observed.Stage
+				}
+			}
 			var pendingErr providerStatePendingError
 			if errors.As(err, &pendingErr) {
 				stage = "等待上游任务同步"
@@ -346,7 +353,7 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 }
 
 func taskUsesUpstreamReportedProgress(taskType string) bool {
-	return taskType == "canvas_image" || taskType == "canvas_video" || strings.HasPrefix(taskType, "video_")
+	return taskType == "canvas_image" || taskType == "canvas_video" || taskType == model.TaskTypeCanvasModel3D || strings.HasPrefix(taskType, "video_")
 }
 
 func taskFailureMessage(err error) string {
