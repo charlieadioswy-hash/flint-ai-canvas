@@ -6,7 +6,7 @@ import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedan
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, videoResolutionComparisonKey, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
@@ -36,7 +36,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 		return <SeedanceVideoSettingsPanel config={config} profile={profile} priceTiers={priceTiers} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
-    const seconds = normalizeVideoDuration(config.videoSeconds);
+    const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
     const resolution = resolveVideoResolutionValue(profile, config.vquality);
     const ratio = resolveVideoRatioValue(profile, config.size);
     const dimensions = videoDimensionsForRatioAndResolution(ratio, resolution);
@@ -90,7 +90,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 function JiMengVideoSettingsPanel({ config, profile, priceTiers, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig; priceTiers: ReturnType<typeof modelPriceTiers> }) {
-    const seconds = normalizeVideoDuration(config.videoSeconds);
+    const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
@@ -233,9 +233,9 @@ function DimensionValue({ prefix, value, theme }: { prefix: string; value: numbe
     );
 }
 
-function DurationInput({ value, min, max, theme, onChange }: { value: number; min: number; max?: number; theme: CanvasTheme; onChange: (value: number) => void }) {
+function DurationInput({ value, min, max, step, theme, onChange }: { value: number; min: number; max: number; step: number; theme: CanvasTheme; onChange: (value: number) => void }) {
     const commit = (input: HTMLInputElement) => {
-        const next = Math.min(max || Number.POSITIVE_INFINITY, Math.max(min, Math.floor(Number(input.value) || value || min)));
+        const next = normalizeDurationValue(Number(input.value), value, min, max, step);
         input.value = String(next);
         onChange(next);
     };
@@ -248,6 +248,7 @@ function DurationInput({ value, min, max, theme, onChange }: { value: number; mi
                 inputMode="numeric"
                 min={min}
                 max={max}
+                step={step}
                 defaultValue={value}
                 aria-label="视频时长（秒）"
                 className="min-w-0 flex-1 bg-transparent pl-2 text-right outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -264,9 +265,9 @@ function DurationInput({ value, min, max, theme, onChange }: { value: number; mi
 
 function VideoDurationControl({ profile, value, theme, disabled, onChange }: { profile: VideoCapabilityConfig; value: number; theme: CanvasTheme; disabled?: (value: number) => boolean; onChange: (value: number) => void }) {
     if (profile.duration.selection === "range") {
-        const min = profile.duration.min || VIDEO_DURATION_MIN;
-        const max = Math.max(min, profile.duration.max || min);
-        const step = Math.max(1, profile.duration.step || 1);
+        const min = profile.duration.min ?? VIDEO_DURATION_MIN;
+        const max = Math.max(min, profile.duration.max ?? min);
+        const step = profile.duration.step || 1;
         const normalized = normalizeDurationValue(value, profile.duration.default, min, max, step);
 		return <DurationRangeControl value={normalized} min={min} max={max} step={step} theme={theme} onChange={(next) => { if (!disabled?.(next)) onChange(next); }} />;
     }
@@ -313,7 +314,7 @@ function DurationRangeControl({ value, min, max, step, theme, onChange }: { valu
                 onChange={(event) => onChange(Number(event.target.value))}
                 onMouseDown={(event) => event.stopPropagation()}
             />
-            <DurationInput value={value} min={min} max={max} theme={theme} onChange={onChange} />
+            <DurationInput value={value} min={min} max={max} step={step} theme={theme} onChange={onChange} />
         </div>
         <div className="flex justify-between px-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
             <span>{min}s</span>
@@ -324,13 +325,13 @@ function DurationRangeControl({ value, min, max, step, theme, onChange }: { valu
 
 function normalizeDurationValue(value: number, fallback: number, min: number, max: number, step: number) {
     const candidate = Number.isFinite(value) ? value : fallback;
-    const clamped = Math.min(max, Math.max(min, Math.floor(candidate)));
+    const clamped = Math.min(max, Math.max(min, candidate));
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
 }
 
 function normalizedNumber(value: number) {
-    return Number.isFinite(value) ? Math.floor(value) : 0;
+    return Number.isFinite(value) ? value : 0;
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {

@@ -137,7 +137,7 @@ export function ImageParameterFields({
         (p) =>
             p.enabled !== false &&
             (!groupedSize || (p.name !== "size" && p.name !== "imageResolution")) &&
-            (p.name !== "count" || (showCount && (p.max ?? 1) > 1)) &&
+            (p.name !== "count" || (showCount && profile.maxOutputs > 1)) &&
             (p.name !== "size" || showSize) &&
             (p.name !== "quality" || showQuality) &&
             (p.name !== "transparentBackground" || showTransparent),

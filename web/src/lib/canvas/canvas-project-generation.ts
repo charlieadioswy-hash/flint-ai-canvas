@@ -8,7 +8,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { isSeedanceVideoConfig } from "@/lib/seedance-video";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
-import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
+import { modelGenerationParameterError, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
@@ -511,6 +511,14 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                   },
               )
             : {};
+    if (!displayOnly && workflowProvider === "model" && node && (mode === "image" || mode === "video")) {
+        const explicit = mode === "image"
+            ? { size: node.metadata?.size, quality: node.metadata?.quality, imageResolution: node.metadata?.imageResolution, imageParameters: node.metadata?.imageParameters, count: node.metadata?.count === undefined ? undefined : String(node.metadata.count) }
+            : { size: node.metadata?.size, videoSeconds: node.metadata?.seconds, vquality: node.metadata?.vquality };
+        const values = { ...generationDefaults, ...Object.fromEntries(Object.entries(explicit).filter(([, value]) => value !== undefined)) };
+        const parameterError = modelGenerationParameterError(config, model, mode, values);
+        if (parameterError) throw new Error(parameterError);
+    }
     const modeCapability = mode === "video" || mode === "audio" ? mode : "image";
     const runningHubCapability = normalizeRunningHubCapability(selectedRunningHubWorkflow?.capability, normalizeRunningHubCapability(config.runningHub.capability));
     const runningHub = {

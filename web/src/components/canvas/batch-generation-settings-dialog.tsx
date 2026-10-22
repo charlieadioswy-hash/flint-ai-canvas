@@ -6,7 +6,7 @@ import { WandSparkles, X } from "lucide-react";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { modelGenerationParamsForSwitch } from "@/lib/model-selection";
 import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -40,7 +40,7 @@ export function BatchGenerationSettingsDialog({ open, config, rowCount, concurre
     };
 
     const handleModelChange = (model: string) => {
-        setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }));
+        setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...modelGenerationParamsForSwitch(current, model, "image") }));
     };
 
     const imageModel = generationConfig.imageModel || generationConfig.model;

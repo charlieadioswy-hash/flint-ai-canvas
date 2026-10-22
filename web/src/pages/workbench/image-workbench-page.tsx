@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { ImageSizePicker } from "@/components/image-size-picker";
+import { ImageParameterFields } from "@/components/image-parameter-fields";
 import { MediaPreview } from "@/components/media-preview";
 import { ModelPicker } from "@/components/model-picker";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
@@ -11,7 +12,9 @@ import { WorkspacePage } from "@/components/layout/workspace-page";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { normalizeCanvasNodeMentionTokens, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { imageResolutionUsesQuality } from "@/lib/image-size-presets";
-import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
+import { imageParameterRequest } from "@/lib/image-parameters";
+import { modelGenerationParameterError } from "@/lib/model-selection";
 import { creationVideoConfig } from "@/pages/create/creation-generation-config";
 import { imageQualityLabel } from "@/lib/image-quality";
 import { modelQuoteRequest } from "@/lib/model-pricing";
@@ -211,6 +214,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
     const [ratio, setRatio] = useState(kind === "image" ? "1:1" : "16:9");
     const [quality, setQuality] = useState("auto");
     const [imageResolution, setImageResolution] = useState("auto");
+    const [imageParameters, setImageParameters] = useState("{}");
     const [count, setCount] = useState("1");
     const [seconds, setSeconds] = useState("6");
     const [videoQuality, setVideoQuality] = useState("720");
@@ -247,8 +251,8 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         [references],
     );
     const composerConfig = useMemo(
-        () => (kind === "video" && selectedModel ? creationVideoConfig(config, selectedModel, { ratio, seconds, videoQuality }) : { ...config, model: selectedModel, imageModel: selectedModel, size: ratio, quality, imageResolution, count }),
-        [config, count, imageResolution, kind, quality, ratio, seconds, selectedModel, videoQuality],
+        () => (kind === "video" && selectedModel ? creationVideoConfig(config, selectedModel, { ratio, seconds, videoQuality }) : { ...config, model: selectedModel, imageModel: selectedModel, size: ratio, quality, imageResolution, imageParameters, count }),
+        [config, count, imageResolution, imageParameters, kind, quality, ratio, seconds, selectedModel, videoQuality],
     );
 
     useEffect(() => {
@@ -283,11 +287,13 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
                 size: saved.image?.ratio || imageProfile.size.default,
                 quality: saved.image?.quality || imageProfile.quality.default,
                 imageResolution: saved.image?.imageResolution || imageProfile.resolution.default,
+                imageParameters: saved.image?.imageParameters ?? config.imageParameters,
                 count: saved.image?.count || "1",
             });
             setRatio(normalized.size);
             setQuality(normalized.quality);
             setImageResolution(normalized.imageResolution || imageProfile.resolution.default || "auto");
+            setImageParameters(normalized.imageParameters ?? "{}");
             setCount(normalized.count);
         } else {
             const normalized = normalizeVideoValue(videoProfile, {
@@ -309,11 +315,13 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             size: saved?.ratio || imageProfile.size.default,
             quality: saved?.quality || imageProfile.quality.default,
             imageResolution: saved?.imageResolution || imageProfile.resolution.default,
+            imageParameters: saved?.imageParameters ?? imageParameters,
             count: saved?.count || count,
         });
         setRatio(normalized.size);
         setQuality(normalized.quality);
         setImageResolution(normalized.imageResolution || imageProfile.resolution.default || "auto");
+        setImageParameters(normalized.imageParameters ?? "{}");
         setCount(normalized.count);
     }, [imageProfile, kind, selectedModel, settingsReady]);
 
@@ -342,10 +350,10 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
                 characterCount: 0,
             },
             ...(kind === "image"
-                ? { imageSize: ratio, options: { size: ratio, quality, ...(imageProfile?.resolution.supported ? { imageResolution } : {}), count: selectedCount } }
+                ? { imageSize: ratio, options: (imageProfile && imageParameterRequest(imageProfile, composerConfig)) ?? { size: ratio, quality, ...(imageProfile?.resolution.supported ? { imageResolution } : {}), count: selectedCount } }
                 : { videoSeconds: seconds, options: { size: ratio, videoSeconds: Number(seconds), vquality: videoQuality } }),
         }),
-        [capability, imageProfile, imageResolution, kind, prompt, quality, ratio, references, seconds, selectedCount, videoQuality],
+        [capability, composerConfig, imageProfile, imageResolution, kind, prompt, quality, ratio, references, seconds, selectedCount, videoQuality],
     );
 
     useEffect(() => {
@@ -452,11 +460,13 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         setDetailLoading(false);
         setDetailTask(null);
         setMobileTab("generate");
-        setCount("1");
+        const imageDefaults = imageProfile ? normalizeImageValue(imageProfile, {}) : undefined;
+        setCount(imageDefaults?.count ?? "1");
+        setImageParameters(imageDefaults?.imageParameters ?? "{}");
         setRatio(kind === "image" ? imageProfile?.size.default || "1:1" : videoProfile?.defaultRatio || "16:9");
         setQuality(imageProfile?.quality.default || "auto");
         setImageResolution(imageProfile?.resolution.default || "auto");
-        setSeconds(String(videoProfile?.duration.default || 6));
+        setSeconds(String(videoProfile?.duration.default ?? 6));
         setVideoQuality((videoProfile?.defaultResolution || "720p").replace(/p$/i, ""));
         const params = new URLSearchParams(searchParams);
         params.delete("tool");
@@ -595,10 +605,12 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         }
         setBusy(true);
         try {
-            const imageRequest = kind === "image" && imageProfile ? normalizeImageValue(imageProfile, { size: ratio, quality, imageResolution, imageParameters: config.imageParameters, count, transparentBackground: config.transparentBackground }) : null;
+            const parameterError = modelGenerationParameterError(config, selectedModel, kind, { ...composerConfig, size: ratio, videoSeconds: seconds, vquality: videoQuality });
+            if (parameterError) throw new Error(parameterError);
+            const imageRequest = kind === "image" && imageProfile ? normalizeImageValue(imageProfile, { size: ratio, quality, imageResolution, imageParameters, count, transparentBackground: config.transparentBackground }) : null;
             const videoRequest = kind === "video" && videoProfile ? normalizeVideoValue(videoProfile, { seconds, ratio, resolution: videoQuality }) : null;
             const parameters = imageRequest
-                ? { size: imageRequest.size, quality: imageRequest.quality, imageResolution: imageRequest.imageResolution, count: Number(imageRequest.count) }
+                ? { size: imageRequest.size, quality: imageRequest.quality, imageResolution: imageRequest.imageResolution, imageParameters: imageRequest.imageParameters, count: Number(imageRequest.count) }
                 : {
                       seconds: Number(videoRequest?.seconds || seconds),
                       ratio: videoRequest?.ratio || ratio,
@@ -609,7 +621,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             const generationConfig = {
                 ...composerConfig,
                 model: selectedModel,
-                ...(imageRequest ? { imageModel: selectedModel, size: imageRequest.size, quality: imageRequest.quality, imageResolution: imageRequest.imageResolution, count: imageRequest.count } : {}),
+                ...(imageRequest ? { imageModel: selectedModel, ...imageRequest } : {}),
                 ...(videoRequest ? { videoModel: selectedModel, size: videoRequest.ratio, videoSeconds: videoRequest.seconds, vquality: videoRequest.resolution.replace(/p$/i, "") } : {}),
             };
             const readyReferences = references.filter((reference) => reference.resourceId);
@@ -720,11 +732,13 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             const restoredQuality = typeof parameters.quality === "string" ? parameters.quality : quality;
             const restoredResolution = typeof parameters.imageResolution === "string" ? parameters.imageResolution : imageResolution;
             const restoredCount = parameters.count != null ? String(parameters.count) : count;
+            const restoredParameters = typeof parameters.imageParameters === "string" ? parameters.imageParameters : imageParameters;
             setRatio(restoredRatio);
             setQuality(restoredQuality);
             setImageResolution(restoredResolution);
             setCount(restoredCount);
-            rememberImageSettings({ ratio: restoredRatio, quality: restoredQuality, imageResolution: restoredResolution, count: restoredCount });
+            setImageParameters(restoredParameters);
+            rememberImageSettings({ ratio: restoredRatio, quality: restoredQuality, imageResolution: restoredResolution, imageParameters: restoredParameters, count: restoredCount });
         } else {
             const restoredSeconds = parameters.seconds != null ? String(parameters.seconds) : seconds;
             const restoredRatio = typeof parameters.ratio === "string" ? parameters.ratio : ratio;
@@ -834,6 +848,15 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
     const settingsPanel =
         kind === "image" && imageProfile ? (
             <div className="workbench-settings-content">
+                {imageProfile.parameters ? <ImageParameterFields profile={imageProfile} config={composerConfig} onChange={(key, value) => {
+                    if (key === "size") setRatio(value);
+                    else if (key === "quality") setQuality(value);
+                    else if (key === "imageResolution") setImageResolution(value);
+                    else if (key === "imageParameters") setImageParameters(value);
+                    else if (key === "count") setCount(value);
+                    else updateConfig(key, value);
+                    if (key !== "transparentBackground") rememberImageSettings({ [key === "size" ? "ratio" : key]: value });
+                }} /> : <>
                 <ImageSizePicker profile={imageProfile} size={ratio} quality={quality} imageResolution={imageResolution} onChange={updateImageSettings} />
                 {imageProfile.quality.supported && !imageResolutionUsesQuality(imageProfile) ? (
                     <label className="workbench-setting-row">
@@ -856,19 +879,14 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
                         rememberImageSettings({ count: value });
                     }}
                 />
+                </>}
             </div>
         ) : videoProfile ? (
             <div className="workbench-settings-content">
                 <ParameterChips
                     label="视频时长"
                     value={seconds}
-                    options={(videoProfile.duration.selection === "enum"
-                        ? videoProfile.duration.values || []
-                        : Array.from(
-                              { length: Math.floor(((videoProfile.duration.max || 15) - (videoProfile.duration.min || 1)) / (videoProfile.duration.step || 1)) + 1 },
-                              (_, index) => (videoProfile.duration.min || 1) + index * (videoProfile.duration.step || 1),
-                          )
-                    ).map((value) => ({ value: String(value), label: `${value} 秒` }))}
+                    options={videoDurationOptions(videoProfile).map((value) => ({ value: String(value), label: `${value} 秒` }))}
                     onChange={(value) => {
                         setSeconds(value);
                         rememberVideoSettings({ seconds: value });
@@ -1513,7 +1531,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
 }
 
 function CountPicker({ value, max, onChange }: { value: string; max: number; onChange: (value: string) => void }) {
-    const limit = Math.min(10, Math.max(1, max || 1));
+    const limit = Math.max(1, max || 1);
     const current = Math.min(limit, Math.max(1, Math.floor(Number(value) || 1)));
     return (
         <div className="workbench-count-picker">
@@ -1531,6 +1549,7 @@ function CountPicker({ value, max, onChange }: { value: string; max: number; onC
 }
 
 function ParameterChips({ label, value, options, onChange }: { label: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void }) {
+    if (!options.length) return null;
     if (options.length > 7) {
         return (
             <label className="workbench-setting-row">

@@ -7,13 +7,13 @@ import { useLocation, useNavigate } from "react-router";
 
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
-import { imageParameterRequest, normalizeImageParameters } from "@/lib/image-parameters";
+import { imageParameterRequest } from "@/lib/image-parameters";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
-import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions } from "@/lib/model-capabilities";
-import { inferVideoOperation, modelGroupReferenceLimits, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
+import { inferVideoOperation, modelGenerationParameterError, modelGroupReferenceLimits, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -227,13 +227,13 @@ export default function CreatePage() {
             size: saved?.ratio || imageProfile.size.default,
             quality: saved?.quality || imageProfile.quality.default,
             imageResolution: saved?.imageResolution || imageProfile.resolution.default,
-            imageParameters: saved?.model === selectedModel ? saved.imageParameters : undefined,
+            imageParameters: saved?.imageParameters,
             count: saved?.count || count,
         });
         setRatio(normalized.size);
         setQuality(normalized.quality);
         setImageResolution(normalized.imageResolution || imageProfile.resolution.default);
-        setImageParameters(JSON.stringify(normalizeImageParameters(imageProfile.parameters, saved?.model === selectedModel ? saved.imageParameters : undefined)));
+        setImageParameters(normalized.imageParameters ?? "{}");
         setCount(normalized.count);
     }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, imageProfile]);
 
@@ -609,8 +609,9 @@ export default function CreatePage() {
             releaseSubmitGate();
             return;
         }
-        if (mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
-            toast.error("当前模型不支持所选视频时长，请重新选择");
+        const parameterError = modelGenerationParameterError(config, selectedModel, mode, { size: ratio, quality, imageResolution, imageParameters, count, videoSeconds: seconds, vquality: videoQuality });
+        if (parameterError) {
+            toast.error(parameterError);
             releaseRetryLock();
             releaseSubmitGate();
             return;

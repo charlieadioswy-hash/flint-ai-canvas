@@ -135,6 +135,7 @@ test("count choices honor single-output models and declared enum or step constra
             [defaultImageCapabilityConfig("km-kemei-seedream"), ["1"]],
             [{ ...defaultImageCapabilityConfig(), maxOutputs: 4, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 4, values: [1, 4], default: 1 }] }, ["1", "4"]],
             [{ ...defaultImageCapabilityConfig(), maxOutputs: 5, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 5, step: 2, default: 1 }] }, ["1", "3", "5"]],
+            [{ ...defaultImageCapabilityConfig(), maxOutputs: 32, parameters: [{ name: "count", label: "数量", type: "integer", values: [1, 16, 32], default: 1 }] }, ["1", "16", "32"]],
         ] as [ImageCapabilityConfig, string[]][]) {
             await f.render(<CanvasImageCountControl config={{ ...configWithProfile(profile), count: "15" }} onChange={() => {}} />);
             const select = f.host.querySelector("select")!;

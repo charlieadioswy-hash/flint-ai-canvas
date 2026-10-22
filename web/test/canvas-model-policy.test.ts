@@ -57,6 +57,7 @@ describe("逻辑模型选择", () => {
 
     test("generationSpec 的显式 false 和 0 覆盖陈旧镜像及全局默认", () => {
         const config = policyConfig();
+        config.channels[0]!.modelCosts![0]!.capabilityConfig!.video!.duration.min = 0;
         config.videoSeconds = "9";
         config.videoGenerateAudio = "true";
         config.videoWatermark = "true";
@@ -82,7 +83,7 @@ describe("逻辑模型选择", () => {
         const generation = buildGenerationConfig(config, videoNode, "video");
 
         expect(generation.model).toBe("relay::cinema-text");
-        expect(generation.videoSeconds).toBe("1");
+        expect(generation.videoSeconds).toBe("0");
         expect(generation.videoGenerateAudio).toBe("false");
         expect(generation.videoWatermark).toBe("false");
     });

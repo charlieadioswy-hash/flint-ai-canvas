@@ -3,7 +3,7 @@ import { Button, Input, Modal } from "antd";
 import { WandSparkles, X } from "lucide-react";
 import { ModelPicker } from "@/components/model-picker";
 import type { AiConfig } from "@/stores/use-config-store";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { modelGenerationParamsForSwitch } from "@/lib/model-selection";
 
 export type CanvasImageEditPayload = { prompt: string; generationConfig?: Partial<Pick<AiConfig, "model" | "imageModel" | "size" | "quality" | "transparentBackground">> };
 
@@ -56,7 +56,7 @@ export function CanvasNodeImageEditDialog({
                             capability="image"
                             fullWidth
                             showSelectedPrice={false}
-                            onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))}
+                            onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...modelGenerationParamsForSwitch(current, model, "image") }))}
                         />
                     </div>
                     <div className="mt-auto flex justify-end gap-2">

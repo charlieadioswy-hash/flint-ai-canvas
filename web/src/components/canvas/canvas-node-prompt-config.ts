@@ -1,9 +1,9 @@
 // 节点生成配置的默认值与补丁：按节点类型推导生成模式，合并全局模型配置。纯函数。
 
-import { type CanvasNodeData, CanvasNodeType } from "@/types/canvas";
+import { type CanvasNodeData, type CanvasNodeMetadata, CanvasNodeType } from "@/types/canvas";
 import { Video } from "lucide-react";
 import { type AiConfig, defaultConfig } from "@/stores/use-config-store";
-import { type ModelRequirements, resolveCompatibleModel, resolveModelGenerationDefaults } from "@/lib/model-selection";
+import { type ModelRequirements, modelGenerationParamsForSwitch, resolveCompatibleModel, resolveModelGenerationDefaults } from "@/lib/model-selection";
 import { canonicalGenerationMetadata } from "@/lib/canvas/generation-contract";
 import { resolveCanvasGenerationModel } from "@/lib/canvas/canvas-project-generation";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -106,6 +106,13 @@ export function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoWatermark") return { watermark: value };
     if (key === "videoArkPrivateAssetUpload") return { arkPrivateAssetUpload: value };
     return { [key]: value };
+}
+
+export function canvasModelConfigPatch(config: AiConfig, model: string, mode: CanvasNodeGenerationMode): Partial<CanvasNodeMetadata> {
+    if (mode !== "image" && mode !== "video") return { model };
+    const values = modelGenerationParamsForSwitch(config, model, mode);
+    if (mode === "video") return { model, size: values.size, seconds: values.videoSeconds, vquality: values.vquality, generateAudio: values.videoGenerateAudio, watermark: values.videoWatermark };
+    return { model, size: values.size, quality: values.quality, imageResolution: values.imageResolution, imageParameters: values.imageParameters, transparentBackground: values.transparentBackground, count: Number(values.count ?? 1) };
 }
 
 export function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {

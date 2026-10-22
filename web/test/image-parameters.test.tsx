@@ -32,6 +32,14 @@ function fixture(fields = parameters) {
 }
 
 describe("plugin image parameters across model configuration and generation", () => {
+    test("count enums without a max expose their configured generation choices", () => {
+        const { image, config } = fixture([{ name: "count", label: "生成数量", type: "integer", values: [1, 4, 8], default: 1 }]);
+        const html = renderToStaticMarkup(<ImageParameterFields profile={image} config={{ ...config, count: "4" }} onChange={() => {}} />);
+        expect(html).toContain("生成数量");
+        expect(html).toContain('aria-pressed="true"');
+        expect(html).toContain(">8<");
+        expect(html).not.toContain(">3<");
+    });
     test("new resolution selects the six preferred ratios without changing existing choices", () => {
         const fields: ImageParameter[] = [
             { name: "size", label: "画幅", type: "string", encoding: "pixels" },

@@ -39,7 +39,10 @@ export function imageParameterAccepts(field: ImageParameter, value: unknown): va
 // 后端把插件未声明参数的能力切片序列化为 null（Go nil slice），默认参数语法
 // 只兜 undefined，读路径必须显式归一，避免 null.filter 渲染崩溃。
 export function imageParameterDefaults(parameters?: ImageParameter[] | null) {
-    return Object.fromEntries((parameters || []).filter((p) => p.enabled !== false && p.default !== undefined).map((p) => [p.name, p.default!])) as Record<string, ImageParameterValue>;
+    return Object.fromEntries((parameters || []).filter((p) => p.enabled !== false).flatMap((p) => {
+        const value = imageParameterAccepts(p, p.default) ? p.default : p.values?.find((candidate) => imageParameterAccepts(p, candidate));
+        return value === undefined ? [] : [[p.name, value]];
+    })) as Record<string, ImageParameterValue>;
 }
 
 export function parseImageParameters(value: unknown): Record<string, ImageParameterValue> {
@@ -106,11 +109,14 @@ export function imageParameterRequest(profile: ImageCapabilityConfig, config: { 
 
 export function projectImageParameters(profile: ImageCapabilityConfig, parameters: ImageParameter[]): ImageCapabilityConfig {
     const active = new Map(parameters.filter((p) => p.enabled !== false).map((p) => [p.name, p]));
+    const defaults = imageParameterDefaults(parameters);
     const stringOption = (name: string) => {
         const p = active.get(name);
-        return { supported: Boolean(p), values: (p?.values || []).map(String), default: String(p?.default ?? p?.values?.[0] ?? "auto") };
+        return { supported: Boolean(p), values: (p?.values || []).map(String), default: String(defaults[name] ?? "auto") };
     };
     const size = active.get("size");
+    const count = active.get("count");
+    const counts = count?.values?.filter((value): value is number => typeof value === "number" && imageParameterAccepts(count, value));
     return {
         ...profile,
         parameters,
@@ -118,13 +124,13 @@ export function projectImageParameters(profile: ImageCapabilityConfig, parameter
         quality: stringOption("quality"),
         resolution: stringOption("imageResolution"),
         transparentBackground: { supported: active.has("transparentBackground"), default: active.get("transparentBackground")?.default === true },
-        maxOutputs: active.get("count")?.max ?? 1,
+        maxOutputs: counts?.length ? Math.max(...counts) : count?.max ?? 1,
         size: size
             ? {
                   ...profile.size,
                   parameter: size.encoding ? (size.encoding === "pixels" && !size.values?.some((v) => String(v).includes(":")) ? "size" : "aspect_ratio") : profile.size.parameter === "none" ? "aspect_ratio" : profile.size.parameter,
                   values: (size.values || []).map(String),
-                  default: String(size.default ?? size.values?.[0] ?? "auto"),
+                  default: String(defaults.size ?? "auto"),
                   allowCustom: !size.values?.length,
                   presets: profile.size.presets?.filter(
                       (p) =>

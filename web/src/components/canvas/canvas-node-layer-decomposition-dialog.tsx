@@ -5,7 +5,7 @@ import { Layers3, Plus, RotateCcw, X } from "lucide-react";
 import { ModelPicker } from "@/components/model-picker";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { defaultImageParamsForModel, modelGenerationParamsForSwitch } from "@/lib/model-selection";
 import { imageLayerOutputSize, imageLayerPlannerError, type ImageLayerPlan } from "@/lib/canvas/canvas-image-layer-plan";
 import { supportsExperimentalLayerExtraction, supportsLayerDecomposition } from "@/lib/canvas/canvas-image-layers";
 import type { ImageLayerExtraction } from "@/lib/canvas/canvas-image-layer-strategy";
@@ -182,7 +182,7 @@ export function CanvasNodeLayerDecompositionDialog({
                             placeholder="选择图层拆分模型"
                             modelFilter={(model) => supportsLayerDecomposition(config, model) || supportsExperimentalLayerExtraction(config, model)}
                             onMissingConfig={() => navigateToSettings({ continueCreation: true })}
-                            onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...defaultImageParamsForModel(current, model) }))}
+                            onChange={(model) => setGenerationConfig((current) => ({ ...current, model, imageModel: model, ...modelGenerationParamsForSwitch(current, model, "image") }))}
                         />
                         {!supported ? (
                             <p role="alert" className="text-xs text-red-500">

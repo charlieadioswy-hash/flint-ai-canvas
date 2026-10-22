@@ -1,4 +1,4 @@
-import { defaultImageCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultImageCapabilityConfig, imageSizeAllowed, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoResolutionRequest, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageParameterRequest, imageParameterDefaults, imageParameterAccepts } from "./image-parameters";
 import { imageSizePresets } from "@/lib/image-size-presets";
@@ -339,6 +339,35 @@ export function defaultImageParamsForModel(config: AiConfig, model: string): Pic
 }
 
 export type ModelGenerationDefaults = Pick<AiConfig, "size" | "imageResolution" | "quality" | "transparentBackground" | "count" | "imageParameters" | "videoSeconds" | "vquality" | "videoGenerateAudio" | "videoWatermark">;
+
+// 切换时只修正目标模型不支持的值；与提交校验分开，避免旧草稿被静默改价。
+export function modelGenerationParamsForSwitch(config: AiConfig, model: string, capability: "image" | "video") {
+    const values = resolveModelGenerationDefaults(config, model, capability, config);
+    return capability === "image" ? { ...values, imageResolution: values.imageResolution ?? "auto", imageParameters: values.imageParameters ?? "{}" } : { ...values, ...resolveModelVideoBooleanOptions(config, model, config) };
+}
+
+export function modelGenerationParameterError(config: AiConfig, model: string, capability: ModelCapability, values: Partial<ModelGenerationDefaults> = config): string {
+    const profile = modelCapabilityConfigFor(config, model);
+    const present = (value: unknown) => value !== undefined && value !== null && value !== "";
+    if (capability === "image" && profile.image) {
+        const image = profile.image;
+        if (image.parameters) {
+            try { imageParameterRequest(image, values, true); } catch (error) { return error instanceof Error ? error.message : "图片参数不受当前模型支持"; }
+            return "";
+        }
+        if (present(values.size) && !imageSizeAllowed(image, values.size!.trim())) return "当前模型不支持所选图片尺寸，请重新选择";
+        if (present(values.count) && (!Number.isInteger(Number(values.count)) || Number(values.count) < 1 || Number(values.count) > image.maxOutputs)) return `当前模型生成数量必须为 1–${image.maxOutputs} 张`;
+        if (image.resolution.supported && present(values.imageResolution) && !/^(auto|any)$/i.test(values.imageResolution!) && !image.resolution.values.some((value) => value.toLowerCase() === values.imageResolution!.toLowerCase())) return "当前模型不支持所选图片分辨率，请重新选择";
+        if (image.quality.supported && present(values.quality) && !/^(auto|any)$/i.test(values.quality!) && !image.quality.values.includes(values.quality!)) return "当前模型不支持所选图片质量，请重新选择";
+    }
+    if (capability === "video" && profile.video) {
+        const video = profile.video;
+        if (present(values.size) && video.ratios.length && !video.ratios.includes(values.size!)) return "当前模型不支持所选视频比例，请重新选择";
+        if (present(values.videoSeconds) && !videoDurationAllowed(video, Number(values.videoSeconds))) return "当前模型不支持所选视频时长，请重新选择";
+        if (present(values.vquality) && video.resolutions.length && !/^(auto|default|medium|high)$/i.test(values.vquality!) && !videoResolutionRequest(video, values.vquality)) return "当前模型不支持所选视频分辨率，请重新选择";
+    }
+    return "";
+}
 
 type ModelVideoBooleanOptions = Pick<AiConfig, "videoGenerateAudio" | "videoWatermark">;
 

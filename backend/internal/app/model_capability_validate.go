@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -478,6 +480,10 @@ func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInp
 	// 比例型线路会在任务输入边界把画布比例换算成 preset 像素值（OpenAI Images 只收
 	// WIDTHxHEIGHT）。换算结果必须继续通过同一套尺寸与分辨率校验。
 	resolvedRatio := imageSizeRatioForDeclaredPreset(profile, input.Config.Size, qualityForImageValidation(selectionTier, profile.Resolution.Default))
+	if profile.Parameters == nil && profile.Size.Parameter != "none" && profile.Size.AllowCustom && strings.TrimSpace(input.Config.Size) != "" &&
+		!containsCapabilityString(profile.Size.Values, input.Config.Size) && resolvedRatio == "" && !validCustomImageSize(input.Config.Size) {
+		return newModelCapabilityArgumentError("size", "unsupported_value", BadAuthRequest("自定义图片尺寸必须是有效的正数宽高或比例"))
+	}
 	if profile.Size.Parameter != "none" && !profile.Size.AllowCustom && strings.TrimSpace(input.Config.Size) != "" &&
 		!containsCapabilityString(profile.Size.Values, input.Config.Size) && resolvedRatio == "" {
 		return newModelCapabilityArgumentError("size", "unsupported_value", BadAuthRequest("图片尺寸不在当前模型支持范围内"))
@@ -494,10 +500,29 @@ func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInp
 		return err
 	}
 	count, err := strconv.Atoi(strings.TrimSpace(input.Config.Count))
+	if profile.Parameters == nil && strings.TrimSpace(input.Config.Count) != "" && (err != nil || count < 1) {
+		return newModelCapabilityArgumentError("count", "unsupported_value", BadAuthRequest("图片生成数量必须为正整数"))
+	}
 	if err == nil && count > profile.MaxOutputs {
 		return newModelCapabilityArgumentError("count", "unsupported_value", BadAuthRequest(fmt.Sprintf("当前图片模型单次最多生成 %d 张", profile.MaxOutputs)))
 	}
 	return nil
+}
+
+var customImageSizePattern = regexp.MustCompile(`^([0-9]+x[0-9]+|[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?)$`)
+
+func validCustomImageSize(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if !customImageSizePattern.MatchString(value) {
+		return false
+	}
+	for _, part := range strings.Split(strings.ReplaceAll(value, "x", ":"), ":") {
+		number, err := strconv.ParseFloat(part, 64)
+		if err != nil || number <= 0 || math.IsInf(number, 0) || math.IsNaN(number) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateImageTaskWithResolvedSize(input map[string]any, taskInput *canvasGenerationInput, profile *ImageCapabilityConfig) error {

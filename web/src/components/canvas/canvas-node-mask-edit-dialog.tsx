@@ -4,7 +4,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { defaultImageParamsForModel } from "@/lib/model-selection";
+import { modelGenerationParamsForSwitch } from "@/lib/model-selection";
 import { exportEditMask, paintMaskStrokes, type MaskPoint, type MaskStroke } from "@/lib/canvas/image-mask-document";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -99,7 +99,7 @@ function MaskEditor({ dataUrl, config, onClose, onConfirm }: MaskEditorProps) {
                     </div>
                     <label className="flex flex-col gap-2 text-sm">修改要求<Input.TextArea rows={4} value={prompt} placeholder="描述选中区域需要发生的变化" onChange={(event) => { setPrompt(event.target.value); setError(""); }} /></label>
                     <Collapse defaultActiveKey={["settings"]} items={[{ key: "settings", label: "生成设置", children: <div className="space-y-4">
-                        <ModelPicker config={settings} value={settings.model} capability="image" fullWidth showSelectedPrice={false} onChange={(model) => setSettings((previous) => ({ ...previous, ...defaultImageParamsForModel(previous, model), imageModel: model, model }))} />
+                        <ModelPicker config={settings} value={settings.model} capability="image" fullWidth showSelectedPrice={false} onChange={(model) => setSettings((previous) => ({ ...previous, ...modelGenerationParamsForSwitch(previous, model, "image"), imageModel: model, model }))} />
                         <ImageSettingsPanel config={settings} theme={theme} showTitle={false} showCount={false} bypassPriceGuard onConfigChange={(key, value) => setSettings((previous) => ({ ...previous, [key]: value }))} />
                     </div> }]} />
                     {error || loadError ? <p role="alert" className="text-sm text-destructive">{error || loadError}</p> : null}

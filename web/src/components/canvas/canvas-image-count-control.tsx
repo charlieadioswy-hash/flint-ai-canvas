@@ -9,7 +9,7 @@ export function CanvasImageCountControl({ config, disabled = false, onChange }: 
     const profile = modelCapabilityConfigFor(config, config.model || config.imageModel).image;
     if (!profile) return null;
     const field = profile.parameters?.find((parameter) => parameter.name === "count" && parameter.enabled !== false);
-    const maxCount = Math.max(1, Math.min(15, Math.floor(profile.maxOutputs)));
+    const maxCount = Math.max(1, Math.floor(profile.maxOutputs));
     const counts = Array.from({ length: maxCount }, (_, index) => index + 1).filter((count) => !field || imageParameterAccepts(field, count));
     const current = Number(normalizeImageValue(profile, config).count);
     return (

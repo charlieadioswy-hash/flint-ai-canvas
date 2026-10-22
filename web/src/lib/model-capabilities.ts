@@ -657,8 +657,15 @@ function imagePresetTierForSelection(profile: ImageCapabilityConfig, size: strin
 export function normalizeImageSizeSetting(profile: ImageCapabilityConfig, value?: string) {
     if (profile.size.parameter === "none") return "auto";
     const candidate = value?.trim() || profile.size.default;
-    if (profile.size.allowCustom || profile.size.values.includes(candidate)) return candidate;
+    if (imageSizeAllowed(profile, candidate)) return candidate;
     return profile.size.default || profile.size.values[0] || "auto";
+}
+
+export function imageSizeAllowed(profile: ImageCapabilityConfig, value: string) {
+    if (profile.size.parameter === "none" || profile.size.values.includes(value)) return true;
+    if (!profile.size.allowCustom) return false;
+    const dimensions = value.match(/^(\d+)x(\d+)$/i) || value.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+    return Boolean(dimensions && dimensions.slice(1).every((part) => Number.isFinite(Number(part)) && Number(part) > 0));
 }
 
 export function imageSizeRequest(profile: ImageCapabilityConfig, value?: string) {
@@ -706,10 +713,10 @@ export function videoResolutionRequest(profile: VideoCapabilityConfig, value: st
 }
 
 function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
-    const min = profile.duration.min || 1;
-    const max = profile.duration.max || min;
+    const min = profile.duration.min ?? 1;
+    const max = profile.duration.max ?? min;
     const step = profile.duration.step || 1;
-    const candidate = Number.isFinite(value) ? Math.floor(value) : profile.duration.default;
+    const candidate = Number.isFinite(value) ? value : profile.duration.default;
     const clamped = Math.min(max, Math.max(min, candidate));
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
@@ -717,16 +724,17 @@ function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
 
 export function videoDurationOptions(profile: VideoCapabilityConfig) {
     if (profile.duration.selection === "enum") return profile.duration.values || [];
-    const min = profile.duration.min || 1;
-    const max = profile.duration.max || min;
+    const min = profile.duration.min ?? 1;
+    const max = profile.duration.max ?? min;
     const step = profile.duration.step || 1;
     return Array.from({ length: Math.floor((max - min) / step) + 1 }, (_, index) => min + index * step);
 }
 
 export function videoDurationAllowed(profile: VideoCapabilityConfig, value: number) {
     if (profile.duration.selection === "enum") return (profile.duration.values || []).includes(value);
-    const min = profile.duration.min || 1;
-    const max = profile.duration.max || min;
+    const min = profile.duration.min ?? 1;
+    const max = profile.duration.max ?? min;
     const step = profile.duration.step || 1;
-    return value >= min && value <= max && (value - min) % step === 0;
+    const steps = (value - min) / step;
+    return Number.isFinite(value) && value >= min && value <= max && Math.abs(steps - Math.round(steps)) < 1e-8;
 }

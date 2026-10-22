@@ -134,6 +134,14 @@ func projectImageParameters(image *ImageCapabilityConfig) error {
 			if p.Max != nil {
 				image.MaxOutputs = int(*p.Max)
 			}
+			if len(p.Values) > 0 {
+				image.MaxOutputs = 1
+				for _, value := range p.Values {
+					if count, ok := numericScalar(value); ok && p.Accepts(value) {
+						image.MaxOutputs = max(image.MaxOutputs, int(count))
+					}
+				}
+			}
 		}
 	}
 	if !sizeEnabled {

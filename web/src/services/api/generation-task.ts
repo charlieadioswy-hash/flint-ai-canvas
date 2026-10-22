@@ -9,7 +9,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
 import { resolveGenerationWorkflowExecution, type GenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
 import { isArkPlanBaseUrl } from "@/lib/seedance-video";
-import { modelCompatibilityError, resolveVideoOperation } from "@/lib/model-selection";
+import { modelCompatibilityError, modelGenerationParameterError, resolveVideoOperation } from "@/lib/model-selection";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -442,6 +442,8 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
+    const parameterError = modelGenerationParameterError(config, config.model, mode);
+    if (parameterError) throw new Error(parameterError);
     const generationOptions = {
         ...(mode === "image" ? { imageParameters: imageParameterRequest(modelCapabilityConfigFor(config, config.model).image!, config, true) } : {}),
         size: config.size,

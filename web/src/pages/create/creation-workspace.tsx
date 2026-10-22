@@ -529,9 +529,9 @@ function DurationMenu({ profile, seconds, onChange }: { profile: VideoCapability
     const value = Number(normalizeVideoValue(profile, { seconds }).seconds);
     const presets = profile.duration.selection === "enum" ? videoDurationOptions(profile) : [];
     const fallbackPreset = presets.length ? presets : [profile.duration.default];
-    const min = profile.duration.selection === "range" ? profile.duration.min || 1 : Math.min(...fallbackPreset);
-    const max = profile.duration.selection === "range" ? Math.max(min, profile.duration.max || min) : Math.max(...fallbackPreset);
-    const step = Math.max(1, profile.duration.step || 1);
+    const min = profile.duration.selection === "range" ? profile.duration.min ?? 1 : Math.min(...fallbackPreset);
+    const max = profile.duration.selection === "range" ? Math.max(min, profile.duration.max ?? min) : Math.max(...fallbackPreset);
+    const step = profile.duration.step || 1;
     const durationControl = profile.duration.selection === "range" ? <>
         <input className="h-8 w-full" style={{ accentColor: "var(--creation-text)" }} type="range" min={min} max={max} step={step} value={value} aria-label="视频时长（秒）" onChange={(event) => onChange(event.target.value)} />
         <div className="flex justify-between px-0.5 text-[var(--fs-tiny)] text-[var(--creation-muted)]"><span>{min}s</span><span>{max}s</span></div>

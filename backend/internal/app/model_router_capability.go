@@ -375,16 +375,28 @@ func MatchCapability(spec CapabilitySpec, intent ModelRequestIntent) CapabilityM
 	}
 	for name, value := range intent.Options {
 		canonical := canonicalModelOptionName(spec.Capability, name)
-		if inactiveCapabilityOptionValue(canonical, value) {
+		constraint, declared := spec.Options[canonical]
+		_, numeric := numericScalar(value)
+		if inactiveCapabilityOptionValue(canonical, value) && (!declared || !numeric) {
 			continue
 		}
-		constraint, declared := spec.Options[canonical]
 		if !declared {
 			addIssue("option", canonical, "不支持参数 "+capabilityOptionLabel(name))
 			continue
 		}
 		if !matchOptionConstraint(name, constraint, value) {
 			addIssue("option", canonical, "参数 "+capabilityOptionLabel(name)+"超出支持范围")
+		} else if canonical == "size" && spec.Capability == "image" && spec.ImageParameters == nil && spec.ImageSize != nil && spec.ImageSize.AllowCustom {
+			explicit := false
+			for _, candidate := range constraint.Values {
+				if normalizedScalar(candidate) != "*" && capabilityOptionValuesEqual(name, candidate, value) {
+					explicit = true
+					break
+				}
+			}
+			if !explicit && !validCustomImageSize(fmt.Sprint(value)) {
+				addIssue("option", canonical, "自定义图片尺寸必须是有效的正数宽高或比例")
+			}
 		}
 	}
 	return CapabilityMatch{Matched: len(reasons) == 0, Reasons: reasons, Issues: issues}

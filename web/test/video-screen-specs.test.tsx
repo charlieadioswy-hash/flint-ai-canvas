@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ModelCapabilityEditor } from "../src/components/model-capability-editor";
+import { VideoSettingsPanel } from "../src/components/video-settings-panel";
 import { defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeModelCapabilityConfig, normalizeVideoValue } from "../src/lib/model-capabilities";
 import type { ModelProtocolWorkflow } from "../src/lib/model-protocols";
 import { resolveWorkflowVideoScreenSpec, updateWorkflowVideoScreenSpec } from "../src/lib/video-screen-specs";
+import { canvasThemes } from "../src/lib/canvas-theme";
+import { defaultConfig } from "../src/stores/use-config-store";
 
 const workflow: ModelProtocolWorkflow = {
     id: "minimax_h3_zm_u24",
@@ -14,6 +17,18 @@ const workflow: ModelProtocolWorkflow = {
     defaults: { resolution: "768p竖" },
 };
 const initial = () => resolveWorkflowVideoScreenSpec(defaultModelCapabilityConfig("autodl-comfyui", workflow.id).video!, workflow);
+
+test("video controls preserve declared zero and fractional steps without empty ratio or resolution groups", () => {
+    const capabilityConfig = defaultModelCapabilityConfig();
+    Object.assign(capabilityConfig.video!, { ratios: [], resolutions: [], defaultRatio: "", defaultResolution: "", duration: { selection: "range", min: 0, max: 2, step: 0.5, default: 1.5 } });
+    const config = { ...defaultConfig, model: "test::video", videoSeconds: "0", channels: [{ ...defaultConfig.channels[0], id: "test", models: ["video"], modelCosts: [{ model: "video", capabilityConfig }] }] };
+    const html = renderToStaticMarkup(<VideoSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={() => {}} />);
+    expect(html).toContain('min="0"');
+    expect(html).toContain('step="0.5"');
+    expect(html).toContain('value="0"');
+    expect(html).not.toContain(">尺寸<");
+    expect(html).not.toContain(">分辨率<");
+});
 
 test("removed switch and draft cannot replace the effective six choices", () => {
     for (const customSizeEnabled of [false, true]) {

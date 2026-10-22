@@ -11,7 +11,7 @@ import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
-import { modelRequestOptions, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
+import { modelRequestOptions, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -41,7 +41,7 @@ import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resou
 import { quoteModel, type LogicalModelQuote } from "@/services/api/logical-models";
 import { ConnectedReferenceShelf, ReferenceToolsPopover, referenceShelfHeading } from "./canvas-node-prompt-references";
 import { PromptModalResizeHandle, PromptResizeHandle, clampExpandedModalSize, clampPromptHeight, estimatePromptContentHeight, promptEditorBounds } from "./canvas-node-prompt-resize";
-import { audioConfigPatch, buildNodeConfig, defaultMode, modeDisplayName, promptPlaceholder, videoConfigPatch } from "./canvas-node-prompt-config";
+import { audioConfigPatch, buildNodeConfig, canvasModelConfigPatch, defaultMode, modeDisplayName, promptPlaceholder, videoConfigPatch } from "./canvas-node-prompt-config";
 
 export { buildNodeConfig } from "./canvas-node-prompt-config";
 
@@ -457,7 +457,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         fullWidth
                         config={config}
                         value={config.model}
-                        onChange={(model) => onConfigChange(node.id, mode === "image" ? { model, ...defaultImageParamsForModel(config, model) } : { model })}
+                        onChange={(model) => onConfigChange(node.id, canvasModelConfigPatch(config, model, mode))}
                         capability={mode}
                         requirements={resolvedRequirements}
                         onMissingConfig={() => navigateToSettings({ continueCreation: true })}
