@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -97,6 +98,10 @@ type Model3DCreateRequest struct {
 	Views                  *Model3DViews      `json:"views,omitempty"`
 	Parameters             model3d.Parameters `json:"parameters"`
 	ExpectedPolicyRevision *int64             `json:"expectedPolicyRevision"`
+	Scope                  string             `json:"scope,omitempty"`
+	GroupID                string             `json:"groupId,omitempty"`
+	CandidateIndex         int                `json:"candidateIndex,omitempty"`
+	CandidateCount         int                `json:"candidateCount,omitempty"`
 }
 type model3DReference struct {
 	ResourceID      string `json:"resourceId"`
@@ -105,8 +110,12 @@ type model3DReference struct {
 	ContentHash     string `json:"contentHash"`
 }
 type model3DClientContext struct {
-	CanvasID string `json:"canvasId"`
-	NodeID   string `json:"nodeId"`
+	CanvasID       string `json:"canvasId,omitempty"`
+	NodeID         string `json:"nodeId,omitempty"`
+	Scope          string `json:"scope"`
+	GroupID        string `json:"groupId,omitempty"`
+	CandidateIndex int    `json:"candidateIndex,omitempty"`
+	CandidateCount int    `json:"candidateCount,omitempty"`
 }
 type model3DInput struct {
 	ConfigID          string               `json:"configId"`
@@ -135,6 +144,15 @@ type Model3DTaskError struct {
 }
 type Model3DTaskView struct {
 	ID                string               `json:"id"`
+	RequestID         string               `json:"requestId"`
+	Scope             string               `json:"scope"`
+	GroupID           string               `json:"groupId,omitempty"`
+	CandidateIndex    int                  `json:"candidateIndex,omitempty"`
+	CandidateCount    int                  `json:"candidateCount,omitempty"`
+	Prompt            string               `json:"prompt"`
+	Parameters        model3d.Parameters   `json:"parameters"`
+	ImageResourceID   string               `json:"imageResourceId,omitempty"`
+	Views             *Model3DViews        `json:"views,omitempty"`
 	Status            model.TaskStatus     `json:"status"`
 	Stage             string               `json:"stage"`
 	Progress          int                  `json:"progress"`
@@ -148,6 +166,23 @@ type Model3DTaskView struct {
 	Error             *Model3DTaskError    `json:"error,omitempty"`
 	CreatedAt         time.Time            `json:"createdAt"`
 	UpdatedAt         time.Time            `json:"updatedAt"`
+}
+
+type Model3DTaskListOptions struct {
+	Scope      string
+	Limit      int
+	Cursor     string
+	ActiveOnly bool
+}
+
+type Model3DTaskPage struct {
+	Tasks      []Model3DTaskView `json:"tasks"`
+	NextCursor string            `json:"nextCursor,omitempty"`
+}
+
+type model3DTaskCursor struct {
+	CreatedAt time.Time `json:"createdAt"`
+	ID        string    `json:"id"`
 }
 
 func model3DError(err error) error {
@@ -424,6 +459,31 @@ func model3DRequestHash(req Model3DCreateRequest) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func model3DScope(scope string) (string, error) {
+	if scope == "" || scope == "canvas" {
+		return "canvas", nil
+	}
+	if scope == "standalone" {
+		return scope, nil
+	}
+	return "", BadAuthRequest("3D 任务范围无效")
+}
+
+func validateModel3DCandidates(req Model3DCreateRequest) error {
+	if req.GroupID == "" && req.CandidateIndex == 0 && req.CandidateCount == 0 {
+		return nil
+	}
+	if req.GroupID == "" || len(req.GroupID) > 96 || req.CandidateIndex < 1 || req.CandidateCount < req.CandidateIndex || req.CandidateCount > 4 {
+		return BadAuthRequest("候选版本须提供分组标识，且满足 1 ≤ 候选序号 ≤ 候选数量 ≤ 4")
+	}
+	for _, char := range req.GroupID {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return BadAuthRequest("候选分组标识无效")
+		}
+	}
+	return nil
+}
+
 func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*Model3DTaskView, error) {
 	if userID == "" {
 		return nil, Unauthorized("请先登录")
@@ -433,8 +493,26 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	}
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.Prompt = strings.TrimSpace(req.Prompt)
-	if req.RequestID == "" || len(req.RequestID) > 96 || strings.ContainsAny(req.RequestID, "\r\n") || req.SourceFingerprint == "" || len(req.SourceFingerprint) > 128 || assets.ValidID(req.CanvasID) == "" || assets.ValidID(req.NodeID) == "" || req.ExpectedPolicyRevision == nil || *req.ExpectedPolicyRevision < 0 {
-		return nil, BadAuthRequest("须提供请求身份、画布节点、来源指纹和生效配置版本")
+	if req.RequestID == "" || len(req.RequestID) > 96 || strings.ContainsAny(req.RequestID, "\r\n") || req.SourceFingerprint == "" || len(req.SourceFingerprint) > 128 || req.ExpectedPolicyRevision == nil || *req.ExpectedPolicyRevision < 0 {
+		return nil, BadAuthRequest("须提供请求身份、来源指纹和生效配置版本")
+	}
+	scope, err := model3DScope(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if scope == "standalone" {
+		if req.CanvasID != "" || req.NodeID != "" {
+			return nil, BadAuthRequest("独立 3D 任务不能关联画布或节点")
+		}
+	} else {
+		if assets.ValidID(req.CanvasID) == "" || assets.ValidID(req.NodeID) == "" {
+			return nil, BadAuthRequest("画布 3D 任务须提供有效画布和节点")
+		}
+		// The omitted scope and explicit canvas scope identify the same request.
+		req.Scope = ""
+	}
+	if err := validateModel3DCandidates(req); err != nil {
+		return nil, err
 	}
 	hash := model3DRequestHash(req)
 	if existing, err := s.repo.Model3DSubmissionForRequest(userID, req.RequestID); err == nil {
@@ -445,11 +523,13 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, req.CanvasID); err != nil {
-		return nil, model3DError(err)
-	}
-	if err := s.ensureTaskProjectActive(userID, req.CanvasID); err != nil {
-		return nil, err
+	if scope == "canvas" {
+		if _, err := s.repo.CanvasProjectForUser(userID, req.CanvasID); err != nil {
+			return nil, model3DError(err)
+		}
+		if err := s.ensureTaskProjectActive(userID, req.CanvasID); err != nil {
+			return nil, err
+		}
 	}
 	record, revision, err := s.repo.ActiveModel3DConfig()
 	if err != nil {
@@ -494,7 +574,7 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	default:
 		return nil, BadAuthRequest("生成方式无效")
 	}
-	input := model3DInput{ConfigID: record.ID, Mode: req.Mode, Prompt: req.Prompt, Parameters: req.Parameters, ReferenceImages: []model3DReference{}, SourceFingerprint: req.SourceFingerprint, ClientContext: model3DClientContext{CanvasID: req.CanvasID, NodeID: req.NodeID}}
+	input := model3DInput{ConfigID: record.ID, Mode: req.Mode, Prompt: req.Prompt, Parameters: req.Parameters, ReferenceImages: []model3DReference{}, SourceFingerprint: req.SourceFingerprint, ClientContext: model3DClientContext{CanvasID: req.CanvasID, NodeID: req.NodeID, Scope: scope, GroupID: req.GroupID, CandidateIndex: req.CandidateIndex, CandidateCount: req.CandidateCount}}
 	versions := map[string]string{}
 	seen := map[string]bool{}
 	for _, view := range []string{"single", "front", "left", "back", "right"} {
@@ -523,6 +603,9 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	}
 	encoded, _ := json.Marshal(input)
 	task := &model.Task{ID: newID(), UserID: userID, ProjectID: req.CanvasID, Type: model.TaskTypeCanvasModel3D, Status: model.TaskStatusQueued, Stage: "等待队列调度", Prompt: firstNonEmpty(req.Prompt, "3D 模型生成"), Operation: "model3d_" + req.Mode, Provider: model3d.ProviderTripo, Model: req.Parameters.Model, InputJSON: string(encoded)}
+	if scope == "standalone" {
+		task.WorkbenchKind = model.WorkbenchKindModel3D
+	}
 	submission := &model.Model3DSubmission{TaskID: task.ID, UserID: userID, RequestID: req.RequestID, RequestHash: hash, ConfigID: record.ID, State: "prepared"}
 	s.storageMu.Lock()
 	admitted, err := s.repo.AdmitModel3D(task, submission, revision, versions, func(repo *repository.Repository) error {
@@ -551,11 +634,39 @@ func (s *Service) Model3DTask(userID, id string) (*Model3DTaskView, error) {
 	if err != nil {
 		return nil, model3DError(err)
 	}
+	return model3DTaskView(task, submission)
+}
+
+func model3DTaskView(task *model.Task, submission *model.Model3DSubmission) (*Model3DTaskView, error) {
 	var input model3DInput
 	if json.Unmarshal([]byte(task.InputJSON), &input) != nil {
 		return nil, NewAppError(503, "3D 任务输入无效")
 	}
-	view := &Model3DTaskView{ID: task.ID, Status: task.Status, Stage: task.Stage, Progress: task.Progress, ProviderProgress: publicProviderProgress(*task), Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ClientContext: input.ClientContext, SubmissionOutcome: "not_submitted", CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
+	scope := "canvas"
+	if task.WorkbenchKind == model.WorkbenchKindModel3D {
+		scope = "standalone"
+	}
+	input.ClientContext.Scope = scope
+	view := &Model3DTaskView{ID: task.ID, RequestID: submission.RequestID, Scope: scope, GroupID: input.ClientContext.GroupID, CandidateIndex: input.ClientContext.CandidateIndex, CandidateCount: input.ClientContext.CandidateCount, Prompt: input.Prompt, Parameters: input.Parameters, Status: task.Status, Stage: task.Stage, Progress: task.Progress, ProviderProgress: publicProviderProgress(*task), Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ClientContext: input.ClientContext, SubmissionOutcome: "not_submitted", CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
+	for _, ref := range input.ReferenceImages {
+		if ref.View == "single" {
+			view.ImageResourceID = ref.ResourceID
+			continue
+		}
+		if view.Views == nil {
+			view.Views = &Model3DViews{}
+		}
+		switch ref.View {
+		case "front":
+			view.Views.Front = ref.ResourceID
+		case "left":
+			view.Views.Left = ref.ResourceID
+		case "back":
+			view.Views.Back = ref.ResourceID
+		case "right":
+			view.Views.Right = ref.ResourceID
+		}
+	}
 	if task.ProviderRequestID != "" {
 		view.SubmissionOutcome = "submitted"
 	} else if submission.State == "inflight" || submission.State == "unknown" {
@@ -579,6 +690,69 @@ func (s *Service) Model3DTask(userID, id string) (*Model3DTaskView, error) {
 		view.Error = &Model3DTaskError{Code: submission.ErrorCode, Reason: "failed_precondition", Message: task.Error, RetryClass: retryClass}
 	}
 	return view, nil
+}
+
+func (s *Service) Model3DTasks(userID string, options Model3DTaskListOptions) (*Model3DTaskPage, error) {
+	if userID == "" {
+		return nil, Unauthorized("请先登录")
+	}
+	scope, err := model3DScope(options.Scope)
+	if err != nil {
+		return nil, err
+	}
+	if options.Limit == 0 {
+		options.Limit = 30
+	}
+	if options.Limit < 1 || options.Limit > 100 {
+		return nil, BadAuthRequest("任务列表数量须为 1–100")
+	}
+	var before *time.Time
+	var cursor model3DTaskCursor
+	if options.Cursor != "" {
+		if len(options.Cursor) > 512 {
+			return nil, BadAuthRequest("任务列表游标无效")
+		}
+		encoded, err := base64.RawURLEncoding.DecodeString(options.Cursor)
+		if err != nil || json.Unmarshal(encoded, &cursor) != nil || cursor.CreatedAt.IsZero() || assets.ValidID(cursor.ID) == "" {
+			return nil, BadAuthRequest("任务列表游标无效")
+		}
+		before = &cursor.CreatedAt
+	}
+	tasks, err := s.repo.Model3DTasks(userID, scope == "standalone", options.ActiveOnly, options.Limit+1, before, cursor.ID)
+	if err != nil {
+		return nil, err
+	}
+	page := &Model3DTaskPage{Tasks: []Model3DTaskView{}}
+	if len(tasks) > options.Limit {
+		tasks = tasks[:options.Limit]
+		last := tasks[len(tasks)-1]
+		encoded, _ := json.Marshal(model3DTaskCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		page.NextCursor = base64.RawURLEncoding.EncodeToString(encoded)
+	}
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	submissions, err := s.repo.Model3DSubmissions(userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	byTaskID := make(map[string]model.Model3DSubmission, len(submissions))
+	for _, submission := range submissions {
+		byTaskID[submission.TaskID] = submission
+	}
+	for _, task := range tasks {
+		submission, ok := byTaskID[task.ID]
+		if !ok {
+			return nil, NewAppError(503, "3D 任务提交记录缺失")
+		}
+		view, err := model3DTaskView(&task, &submission)
+		if err != nil {
+			return nil, err
+		}
+		page.Tasks = append(page.Tasks, *view)
+	}
+	return page, nil
 }
 
 func (s *Service) RecoverModel3DTask(userID, id string) (*Model3DTaskView, error) {

@@ -36,7 +36,9 @@ describe("model thumbnails", () => {
         expect(modelThumbnailFormat(source)).toBe("glb");
         expect(modelThumbnailFormat({ ...source, fileName: "model.FBX", mimeType: "application/octet-stream" })).toBe("fbx");
         expect(modelThumbnailFormat({ ...source, fileName: "model", mimeType: "model/gltf+json" })).toBe("gltf");
-        expect(modelThumbnailFormat({ ...source, fileName: "model.obj", mimeType: "application/octet-stream" })).toBeNull();
+        expect(modelThumbnailFormat({ ...source, fileName: "model.obj", mimeType: "application/octet-stream" })).toBe("obj");
+        expect(modelThumbnailFormat({ ...source, fileName: "model.STL", mimeType: "application/octet-stream" })).toBe("stl");
+        expect(modelThumbnailFormat({ ...source, fileName: "model.unknown", mimeType: "application/octet-stream", url: "" })).toBeNull();
         expect(modelThumbnailKey(source, "a")).not.toBe(modelThumbnailKey(source, "b"));
         expect(modelThumbnailKey(source, "a")).not.toBe(modelThumbnailKey({ ...source, storageKey: "resource:other" }, "a"));
         expect(modelThumbnailKey(source, "a")).toBe(modelThumbnailKey({ ...source, url: "https://storage.example/model?signature=new" }, "a"));

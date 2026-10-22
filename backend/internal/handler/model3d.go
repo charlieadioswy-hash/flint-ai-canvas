@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -155,6 +156,34 @@ func RegisterModel3DRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, view)
+	})
+	r.GET("/model3d/tasks", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		options := service.Model3DTaskListOptions{Scope: c.Query("scope"), Cursor: c.Query("cursor")}
+		if limit, provided := c.GetQuery("limit"); provided {
+			options.Limit, err = strconv.Atoi(limit)
+			if err != nil || options.Limit < 1 || options.Limit > 100 {
+				failService(c, service.BadAuthRequest("任务列表数量须为 1–100"))
+				return
+			}
+		}
+		if activeOnly, provided := c.GetQuery("activeOnly"); provided {
+			options.ActiveOnly, err = strconv.ParseBool(activeOnly)
+			if err != nil {
+				failService(c, service.BadAuthRequest("活动任务筛选参数无效"))
+				return
+			}
+		}
+		page, err := svc.Model3DTasks(user.ID, options)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, page)
 	})
 	r.GET("/model3d/tasks/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

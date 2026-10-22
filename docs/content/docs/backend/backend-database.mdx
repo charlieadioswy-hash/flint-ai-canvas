@@ -403,6 +403,8 @@ Schema 51 为 `channel_models` 新增可空 TEXT 字段 `provider_defaults`，�
 
 Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 `canvas_model3d` 类型。
 
+独立 3D 工作台不增加表或字段，继续复用上述任务类型及提交幂等记录。独立任务的 `workbench_kind=model3d`、`project_id` 为空，`input_json.metadata.scope=standalone`；不写画布或节点标识，不创建 `CanvasProject`。`groupId`、`candidateIndex`、`candidateCount` 在输入 JSON 中关联同一轮候选，每个候选仍有独立任务、请求幂等和产物。画布入口保持项目与节点归属，旧任务省略 scope 时按 canvas 读取。任务与输入资源读取始终限制当前用户。
+
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
 | `model3d_providers` | 服务商实例、启用/归档状态和最新配置指针 | 当前类型为 `tripo3d`；归档不删除历史版本 |

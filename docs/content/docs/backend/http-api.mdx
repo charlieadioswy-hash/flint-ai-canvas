@@ -5,6 +5,12 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 独立 3D 任务
+
+`POST /api/model3d/tasks` 增加 `scope: "standalone"`，独立任务不接收画布或节点绑定，不创建画布。`GET /api/model3d/tasks?scope=standalone&limit=30&cursor=...` 按当前用户分页返回 `{tasks, nextCursor?}`，`activeOnly=true` 用于恢复历史页以外的活动任务。省略 scope 保持画布入口合同。
+
+多个候选通过独立请求与任务保存，共用 `groupId`，并传 `candidateIndex`、`candidateCount`，三项同时提供且满足 `1 <= candidateIndex <= candidateCount <= 4`。任务视图补充输入快照与分组，刷新只查询原任务；结果不确定时按 requestId 核实，不自动重发生成。详情见 [3D 任务工作台](/docs/backend/model3d-workflow)。
+
 ## 媒体任务的供应商进度
 
 任务详情、任务摘要列表及 3D 任务视图新增可选 `providerProgress: number`，仅表示供应商明确返回的生成百分比，有效展示范围为 0–99。0 是有效值；缺失、非法、供应商已报 100 但尚未交付结果、保存阶段和终态均省略。`status` / `stage` 仍决定任务状态；旧 `progress` 可能承载平台调度数值，不作为媒体生成百分比。

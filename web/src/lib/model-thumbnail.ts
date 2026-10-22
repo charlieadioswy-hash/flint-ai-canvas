@@ -1,16 +1,13 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "@noble/hashes/utils";
 import type { Object3D, WebGLRenderer } from "three";
+import { model3DFormat, type Model3DPreviewFormat } from "@/lib/model3d-formats";
 
 export type ModelThumbnailSource = { storageKey?: string; url: string; fileName: string; mimeType: string };
-export type ModelThumbnailFormat = "glb" | "gltf" | "fbx";
+export type ModelThumbnailFormat = Model3DPreviewFormat;
 
 export function modelThumbnailFormat(source: ModelThumbnailSource): ModelThumbnailFormat | null {
-    const extension = source.fileName.match(/\.(glb|gltf|fbx)$/i)?.[1]?.toLowerCase();
-    if (extension) return extension as ModelThumbnailFormat;
-    if (source.mimeType === "model/gltf-binary") return "glb";
-    if (source.mimeType === "model/gltf+json") return "gltf";
-    return null;
+    return model3DFormat(source);
 }
 
 export function modelThumbnailKey(source: ModelThumbnailSource, scope: string) {
@@ -22,20 +19,12 @@ export function modelThumbnailKey(source: ModelThumbnailSource, scope: string) {
 export async function renderModelThumbnail(source: ModelThumbnailSource, signal: AbortSignal): Promise<Blob> {
     const format = modelThumbnailFormat(source);
     if (!format) throw new Error("模型格式不支持缩略图");
-    const [THREE, loaders, resources, storage] = await Promise.all([import("three"), import("@/lib/canvas/model3d-preview"), import("@/lib/canvas/previs/previs-resources"), import("@/services/file-storage")]);
+    const [THREE, loaders, resources] = await Promise.all([import("three"), import("@/lib/canvas/model3d-preview"), import("@/lib/canvas/previs/previs-resources")]);
     signal.throwIfAborted();
-    const url = await storage.resolveMediaUrl(source.storageKey, source.url);
-    signal.throwIfAborted();
-    if (!url) throw new Error("模型资源暂时不可用");
-    const response = await fetch(url, { credentials: "same-origin", signal });
-    if (!response.ok) throw new Error("模型读取失败");
-    const bytes = await response.arrayBuffer();
-    signal.throwIfAborted();
-    const basePath = new URL(".", url.startsWith("blob:") || url.startsWith("data:") ? window.location.href : new URL(url, window.location.href)).href;
     let model: Object3D | undefined;
     let renderer: WebGLRenderer | undefined;
     try {
-        model = format === "fbx" ? loaders.createModel3DFBXLoader().parse(bytes, basePath) : (await loaders.createModel3DGLTFLoader().parseAsync(bytes, basePath)).scene;
+        model = await loaders.loadModel3D({ ...source, format }, signal);
         signal.throwIfAborted();
         model.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(model);

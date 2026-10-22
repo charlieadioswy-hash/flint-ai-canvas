@@ -162,6 +162,34 @@ func (r *Repository) Model3DSubmission(taskID string) (*model.Model3DSubmission,
 	err := r.db.First(&value, "task_id = ?", taskID).Error
 	return &value, err
 }
+
+func (r *Repository) Model3DTasks(userID string, standalone, activeOnly bool, limit int, before *time.Time, beforeID string) ([]model.Task, error) {
+	query := r.db.Where("user_id = ? AND type = ?", userID, model.TaskTypeCanvasModel3D)
+	if standalone {
+		query = query.Where("workbench_kind = ? AND project_id = ?", model.WorkbenchKindModel3D, "")
+	} else {
+		query = query.Where("(workbench_kind IS NULL OR workbench_kind <> ?)", model.WorkbenchKindModel3D)
+	}
+	if activeOnly {
+		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
+	}
+	if before != nil {
+		query = query.Where("(created_at < ? OR (created_at = ? AND id < ?))", *before, *before, beforeID)
+	}
+	tasks := []model.Task{}
+	err := query.Order("created_at desc, id desc").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *Repository) Model3DSubmissions(userID string, taskIDs []string) ([]model.Model3DSubmission, error) {
+	values := []model.Model3DSubmission{}
+	if len(taskIDs) == 0 {
+		return values, nil
+	}
+	err := r.db.Where("user_id = ? AND task_id IN ?", userID, taskIDs).Find(&values).Error
+	return values, err
+}
+
 func (r *Repository) Model3DSubmissionForRequest(userID, requestID string) (*model.Model3DSubmission, error) {
 	var value model.Model3DSubmission
 	err := r.db.First(&value, "user_id = ? AND request_id = ?", userID, requestID).Error

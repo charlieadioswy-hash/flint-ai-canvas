@@ -3,6 +3,7 @@ package model
 import "time"
 
 const TaskTypeCanvasModel3D = "canvas_model3d"
+const WorkbenchKindModel3D = "model3d"
 
 type Model3DProvider struct {
 	ID             string `gorm:"primaryKey;size:36"`

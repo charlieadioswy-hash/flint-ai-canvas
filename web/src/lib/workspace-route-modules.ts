@@ -3,6 +3,7 @@ const workspaceRouteLoaders = {
     canvas: () => import("@/pages/canvas"),
     create: () => import("@/pages/create"),
     inspirations: () => import("@/pages/inspirations"),
+    model3d: () => import("@/pages/model3d"),
     projects: () => import("@/pages/projects"),
     projectDetail: () => import("@/pages/projects/detail"),
 };
@@ -12,6 +13,7 @@ export const loadCanvasPage = workspaceRouteLoaders.canvas;
 export const loadCanvasProjectPage = () => import("@/pages/canvas/project");
 export const loadCreatePage = workspaceRouteLoaders.create;
 export const loadInspirationsPage = workspaceRouteLoaders.inspirations;
+export const loadModel3DPage = workspaceRouteLoaders.model3d;
 export const loadProjectDetailPage = workspaceRouteLoaders.projectDetail;
 export const loadProjectsPage = workspaceRouteLoaders.projects;
 

@@ -10,4 +10,6 @@ type Model3DCapabilities = app.Model3DCapabilities
 type Model3DCreateRequest = app.Model3DCreateRequest
 type Model3DViews = app.Model3DViews
 type Model3DTaskView = app.Model3DTaskView
+type Model3DTaskListOptions = app.Model3DTaskListOptions
+type Model3DTaskPage = app.Model3DTaskPage
 type Model3DResult = app.Model3DResult

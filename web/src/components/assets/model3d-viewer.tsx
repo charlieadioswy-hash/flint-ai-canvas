@@ -5,10 +5,10 @@ import type { Object3D } from "three";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
-import { resolveMediaUrl } from "@/services/file-storage";
-import { createModel3DFBXLoader, createModel3DGLTFLoader } from "@/lib/canvas/model3d-preview";
+import { loadModel3D } from "@/lib/canvas/model3d-preview";
+import type { Model3DPreviewFormat } from "@/lib/model3d-formats";
 
-type Props = { storageKey?: string; url: string; format: "glb" | "gltf" | "fbx"; theme?: CanvasTheme; expanded?: boolean };
+type Props = { storageKey?: string; url: string; format: Model3DPreviewFormat; theme?: CanvasTheme; expanded?: boolean };
 
 /** Mounted only after entering preview; controls render on demand and own their GPU resources. */
 export function Model3DViewer({ storageKey, url, format, theme, expanded = false }: Props) {
@@ -27,6 +27,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
         const host = hostRef.current;
         if (!host) return;
         let active = true;
+        const abort = new AbortController();
         let cleanup: (() => void) | undefined;
         let ownedModel: Object3D | undefined;
         setFailure(null);
@@ -103,10 +104,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 renderer.domElement.remove();
             };
             resize();
-            const resolved = await resolveMediaUrl(storageKey, url);
-            if (!active) return;
-            if (!resolved) throw new Error("模型资源暂时不可用");
-            const model = format === "fbx" ? await createModel3DFBXLoader().loadAsync(resolved) : (await createModel3DGLTFLoader().loadAsync(resolved)).scene;
+            const model = await loadModel3D({ storageKey, url, format }, abort.signal);
             if (!active) {
                 disposePrevisObject3D(model);
                 return;
@@ -135,6 +133,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
         });
         return () => {
             active = false;
+            abort.abort();
             cleanup?.();
         };
     }, [identity, storageKey, url, format, expanded, retry]);

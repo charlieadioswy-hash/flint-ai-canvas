@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { Box3, Mesh, Vector3 } from "three";
-import { createModel3DFBXLoader, createModel3DGLTFLoader } from "@/lib/canvas/model3d-preview";
+import { createModel3DFBXLoader, parseModel3D } from "@/lib/canvas/model3d-preview";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
 
 // Deterministic triangle buffer encoded by meshopt; no network or external texture dependencies.
 const compressedVertices = [160, 0, 0, 1, 12, 0, 0, 0, 255, 1, 60, 0, 0, 0, 255, 125, 0, 0, 1, 12, 0, 0, 0, 255, 1, 12, 0, 0, 0, 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 191, 0, 0, 0, 0, 0, 0, 0, 0];
-function glb(compressed: boolean) {
+function glb(compressed: boolean, externalImage?: string) {
     const binary = compressed ? Uint8Array.from(compressedVertices) : new Uint8Array(new Float32Array([-1, 0, 0, 1, 0, 0, 0, 1, 0]).buffer);
     const json = {
         asset: { version: "2.0" },
@@ -17,6 +17,7 @@ function glb(compressed: boolean) {
         bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36, ...(compressed ? { extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: 0, byteLength: binary.length, byteStride: 12, count: 3, mode: "ATTRIBUTES", filter: "NONE" } } } : {}) }],
         accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [-1, 0, 0], max: [1, 1, 0] }],
         ...(compressed ? { extensionsUsed: ["EXT_meshopt_compression"], extensionsRequired: ["EXT_meshopt_compression"] } : {}),
+        ...(externalImage ? { images: [{ uri: externalImage }] } : {}),
     };
     const encoded = new TextEncoder().encode(JSON.stringify(json));
     const jsonSize = Math.ceil(encoded.length / 4) * 4;
@@ -39,7 +40,7 @@ function glb(compressed: boolean) {
 
 test("real GLB loader parses ordinary and meshopt compressed model geometry offline", async () => {
     for (const compressed of [false, true]) {
-        const model = (await createModel3DGLTFLoader().parseAsync(glb(compressed), "")).scene;
+        const model = await parseModel3D(glb(compressed), "glb");
         const bounds = new Box3().setFromObject(model).getSize(new Vector3());
         expect(bounds.x).toBeCloseTo(2);
         expect(bounds.y).toBeCloseTo(1);
@@ -50,6 +51,21 @@ test("real GLB loader parses ordinary and meshopt compressed model geometry offl
         expect(vertices).toBe(3);
         disposePrevisObject3D(model);
     }
+});
+
+test("shared preview rejects external GLB/GLTF buffers and images before the loader can fetch them", async () => {
+    for (const uri of ["https://tracker.invalid/texture.png", "../texture.png", "file:///private/image.png", "blob:other-document"]) {
+        await expect(parseModel3D(glb(false, uri), "glb")).rejects.toThrow("外部依赖");
+        const document = { asset: { version: "2.0" }, buffers: [{ uri, byteLength: 12 }] };
+        await expect(parseModel3D(new TextEncoder().encode(JSON.stringify(document)).buffer, "gltf")).rejects.toThrow("外部依赖");
+    }
+});
+
+test("shared preview rejects OBJ material dependencies and honours cancellation", async () => {
+    await expect(parseModel3D(new TextEncoder().encode("mtllib https://tracker.invalid/material.mtl\nv 0 0 0").buffer, "obj")).rejects.toThrow("外部依赖");
+    const abort = new AbortController();
+    abort.abort();
+    await expect(parseModel3D(glb(false), "glb", abort.signal)).rejects.toMatchObject({ name: "AbortError" });
 });
 
 const fbxTriangle = `; FBX 7.4.0 project file
@@ -96,4 +112,23 @@ test("real FBX loader parses quad-output format and owned geometry/material disp
     disposePrevisObject3D(model);
     expect(geometryDisposals).toBe(1);
     expect(materialDisposals).toBe(1);
+});
+
+test("shared FBX preview rejects external textures before creating an image request", async () => {
+    const withTexture = fbxTriangle
+        .replace(
+            "Objects:  {",
+            `Objects:  {
+\tVideo: 3, "Video::Image", "Clip" {
+\t\tFilename: "https://tracker.invalid/image.png"
+\t\tRelativeFilename: "image.png"
+\t}
+\tTexture: 4, "Texture::Image", "" {
+\t\tFileName: "image.png"
+\t\tRelativeFilename: "image.png"
+\t}
+`,
+        )
+        .replace("Connections:  {", 'Connections:  {\n\tC: "OO",3,4');
+    await expect(parseModel3D(new TextEncoder().encode(withTexture).buffer, "fbx")).rejects.toThrow("外部依赖");
 });

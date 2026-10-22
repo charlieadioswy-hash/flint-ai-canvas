@@ -222,7 +222,14 @@ func (s *Service) completeModel3DTask(task *model.Task, input model3DInput, resu
 		return err
 	}
 	now := time.Now()
-	payload, err := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": "3D 生成模型", "coverUrl": "", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": map[string]any{"source": "model3d", "taskId": task.ID, "canvasId": input.ClientContext.CanvasID, "nodeId": input.ClientContext.NodeID}})
+	metadata := map[string]any{"source": "model3d", "taskId": task.ID, "scope": "standalone"}
+	if task.WorkbenchKind != model.WorkbenchKindModel3D {
+		metadata["scope"], metadata["canvasId"], metadata["nodeId"] = "canvas", input.ClientContext.CanvasID, input.ClientContext.NodeID
+	}
+	if input.ClientContext.GroupID != "" {
+		metadata["groupId"], metadata["candidateIndex"], metadata["candidateCount"] = input.ClientContext.GroupID, input.ClientContext.CandidateIndex, input.ClientContext.CandidateCount
+	}
+	payload, err := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": "3D 生成模型", "coverUrl": "", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": metadata})
 	if err != nil {
 		return err
 	}

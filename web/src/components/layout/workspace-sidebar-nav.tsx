@@ -1,5 +1,5 @@
 import { Popover } from "antd";
-import { ChevronRight, CircleUserRound, Image as ImageIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Scan, Video } from "lucide-react";
+import { Box, ChevronRight, CircleUserRound, Image as ImageIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Scan, Video } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -50,6 +50,7 @@ function buildNav(features: FeatureAvailability): { groups: WorkspaceNavGroup[];
                 { ...toolItem("projects", "/projects"), title: "短剧制作" },
                 { ...toolItem("canvas", "/canvas"), title: "自由画布" },
                 { id: "screen-creation", title: "异形屏创作", icon: Scan, to: "/screen-creation" },
+                { id: "model3d", title: "3D 创作", icon: Box, to: "/model3d" },
                 ...(features.imageWorkbenchEnabled ? [{ id: "toolbox-image", title: "图片生成", icon: ImageIcon, to: "/toolbox/image" }] : []),
                 ...(features.videoWorkbenchEnabled ? [{ id: "toolbox-video", title: "视频生成", icon: Video, to: "/toolbox/video" }] : []),
             ],

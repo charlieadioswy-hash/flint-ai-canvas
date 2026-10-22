@@ -1,4 +1,4 @@
-import { http } from "@/services/api/request";
+import { compactApiParams, http } from "@/services/api/request";
 
 export type Model3DMode = "text" | "image" | "multiview";
 export type Model3DView = "front" | "left" | "back" | "right";
@@ -42,14 +42,18 @@ export type Model3DCapabilities = {
     defaultModel: string;
     modelVersions: Model3DModelVersion[];
     modes: Model3DMode[];
-    inputLimits: { maxBytes: number; mimeTypes: string[]; minViews: number; maxViews: number; requiredView: Model3DView };
+    inputLimits: { maxBytes: number; mimeTypes: string[]; minViews: number; maxViews: number; requiredView: Model3DView; minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number };
 };
 
 export type Model3DCreateRequest = {
     requestId: string;
     sourceFingerprint: string;
-    canvasId: string;
-    nodeId: string;
+    scope?: "canvas" | "standalone";
+    canvasId?: string;
+    nodeId?: string;
+    groupId?: string;
+    candidateIndex?: number;
+    candidateCount?: number;
     mode: Model3DMode;
     prompt?: string;
     imageResourceId?: string;
@@ -76,6 +80,15 @@ export type Model3DTaskView = {
     progress?: number;
     providerProgress?: number;
     mode: Model3DMode;
+    scope?: "canvas" | "standalone";
+    requestId?: string;
+    prompt?: string;
+    parameters?: Model3DParameters;
+    imageResourceId?: string;
+    views?: { front: string; left?: string; back?: string; right?: string };
+    groupId?: string;
+    candidateIndex?: number;
+    candidateCount?: number;
     sourceFingerprint: string;
     clientContext: { canvasId: string; nodeId: string };
     submissionOutcome: "not_submitted" | "submitted" | "unknown";
@@ -129,6 +142,13 @@ export function getModel3DTask(id: string, signal?: AbortSignal) {
 
 export function getModel3DTaskByRequest(requestId: string, signal?: AbortSignal) {
     return http.get<Model3DTaskView | null>(`/model3d/requests/${encodeURIComponent(requestId)}`, { signal });
+}
+
+export type Model3DTaskList = { tasks: Model3DTaskView[]; nextCursor?: string };
+
+export function listModel3DTasks(input: { scope?: "canvas" | "standalone"; limit?: number; cursor?: string; activeOnly?: boolean } = {}, signal?: AbortSignal) {
+    const { activeOnly, ...params } = input;
+    return http.get<Model3DTaskList>("/model3d/tasks", { params: compactApiParams({ ...params, ...(activeOnly ? { activeOnly: "true" } : {}) }), signal });
 }
 
 export function recoverModel3DTask(id: string, signal?: AbortSignal) {

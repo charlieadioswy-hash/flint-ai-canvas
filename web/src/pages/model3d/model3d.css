@@ -1,0 +1,413 @@
+.model3d-page-inner {
+    max-width: 1560px;
+    margin: 0 auto;
+    padding-bottom: 24px;
+}
+.model3d-title-badge,
+.model3d-assets-link,
+.model3d-section-heading,
+.model3d-task-status > span,
+.model3d-saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.model3d-title-badge {
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-full);
+    font-size: var(--fs-caption);
+    color: var(--muted-foreground);
+}
+.model3d-assets-link {
+    font-size: var(--fs-caption);
+    color: var(--foreground);
+}
+.model3d-layout {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+    margin-top: 20px;
+}
+.model3d-composer,
+.model3d-preview-panel,
+.model3d-history {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--r-2xl);
+    background: var(--surface);
+}
+.model3d-inputs {
+    display: grid;
+    gap: 20px;
+    padding: 22px;
+}
+.model3d-section-heading h2,
+.model3d-panel-heading h2 {
+    margin: 0;
+    font-size: var(--fs-body);
+    font-weight: 600;
+}
+.model3d-step {
+    display: grid;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    border-radius: var(--r-full);
+    background: var(--surface-card);
+    color: var(--foreground);
+    font-size: var(--fs-caption);
+}
+.model3d-mode-switch {
+    display: flex;
+    min-width: 0;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--background);
+}
+.model3d-mode-switch button {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 6px;
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    font-size: var(--fs-caption);
+    color: var(--muted-foreground);
+    cursor: pointer;
+}
+.model3d-mode-switch button[aria-pressed="true"] {
+    border-color: var(--border);
+    background: var(--surface);
+    color: var(--foreground);
+    box-shadow: var(--shadow-sm);
+}
+.model3d-mode-switch button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.model3d-mode-switch button:focus-visible,
+.model3d-task-select:focus-visible,
+.model3d-upload-target:focus-visible {
+    outline: 2px solid var(--control-focus-ring);
+    outline-offset: 2px;
+}
+.model3d-field,
+.model3d-upload {
+    display: grid;
+    min-width: 0;
+    gap: 9px;
+}
+.model3d-field-label {
+    font-size: var(--fs-caption);
+    font-weight: 500;
+    color: var(--foreground);
+}
+.model3d-hint {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+.model3d-field-row,
+.model3d-image-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+.model3d-image-grid > p {
+    grid-column: 1 / -1;
+}
+.model3d-advanced,
+.model3d-ideas {
+    display: grid;
+    min-width: 0;
+    gap: 18px;
+}
+.model3d-upload-target {
+    display: flex;
+    min-width: 0;
+    min-height: 116px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    overflow: hidden;
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--r-lg);
+    background: var(--background);
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+    cursor: pointer;
+}
+.model3d-upload-target span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.model3d-upload-target:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.model3d-reference-image {
+    max-width: 100%;
+    height: 100px;
+    object-fit: contain;
+}
+.model3d-submit {
+    display: grid;
+    gap: 12px;
+    padding: 20px 22px;
+    border-top: 1px solid var(--border);
+}
+.model3d-output-column,
+.model3d-results {
+    display: grid;
+    min-width: 0;
+    gap: 20px;
+}
+.model3d-panel-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 18px 20px;
+}
+.model3d-panel-heading p {
+    margin-top: 4px;
+}
+.model3d-preview-stage {
+    position: relative;
+    height: clamp(320px, 46vh, 560px);
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+}
+.model3d-preview-empty {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    color: var(--muted-foreground);
+    text-align: center;
+}
+.model3d-preview-icon {
+    width: 76px;
+    height: 76px;
+    color: var(--muted-foreground);
+}
+.model3d-preview-empty h3 {
+    margin: 0;
+    color: var(--foreground);
+    font-size: var(--fs-body);
+    font-weight: 500;
+}
+.model3d-preview-empty > p {
+    max-width: 460px;
+    margin: 0;
+    font-size: var(--fs-caption);
+    line-height: 1.7;
+}
+.model3d-export-bar {
+    display: flex;
+    min-height: 70px;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 20px;
+}
+.model3d-export-bar .ant-select {
+    min-width: 180px;
+}
+.model3d-saved {
+    margin-left: auto;
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+}
+.model3d-preview-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 20px;
+    background: var(--surface-card);
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+}
+.model3d-task-list {
+    display: grid;
+    gap: 6px;
+    padding: 0 10px 12px;
+}
+.model3d-task-card {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    border: 1px solid transparent;
+    border-radius: var(--r-lg);
+}
+.model3d-task-card.is-selected {
+    border-color: var(--border);
+    background: var(--surface-card);
+}
+.model3d-task-select {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 12px;
+    padding: 4px;
+    border-radius: var(--r-md);
+    text-align: left;
+    cursor: pointer;
+}
+.model3d-task-icon {
+    display: grid;
+    flex-shrink: 0;
+    width: 44px;
+    height: 48px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--muted-foreground);
+    background: var(--background);
+}
+.model3d-task-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    gap: 5px;
+}
+.model3d-task-copy strong {
+    overflow: hidden;
+    font-size: var(--fs-caption);
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.model3d-task-copy small {
+    color: var(--muted-foreground);
+    font-size: var(--fs-tiny);
+}
+.model3d-task-status {
+    display: grid;
+    gap: 6px;
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+}
+.model3d-task-status progress {
+    width: 100%;
+    max-width: 260px;
+    height: 4px;
+    accent-color: var(--primary);
+}
+.model3d-history-empty {
+    margin: 0;
+    padding: 8px 22px 24px;
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+}
+.model3d-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    color: var(--status-warning);
+    font-size: var(--fs-caption);
+}
+.model3d-error {
+    margin: 0;
+    color: var(--status-warning);
+    font-size: var(--fs-caption);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+.model3d-export-error {
+    padding: 0 20px 16px;
+}
+.model3d-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.model3d-confirmation {
+    display: grid;
+    gap: 16px;
+    padding-top: 8px;
+}
+.model3d-confirmation dl {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+}
+.model3d-confirmation dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    font-size: var(--fs-caption);
+}
+.model3d-confirmation dt {
+    color: var(--muted-foreground);
+}
+.model3d-confirmation dd {
+    margin: 0;
+    text-align: right;
+}
+.model3d-confirmation-prompt {
+    max-height: 180px;
+    margin: 0;
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--background);
+    font-size: var(--fs-caption);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 1000px) {
+    .model3d-layout {
+        grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+        gap: 14px;
+    }
+    .model3d-inputs {
+        padding: 18px;
+    }
+    .model3d-task-card {
+        flex-wrap: wrap;
+    }
+}
+@media (max-width: 740px) {
+    .model3d-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .model3d-preview-stage {
+        height: 340px;
+    }
+    .model3d-saved {
+        width: 100%;
+        margin-left: 0;
+    }
+    .model3d-title-badge {
+        display: none;
+    }
+}

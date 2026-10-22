@@ -1,0 +1,38 @@
+---
+title: 3D 任务工作台
+description: 独立 3D 任务、候选版本、进度恢复与多格式预览导出合同
+---
+
+## 入口与数据归属
+
+`/model3d` 是登录后的独立任务工作台。入口点击、参数编辑、生成、刷新和预览都不创建画布。生成结果通过现有 Resource 与模型素材保存，候选版本通过任务关联。画布内 3D 节点及其恢复、分享继续使用原合同。
+
+后台 `/admin/settings/model3d` 管理唯一生效的服务商、模型、模式与策略修订。独立页复用这套能力，不额外保存密钥或单独指定供应商。
+
+## 任务 API
+
+- `GET /api/model3d/capabilities`：读取开放能力。
+- `POST /api/model3d/tasks`：创建任务，独立入口显式传 `scope: "standalone"`，省略 `canvasId` 与 `nodeId`；带画布标识的独立请求会被拒绝。省略 scope 时保持原画布合同。
+- `GET /api/model3d/tasks?scope=standalone&limit=30`：按当前用户与独立归属查询，使用 `cursor` 继续读取，返回 `{tasks, nextCursor?}`。`limit` 范围 1–100；`activeOnly=true` 用于恢复历史页之外仍在执行的任务。排序为创建时间倒序、ID 倒序。
+- `GET /api/model3d/tasks/:id`、`GET /api/model3d/requests/:requestId`：读取已提交任务或核实同一请求。
+- `POST /api/model3d/tasks/:id/recover`：仅恢复允许恢复的原任务交付，不重新创建模型。
+
+每个候选有独立 `requestId` 与 `sourceFingerprint`，同时传入同一 `groupId` 和对应的 `candidateIndex`、`candidateCount`。这三个字段可一起省略；传入时必须齐全，`1 <= candidateIndex <= candidateCount <= 4`。相同请求 ID 与相同正文复用原任务，变更正文或归属会冲突。
+
+任务投影包含 `scope`、`requestId`、`prompt`、`parameters`、`imageResourceId` 或 `views`、候选关联及原有状态、错误和结果字段，用于历史恢复和显式复用参数。独立任务的客户端上下文没有画布或节点绑定。任务列表与资源仍由后端校验当前用户归属。
+
+## 进度与提交恢复
+
+页面自动同步后台任务，刷新或重进后继续观察原任务，不重新执行生成。活动任务与已加载历史分开恢复，避免分页漏掉仍在运行的任务。离开页面取消浏览器观察，不取消已受理的后台任务。
+
+百分比只取 `providerProgress`，真实的 0 可显示；缺失、非法值、供应商 100、结果保存和终态不显示旧百分比。供应商生成完成后继续显示文件保存阶段，资源与素材登记完成后才显示完成。
+
+查询的暂时网络错误允许退避；提交失败且结果不确定时按原 `requestId` 查询，不自动重发 POST。部分候选已受理时保留它们，不用整轮重新提交替代恢复。每个候选分别占用实际任务预算，仍受既有并发、平台日预算和存储限制。
+
+## 多格式预览与导出
+
+共享预览器支持 GLB、GLTF、FBX、OBJ 和 STL，并限制为自包含文件。不会按模型内声明请求任意外部贴图或几何地址；外置依赖须先在建模工具中打包为 GLB。GLB 保留 Meshopt 解码支持。页面同时提供本地模型预览，本地导入不会创建任务、画布或云端素材。
+
+原文件下载走既有资源访问合同。额外导出在浏览器内转换为 GLB、GLTF、OBJ 或 STL；OBJ/STL 仅含几何，GLB/GLTF 可保留解析出的材质。FBX 仅提供原文件下载，不声明本地 FBX 转换能力。需要完整供应商产物时优先下载原文件，转换不调用供应商 API。
+
+「帮我想想」提供模型描述示例，用户也可选择文本模型显式生成提示词；这只创建文本任务，不自动创建 3D 任务，采用描述后仍需确认 3D 参数才开始生成。

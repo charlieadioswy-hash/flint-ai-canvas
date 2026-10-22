@@ -37,10 +37,30 @@ paths:
         "200": {$ref: "#/components/responses/Envelope"}
         "401": {$ref: "#/components/responses/Error"}
   /model3d/tasks:
+    get:
+      tags: [tasks]
+      summary: 分页读取本人指定范围的 3D 任务
+      description: scope 默认为 canvas；独立创作页显式使用 standalone。按创建时间和任务 ID 倒序分页。activeOnly 可恢复不在首个历史页中的活动任务。读取和恢复均不会创建画布。
+      parameters:
+        - {in: query, name: scope, schema: {type: string, enum: [canvas, standalone], default: canvas}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 100, default: 30}}
+        - {in: query, name: cursor, schema: {type: string}, description: 上一页返回的 nextCursor}
+        - {in: query, name: activeOnly, schema: {type: boolean, default: false}}
+      responses:
+        "200":
+          description: 标准信封 data 为 Model3DTaskPage
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Envelope"}
+                  - {type: object, properties: {data: {$ref: "#/components/schemas/Model3DTaskPage"}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
     post:
       tags: [tasks]
       summary: 创建文本、单图或多视图 3D 任务
-      description: requestId 在当前用户内幂等；相同编号但内容不同返回冲突。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。
+      description: requestId 在当前用户内幂等；scope 或候选身份不同也返回冲突。scope 默认为 canvas，须提供画布和节点；standalone 禁止传入画布或节点，独立保存任务和资产。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。
       requestBody:
         required: true
         content:
@@ -2355,12 +2375,16 @@ components:
     Model3DCreateRequest:
       type: object
       additionalProperties: false
-      required: [requestId, sourceFingerprint, canvasId, nodeId, mode, parameters, expectedPolicyRevision]
+      required: [requestId, sourceFingerprint, mode, parameters, expectedPolicyRevision]
       properties:
         requestId: {type: string, description: 当前用户内唯一的请求标识，重试保持不变}
         sourceFingerprint: {type: string, description: 前端输入与参数快照身份，仅用于上下文回写，不替代后端请求摘要}
-        canvasId: {type: string}
-        nodeId: {type: string}
+        scope: {type: string, enum: [canvas, standalone], default: canvas}
+        canvasId: {type: string, description: canvas 范围必填，standalone 范围禁止提供}
+        nodeId: {type: string, description: canvas 范围必填，standalone 范围禁止提供}
+        groupId: {type: string, maxLength: 96, pattern: '^[A-Za-z0-9_-]+$', description: 候选关联标识；与 candidateIndex 和 candidateCount 同时提供或全部省略}
+        candidateIndex: {type: integer, minimum: 1, maximum: 4, description: 候选序号，不得大于 candidateCount；每个候选为独立幂等任务}
+        candidateCount: {type: integer, minimum: 1, maximum: 4}
         mode: {type: string, enum: [text, image, multiview]}
         prompt: {type: string, maxLength: 1024}
         imageResourceId: {type: string}
@@ -2379,16 +2403,34 @@ components:
         expectedPolicyRevision: {type: integer, format: int64, minimum: 0}
     Model3DTaskView:
       type: object
-      required: [id, status, stage, mode, sourceFingerprint, clientContext, submissionOutcome, canRetryStorage, createdAt, updatedAt]
+      required: [id, requestId, scope, prompt, parameters, status, stage, mode, sourceFingerprint, clientContext, submissionOutcome, canRetryStorage, createdAt, updatedAt]
       properties:
         id: {type: string}
+        requestId: {type: string}
+        scope: {type: string, enum: [canvas, standalone]}
+        groupId: {type: string}
+        candidateIndex: {type: integer, minimum: 1, maximum: 4}
+        candidateCount: {type: integer, minimum: 1, maximum: 4}
+        prompt: {type: string}
+        parameters: {$ref: "#/components/schemas/Model3DParameters"}
+        imageResourceId: {type: string}
+        views: {$ref: "#/components/schemas/Model3DCreateRequest/properties/views"}
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
         stage: {type: string}
         progress: {type: integer, minimum: 0, maximum: 100}
         providerProgress: {type: integer, minimum: 0, maximum: 99, description: "供应商明确返回的生成百分比；缺失、保存中或终态时省略，0 是有效值。"}
         mode: {type: string, enum: [text, image, multiview]}
         sourceFingerprint: {type: string}
-        clientContext: {type: object, properties: {canvasId: {type: string}, nodeId: {type: string}}}
+        clientContext:
+          type: object
+          required: [scope]
+          properties:
+            scope: {type: string, enum: [canvas, standalone]}
+            canvasId: {type: string}
+            nodeId: {type: string}
+            groupId: {type: string}
+            candidateIndex: {type: integer, minimum: 1, maximum: 4}
+            candidateCount: {type: integer, minimum: 1, maximum: 4}
         submissionOutcome: {type: string, enum: [not_submitted, submitted, unknown]}
         canRetryStorage: {type: boolean}
         result:
@@ -2411,6 +2453,12 @@ components:
             retryClass: {type: string}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
+    Model3DTaskPage:
+      type: object
+      required: [tasks]
+      properties:
+        tasks: {type: array, items: {$ref: "#/components/schemas/Model3DTaskView"}}
+        nextCursor: {type: string}
     ImageModerationProviderRequest:
       type: object
       required: [name, type, enabled, region, services, timeoutSeconds, maxCallsPerDay, minIntervalSeconds]
