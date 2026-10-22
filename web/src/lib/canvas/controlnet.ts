@@ -93,6 +93,7 @@ export function structureControlBindingNodeIds(node?: Pick<CanvasNodeData, "meta
     const output = nodeOutputMask(node);
     if (output) ids.add(output.bindingId);
     const bindings = node?.metadata?.generationSpec?.referenceBindings ?? [];
+    for (const binding of bindings) if (binding.role === "mask") ids.add(binding.id);
     const explicitReferences = new Set(bindings.filter((binding) => binding.role === "reference").map((binding) => binding.nodeId));
     return new Set(bindings.filter((binding) => ids.has(binding.id) && !explicitReferences.has(binding.nodeId)).flatMap((binding) => binding.nodeId ? [binding.nodeId] : []));
 }
@@ -103,7 +104,7 @@ export function setControlNetReference(spec: GenerationSpec, bindingId: string, 
     return { ...spec, referenceBindings: references };
 }
 
-export function resolveCanvasControlNetInputs(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]): { controlNet: ControlNetInput[]; outputMask?: OutputMaskInput } {
+export function resolveCanvasControlNetInputs(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]): { controlNet: ControlNetInput[]; outputMask?: OutputMaskInput; mask?: ReferenceImage } {
     const bindings = node?.metadata?.generationSpec?.referenceBindings ?? [];
     const read = (id: string, role: ReferenceBinding["role"], label: string): ReferenceImage => {
         const binding = bindings.find((item) => item.id === id && item.role === role);
@@ -122,5 +123,11 @@ export function resolveCanvasControlNetInputs(node: CanvasNodeData | undefined, 
     });
     const output = nodeOutputMask(node);
     if (isStructureControlNode(node) && !controlNet.length) throw new Error("请添加至少一组结构控制");
-    return { controlNet, ...(output ? { outputMask: { image: read(output.bindingId, "output-mask", "输出蒙版"), mode: output.mode, resizeMode: "stretch" as const } } : {}) };
+    const masks = bindings.filter((binding) => binding.role === "mask");
+    if (masks.length > 1) throw new Error("局部重绘只能绑定一张重绘蒙版");
+    return {
+        controlNet,
+        ...(output ? { outputMask: { image: read(output.bindingId, "output-mask", "输出蒙版"), mode: output.mode, resizeMode: "stretch" as const } } : {}),
+        ...(masks[0] ? { mask: read(masks[0].id, "mask", "重绘蒙版") } : {}),
+    };
 }

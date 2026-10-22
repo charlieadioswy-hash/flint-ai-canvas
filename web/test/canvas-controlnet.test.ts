@@ -77,6 +77,30 @@ describe("canvas structure control contract and resource roles", () => {
         expect(controls.outputMask?.resizeMode).toBe("stretch");
     });
 
+    test("resolves repaint bindings separately and never clears an unbound image edit mask", () => {
+        const spec = recipe();
+        spec.referenceBindings.push({ id: "repaint", nodeId: "repaint", mediaType: "image", role: "mask", order: 3, resolution: "latest" });
+        const target = controlledNode(spec);
+        const sources = [image("screen"), image("region"), image("output"), image("repaint"), image("reference")];
+        const connections = sources.map((source) => ({ id: source.id, fromNodeId: source.id, toNodeId: target.id }));
+        expect(buildNodeGenerationContext(target.id, [target, ...sources], connections, "scene", []).referenceImages.map((image) => image.id)).toEqual(["reference"]);
+        expect(resolveCanvasControlNetInputs(target, sources).mask?.storageKey).toBe("resource:repaint");
+        const unbound = resolveCanvasControlNetInputs(controlledNode(), sources);
+        expect(Object.hasOwn(unbound, "mask")).toBe(false);
+        const editingMask = { id: "original-edit-mask" };
+        expect({ mask: editingMask, ...unbound }.mask).toBe(editingMask);
+        const copy = isolateCopiedNodeMetadata(target, new Map([["repaint", "repaint-copy"]]));
+        expect(copy.generationSpec?.referenceBindings.find((binding) => binding.role === "mask")?.nodeId).toBe("repaint-copy");
+        expect(() =>
+            resolveCanvasControlNetInputs(
+                target,
+                sources.filter((source) => source.id !== "repaint"),
+            ),
+        ).toThrow("重绘蒙版");
+        spec.referenceBindings.push({ ...spec.referenceBindings.at(-1)!, id: "another-mask" });
+        expect(() => resolveCanvasControlNetInputs(controlledNode(spec), sources)).toThrow("一张重绘蒙版");
+    });
+
     test("copying a group remaps control sources without sharing mutable parameters", () => {
         const source = controlledNode();
         const copy = isolateCopiedNodeMetadata(source, new Map([["screen", "screen-copy"], ["output", "output-copy"]]));
@@ -216,11 +240,16 @@ describe("structure control task preparation and frozen retry", () => {
         expect(result).toBe(completed);
     });
 
-    test("new image versions and batch children retain the complete structural recipe", async () => {
-        const source = controlledNode();
+    test.each([false, true])("new image versions and batch children retain the complete structural recipe (inpaint=%p)", async (inpaint) => {
+        const spec = recipe();
+        if (inpaint) spec.referenceBindings.push(
+            { id: "screen-inpaint-mask", nodeId: "output", mediaType: "image", role: "mask", order: 3, resolution: "latest" },
+            { id: "screen-content-reference", nodeId: "reference", mediaType: "image", role: "reference", order: 4, resolution: "latest" },
+        );
+        const source = controlledNode(spec);
         source.metadata!.content = "data:image/png;base64,AA==";
         source.metadata!.providerOptions = { "control-test": { templateUuid: "configured-template", steps: 20 } };
-        let nodes = [source, image("screen"), image("region"), image("output")];
+        let nodes = [source, image("screen"), image("region"), image("output"), ...(inpaint ? [image("reference")] : [])];
         let connections = nodes.slice(1).map((node) => ({ id: node.id, fromNodeId: node.id, toNodeId: source.id }));
         const inputs: Array<Parameters<typeof generationProject.runCanvasGenerationTaskToConsumer>[0]> = [];
         const run = spyOn(generationProject, "runCanvasGenerationTaskToConsumer").mockImplementation(async (input) => { inputs.push(input); return { mode: "image", images: [] }; });
@@ -228,7 +257,7 @@ describe("structure control task preparation and frozen retry", () => {
             await executeImageGeneration({
                 nodeId: source.id, sourceNode: source, canvasNodes: nodes, canvasConnections: connections,
                 prompt: "panda", effectivePrompt: "panda", generationConfig: { ...config(), count: "2" },
-                generationContext: { prompt: "panda", referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [], textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0 },
+                generationContext: buildNodeGenerationContext(source.id, nodes, connections, "panda", []),
                 controller: new AbortController(), projectId: "", editingTextNode: false, styleMetadata: {}, skillMetadata: { skillIds: [], skillVersions: [], skillFiles: [] },
                 setNodes: (value) => { nodes = typeof value === "function" ? value(nodes) : value; },
                 setConnections: (value) => { connections = typeof value === "function" ? value(connections) : value; },
@@ -242,9 +271,13 @@ describe("structure control task preparation and frozen retry", () => {
                 expect(output.metadata?.generationSpec?.options.controlNet?.[0].parameters.model).toBe("control-model");
                 expect(output.metadata?.generationSpec?.options.outputMask?.bindingId).toBe("output-region");
                 expect(output.metadata?.providerOptions?.["control-test"]?.steps).toBe(20);
+                expect(output.metadata?.generationSpec?.referenceBindings.some((binding) => binding.role === "mask")).toBe(inpaint);
             }
             expect(inputs).toHaveLength(2);
             expect(inputs[0].controlNet?.[0].image.storageKey).toBe("resource:screen");
+            expect(inputs[0].mask?.storageKey).toBe(inpaint ? "resource:output" : undefined);
+            expect(inputs[0].referenceImages?.map((image) => image.storageKey)).toEqual(inpaint ? ["resource:reference"] : []);
+            expect(inputs[0].outputMask?.image.storageKey).toBe("resource:output");
         } finally { run.mockRestore(); }
     });
 });

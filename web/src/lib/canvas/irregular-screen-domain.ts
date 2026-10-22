@@ -19,6 +19,7 @@ export type IrregularScreenTemplateInput = {
     controlImage: IrregularScreenImage;
     outputMask: IrregularScreenImage;
     contentReference?: IrregularScreenImage;
+    inpaint?: boolean;
     prompt: string;
     modelSelection?: ModelSelection;
     controlParameters: ControlNetParameters;
@@ -50,6 +51,11 @@ function pixelSize(value: string) {
 
 function sameRatio(a: { width: number; height: number }, b: { width: number; height: number }) {
     return Math.abs((a.width * b.height) / (b.width * a.height) - 1) <= 0.005;
+}
+
+export function irregularScreenOutputSizeError(source: { width: number; height: number }, size: string) {
+    const output = pixelSize(size);
+    return validDimensions(source) && output && sameRatio(source, output) ? "" : "输出尺寸必须与屏幕原图保持相同比例，不能拉伸或裁剪";
 }
 
 export function resolveIrregularScreenOutputSize(source: { width: number; height: number }, profile: ImageCapabilityConfig): IrregularScreenOutputSize {
@@ -95,9 +101,14 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
     requireImage(input.controlImage, "结构原图");
     requireImage(input.outputMask, "输出蒙版");
     if (input.contentReference) requireImage(input.contentReference, "内容参考图");
+    if (input.inpaint) {
+        if (!input.contentReference) throw new Error("局部重绘需要先添加内容原图");
+        if (input.contentReference.width !== input.outputMask.width || input.contentReference.height !== input.outputMask.height) throw new Error("局部重绘内容原图和屏幕蒙版必须使用完全相同的像素尺寸");
+    }
     if (input.controlImage.width !== input.outputMask.width || input.controlImage.height !== input.outputMask.height) throw new Error("结构原图和输出蒙版必须使用完全相同的像素尺寸与坐标");
-    const output = pixelSize(input.size);
-    if (!output || !sameRatio(input.controlImage, output)) throw new Error("输出尺寸必须与屏幕原图保持相同比例，不能拉伸或裁剪");
+    const sizeError = irregularScreenOutputSizeError(input.controlImage, input.size);
+    if (sizeError) throw new Error(sizeError);
+    const output = pixelSize(input.size)!;
     if (input.controlParameters.resizeMode !== "stretch") throw new Error("异形屏结构控制必须使用一致的完整图片坐标");
     const existing = input.existingProject;
     const scene = isIrregularScreenScene(existing?.creationScene) ? existing.creationScene : undefined;
@@ -115,6 +126,7 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
         { id: "screen-control", nodeId: control.id, mediaType: "image", role: "control-image", order: 0, resolution: "latest" },
         { id: "screen-output-mask", nodeId: mask.id, mediaType: "image", role: "output-mask", order: 1, resolution: "latest" },
         ...(reference ? [{ id: "screen-content-reference", nodeId: reference.id, mediaType: "image" as const, role: "reference" as const, order: 2, resolution: "latest" as const }] : []),
+        ...(input.inpaint ? [{ id: "screen-inpaint-mask", nodeId: mask.id, mediaType: "image" as const, role: "mask" as const, order: 3, resolution: "latest" as const }] : []),
     ];
     const spec: GenerationSpec = validateGenerationSpec({
         version: GENERATION_CONTRACT_VERSION,

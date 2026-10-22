@@ -13,6 +13,7 @@ import type { ModelRequirements } from "@/lib/model-selection";
 import { cn } from "@/lib/utils";
 import { ScreenCreationAdvanced } from "./screen-creation-advanced";
 import { ScreenCreationPreviewImage } from "./screen-creation-preview-image";
+import { ScreenCreationMaskGuide } from "./screen-creation-mask-guide";
 import type { ScreenCreationImage, ScreenCreationWorkspaceProps } from "./screen-creation-types";
 import "./screen-creation.css";
 
@@ -31,6 +32,7 @@ function ImageUpload({
     hint,
     value,
     optional = false,
+    accept = "image/png,image/jpeg",
     disabled,
     onUpload,
     onClear,
@@ -39,6 +41,7 @@ function ImageUpload({
     hint: string;
     value: ScreenCreationImage | null;
     optional?: boolean;
+    accept?: string;
     disabled: boolean;
     onUpload: (file: File) => void | Promise<void>;
     onClear: () => void;
@@ -72,7 +75,7 @@ function ImageUpload({
                 <input
                     ref={inputRef}
                     type="file"
-                    accept="image/png,image/jpeg"
+                    accept={accept}
                     aria-label={`上传${label}`}
                     className="sr-only"
                     tabIndex={-1}
@@ -106,6 +109,28 @@ function ImageUpload({
                 </button>
                 {value ? <Button type="text" size="small" className="screen-creation-upload-remove" icon={<X className="size-3.5" />} aria-label={`移除${label}`} disabled={disabled} onClick={onClear} /> : null}
             </div>
+        </div>
+    );
+}
+
+export function ScreenCreationGenerationMode({ inpaint, setInpaint, inpaintUnavailableReason, disabled }: Pick<ScreenCreationWorkspaceProps, "inpaint" | "setInpaint" | "inpaintUnavailableReason"> & { disabled: boolean }) {
+    return (
+        <div className="screen-creation-generation-mode">
+            <span className="screen-creation-field-label">生成方式</span>
+            <div className="screen-creation-mode-options" role="group" aria-label="生成方式">
+                <button type="button" aria-pressed={!inpaint} disabled={disabled} onClick={() => setInpaint(false)}>
+                    从描述生成
+                </button>
+                <button type="button" aria-pressed={inpaint} disabled={disabled || Boolean(inpaintUnavailableReason)} onClick={() => setInpaint(true)}>
+                    按原图局部重绘
+                </button>
+            </div>
+            <p className="screen-creation-hint">{inpaint ? "在屏幕范围内重绘内容原图，原图尺寸必须与屏幕蒙版完全一致。选择方式后，点击“生成画面”才会开始。" : "按描述创作新画面，也可添加内容参考图，借鉴色彩、风格与内容。"}</p>
+            {inpaintUnavailableReason ? (
+                <p className="screen-creation-hint" role="status">
+                    {inpaintUnavailableReason}
+                </p>
+            ) : null}
         </div>
     );
 }
@@ -165,8 +190,33 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                 </div>
                             </div>
                             <fieldset className="screen-creation-inputs" disabled={disabled}>
-                                <ImageUpload label="屏幕蒙版" hint="点击或拖入 PNG、JPG" value={props.mask} disabled={disabled} onUpload={props.uploadMask} onClear={props.clearMask} />
-                                <ImageUpload label="内容参考图" hint="参考画面的色彩、风格与内容" value={props.reference} optional disabled={disabled} onUpload={props.uploadReference} onClear={props.clearReference} />
+                                <div className="screen-creation-mask-input">
+                                    <ImageUpload label="屏幕蒙版" hint="透明 PNG · ≤ 10 MB · 宽、高各 ≤ 4096 像素" accept="image/png" value={props.mask} disabled={disabled} onUpload={props.uploadMask} onClear={props.clearMask} />
+                                    <p className="screen-creation-hint">透明处为屏幕外，不透明处显示内容。仅支持透明 PNG，不超过 10 MB，宽、高各不超过 4096 像素。</p>
+                                    {props.mask && props.maskMode !== "alpha" ? (
+                                        <p className="screen-creation-hint" role="note">
+                                            历史蒙版仍按原规则读取，替换时请上传透明PNG
+                                        </p>
+                                    ) : null}
+                                    <ScreenCreationMaskGuide />
+                                </div>
+                                <ScreenCreationGenerationMode inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} disabled={disabled} />
+                                <div>
+                                    <ImageUpload
+                                        label={props.inpaint ? "内容原图" : "内容参考图"}
+                                        hint={props.inpaint ? "必填 · 宽、高须与屏幕蒙版完全一致" : "参考画面的色彩、风格与内容"}
+                                        value={props.reference}
+                                        optional={!props.inpaint}
+                                        disabled={disabled}
+                                        onUpload={props.uploadReference}
+                                        onClear={props.clearReference}
+                                    />
+                                    {props.inpaint ? (
+                                        <p className="screen-creation-hint">
+                                            内容原图必填；{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"} 输出尺寸可按蒙版的相同比例缩放。
+                                        </p>
+                                    ) : null}
+                                </div>
                                 <label className="screen-creation-field screen-creation-prompt">
                                     <span>画面描述</span>
                                     <Input.TextArea
@@ -179,6 +229,11 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                         onChange={(event) => props.setPrompt(event.target.value)}
                                     />
                                 </label>
+                                {props.applyExample ? (
+                                    <Button className="screen-creation-example-action" type="text" size="small" icon={<Sparkles className="size-3.5" />} disabled={disabled} onClick={props.applyExample}>
+                                        使用科幻跑车示例
+                                    </Button>
+                                ) : null}
                                 <div className="screen-creation-model-settings">
                                     <div className="screen-creation-model-picker">
                                         <ModelPicker config={props.config} value={props.model} onChange={props.setModel} capability="image" requirements={screenModelRequirements} fullWidth showSelectedPrice={false} showOptionPrices variant="creation" />
@@ -216,16 +271,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     </Callout>
                                 ) : null}
                             </fieldset>
-                            <ScreenCreationAdvanced
-                                advanced={props.advanced}
-                                setAdvanced={props.setAdvanced}
-                                maskMode={props.maskMode}
-                                setMaskMode={props.setMaskMode}
-                                profile={props.profile}
-                                config={props.config}
-                                model={props.model}
-                                disabled={disabled}
-                            />
+                            <ScreenCreationAdvanced advanced={props.advanced} setAdvanced={props.setAdvanced} profile={props.profile} config={props.config} model={props.model} inpaint={props.inpaint} disabled={disabled} />
                             <div className="screen-creation-submit">
                                 <div className="screen-creation-quote" aria-live="polite">
                                     <span>生成 1 张</span>
@@ -268,7 +314,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     <span>{props.statusText || (props.uploading ? "正在准备图片…" : "正在生成屏幕画面…")}</span>
                                 </div>
                             ) : null}
-                            <div className={cn("screen-creation-preview-stage", previewUrl && "has-image")}>
+                            <div className={cn("screen-creation-preview-stage", previewUrl && "has-image", previewTab === "original" && previewUrl && "screen-creation-transparency-grid")}>
                                 {previewUrl ? (
                                     <ScreenCreationPreviewImage
                                         storageKey={previewStorageKey}
@@ -284,12 +330,20 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                             <Scan />
                                         </span>
                                         <h2>{previewTab === "result" ? "画面将在这里呈现" : props.mask ? "正在准备有效区域" : "先定义屏幕的形状"}</h2>
-                                        <p>{previewTab === "result" ? "上传蒙版、描述画面后，开始第一次生成。" : props.mask ? "有效区域准备完成后，可以在这里检查显示范围。" : "上传一张蒙版，在这里检查原图和有效显示区域。"}</p>
+                                        <p>{previewTab === "result" ? "上传蒙版、描述画面后，开始第一次生成。" : props.mask ? "有效区域准备完成后，可以在这里检查显示范围。" : "上传透明 PNG 蒙版。不透明处显示内容，透明处为屏幕外。"}</p>
                                     </div>
                                 )}
                             </div>
                             <div className="screen-creation-preview-footer">
-                                <p>{previewTab === "original" ? "保留原始画幅，检查屏幕布局与边界。" : previewTab === "mask" ? "白色为可见区域，黑色为屏幕外区域。" : "结果按原始比例展示，屏幕外区域保持黑色。"}</p>
+                                <p>
+                                    {previewTab === "original"
+                                        ? props.maskMode === "alpha"
+                                            ? "棋盘格表示透明屏外；彩色不透明区域与转角线会保留。"
+                                            : "保留历史蒙版的原始画幅，有效区域仍按原规则识别。"
+                                        : previewTab === "mask"
+                                          ? "白色为可见区域，黑色为屏幕外区域。"
+                                          : "结果按原始比例展示，屏幕外区域保持黑色。"}
+                                </p>
                                 <div>
                                     {previewTab === "result" && selectedResult ? (
                                         <Button icon={<Download className="size-3.5" />} onClick={() => void props.downloadResult(selectedResult.id)}>
@@ -366,10 +420,14 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                 {props.recentError ? (
                     <Callout tone="error" title="场景列表暂时无法读取">
                         <p>{props.recentError}</p>
-                        <Button onClick={props.retryRecentScenes} loading={props.recentLoading || props.recentLoadingMore}>重试读取场景</Button>
+                        <Button onClick={props.retryRecentScenes} loading={props.recentLoading || props.recentLoadingMore}>
+                            重试读取场景
+                        </Button>
                     </Callout>
                 ) : props.recentHasMore ? (
-                    <Button block disabled={disabled} loading={props.recentLoadingMore} onClick={props.loadMoreScenes}>加载更多场景</Button>
+                    <Button block disabled={disabled} loading={props.recentLoadingMore} onClick={props.loadMoreScenes}>
+                        加载更多场景
+                    </Button>
                 ) : null}
             </AppDrawer>
         </WorkspacePage>

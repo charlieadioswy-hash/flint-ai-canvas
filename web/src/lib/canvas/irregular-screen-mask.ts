@@ -11,6 +11,35 @@ export type IrregularScreenMaskResult = IrregularScreenPixels & {
 
 const BLACK_TOLERANCE = 16;
 const WHITE_TOLERANCE = 239;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+export function validateIrregularScreenMaskFile(file: { type: string; size: number }, signature: Uint8Array) {
+    if (file.type !== "image/png") throw new Error("屏幕蒙版仅支持带透明背景的 PNG 图片");
+    if (file.size > 10 * 1024 * 1024) throw new Error("屏幕蒙版不能超过 10 MB");
+    if (file.size < PNG_SIGNATURE.length || signature.length < PNG_SIGNATURE.length || !PNG_SIGNATURE.every((byte, index) => signature[index] === byte)) {
+        throw new Error("屏幕蒙版不是有效的 PNG 文件，请重新导出为透明背景 PNG");
+    }
+}
+
+function validatePixelDimensions({ width, height, data }: IrregularScreenPixels) {
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width * height * 4 !== data.length) throw new Error("蒙版像素尺寸无效");
+}
+
+// New uploads use alpha only. Legacy auto/color/luminance extraction below remains independent.
+export function validateIrregularScreenMaskPixels(source: IrregularScreenPixels) {
+    validatePixelDimensions(source);
+    if (source.width > 4096 || source.height > 4096) throw new Error("屏幕蒙版宽高不能超过 4096 像素");
+    let hasTransparent = false;
+    let hasOpaque = false;
+    for (let index = 3; index < source.data.length; index += 4) {
+        const alpha = source.data[index];
+        if (alpha <= BLACK_TOLERANCE) hasTransparent = true;
+        if (alpha >= WHITE_TOLERANCE) hasOpaque = true;
+        if (hasTransparent && hasOpaque) return;
+    }
+    if (!hasTransparent) throw new Error("屏幕蒙版缺少透明的屏幕外区域，请将屏幕外设为透明后导出 PNG");
+    throw new Error("屏幕蒙版缺少不透明的屏幕区域，请保留不透明屏幕区域后导出 PNG");
+}
 
 function coloredPixel(red: number, green: number, blue: number, alpha: number) {
     const maximum = Math.max(red, green, blue);
@@ -25,7 +54,7 @@ function denoise(value: number) {
 
 export function deriveIrregularScreenMask(source: IrregularScreenPixels, requestedMode: IrregularScreenMaskMode = "auto"): IrregularScreenMaskResult {
     const { width, height, data } = source;
-    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width * height * 4 !== data.length) throw new Error("蒙版像素尺寸无效");
+    validatePixelDimensions(source);
     if (!["auto", "color", "luminance", "alpha"].includes(requestedMode)) throw new Error("蒙版识别模式无效");
     const pixels = width * height;
     let colorPixels = 0;

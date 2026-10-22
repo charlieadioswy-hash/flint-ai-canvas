@@ -129,6 +129,79 @@ func TestLiblibConfigValidationRunsBeforeURLPreparation(t *testing.T) {
 	}
 }
 
+func liblibInpaintTestRequest() GenerationRequest {
+	r := liblibTestRequest()
+	r.ProviderOptions[LiblibImageProtocolID]["denoisingStrength"] = 0.75
+	r.Images = []MediaReference{
+		{URL: "https://cdn.example.com/repaint.png", Role: "mask", Metadata: map[string]any{"width": 640, "height": 960}},
+		{URL: "https://cdn.example.com/content.png", Role: "edit_source", Metadata: map[string]any{"width": 640, "height": 960}},
+	}
+	return r
+}
+
+func TestLiblibInpaintCombinesSourceMaskAndIndependentCanny(t *testing.T) {
+	r := liblibInpaintTestRequest()
+	r.ProviderOptions[LiblibImageProtocolID]["inpaintMaskMode"] = "luminance"
+	r.ControlNet[0].Mask = &MediaReference{URL: "https://cdn.example.com/control-area.png", Metadata: map[string]any{"width": 1256, "height": 704}}
+	spec, err := buildLiblibCreate(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := spec.Body.(map[string]any)["generateParams"].(map[string]any)
+	if spec.Path != "/api/generate/webui/img2img" || params["mode"] != 4 || params["sourceImage"] != r.Images[1].URL || params["resizedWidth"] != 1024 || params["resizedHeight"] != 768 {
+		t.Fatalf("wrong inpaint source or output geometry: %+v", params)
+	}
+	inpaint := params["inpaintParam"].(map[string]any)
+	if inpaint["maskImage"] != r.Images[0].URL || inpaint["maskMode"] != 0 || inpaint["maskBlur"] != 4 || inpaint["maskPadding"] != 32 || inpaint["inpaintArea"] != 0 || inpaint["inpaintingFill"] != 1 {
+		t.Fatalf("inpaint SDK defaults lost: %+v", inpaint)
+	}
+	control := params["controlNet"].([]any)[0].(map[string]any)
+	if control["sourceImage"] != r.ControlNet[0].Image.URL || control["maskImage"] != r.ControlNet[0].Mask.URL || control["preprocessor"] != 1 || control["width"] != 1256 {
+		t.Fatalf("inpaint replaced independent Canny control: %+v", control)
+	}
+	if _, ok := params["inpaintMaskMode"]; ok {
+		t.Fatal("host mask interpretation option leaked to upstream")
+	}
+}
+
+func TestLiblibInpaintRejectsAmbiguousOrUnsupportedInput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*GenerationRequest)
+		want string
+	}{
+		{"missing source", func(r *GenerationRequest) { r.Images = r.Images[:1] }, "内容原图"},
+		{"two sources", func(r *GenerationRequest) { r.Images = append(r.Images, r.Images[1]) }, "一张普通参考图"},
+		{"two masks", func(r *GenerationRequest) { r.Images = append(r.Images, r.Images[0]) }, "一张重绘蒙版"},
+		{"unverified family", func(r *GenerationRequest) { r.ProviderOptions[LiblibImageProtocolID]["family"] = "f1" }, "SD/SDXL"},
+		{"unknown mask interpretation", func(r *GenerationRequest) { r.ProviderOptions[LiblibImageProtocolID]["inpaintMaskMode"] = "guess" }, "inpaintMaskMode"},
+		{"non-string mask interpretation", func(r *GenerationRequest) { r.ProviderOptions[LiblibImageProtocolID]["inpaintMaskMode"] = 1 }, "inpaintMaskMode"},
+		{"missing strength", func(r *GenerationRequest) { delete(r.ProviderOptions[LiblibImageProtocolID], "denoisingStrength") }, "denoisingStrength"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := liblibInpaintTestRequest()
+			test.edit(&r)
+			if err := ValidateLiblibRequest(r); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("invalid input was not rejected before preparation: %v", err)
+			}
+		})
+	}
+	for _, dimensions := range []map[string]any{nil, {"width": 960, "height": 640}, {"width": 640, "height": 0}} {
+		r := liblibInpaintTestRequest()
+		r.Images[0].Metadata = dimensions
+		if _, err := buildLiblibCreate(r); err == nil || !strings.Contains(err.Error(), "真实像素尺寸") {
+			t.Fatalf("mismatched or unknown mask geometry accepted: %v", err)
+		}
+	}
+	r := liblibInpaintTestRequest()
+	for i := range r.Images {
+		r.Images[i].URL, r.Images[i].Metadata = "", nil
+	}
+	if err := ValidateLiblibRequest(r); err != nil {
+		t.Fatalf("admission should accept not-yet-hydrated resource roles: %v", err)
+	}
+}
+
 func TestLiblibPollWaitsForAuditAndRejectsUnknownOrWrongTasks(t *testing.T) {
 	a := LiblibImageAdapter()
 	ctx := context.Background()

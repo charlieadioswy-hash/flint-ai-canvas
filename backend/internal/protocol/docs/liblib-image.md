@@ -14,15 +14,19 @@
 
 {{PARAMETERS}}
 
-上表列出宿主可配置字段；渠道默认值合并后，最终请求还须通过组合校验：`family` 必须为 `f1` 或 `sd`，`templateUuid` 必须是有效 UUID，`steps` 必须是正整数。`family=sd` 还要求有效的 `checkPointId`（缺省取渠道上游模型）、非负整数 `sampler` 和非负数 `cfgScale`；`family=f1` 不发送这三个 SD 专用字段。`seed` 缺省为 -1，表示随机，显式值须为 -1 或非负整数。`negativePrompt` 为可选负向提示词。首版只处理一张普通参考图；有普通参考图时必须提供 0–1 的 `denoisingStrength`。
+上表列出宿主可配置字段；渠道默认值合并后，最终请求还须通过组合校验：`family` 必须为 `f1` 或 `sd`，`templateUuid` 必须是有效 UUID，`steps` 必须是正整数。`family=sd` 还要求有效的 `checkPointId`（缺省取渠道上游模型）、非负整数 `sampler` 和非负数 `cfgScale`；`family=f1` 不发送这三个 SD 专用字段。`seed` 缺省为 -1，表示随机，显式值须为 -1 或非负整数。`negativePrompt` 为可选负向提示词。只处理一张普通参考图；有普通参考图时必须提供 0–1 的 `denoisingStrength`。
 
 输出尺寸优先使用统一输出合同中的像素宽高，其次使用 `providerOptions.liblib-image` 中成对的 `width`、`height`，最后读取明确的像素尺寸字符串（如 `1024x576`）。宿主要求每边为 1–4096 的整数；这不替代上游模型或模板的尺寸限制。图片数量优先取统一输出合同，其次取图片数量字段，缺省为 1，最多为 4。
 
-文生图将输出尺寸写入 `generateParams.width/height`；图生图使用 `resizedWidth/resizedHeight`，并发送 `sourceImage`、`mode: 0` 与 `resizeMode: 0`。这些尺寸来自统一输出合同，不是参考图真实尺寸；ControlNet 的 `width/height` 仍是控制图真实尺寸。`mode: 4` 是局部重绘，不用于普通内容参考图或后处理输出蒙版。映射依据 [LiblibAI SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image)。插件 1.0.2 需要同步升级后端内置适配器。
+文生图将输出尺寸写入 `generateParams.width/height`；普通图生图使用 `resizedWidth/resizedHeight`，并发送 `sourceImage`、`mode: 0` 与 `resizeMode: 0`。这些尺寸来自统一输出合同，不是参考图真实尺寸；ControlNet 的 `width/height` 仍是控制图真实尺寸。映射依据 [LiblibAI SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image)。插件 1.1.0 需要同步升级后端内置适配器。
+
+SD/SDXL 局部重绘要求一张内容原图和独立 `mask`，并显式开启模型的蒙版编辑能力；`family=f1` 当前不声明支持。两张图片的真实像素尺寸必须相同。`inpaintMaskMode` 默认 `alpha`，透明处重绘，保持通用画布的蒙版含义；黑白蒙版使用 `luminance`，白处重绘、黑处保留，透明像素视为黑。宿主转换为不透明灰度 PNG，再发送 `mode: 4` 与 `inpaintParam.maskImage`，其余采用 SDK 示例默认值 `maskBlur=4`、`maskPadding=32`、`maskMode=0`、`inpaintArea=0`、`inpaintingFill=1`。没有可重绘区域的蒙版会被拒绝。ControlNet 仍独立发送，输出范围蒙版只在保存结果时合成，不会自动成为重绘蒙版。SDK 明确示例支持局部重绘和 ControlNet 同时传入；离线测试不代表该账号、模板的实图效果已验收。
 
 渠道 `providerDefaults` 可保存协议默认参数及 textToImageTemplateUuid、imageToImageTemplateUuid、controlNetModel。任务创建按实际选定渠道合并用户显式值，再根据普通参考图选择文生/图生模板，填补缺省控制模型并冻结；辅助字段不会直接发送上游。已验证 SDXL checkpoint `0ea388c7eb854be3ba3c6f65aac6bfd3` 在启用兼容 ControlNet 时提供默认组合，其他 checkpoint 不推断模板和控制模型。
 
 ControlNet 最多四组，执行顺序从1开始。首版 Canny 对应平台预处理器1，检测分辨率64–2048、阈值1–255。控制权重0–2，起止比例0–1且起点不晚于终点。控制偏好可选择均衡、提示词优先或ControlNet优先；图像适配可选择直接缩放、等比裁切或等比补边。可选控制影响蒙版要求白色蒙版、黑色底色并与参考图同尺寸。控制影响蒙版不会锁住生成图片外部像素；独立输出范围蒙版在结果保存阶段合成。
+
+Liblib Canny 控制图若为含透明像素的 PNG，宿主按原尺寸将可见颜色合成到黑底后上传，避免透明像素中隐藏的 RGB 干扰边缘检测；远端 URL 也会读取、转换并重新上传。全不透明控制图保留原始字节或公开 URL。转换仅作用于供应商使用的 Canny 控制图副本，普通内容参考图、各类蒙版及平台原始资源保留各自内容；转换后仍须满足 10 MB 限制。
 
 ## 官方文档与鉴权
 

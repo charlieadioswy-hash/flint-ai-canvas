@@ -52,7 +52,10 @@ export type ScreenCreationWorkspaceProps = {
     clearMask: () => void;
     clearReference: () => void;
     maskMode: ScreenMaskMode;
-    setMaskMode: (mode: ScreenMaskMode) => void;
+    inpaint: boolean;
+    setInpaint: (value: boolean) => void;
+    inpaintUnavailableReason?: string;
+    applyExample?: () => void;
     prompt: string;
     setPrompt: (prompt: string) => void;
     advanced: ScreenAdvancedSettings;

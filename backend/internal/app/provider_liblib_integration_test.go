@@ -62,6 +62,117 @@ func TestLiblibAPILogRetainsAcceptedTaskAndAuditState(t *testing.T) {
 // All HTTP endpoints are loopback fixtures. The test covers the real host upload,
 // signed create/poll, persisted task identity, and final resource materialization.
 func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
+	testLiblibControlledTaskRecovery(t, false)
+}
+
+func TestLiblibInpaintTaskResumesWithIndependentOutputMask(t *testing.T) {
+	testLiblibControlledTaskRecovery(t, true)
+}
+
+func TestLiblibCannyPreparationChangesOnlyTransparentControlUploads(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+			transparent := outputMaskPNG(t, outputMaskRow(color.NRGBA{R: 255, G: 255, B: 255}, color.NRGBA{R: 255, A: 255}, color.NRGBA{G: 255, A: 255}))
+			opaque := outputMaskPNG(t, outputMaskRow(color.NRGBA{R: 8, G: 51, B: 219, A: 255}))
+			uploads := make(chan []byte, 4)
+			var signatures atomic.Int32
+			var server *httptest.Server
+			server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/transparent.png":
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write(transparent)
+				case "/opaque.png":
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write(opaque)
+				case "/api/generate/upload/signature":
+					_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"key": fmt.Sprintf("inputs/%d.png", signatures.Add(1)), "policy": "fixture-policy", "postUrl": server.URL + "/oss", "xossDate": "20260101T000000Z", "xossSignature": "fixture-signature", "xossCredential": "fixture-credential", "xossSignatureVersion": "OSS4-HMAC-SHA256"}})
+				case "/oss":
+					if err := r.ParseMultipartForm(1 << 20); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					file, _, err := r.FormFile("file")
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					data, _ := io.ReadAll(file)
+					_ = file.Close()
+					uploads <- data
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected upstream request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			transport := OutboundHTTPClient(time.Second).Transport.(*http.Transport)
+			originalTLS := transport.TLSClientConfig
+			roots := x509.NewCertPool()
+			roots.AddCert(server.Certificate())
+			transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+			t.Cleanup(func() { transport.CloseIdleConnections(); transport.TLSClientConfig = originalTLS })
+			media := func(name string, data []byte) generation.Media {
+				if remote {
+					return generation.Media{URL: server.URL + "/" + name + ".png"}
+				}
+				return generation.Media{DataURL: dataURL("image/png", data)}
+			}
+			control, controlOpaque := media("transparent", transparent), media("opaque", opaque)
+			params := generation.ControlNetParameters{Preprocessor: "canny", Model: "abcdef0123456789abcdef0123456789", Strength: .6, End: .6, ControlMode: "balanced", ResizeMode: "stretch", Canny: &generation.CannyParameters{Resolution: 512, LowThreshold: 100, HighThreshold: 200}}
+			input := canvasGenerationInput{
+				Mode: "image", Config: providerConfig{InterfaceType: protocol.LiblibImageProtocolID, BaseURL: server.URL, APIKey: "fixture-access", SecretKey: "fixture-secret", Model: "0123456789abcdef0123456789abcdef", Size: "6x2"},
+				ReferenceImages: []providerMedia{providerMedia(control)},
+				ControlNet:      []generation.ControlNetUnit{{ID: "transparent", Image: control, Mask: &control, Parameters: params}, {ID: "opaque", Image: controlOpaque, Parameters: params}},
+				OutputMask:      &generation.OutputMask{Image: control, Mode: "non-black", ResizeMode: "stretch"},
+				Metadata:        map[string]any{"providerOptions": map[string]any{protocol.LiblibImageProtocolID: map[string]any{"family": "sd", "templateUuid": "0123456789abcdef0123456789abcdef", "steps": 20, "sampler": 0, "cfgScale": 7, "denoisingStrength": .75}}},
+			}
+			original, _ := json.Marshal(input)
+			request := protocolRequestFromInput(input)
+			before, _ := json.Marshal(request)
+			prepared, err := prepareLiblibProtocolRequest(context.Background(), input, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, _ := json.Marshal(request)
+			current, _ := json.Marshal(input)
+			if !bytes.Equal(before, after) || !bytes.Equal(original, current) {
+				t.Fatal("preparation mutated source, output mask, or original request references")
+			}
+			if prepared.ControlNet[0].Image.URL == prepared.Images[0].URL || prepared.ControlNet[0].Mask.URL != prepared.Images[0].URL || prepared.ControlNet[0].Image.Metadata["width"] != 3 || prepared.ControlNet[0].Image.Metadata["height"] != 1 {
+				t.Fatal("Canny control was not isolated from content and control mask")
+			}
+			if remote {
+				if signatures.Load() != 1 || prepared.Images[0].URL != control.URL || prepared.ControlNet[1].Image.URL != controlOpaque.URL {
+					t.Fatal("remote transparent control must be uploaded, while source and opaque control retain their addresses")
+				}
+			} else {
+				if signatures.Load() != 3 || !bytes.Equal(<-uploads, transparent) {
+					t.Fatal("ordinary content must upload its original transparent bytes")
+				}
+			}
+			flattened, err := png.Decode(bytes.NewReader(<-uploads))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for x, want := range []color.NRGBA{{A: 255}, {R: 255, A: 255}, {G: 255, A: 255}} {
+				if color.NRGBAModel.Convert(flattened.At(x, 0)).(color.NRGBA) != want {
+					t.Fatalf("Canny pixel %d has hidden RGB or lost its visible color", x)
+				}
+			}
+			if !remote && !bytes.Equal(<-uploads, opaque) {
+				t.Fatal("opaque control upload was re-encoded")
+			}
+		})
+	}
+}
+
+func testLiblibControlledTaskRecovery(t *testing.T, inpaint bool) {
+	t.Helper()
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	s, db := newMediaRecoveryTestService(t)
 	s.coordinator = platform.NewCoordinatorWithRedis(nil, "fixture-worker")
@@ -82,6 +193,10 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 	}
 	generatedBytes := outputMaskPNG(t, generated)
 	controlBytes := outputMaskPNG(t, outputMaskRow(color.NRGBA{R: 255, A: 255}, color.NRGBA{G: 255, A: 255}, color.NRGBA{B: 255, A: 255}))
+	wantUploads := int32(1)
+	if inpaint {
+		wantUploads = 2
+	}
 	assertSigned := func(r *http.Request) {
 		q := r.URL.Query()
 		mac := hmac.New(sha1.New, []byte(secretKey))
@@ -101,8 +216,11 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/generate/upload/signature":
 			assertSigned(r)
-			signatures.Add(1)
-			writeJSON(w, map[string]any{"key": "references/control.png", "policy": policySecret, "postUrl": server.URL + "/oss", "xossDate": "20260101T000000Z", "xossExpires": "3600", "xossSignature": signatureSecret, "xossCredential": credentialSecret, "xossSignatureVersion": "OSS4-HMAC-SHA256"})
+			key := "references/control.png"
+			if signatures.Add(1) == 2 && inpaint {
+				key = "references/repaint.png"
+			}
+			writeJSON(w, map[string]any{"key": key, "policy": policySecret, "postUrl": server.URL + "/oss", "xossDate": "20260101T000000Z", "xossExpires": "3600", "xossSignature": signatureSecret, "xossCredential": credentialSecret, "xossSignatureVersion": "OSS4-HMAC-SHA256"})
 		case "/oss":
 			uploads.Add(1)
 			if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" || r.Header.Get("X-Upstream-Custom") != "" {
@@ -128,22 +246,40 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 				content, _ := io.ReadAll(part)
 				lastPart = part.FormName()
 				if lastPart == "file" {
-					if !bytes.Equal(content, controlBytes) {
+					if inpaint && fields["key"] == "references/repaint.png" {
+						mask, err := png.Decode(bytes.NewReader(content))
+						if err != nil || mask.Bounds().Dx() != 3 || mask.Bounds().Dy() != 1 {
+							t.Errorf("invalid inpaint mask upload: %v", err)
+						} else {
+							for x, want := range []uint32{0, 0xffff, 0} {
+								r, g, b, a := mask.At(x, 0).RGBA()
+								if r != want || g != want || b != want || a != 0xffff {
+									t.Errorf("uploaded mask pixel %d did not convert alpha to white=repaint", x)
+								}
+							}
+						}
+					} else if !bytes.Equal(content, controlBytes) {
 						t.Error("uploaded bytes differ from owned control resource")
 					}
 				} else {
 					fields[lastPart] = string(content)
 				}
 			}
-			if lastPart != "file" || fields["policy"] != policySecret || fields["x-oss-signature"] != signatureSecret || fields["x-oss-credential"] != credentialSecret || fields["key"] != "references/control.png" {
+			validKey := fields["key"] == "references/control.png" || inpaint && fields["key"] == "references/repaint.png"
+			if lastPart != "file" || fields["policy"] != policySecret || fields["x-oss-signature"] != signatureSecret || fields["x-oss-credential"] != credentialSecret || !validKey {
 				t.Error("invalid OSS form or file was not the final part")
 			}
 			w.WriteHeader(http.StatusNoContent)
-		case "/api/generate/webui/text2img":
+		case "/api/generate/webui/text2img", "/api/generate/webui/img2img":
 			assertSigned(r)
 			creates.Add(1)
 			var body struct {
 				GenerateParams struct {
+					SourceImage  string `json:"sourceImage"`
+					Mode         int    `json:"mode"`
+					InpaintParam *struct {
+						MaskImage string `json:"maskImage"`
+					} `json:"inpaintParam"`
 					ControlNet []struct {
 						SourceImage string `json:"sourceImage"`
 						MaskImage   string `json:"maskImage"`
@@ -155,6 +291,14 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
+			}
+			if inpaint {
+				params := body.GenerateParams
+				if r.URL.Path != "/api/generate/webui/img2img" || params.Mode != 4 || params.SourceImage != server.URL+"/oss/references/control.png" || params.InpaintParam == nil || params.InpaintParam.MaskImage != server.URL+"/oss/references/repaint.png" {
+					t.Errorf("incorrect prepared inpaint request: %+v", params)
+				}
+			} else if r.URL.Path != "/api/generate/webui/text2img" || body.GenerateParams.InpaintParam != nil {
+				t.Error("output mask or ControlNet mask enabled inpainting")
 			}
 			units := body.GenerateParams.ControlNet
 			if len(units) != 1 || units[0].SourceImage != server.URL+"/oss/references/control.png" || units[0].MaskImage != units[0].SourceImage || units[0].Width != 3 || units[0].Height != 1 || units[0].ResizeMode != 0 {
@@ -212,6 +356,12 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 	control := generation.Media{StorageKey: "resource:" + resource.ID, Width: 3, Height: 1, MimeType: "image/png"}
 	input.ControlNet = []generation.ControlNetUnit{{ID: "screen", Image: control, Mask: &control, Parameters: generation.ControlNetParameters{Preprocessor: "canny", Model: "abcdef0123456789abcdef0123456789", Strength: .6, End: .6, ControlMode: "balanced", ResizeMode: "stretch", Canny: &generation.CannyParameters{Resolution: 512, LowThreshold: 100, HighThreshold: 200}}}}
 	input.Metadata = map[string]any{"providerOptions": map[string]any{protocol.LiblibImageProtocolID: map[string]any{"family": "sd", "templateUuid": "0123456789abcdef0123456789abcdef", "steps": 20, "sampler": 0, "cfgScale": 7}}}
+	if inpaint {
+		maskBytes := outputMaskPNG(t, outputMaskRow(color.NRGBA{A: 255}, color.NRGBA{}, color.NRGBA{A: 255}))
+		input.ReferenceImages = []providerMedia{{DataURL: dataURL("image/png", controlBytes)}}
+		input.Mask = &providerMedia{DataURL: dataURL("image/png", maskBytes)}
+		input.Metadata["providerOptions"].(map[string]any)[protocol.LiblibImageProtocolID].(map[string]any)["denoisingStrength"] = 0.75
+	}
 	encoded, _ := json.Marshal(input)
 	task.InputJSON = string(encoded)
 	if err := db.Model(task).Update("input_json", task.InputJSON).Error; err != nil {
@@ -226,7 +376,7 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 	if _, err := runImageTask(ctx, input); err == nil {
 		t.Fatal("injected poll failure was ignored")
 	}
-	if creates.Load() != 1 || signatures.Load() != 1 || uploads.Load() != 1 || polls.Load() != 3 || downloads.Load() != 0 {
+	if creates.Load() != 1 || signatures.Load() != wantUploads || uploads.Load() != wantUploads || polls.Load() != 3 || downloads.Load() != 0 {
 		t.Fatalf("first execution counts create=%d signature=%d upload=%d poll=%d download=%d", creates.Load(), signatures.Load(), uploads.Load(), polls.Load(), downloads.Load())
 	}
 	saved, err := s.repo.Task(task.ID)
@@ -248,7 +398,7 @@ func TestLiblibControlledTaskResumesAndSavesOnlyMaskedPNG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if creates.Load() != 1 || signatures.Load() != 1 || uploads.Load() != 1 || polls.Load() != 4 || downloads.Load() != 1 {
+	if creates.Load() != 1 || signatures.Load() != wantUploads || uploads.Load() != wantUploads || polls.Load() != 4 || downloads.Load() != 1 {
 		t.Fatal("recovery repeated upstream creation/upload or download")
 	}
 	if err := restarted.finishTaskMediaRecovery(saved, result, nil); err != nil {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { screenControlParameters, screenDefaultSettings, screenModelError, screenModels, screenPickerConfig, screenProviderOptions } from "../src/lib/canvas/irregular-screen-model";
+import { screenControlParameters, screenDefaultSettings, screenInpaintError, screenModelError, screenModels, screenPickerConfig, screenProviderOptions } from "../src/lib/canvas/irregular-screen-model";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { createModelChannel, defaultConfig, encodeChannelModel, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
@@ -162,5 +162,26 @@ describe("irregular screen model settings", () => {
             resizeMode: "stretch",
             canny: { lowThreshold: 80, highThreshold: 160, resolution: 768 },
         });
+    });
+
+    test("local repaint requires an explicitly enabled SD image-to-image template", () => {
+        const { config, model, channel } = setup();
+        expect(screenInpaintError(config, model)).toContain("未启用局部重绘");
+        channel.modelCosts![0].capabilityConfig!.image!.references.maskSupported = true;
+        expect(screenInpaintError(config, model)).toBe("");
+        channel.modelCosts![0].defaultOptions!.family = "f1";
+        expect(screenInpaintError(config, model)).toContain("SD / SDXL");
+        channel.modelCosts![0].defaultOptions!.family = "sd";
+        delete channel.modelCosts![0].defaultOptions!.imageToImageTemplateUuid;
+        expect(screenInpaintError(config, model)).toContain("模板");
+    });
+
+    test("screen inpaint sends white-redraw semantics without leaking them into normal generation", () => {
+        const { config, model } = setup();
+        const settings = screenDefaultSettings(config, model);
+        expect(screenProviderOptions(config, model, settings, true, true)["liblib-image"]).toMatchObject({ templateUuid: "image-template", inpaintMaskMode: "luminance", denoisingStrength: 0.75 });
+        config.channels[0].modelCosts![0].defaultOptions!.inpaintMaskMode = "alpha";
+        expect(screenProviderOptions(config, model, settings, false)["liblib-image"]).not.toHaveProperty("inpaintMaskMode");
+        expect(config.channels[0].modelCosts![0].defaultOptions!.inpaintMaskMode).toBe("alpha");
     });
 });

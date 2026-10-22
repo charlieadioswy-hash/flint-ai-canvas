@@ -91,6 +91,120 @@
     font-weight: 400;
 }
 
+.screen-creation-setting-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.screen-creation-help {
+    display: inline-grid;
+    padding: 0;
+    place-items: center;
+    color: var(--muted-foreground);
+    cursor: help;
+}
+
+.screen-creation-help svg {
+    width: var(--space-3);
+    height: var(--space-3);
+}
+
+.screen-creation-mask-input,
+.screen-creation-generation-mode {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-2);
+}
+
+.screen-creation-mode-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--r-lg);
+    background: var(--surface-card);
+}
+
+.screen-creation-mode-options button {
+    padding: var(--space-2);
+    border-radius: var(--r-md);
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+    cursor: pointer;
+}
+
+.screen-creation-mode-options button[aria-pressed="true"] {
+    color: var(--control-selected-fg);
+    background: var(--control-selected-bg);
+}
+
+.screen-creation-mode-options button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.screen-creation-example-action {
+    justify-self: start;
+    margin-top: calc(-1 * var(--space-3));
+}
+
+.screen-creation-mask-guide {
+    color: var(--muted-foreground);
+    font-size: var(--fs-caption);
+}
+
+.screen-creation-mask-guide summary {
+    width: fit-content;
+    cursor: pointer;
+}
+
+.screen-creation-mask-guide figure {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.screen-creation-mask-guide figcaption {
+    color: var(--foreground);
+    font-size: var(--fs-label);
+    line-height: 1.6;
+}
+
+.screen-creation-transparency-grid,
+.screen-creation-preview-stage.screen-creation-transparency-grid {
+    border-radius: var(--r-lg);
+    background-color: var(--background);
+    background-image: conic-gradient(var(--surface-active) 25%, transparent 0 50%, var(--surface-active) 0 75%, transparent 0);
+    background-size: var(--space-6) var(--space-6);
+}
+
+.screen-creation-mask-example {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.screen-creation-mask-face {
+    fill: var(--primary);
+}
+
+.screen-creation-mask-face.is-side {
+    fill: color-mix(in srgb, var(--primary), var(--foreground) 24%);
+}
+
+.screen-creation-mask-corner {
+    fill: none;
+    stroke: var(--primary-foreground);
+    stroke-width: 3;
+}
+
+.screen-creation-mask-label {
+    fill: var(--primary-foreground);
+    font-size: var(--fs-caption);
+    text-anchor: middle;
+}
+
 .screen-creation-upload {
     position: relative;
     min-width: 0;
@@ -563,6 +677,9 @@
 }
 
 .screen-creation-upload-trigger:focus-visible,
+.screen-creation-help:focus-visible,
+.screen-creation-mask-guide summary:focus-visible,
+.screen-creation-mode-options button:focus-visible,
 .screen-creation-advanced > summary:focus-visible,
 .screen-creation-preview-tabs button:focus-visible,
 .screen-creation-result:focus-visible,

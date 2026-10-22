@@ -79,7 +79,7 @@ export async function executeImageGeneration(
     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
     const sourceSpec = sourceNode ? readNodeGenerationSpec(sourceNode) : undefined;
     const outputSpec = specFromConfig("image", prompt, generationConfig);
-    const structureMetadata = sourceSpec && (structureInputs.controlNet.length || structureInputs.outputMask)
+    const structureMetadata = sourceSpec && (structureInputs.controlNet.length || structureInputs.outputMask || structureInputs.mask)
         ? { ...generationSpecMetadata({ ...outputSpec, options: { ...outputSpec.options, controlNet: nodeControlNet(sourceNode), outputMask: nodeOutputMask(sourceNode) }, referenceBindings: sourceSpec.referenceBindings }), structureControl: isStructureControlNode(sourceNode) }
         : {};
     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];

@@ -45,6 +45,15 @@ export function screenModels(config: AiConfig) {
     return selectableModelsByCapability(config, "image").filter((model) => !screenModelError(config, model));
 }
 
+export function screenInpaintError(config: AiConfig, model: string) {
+    const error = screenModelError(config, model, true);
+    if (error) return error;
+    const { protocol, defaults } = screenModelDefaults(config, model);
+    if (protocol !== "liblib-image" || defaults.family !== "sd") return "局部重绘目前支持 Liblib SD / SDXL 模型，请选择对应模型";
+    if (!modelCapabilityConfigFor(config, model).image?.references.maskSupported) return "当前模型未启用局部重绘，请管理员确认模板支持后开启蒙版能力";
+    return "";
+}
+
 export function screenPickerConfig(config: AiConfig): AiConfig {
     const models = screenModels(config);
     const allowed = new Set(models);
@@ -95,12 +104,15 @@ export function screenControlParameters(settings: ScreenGenerationSettings): Con
     };
 }
 
-export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, hasReference: boolean) {
+export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, hasReference: boolean, inpaint = false) {
     const { defaults, protocol } = screenModelDefaults(config, model);
     const options: Record<string, unknown> = { ...defaults };
     if (protocol === "liblib-image") {
         Object.assign(options, { steps: settings.steps, sampler: settings.sampler, cfgScale: settings.cfgScale, seed: settings.seed, denoisingStrength: settings.denoisingStrength, negativePrompt: settings.negativePrompt });
         options.templateUuid = defaults.templateUuid || (hasReference ? defaults.imageToImageTemplateUuid : defaults.textToImageTemplateUuid);
+        // The screen mask is opaque grayscale: white redraws, black preserves.
+        if (inpaint) options.inpaintMaskMode = "luminance";
+        else delete options.inpaintMaskMode;
     }
     return { [protocol]: options };
 }

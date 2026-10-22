@@ -75,11 +75,12 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
         return { id: "screen-task", projectId: "screen-canvas", type: "canvas_image", status, stage: status, prompt: "A colorful landscape", attempts: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
     }
 
-    function setup(contentReference = false) {
+    function setup(contentReference = false, inpaint = false) {
         const channelId = "screen-channel";
         const modelKey = "0ea388c7eb854be3ba3c6f65aac6bfd3";
         const modelName = configModule.encodeChannelModel(channelId, modelKey);
         const profile = capabilities.defaultImageCapabilityConfig("liblib-image");
+        profile.references.maskSupported = inpaint;
         const channel = configModule.createModelChannel({
             id: channelId,
             name: "Screen",
@@ -107,12 +108,18 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
             outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
             contentReference: contentReference ? { storageKey: "resource:content", width: 1024, height: 1024 } : undefined,
+            inpaint,
             prompt: "A colorful landscape",
             modelSelection: { kind: "channel", channelId, modelKey },
             size: "1024x1024",
             maskMode: "color",
             controlParameters: model.screenControlParameters(settings),
-            providerOptions: model.screenProviderOptions(config, modelName, settings, contentReference),
+            providerOptions: {
+                "liblib-image": {
+                    ...model.screenProviderOptions(config, modelName, settings, contentReference)["liblib-image"],
+                    ...(inpaint ? { inpaintMaskMode: "luminance" } : {}),
+                },
+            },
         });
         nodeId = template.generationNodeId;
         project = { id: "screen-canvas", title: "Screen", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", ...template };
@@ -148,9 +155,32 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
                 expect(input.referenceImages).toHaveLength(Number(withContent));
                 expect(input.controlNet).toMatchObject([{ image: { storageKey: "resource:control" }, parameters: { model: "b6806516962f4e1599a93ac4483c3d23", preprocessor: "canny" } }]);
                 expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance", resizeMode: "stretch" });
+                expect(input.mask).toBeUndefined();
                 expect(input.metadata).toMatchObject({ nodeId, providerOptions: { "liblib-image": { family: "sd", templateUuid: withContent ? "9c7d531dc75f476aa833b3d452b8f7ad" : "e10adc3949ba59abbe56e057f20f883e" } } });
                 expect(node().metadata?.taskId).toBe("screen-task");
             });
+
+        test("submits persisted inpaint bindings as an independent top-level mask", async () => {
+            setup(true, true);
+            project = structuredClone(project);
+            await submitScreenGeneration(project, config);
+            const input = submitted[0].input!;
+            expect(input.referenceImages).toMatchObject([{ storageKey: "resource:content" }]);
+            expect(input.referenceImages).toHaveLength(1);
+            expect(input.mask).toMatchObject({ storageKey: "resource:mask", width: 1024, height: 1024 });
+            expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance" });
+            expect(input.controlNet).toMatchObject([{ image: { storageKey: "resource:control" }, parameters: { preprocessor: "canny" } }]);
+            expect(input.metadata).toMatchObject({ providerOptions: { "liblib-image": { inpaintMaskMode: "luminance", templateUuid: "9c7d531dc75f476aa833b3d452b8f7ad" } } });
+        });
+
+        test("rejects a changed inpaint source size before saving or submitting", async () => {
+            setup(true, true);
+            const source = project.nodes.find((item) => item.id === project.creationScene!.nodeIds.contentReference)!;
+            source.metadata!.naturalWidth = 512;
+            await expect(submitScreenGeneration(project, config)).rejects.toThrow("相同的像素尺寸");
+            expect(submitted).toHaveLength(0);
+            expect(saved).toHaveLength(0);
+        });
 
         test("rejects unexpected ordinary canvas input before persisting pending state", async () => {
             const extra = { ...project.nodes[0], id: "extra-content" };

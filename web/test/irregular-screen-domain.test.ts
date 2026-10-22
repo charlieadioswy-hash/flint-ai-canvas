@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { defaultControlNetBinding } from "../src/lib/canvas/controlnet";
 import { readNodeGenerationSpec } from "../src/lib/canvas/generation-contract";
-import { buildIrregularScreenTemplate, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
+import { buildIrregularScreenTemplate, irregularScreenOutputSizeError, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -16,6 +16,13 @@ function input(): IrregularScreenTemplateInput {
         maskMode: "color",
     };
 }
+
+test("screen readiness rejects stale or manually stretched sizes while allowing pixel rounding", () => {
+    expect(irregularScreenOutputSizeError({ width: 400, height: 900 }, "1024x1024")).toContain("相同比例");
+    expect(irregularScreenOutputSizeError({ width: 1600, height: 900 }, "1024x1024")).toContain("相同比例");
+    expect(irregularScreenOutputSizeError({ width: 3803, height: 2139 }, "1824x1024")).toBe("");
+    expect(irregularScreenOutputSizeError({ width: 1024, height: 1024 }, "")).toContain("相同比例");
+});
 
 describe("irregular screen canvas template", () => {
     test("builds three standard image nodes with separate control and output-mask bindings", () => {
@@ -44,6 +51,31 @@ describe("irregular screen canvas template", () => {
         const spec = readNodeGenerationSpec(generator)!;
         expect(spec.referenceBindings.find((binding) => binding.nodeId === template.creationScene.nodeIds.contentReference)?.role).toBe("reference");
         expect(generator.metadata?.providerOptions).toEqual(providerOptions);
+    });
+
+    test("persists inpainting as a separate mask binding while reusing the screen mask node", () => {
+        const contentReference = { storageKey: "resource:reference", width: 1600, height: 900 };
+        const first = buildIrregularScreenTemplate({ ...input(), contentReference, inpaint: true });
+        expect(first.nodes).toHaveLength(4);
+        expect(first.connections).toHaveLength(3);
+        expect(first.creationScene.version).toBe(1);
+        const saved = JSON.parse(JSON.stringify(first));
+        const generator = saved.nodes.find((node: CanvasNodeData) => node.id === first.generationNodeId)!;
+        const spec = readNodeGenerationSpec(generator)!;
+        expect(spec.referenceBindings.find((binding) => binding.role === "mask")).toMatchObject({ id: "screen-inpaint-mask", nodeId: first.creationScene.nodeIds.outputMask });
+        expect(spec.referenceBindings.find((binding) => binding.role === "output-mask")?.nodeId).toBe(first.creationScene.nodeIds.outputMask);
+        expect(spec.options.outputMask?.bindingId).toBe("screen-output-mask");
+
+        const disabled = buildIrregularScreenTemplate({ ...input(), contentReference, inpaint: false, existingProject: saved });
+        const next = readNodeGenerationSpec(disabled.nodes.find((node) => node.id === disabled.generationNodeId)!)!;
+        expect(next.referenceBindings.some((binding) => binding.role === "mask")).toBe(false);
+        expect(next.referenceBindings.find((binding) => binding.role === "output-mask")?.nodeId).toBe(first.creationScene.nodeIds.outputMask);
+        expect(disabled.creationScene.nodeIds).toEqual(first.creationScene.nodeIds);
+    });
+
+    test("requires a matching original image only when inpainting is enabled", () => {
+        expect(() => buildIrregularScreenTemplate({ ...input(), inpaint: true })).toThrow("内容原图");
+        expect(() => buildIrregularScreenTemplate({ ...input(), inpaint: true, contentReference: { storageKey: "resource:reference", width: 800, height: 450 } })).toThrow("相同的像素尺寸");
     });
 
     test("updating inputs retains node IDs, previous results, user placement and unrelated nodes/edges", () => {

@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -89,7 +91,7 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 		}
 		return analytics.Service.repo.SaveTaskProviderPreparation(task, string(encoded))
 	}
-	prepare := func(media protocol.MediaReference) (protocol.MediaReference, error) {
+	prepare := func(media protocol.MediaReference, canny bool) (protocol.MediaReference, error) {
 		value := strings.TrimSpace(media.URL)
 		publicURL := strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://")
 		if publicURL {
@@ -114,6 +116,32 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 		}
 		media.Metadata = cloneLiblibMetadata(media.Metadata)
 		media.Metadata["width"], media.Metadata["height"] = config.Width, config.Height
+		if canny && media.Role == "control_image" && format == "png" {
+			var changed bool
+			data, changed, err = liblibCannyImagePNG(data)
+			if err != nil {
+				return media, err
+			}
+			if changed {
+				// Canny receives visible RGB on black, never hidden RGB from alpha.
+				// Only this provider upload changes; the owned resource is untouched.
+				publicURL = false
+				media.MIMEType = "image/png"
+				media.Metadata["bytes"] = len(data)
+			}
+		}
+		if media.Role == "mask" {
+			mode, _ := request.ProviderOptions[protocol.LiblibImageProtocolID]["inpaintMaskMode"].(string)
+			data, err = liblibInpaintMaskPNG(data, mode)
+			if err != nil {
+				return media, err
+			}
+			// The uploaded bytes, including a remote input mask, must use Liblib's
+			// white=repaint convention rather than canvas alpha transparency.
+			publicURL, format = false, "png"
+			media.MIMEType = "image/png"
+			media.Metadata["bytes"] = len(data)
+		}
 		if publicURL {
 			media.DataURL = ""
 			return media, nil
@@ -144,7 +172,7 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 	}
 	request.Images = append([]protocol.MediaReference(nil), request.Images...)
 	for i, media := range request.Images {
-		prepared, err := prepare(media)
+		prepared, err := prepare(media, false)
 		if err != nil {
 			return request, err
 		}
@@ -152,13 +180,13 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 	}
 	request.ControlNet = append([]protocol.ControlNetUnit(nil), request.ControlNet...)
 	for i, unit := range request.ControlNet {
-		prepared, err := prepare(unit.Image)
+		prepared, err := prepare(unit.Image, unit.Parameters.Preprocessor == "canny")
 		if err != nil {
 			return request, err
 		}
 		request.ControlNet[i].Image = prepared
 		if unit.Mask != nil {
-			prepared, err := prepare(*unit.Mask)
+			prepared, err := prepare(*unit.Mask, false)
 			if err != nil {
 				return request, err
 			}
@@ -166,6 +194,69 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 		}
 	}
 	return request, nil
+}
+
+func liblibCannyImagePNG(data []byte) ([]byte, bool, error) {
+	source, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, false, errors.New("Liblib Canny 控制图不是有效 PNG 图片")
+	}
+	if opaque, ok := source.(interface{ Opaque() bool }); ok && opaque.Opaque() {
+		return data, false, nil
+	}
+	bounds := source.Bounds()
+	var result draw.Image = image.NewRGBA(bounds)
+	switch source.(type) {
+	case *image.NRGBA64, *image.RGBA64, *image.Gray16:
+		result = image.NewRGBA64(bounds)
+	}
+	draw.Draw(result, bounds, image.NewUniform(color.Black), image.Point{}, draw.Src)
+	draw.Draw(result, bounds, source, bounds.Min, draw.Over)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, result); err != nil {
+		return nil, false, err
+	}
+	if encoded.Len() > 10<<20 {
+		return nil, false, errors.New("Liblib 黑底合成后的 Canny 控制图超过10MB")
+	}
+	return encoded.Bytes(), true, nil
+}
+
+func liblibInpaintMaskPNG(data []byte, mode string) ([]byte, error) {
+	mode = strings.TrimSpace(mode)
+	if mode != "" && mode != "alpha" && mode != "luminance" {
+		return nil, errors.New("Liblib inpaintMaskMode 仅支持 alpha 或 luminance")
+	}
+	source, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, errors.New("Liblib 局部重绘蒙版不是有效图片")
+	}
+	bounds := source.Bounds()
+	result := image.NewGray(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	selected := false
+	for y := 0; y < bounds.Dy(); y++ {
+		for x := 0; x < bounds.Dx(); x++ {
+			pixel := source.At(bounds.Min.X+x, bounds.Min.Y+y)
+			_, _, _, alpha := pixel.RGBA()
+			value := uint8((0xffff - alpha) >> 8)
+			if mode == "luminance" {
+				value = color.GrayModel.Convert(pixel).(color.Gray).Y
+			}
+			result.SetGray(x, y, color.Gray{Y: value})
+			selected = selected || value > 0
+		}
+	}
+	if !selected {
+		return nil, errors.New("Liblib 局部重绘蒙版没有可重绘区域；透明蒙版使用 alpha，黑白蒙版使用 luminance")
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, result); err != nil {
+		return nil, err
+	}
+	if encoded.Len() > 10<<20 {
+		return nil, errors.New("Liblib 转换后的局部重绘蒙版超过10MB")
+	}
+	return encoded.Bytes(), nil
 }
 
 func cloneLiblibMetadata(original map[string]any) map[string]any {

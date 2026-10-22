@@ -8,12 +8,13 @@ import { useUserStore } from "@/stores/use-user-store";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { requestCreditCost } from "@/lib/model-pricing";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
-import { isIrregularScreenScene, resolveIrregularScreenOutputSize } from "@/lib/canvas/irregular-screen-domain";
-import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenControlParameters, screenProviderOptions } from "@/lib/canvas/irregular-screen-model";
+import { isIrregularScreenScene, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize } from "@/lib/canvas/irregular-screen-domain";
+import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions } from "@/lib/canvas/irregular-screen-model";
+import { screenCarExample } from "@/lib/canvas/irregular-screen-example";
 import { validateControlNetBindings } from "@/lib/canvas/controlnet";
 import { loadCanvasProjectForEditing } from "@/services/user-data-sync";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
-import { readScreenImage, deriveScreenOutputMask, persistScreenImage, screenImageFromNode, type ScreenImage } from "@/services/irregular-screen-media";
+import { readScreenImage, readScreenMask, deriveScreenOutputMask, persistScreenImage, screenImageFromNode, type ScreenImage } from "@/services/irregular-screen-media";
 import { saveScreenCanvas, submitScreenGeneration, recoverScreenGeneration } from "@/services/irregular-screen-generation";
 import { createScreenCreationSession, type ScreenCreationSession } from "./screen-creation-session";
 import type { ScreenCreationWorkspaceProps, ScreenCreationResult, ScreenMaskMode } from "./screen-creation-types";
@@ -46,7 +47,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const [mask, setMask] = useState<ScreenImage | null>(null);
     const [reference, setReference] = useState<ScreenImage | null>(null);
     const [outputMask, setOutputMask] = useState<ScreenImage | null>(null);
-    const [maskMode, setMaskModeValue] = useState<ScreenMaskMode>("auto");
+    const [maskMode, setMaskModeValue] = useState<ScreenMaskMode>("alpha");
+    const [inpaint, setInpaint] = useState(false);
     const [results, setResults] = useState<ScreenCreationResult[]>([]);
     const [selectedResultId, setSelectedResultId] = useState("");
     const [busy, setBusy] = useState(false);
@@ -89,7 +91,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         setMask(null);
         setReference(null);
         setOutputMask(null);
-        setMaskModeValue("auto");
+        setMaskModeValue("alpha");
+        setInpaint(false);
         setSizeValue("");
         setQuality("auto");
         setModelValue(initialModel);
@@ -140,6 +143,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             setOutputMask(images[1]);
             setReference(images[2]);
             setMaskModeValue(loaded.creationScene.maskMode || "auto");
+            setInpaint(spec.referenceBindings.some((binding) => binding.role === "mask"));
             setStorageNotice("已读取保存的画布设置");
         })()
             .catch((failure) => {
@@ -271,21 +275,23 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         setUploading(true);
         setError("");
         try {
-            const pixels = await readScreenImage(file);
+            const pixels = await (role === "mask" ? readScreenMask(file) : readScreenImage(file));
             session.assertActive();
             if (token !== uploadEpoch.current) return;
             const image: ScreenImage = { storageKey: "", blob: file, url: session.ownUrl(URL.createObjectURL(file)), width: pixels.width, height: pixels.height, mimeType: file.type, bytes: file.size, name: file.name, uploadKey: nanoid() };
             if (role === "reference") setReference(image);
             else {
-                const derived = await deriveScreenOutputMask(image, maskMode);
+                const derived = await deriveScreenOutputMask(image, "alpha");
                 session.ownUrl(derived.image.url);
                 if (token !== uploadEpoch.current) {
                     session.releaseUrl(derived.image.url);
                     return;
                 }
                 setMask(image);
+                setMaskModeValue("alpha");
                 setOutputMask({ ...derived.image, uploadKey: nanoid() });
                 setStorageNotice(derived.warnings.join("；"));
+                setSizeValue("");
                 if (model) chooseSize(image);
             }
         } catch (failure) {
@@ -294,36 +300,16 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             if (session.isActive() && token === uploadEpoch.current) setUploading(false);
         }
     };
-    const changeMaskMode = async (value: ScreenMaskMode) => {
-        const session = lifetime.current;
-        if (!session?.isActive()) return;
-        setMaskModeValue(value);
-        if (!mask) return;
-        const token = ++uploadEpoch.current;
-        setUploading(true);
-        setOutputMask(null);
-        setError("");
-        try {
-            const derived = await deriveScreenOutputMask(mask, value);
-            session.ownUrl(derived.image.url);
-            if (token !== uploadEpoch.current) {
-                session.releaseUrl(derived.image.url);
-                return;
-            }
-            setOutputMask({ ...derived.image, uploadKey: nanoid() });
-            setStorageNotice(derived.warnings.join("；"));
-        } catch (failure) {
-            if (session.isActive() && token === uploadEpoch.current) setError(errorText(failure));
-        } finally {
-            if (session.isActive() && token === uploadEpoch.current) setUploading(false);
-        }
-    };
-
+    const inpaintUnavailableReason = screenInpaintError(baseConfig, model);
     let disabledReason = screenModelError(baseConfig, model, Boolean(reference));
+    if (!disabledReason && inpaint) disabledReason = inpaintUnavailableReason;
+    if (!disabledReason && inpaint && !reference) disabledReason = "局部重绘需要上传内容原图";
+    if (!disabledReason && inpaint && reference && mask && (reference.width !== mask.width || reference.height !== mask.height)) disabledReason = "内容原图与屏幕蒙版的像素宽高必须相同，请使用同一尺寸的图片";
     if (!disabledReason && !mask) disabledReason = "请上传屏幕蒙版";
     if (!disabledReason && !outputMask) disabledReason = "请先确认有效屏幕区域";
     if (!disabledReason && !prompt.trim()) disabledReason = "请输入画面描述";
     if (!disabledReason && !size) disabledReason = "当前模型没有与蒙版匹配的输出尺寸";
+    if (!disabledReason && mask) disabledReason = irregularScreenOutputSizeError(mask, size);
     if (!disabledReason && profile?.controlNet?.models?.length && !profile.controlNet.models.includes(advanced.controlModel)) disabledReason = "所选控制模型与当前图片模型不兼容";
     try {
         validateControlNetBindings([{ id: "screen", imageBindingId: "screen", parameters: screenControlParameters(advanced) }]);
@@ -361,7 +347,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 size,
                 quality,
                 maskMode,
-                providerOptions: screenProviderOptions(baseConfig, model, advanced, Boolean(content)),
+                inpaint,
+                providerOptions: screenProviderOptions(baseConfig, model, advanced, Boolean(content), inpaint),
             },
             signal,
         );
@@ -471,8 +458,13 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             setUploading(false);
         },
         maskMode,
-        setMaskMode: (value) => {
-            void changeMaskMode(value);
+        inpaint,
+        setInpaint,
+        inpaintUnavailableReason,
+        applyExample: () => {
+            setPrompt(screenCarExample.prompt);
+            setAdvancedValue((value) => ({ ...value, ...screenCarExample.settings }));
+            setStorageNotice("已填入科幻超跑提示词与调试起始参数；请按当前模型生成后检查构图效果");
         },
         prompt,
         setPrompt,

@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 import type { SetStateAction } from "react";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { buildIrregularScreenTemplate, isIrregularScreenScene, type IrregularScreenTemplateInput } from "@/lib/canvas/irregular-screen-domain";
-import { resolveCanvasControlNetInputs } from "@/lib/canvas/controlnet";
+import { controlImageReference, resolveCanvasControlNetInputs } from "@/lib/canvas/controlnet";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { applyGenerationTaskResultToNodes, generationTaskOutputsApplied, shouldRecoverCanvasMediaAsset } from "@/lib/canvas/canvas-generation-task-sync";
@@ -61,6 +61,12 @@ export async function submitScreenGeneration(project: CanvasProject, config: AiC
     const expectedReferences = project.creationScene.nodeIds.contentReference ? 1 : 0;
     if (context.referenceImages.length !== expectedReferences) throw new Error("画布增加了其他内容参考输入，请在完整画布生成，或移除额外连线后使用快捷设置");
     const controls = resolveCanvasControlNetInputs(node, project.nodes);
+    if (controls.mask) {
+        const sourceNode = project.nodes.find((item) => item.id === context.referenceImages[0]?.id);
+        const source = sourceNode ? controlImageReference(sourceNode) : null;
+        if (!source) throw new Error("局部重绘需要先添加内容原图");
+        if (source.width !== controls.mask.width || source.height !== controls.mask.height) throw new Error("局部重绘内容原图和屏幕蒙版必须使用完全相同的像素尺寸");
+    }
     const operationId = nanoid();
     const oldResult =
         node.metadata?.assetId && node.metadata?.storageKey && node.metadata?.status === "success"

@@ -15,7 +15,7 @@ const LiblibImageProtocolID = "liblib-image"
 
 func liblibImageAdapter() Adapter {
 	info := metadata(LiblibImageProtocolID, "Liblib 图片与 ControlNet", "LiblibAI", CapabilityImage, "POST /api/generate/webui/text2img", "POST /api/generate/webui/status", "application/json")
-	info.Version = "1.0.2"
+	info.Version = "1.1.0"
 	info.SupportsControlNet = true
 	info.Parameters = []Parameter{
 		{Name: "family", Type: "string", Values: []string{"f1", "sd"}, Description: "基础算法", Mapping: "providerOptions.liblib-image.family"},
@@ -30,6 +30,7 @@ func liblibImageAdapter() Adapter {
 		{Name: "seed", Type: "integer", Description: "随机种子（-1 随机）", Mapping: "providerOptions.liblib-image.seed"},
 		{Name: "negativePrompt", Type: "string", Description: "负向提示词", Mapping: "providerOptions.liblib-image.negativePrompt"},
 		{Name: "denoisingStrength", Type: "number", Description: "图生图重绘幅度（0–1）", Mapping: "providerOptions.liblib-image.denoisingStrength"},
+		{Name: "inpaintMaskMode", Type: "string", Values: []string{"alpha", "luminance"}, Description: "局部重绘蒙版：alpha 透明处重绘（默认），luminance 白色处重绘", Mapping: "providerOptions.liblib-image.inpaintMaskMode"},
 		{Name: "width", Type: "integer", Description: "输出宽度", Mapping: "providerOptions.liblib-image.width"},
 		{Name: "height", Type: "integer", Description: "输出高度", Mapping: "providerOptions.liblib-image.height"},
 	}
@@ -82,15 +83,21 @@ func ValidateLiblibRequest(r GenerationRequest) error {
 	if r.ImageCount < 0 || r.ImageCount > 4 || r.Output.Count < 0 || r.Output.Count > 4 {
 		return fmt.Errorf("Liblib 单次生成图片数量须为 1–4")
 	}
-	if len(r.Images) > 1 {
-		return fmt.Errorf("Liblib 图生图只支持一张普通参考图；控制图应通过 ControlNet 单元传入")
+	source, mask, err := liblibImageInputs(r.Images)
+	if err != nil {
+		return err
 	}
-	for _, image := range r.Images {
-		if image.Role == "mask" {
-			return fmt.Errorf("Liblib 常规图片蒙版编辑尚未配置；请使用控制影响蒙版或输出范围蒙版")
+	if value, present := o["inpaintMaskMode"]; present {
+		mode, ok := value.(string)
+		mode = strings.TrimSpace(mode)
+		if !ok || (mode != "" && mode != "alpha" && mode != "luminance") {
+			return fmt.Errorf("Liblib inpaintMaskMode 仅支持 alpha 或 luminance")
 		}
 	}
-	if len(r.Images) == 1 {
+	if mask != nil && family != "sd" {
+		return fmt.Errorf("Liblib 局部重绘目前仅支持已核实的 SD/SDXL 图生图模板")
+	}
+	if source != nil {
 		strength, ok := liblibNumber(o["denoisingStrength"])
 		if !ok || strength < 0 || strength > 1 {
 			return fmt.Errorf("Liblib 图生图需要 denoisingStrength，范围为 0–1")
@@ -117,6 +124,26 @@ func ValidateLiblibRequest(r GenerationRequest) error {
 		}
 	}
 	return nil
+}
+
+func liblibImageInputs(images []MediaReference) (source, mask *MediaReference, err error) {
+	for i := range images {
+		if images[i].Role == "mask" {
+			if mask != nil {
+				return nil, nil, fmt.Errorf("Liblib 局部重绘只支持一张重绘蒙版")
+			}
+			mask = &images[i]
+		} else {
+			if source != nil {
+				return nil, nil, fmt.Errorf("Liblib 图生图只支持一张普通参考图；控制图应通过 ControlNet 单元传入")
+			}
+			source = &images[i]
+		}
+	}
+	if mask != nil && source == nil {
+		return nil, nil, fmt.Errorf("Liblib 局部重绘需要一张内容原图，控制图不能代替原图")
+	}
+	return source, mask, nil
 }
 
 func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
@@ -148,8 +175,9 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 		}
 	}
 	path := "/api/generate/webui/text2img"
-	if len(r.Images) == 1 {
-		imageURL, err := liblibPublicURL(r.Images[0])
+	source, mask, _ := liblibImageInputs(r.Images)
+	if source != nil {
+		imageURL, err := liblibPublicURL(*source)
 		if err != nil {
 			return RequestSpec{}, err
 		}
@@ -157,6 +185,20 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 		// Liblib img2img uses resized dimensions; mode 0 is ordinary image editing.
 		params["resizedWidth"], params["resizedHeight"] = width, height
 		params["resizeMode"], params["mode"] = 0, 0
+		if mask != nil {
+			maskURL, err := liblibPublicURL(*mask)
+			if err != nil {
+				return RequestSpec{}, err
+			}
+			w, h := liblibMediaDimension(*source, "width"), liblibMediaDimension(*source, "height")
+			if w < 1 || h < 1 || w > 4096 || h > 4096 || liblibMediaDimension(*mask, "width") != w || liblibMediaDimension(*mask, "height") != h {
+				return RequestSpec{}, fmt.Errorf("Liblib 局部重绘原图与蒙版须提供相同的真实像素尺寸（1–4096）")
+			}
+			// The host prepares the editing mask as white=repaint. These are the
+			// SD SDK's inpaint defaults, independent of each ControlNet mask.
+			params["mode"] = 4
+			params["inpaintParam"] = map[string]any{"maskImage": maskURL, "maskBlur": 4, "maskPadding": 32, "maskMode": 0, "inpaintArea": 0, "inpaintingFill": 1}
+		}
 		path = "/api/generate/webui/img2img"
 	} else {
 		params["width"], params["height"] = width, height

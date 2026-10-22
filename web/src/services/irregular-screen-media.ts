@@ -1,4 +1,4 @@
-import { deriveIrregularScreenMask, type IrregularScreenMaskMode } from "@/lib/canvas/irregular-screen-mask";
+import { deriveIrregularScreenMask, validateIrregularScreenMaskFile, validateIrregularScreenMaskPixels, type IrregularScreenMaskMode } from "@/lib/canvas/irregular-screen-mask";
 import type { IrregularScreenImage } from "@/lib/canvas/irregular-screen-domain";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
 import { resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
@@ -9,9 +9,18 @@ export type ScreenImage = IrregularScreenImage & { url: string; blob?: Blob; upl
 export async function readScreenImage(blob: Blob) {
     if (!["image/png", "image/jpeg"].includes(blob.type)) throw new Error("请上传 PNG 或 JPEG 图片");
     if (blob.size > 10 * 1024 * 1024) throw new Error("图片不能超过 10 MB");
-    const bitmap = await createImageBitmap(blob);
+    return readScreenPixels(blob, "图片");
+}
+
+async function readScreenPixels(blob: Blob, label: "图片" | "屏幕蒙版") {
+    let bitmap: ImageBitmap;
     try {
-        if (bitmap.width > 4096 || bitmap.height > 4096) throw new Error("图片宽高不能超过 4096 像素");
+        bitmap = await createImageBitmap(blob);
+    } catch {
+        throw new Error(label === "屏幕蒙版" ? "屏幕蒙版无法读取，请上传完整且有效的透明背景 PNG" : "图片无法读取，请上传完整且有效的 PNG 或 JPEG 图片");
+    }
+    try {
+        if (bitmap.width > 4096 || bitmap.height > 4096) throw new Error(`${label}宽高不能超过 4096 像素`);
         const canvas = document.createElement("canvas");
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
@@ -22,6 +31,13 @@ export async function readScreenImage(blob: Blob) {
     } finally {
         bitmap.close();
     }
+}
+
+export async function readScreenMask(blob: Blob) {
+    validateIrregularScreenMaskFile(blob, new Uint8Array(await blob.slice(0, 8).arrayBuffer()));
+    const pixels = await readScreenPixels(blob, "屏幕蒙版");
+    validateIrregularScreenMaskPixels(pixels);
+    return pixels;
 }
 
 export async function deriveScreenOutputMask(image: ScreenImage, mode: IrregularScreenMaskMode) {
