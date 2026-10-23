@@ -516,6 +516,7 @@ export function AgentConversation({
                     <ApprovalCard
                         key={approval.approvalId}
                         approval={approval}
+                        references={references}
                         theme={theme}
                         submitting={approvalSubmitting}
                         targetGenerating={approvalTargetGenerating}
@@ -599,6 +600,7 @@ export function ComposerControls({
 
 export function ApprovalCard({
     approval,
+    references = [],
     theme,
     submitting,
     targetGenerating,
@@ -608,6 +610,7 @@ export function ApprovalCard({
     onReject,
 }: {
     approval: ApprovalState;
+    references?: readonly CanvasResourceReference[];
     theme: CanvasTheme;
     submitting: boolean;
     /** 目标节点已在画布上直接生成：禁用“同意执行”，等待后端关闭本次审批。 */
@@ -653,7 +656,7 @@ export function ApprovalCard({
             {imageApproval ? (
                 <CanvasAgentImageApprovalSettings initial={imageApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} />
             ) : videoApproval ? (
-                <CanvasAgentVideoApprovalSettings initial={videoApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} />
+                <CanvasAgentVideoApprovalSettings initial={videoApproval} references={references} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} />
             ) : null}
             <button type="button" className="canvas-agent-approval-reason-toggle" aria-expanded={showReason} onClick={() => setShowReason((value) => !value)} disabled={submitting}>
                 {showReason ? "收起拒绝理由" : "填写拒绝理由（可选）"}

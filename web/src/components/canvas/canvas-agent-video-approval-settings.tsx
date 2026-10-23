@@ -2,13 +2,28 @@ import { useMemo } from "react";
 import { ModelPicker } from "@/components/model-picker";
 import { VideoSettingsPanel } from "@/components/video-settings-panel";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { agentApprovalModel, agentApprovalModelSelection, agentMediaSettings, type AgentVideoApproval } from "@/lib/canvas/agent-media-approval";
+import { agentApprovalModel, agentApprovalModelSelection, agentMediaSettings, agentVideoApprovalInput, type AgentVideoApproval } from "@/lib/canvas/agent-media-approval";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { modelCapabilityConfigFor, normalizeVideoValue } from "@/lib/model-capabilities";
 import { resolveCompatibleModel, type ModelRequirements } from "@/lib/model-selection";
 import type { AgentMediaSettings } from "@/services/api/agent";
 import { PUBLIC_MODEL_CATALOG_ID, useEffectiveConfig } from "@/stores/use-config-store";
 
-export function CanvasAgentVideoApprovalSettings({ initial, value, theme, disabled, onChange }: { initial: AgentVideoApproval; value?: AgentMediaSettings; theme: CanvasTheme; disabled: boolean; onChange: (value: AgentMediaSettings) => void }) {
+export function CanvasAgentVideoApprovalSettings({
+    initial,
+    references,
+    value,
+    theme,
+    disabled,
+    onChange,
+}: {
+    initial: AgentVideoApproval;
+    references: readonly CanvasResourceReference[];
+    value?: AgentMediaSettings;
+    theme: CanvasTheme;
+    disabled: boolean;
+    onChange: (value: AgentMediaSettings) => void;
+}) {
     const effective = useEffectiveConfig();
     const config = useMemo(() => ({ ...effective, channels: effective.channels.filter((channel) => channel.scope === "system" || channel.id === PUBLIC_MODEL_CATALOG_ID) }), [effective]);
     const settings = agentMediaSettings(value || initial);
@@ -19,7 +34,7 @@ export function CanvasAgentVideoApprovalSettings({ initial, value, theme, disabl
     const privateAssetUpload = settings.videoArkPrivateAssetUpload === undefined ? "" : String(settings.videoArkPrivateAssetUpload);
     const requirements: ModelRequirements = {
         capability: "video",
-        input: { textCount: initial.sourceNodeId ? 1 : 0, imageCount: initial.referenceNodeIds.length, videoCount: 0, audioCount: 0, characterCount: 0 },
+        input: agentVideoApprovalInput(initial, references),
         videoSeconds: duration || undefined,
         options: {
             size: settings.size,
@@ -85,6 +100,7 @@ export function CanvasAgentVideoApprovalSettings({ initial, value, theme, disabl
             {model ? (
                 <VideoSettingsPanel
                     config={{ ...config, model, size: settings.size, videoSeconds: duration, vquality: settings.quality, videoGenerateAudio: audio, videoWatermark: watermark, videoArkPrivateAssetUpload: privateAssetUpload }}
+                    requirements={requirements}
                     onConfigChange={changeOption}
                     theme={theme}
                     showTitle={false}

@@ -38,7 +38,7 @@ import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
-import { quoteModel, type LogicalModelQuote } from "@/services/api/logical-models";
+import { useCanvasModelQuote } from "./use-canvas-model-quote";
 import { ConnectedReferenceShelf, ReferenceToolsPopover, referenceShelfHeading } from "./canvas-node-prompt-references";
 import { PromptModalResizeHandle, PromptResizeHandle, clampExpandedModalSize, clampPromptHeight, estimatePromptContentHeight, promptEditorBounds } from "./canvas-node-prompt-resize";
 import { audioConfigPatch, buildNodeConfig, canvasModelConfigPatch, defaultMode, modeDisplayName, promptPlaceholder, videoConfigPatch } from "./canvas-node-prompt-config";
@@ -188,8 +188,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         requirements: resolvedRequirements,
     });
     const quoteRequest = modelQuoteRequest(config, config.model, mode, resolvedRequirements);
-    const quoteRequestKey = JSON.stringify(quoteRequest || null);
-    const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | null>(null);
+    const { quote: routeQuote, error: quoteError, pending: quotePending, retry: retryQuote } = useCanvasModelQuote(quoteRequest, creditsEnabled);
     const credits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : configuredCredits;
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
@@ -217,7 +216,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const isSubmitDisabled = !prompt.trim() || quotePending || Boolean(quoteError);
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -249,23 +248,6 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         window.addEventListener("resize", constrainSize);
         return () => window.removeEventListener("resize", constrainSize);
     }, [expandedPromptOpen]);
-
-    useEffect(() => {
-        if (!creditsEnabled || !quoteRequest) {
-            setRouteQuote(null);
-            return;
-        }
-        const controller = new AbortController();
-        setRouteQuote(null);
-        quoteModel(quoteRequest, controller.signal)
-            .then(({ quote }) => setRouteQuote(quote))
-            .catch(() => {
-                if (!controller.signal.aborted) setRouteQuote(null);
-            });
-        return () => controller.abort();
-        // quoteRequestKey captures the full normalized request without retriggering on object identity.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [creditsEnabled, quoteRequestKey]);
 
     const skillReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.kind === "skill"), [resolvedMentionReferences]);
 
@@ -309,7 +291,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return false;
+        if (isSubmitDisabled || isRunning) return false;
         if (mode === "text" && node.metadata?.listMode && onListGenerate) onListGenerate(node.id, text);
         else onGenerate(node.id, mode, text);
         return true;
@@ -400,9 +382,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     );
 
     const renderSubmitButton = (expanded: boolean) => {
-        const showCost = creditsEnabled && credits !== null;
+        const showCost = creditsEnabled && !quotePending && !quoteError && credits !== null;
         const formattedCredits = credits?.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
-        const actionLabel = isRunning ? "生成中" : showCost ? `${routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，生成` : "生成";
+        const actionLabel = isRunning ? "生成中" : quotePending ? "正在确认费用" : quoteError ? "费用确认失败" : showCost ? `${routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，生成` : "生成";
         return (
             <Button
                 type="text"
@@ -417,7 +399,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 }
                 onClick={() => (expanded ? submitExpandedPrompt() : submit())}
                 aria-label={actionLabel}
-                title={routeQuote ? modelQuoteDescription(routeQuote) : actionLabel}
+                title={quoteError || (routeQuote ? modelQuoteDescription(routeQuote) : actionLabel)}
             >
                 {showCost ? (
                     <span className="canvas-node-composer-submit-cost">
@@ -426,7 +408,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     </span>
                 ) : null}
                 <span className="canvas-node-composer-submit-action" aria-hidden>
-                    {isRunning ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <ArrowUp className="size-3.5" strokeWidth={2.4} />}
+                    {isRunning || quotePending ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <ArrowUp className="size-3.5" strokeWidth={2.4} />}
                 </span>
             </Button>
         );
@@ -530,6 +512,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     ) : mode === "video" ? (
                         <CanvasVideoSettingsPopover
                             config={config}
+                            requirements={resolvedRequirements}
                             buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                             onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
                         />
@@ -581,6 +564,12 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     />
                 </div>
                 <CanvasTextLeaseIndicator nodeId={node.id} canvasId={projectId} />
+                {quoteError ? (
+                    <div role="alert" className="flex items-center gap-2 px-2.5 py-1 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                        <span className="min-w-0 flex-1">费用确认失败：{quoteError}</span>
+                        <Button type="text" size="small" onClick={retryQuote}>重试</Button>
+                    </div>
+                ) : null}
                 {!expanded && <PromptResizeHandle
                     height={height}
                     min={bounds.min}

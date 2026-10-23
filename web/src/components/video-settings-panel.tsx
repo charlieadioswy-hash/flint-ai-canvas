@@ -5,8 +5,10 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceRatioOptions } from "@/lib/seedance-video";
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, videoResolutionComparisonKey, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
+import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { priceTiersForCurrentSelection } from "@/lib/model-pricing";
+import type { ModelRequirements } from "@/lib/model-selection";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
@@ -20,20 +22,21 @@ const sizeOptions = [
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
+    requirements?: ModelRequirements;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, requirements, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3" }: VideoSettingsPanelProps) {
     const profile = modelCapabilityConfigFor(config, config.model).video!;
 	const priceTiers = modelPriceTiers(config);
     if (resolveModelRequestConfig(config, config.model).interfaceType === "volcengine-jimeng-video") {
-		return <JiMengVideoSettingsPanel config={config} profile={profile} priceTiers={priceTiers} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+		return <JiMengVideoSettingsPanel config={config} requirements={requirements} profile={profile} priceTiers={priceTiers} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
-		return <SeedanceVideoSettingsPanel config={config} profile={profile} priceTiers={priceTiers} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+		return <SeedanceVideoSettingsPanel config={config} requirements={requirements} profile={profile} priceTiers={priceTiers} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
@@ -52,7 +55,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {configuredResolutions.length ? <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-1.5">
                         {configuredResolutions.map((item) => (
-							<OptionPill key={item.value} selected={isVideoResolutionMatch(resolution, item.value)} disabled={!hasPriceTierForVideoSelection(priceTiers, item.value, Number(seconds))} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+							<OptionPill key={item.value} selected={isVideoResolutionMatch(resolution, item.value)} disabled={!hasPriceTierForVideoSelection(priceTiers, config, requirements, item.value, Number(seconds))} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
@@ -81,7 +84,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                 </SettingGroup> : null}
                 <SettingGroup title="秒数" color={theme.node.muted}>
-					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, resolution, value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, config, requirements, resolution, value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
                 {profile.generateAudio.supported || profile.watermark.supported ? <SettingGroup title="输出" color={theme.node.muted}><div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>{profile.generateAudio.supported ? <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} /> : null}{profile.watermark.supported ? <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} /> : null}</div></SettingGroup> : null}
             </div>
@@ -89,7 +92,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
-function JiMengVideoSettingsPanel({ config, profile, priceTiers, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig; priceTiers: ReturnType<typeof modelPriceTiers> }) {
+function JiMengVideoSettingsPanel({ config, requirements, profile, priceTiers, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig; priceTiers: ReturnType<typeof modelPriceTiers> }) {
     const seconds = normalizeVideoValue(profile, { seconds: config.videoSeconds }).seconds;
     return (
         <ImageSettingsTheme theme={theme}>
@@ -101,14 +104,14 @@ function JiMengVideoSettingsPanel({ config, profile, priceTiers, onConfigChange,
                     </div>
                 </SettingGroup>
                 <SettingGroup title="秒数" color={theme.node.muted}>
-					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, "*", value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+					<VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, config, requirements, resolveVideoResolutionValue(profile, config.vquality), value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
             </div>
         </ImageSettingsTheme>
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, profile, priceTiers, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig; priceTiers: ReturnType<typeof modelPriceTiers> }) {
+function SeedanceVideoSettingsPanel({ config, requirements, profile, priceTiers, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { profile: VideoCapabilityConfig; priceTiers: ReturnType<typeof modelPriceTiers> }) {
     const model = modelOptionName(config.model || config.videoModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
     const ratio = normalizeSeedanceRatio(config.size);
@@ -126,7 +129,7 @@ function SeedanceVideoSettingsPanel({ config, profile, priceTiers, onConfigChang
                     <div className="grid grid-cols-3 gap-1.5">
                         {profile.resolutions.map((value) => {
                             const item = { value, label: value.toUpperCase() };
-							const disabled = (item.value === "1080p" && isSeedanceFastModel(model)) || !hasPriceTierForVideoSelection(priceTiers, item.value, duration);
+							const disabled = (item.value === "1080p" && isSeedanceFastModel(model)) || !hasPriceTierForVideoSelection(priceTiers, config, requirements, item.value, duration);
                             return (
                                 <OptionPill key={item.value} selected={resolution === item.value} disabled={disabled} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                     {item.label}
@@ -134,7 +137,6 @@ function SeedanceVideoSettingsPanel({ config, profile, priceTiers, onConfigChang
                             );
                         })}
                     </div>
-                    {isSeedanceFastModel(model) ? <div className="text-[var(--fs-tiny)] leading-4 opacity-55">fast 模型自动使用 720P</div> : null}
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-1.5">
@@ -159,7 +161,7 @@ function SeedanceVideoSettingsPanel({ config, profile, priceTiers, onConfigChang
                     </div>
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
-					<VideoDurationControl profile={profile} value={duration} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, resolution, value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
+					<VideoDurationControl profile={profile} value={duration} theme={theme} disabled={(value) => !hasPriceTierForVideoSelection(priceTiers, config, requirements, resolution, value)} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>
@@ -284,19 +286,14 @@ function modelPriceTiers(config: AiConfig) {
 	return cost?.logicalPriceTiers || [];
 }
 
-function hasPriceTierForVideoSelection(tiers: ReturnType<typeof modelPriceTiers>, resolution: string, seconds: number) {
+function hasPriceTierForVideoSelection(tiers: ReturnType<typeof modelPriceTiers>, config: AiConfig, requirements: ModelRequirements | undefined, resolution: string, seconds: number) {
 	if (!tiers.length) return true;
-	const normalizedResolution = normalizeTierResolution(resolution);
-	return tiers.some((tier) => {
-		const selector = tier.selector || {};
-		const tierResolution = selector.vquality || tier.resolution;
-		const tierSeconds = selector.videoSeconds ? Number(selector.videoSeconds) : tier.videoSeconds;
-		return (tierResolution === "*" || !tierResolution || normalizeTierResolution(tierResolution) === normalizedResolution) && (!tierSeconds || tierSeconds === seconds);
-	});
-}
-
-function normalizeTierResolution(value: string) {
-	return videoResolutionComparisonKey(value);
+	return priceTiersForCurrentSelection(tiers, "video", { ...config, vquality: resolution, videoSeconds: String(seconds) }, {
+        ...requirements,
+        videoOperation: requirements?.videoOperation || "text_to_video",
+        videoSeconds: String(seconds),
+        options: { ...requirements?.options, vquality: resolution, videoSeconds: seconds },
+    }).length > 0;
 }
 
 function DurationRangeControl({ value, min, max, step, theme, onChange }: { value: number; min: number; max: number; step: number; theme: CanvasTheme; onChange: (value: number) => void }) {

@@ -2,9 +2,26 @@ import type { AgentMediaSettings } from "@/services/api/agent";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import type { CanvasNodeData } from "@/types/canvas";
 import { logicalModelIDForConfig, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
+import type { ModelInputSummary } from "@/lib/model-selection";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 export type AgentImageApproval = AgentMediaSettings & { prompt: string; referenceNodeIds: string[] };
 export type AgentVideoApproval = AgentImageApproval & { referenceTransientIds: string[]; sourceNodeId: string };
+
+export function agentVideoApprovalInput(approval: AgentVideoApproval, references: readonly CanvasResourceReference[]): ModelInputSummary {
+    // 后端只允许图片类型的临时引用；节点引用则保留画布上的真实素材类型。
+    const input: ModelInputSummary = { textCount: approval.prompt.trim() ? 1 : 0, imageCount: approval.referenceTransientIds.length, videoCount: 0, audioCount: 0, characterCount: 0 };
+    const kinds = new Map(references.map((reference) => [reference.nodeId, reference.kind]));
+    for (const id of new Set(approval.referenceNodeIds)) {
+        switch (kinds.get(id)) {
+            case "image": input.imageCount++; break;
+            case "video": input.videoCount++; break;
+            case "audio": input.audioCount++; break;
+            case "character": input.characterCount++; break;
+        }
+    }
+    return input;
+}
 
 /**
  * 审批详情里只有这些字段属于后端 mediaSettings；prompt 与引用节点由服务端持有。
