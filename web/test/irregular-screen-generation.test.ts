@@ -105,6 +105,7 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
         config = { ...configModule.defaultConfig, channels: [channel], model: modelName, imageModel: modelName, size: "1024x1024", count: "1" };
         const settings = model.screenDefaultSettings(config, modelName);
         const template = domain.buildIrregularScreenTemplate({
+            generationMode: contentReference ? "img2img" : "text2img",
             controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
             outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
             contentReference: contentReference ? { storageKey: "resource:content", width: 1024, height: 1024 } : undefined,
@@ -116,8 +117,7 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             controlParameters: model.screenControlParameters(settings),
             providerOptions: {
                 "liblib-image": {
-                    ...model.screenProviderOptions(config, modelName, settings, contentReference)["liblib-image"],
-                    ...(inpaint ? { inpaintMaskMode: "luminance" } : {}),
+                    ...model.screenProviderOptions(config, modelName, settings, contentReference ? "img2img" : "text2img", inpaint)["liblib-image"],
                 },
             },
         });
@@ -145,6 +145,48 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
     });
 
     describe("real generation preparation", () => {
+        test("submits text-to-image Inpaint defaults with an independent ControlNet mask", async () => {
+            const controls = config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!;
+            controls.preprocessors = ["canny", "inpaint_global_harmonious", "inpaint_only", "inpaint_only+lama"];
+            controls.models = ["b6806516962f4e1599a93ac4483c3d23", "a311363995dd4f2fa42ee3fc9582d920"];
+            const settings = model.screenDefaultSettings(config, config.model, "text2img");
+            const template = domain.buildIrregularScreenTemplate({
+                generationMode: "text2img",
+                controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
+                outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
+                prompt: "A colorful landscape",
+                size: "1024x1024",
+                controlParameters: model.screenControlParameters(settings),
+                modelSelection: node().metadata!.generationSpec!.modelSelection,
+                providerOptions: model.screenProviderOptions(config, config.model, settings, "text2img"),
+                existingProject: project,
+            });
+            project = { ...project, ...template };
+            nodeId = template.generationNodeId;
+
+            await submitScreenGeneration(project, config);
+
+            const input = submitted[0].input!;
+            expect(input.referenceImages).toEqual([]);
+            expect(input.mask).toBeUndefined();
+            expect(input.controlNet).toMatchObject([{
+                image: { storageKey: "resource:control" },
+                mask: { storageKey: "resource:mask" },
+                parameters: {
+                    controlType: "inpaint",
+                    preprocessor: "inpaint_global_harmonious",
+                    model: "a311363995dd4f2fa42ee3fc9582d920",
+                    strength: 1,
+                    start: 0,
+                    end: 1,
+                    pixelPerfect: false,
+                    processorParameters: {},
+                },
+            }]);
+            expect(input.controlNet![0].parameters).not.toHaveProperty("canny");
+            expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance", resizeMode: "stretch" });
+        });
+
         for (const withContent of [false, true])
             test(`keeps control/mask separate and chooses ${withContent ? "img2img" : "txt2img"} defaults`, async () => {
                 setup(withContent);
@@ -171,6 +213,36 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance" });
             expect(input.controlNet).toMatchObject([{ image: { storageKey: "resource:control" }, parameters: { preprocessor: "canny" } }]);
             expect(input.metadata).toMatchObject({ providerOptions: { "liblib-image": { inpaintMaskMode: "luminance", templateUuid: "9c7d531dc75f476aa833b3d452b8f7ad" } } });
+        });
+
+        test("switching a saved mask repaint scene to text-to-image removes both image and repaint inputs", async () => {
+            setup(true, true);
+            const previous = JSON.parse(JSON.stringify(project)) as CanvasProject;
+            const previousSpec = node().metadata!.generationSpec!;
+            expect(domain.irregularScreenGenerationMode(previousSpec)).toEqual({ generationMode: "img2img", inpaint: true });
+            const settings = model.screenDefaultSettings(config, config.model);
+            const template = domain.buildIrregularScreenTemplate({
+                generationMode: "text2img",
+                controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
+                outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
+                contentReference: { storageKey: "resource:stale-content", width: 1024, height: 1024 },
+                inpaint: true,
+                prompt: "A new landscape",
+                size: "1024x1024",
+                controlParameters: model.screenControlParameters(settings),
+                modelSelection: previousSpec.modelSelection,
+                providerOptions: model.screenProviderOptions(config, config.model, settings, "text2img", true),
+                existingProject: previous,
+            });
+            project = { ...previous, ...template };
+            await submitScreenGeneration(project, config);
+            const input = submitted[0].input!;
+            expect(input.referenceImages).toEqual([]);
+            expect(input.mask).toBeUndefined();
+            expect(input.outputMask).toMatchObject({ image: { storageKey: "resource:mask" }, mode: "luminance" });
+            expect(input.metadata).toMatchObject({ providerOptions: { "liblib-image": { templateUuid: "e10adc3949ba59abbe56e057f20f883e" } } });
+            expect((input.metadata as { providerOptions: Record<string, Record<string, unknown>> }).providerOptions["liblib-image"]).not.toHaveProperty("inpaintMaskMode");
+            expect(domain.irregularScreenGenerationMode(node().metadata!.generationSpec!)).toEqual({ generationMode: "text2img", inpaint: false });
         });
 
         test("rejects a changed inpaint source size before saving or submitting", async () => {

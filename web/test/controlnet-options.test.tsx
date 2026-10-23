@@ -5,7 +5,7 @@ import { ControlNetParameterFields } from "../src/components/controlnet-paramete
 import { Select, type SelectProps } from "../src/components/ui/base/select";
 import { CONTROLNET_PREPROCESSORS } from "../src/lib/canvas/controlnet-catalog.generated";
 import { defaultControlNetBinding, validateControlNetBindings } from "../src/lib/canvas/controlnet";
-import { controlNetBaseModel, controlNetBaseModelError, controlNetConfigurationError, controlNetDefaultModel, controlNetDefaultType, controlNetModelCatalog, controlNetModelId, controlNetModels, controlNetPreprocessors, switchControlNetPreprocessor, switchControlNetType, type ControlNetProfile } from "../src/lib/canvas/controlnet-options";
+import { controlNetBaseModel, controlNetBaseModelError, controlNetConfigurationError, controlNetDefaultModel, controlNetDefaultType, controlNetModelCatalog, controlNetModelId, controlNetModels, controlNetPreprocessors, controlNetTypeUnavailableReason, switchControlNetPreprocessor, switchControlNetType, type ControlNetProfile } from "../src/lib/canvas/controlnet-options";
 import { screenControlParameters, screenDefaultSettings, screenModelError, screenModels, screenSettingsFromControl } from "../src/lib/canvas/irregular-screen-model";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { createModelChannel, defaultConfig } from "../src/stores/use-config-store";
@@ -27,6 +27,43 @@ function selectFields(parameters: ControlNetParameters, onChange: (next: Control
 }
 
 describe("ControlNet official types and model selection", () => {
+    test("disabled types explain channel configuration, model allowlists and incompatible bases", () => {
+        const parameters = { ...defaultControlNetBinding("unit").parameters, model: cannyXL };
+        const cannyOnly = { ...profile, preprocessors: ["canny"] };
+        const limitedModels = { ...profile, models: [cannyXL] };
+        expect(controlNetTypeUnavailableReason("canny", cannyOnly)).toBe("");
+        expect(controlNetTypeUnavailableReason("depth", cannyOnly)).toBe("后台未启用预处理器");
+        expect(controlNetTypeUnavailableReason("depth", limitedModels)).toBe("后台未开放兼容模型");
+        expect(controlNetTypeUnavailableReason("mlsd", profile)).toBe("当前底模无兼容控制模型");
+        expect(controlNetTypeUnavailableReason("depth", { ...profile, supported: false })).toBe("后台未启用 ControlNet");
+        expect(controlNetTypeUnavailableReason("depth", { ...profile, baseModel: undefined })).toBe("后台未配置基础算法");
+        expect(controlNetTypeUnavailableReason("depth", profile, { family: "f1" })).toBe("基础算法配置冲突");
+        expect(controlNetTypeUnavailableReason("revision", profile)).toBe("暂不支持");
+        const fields = selectFields(parameters, () => {}, cannyOnly).get("Control Type（控制类型）")!;
+        expect(fields.options?.find((option) => option.value === "depth")).toMatchObject({ disabled: true, label: "Depth（深度图）（后台未启用预处理器）" });
+        const complete = selectFields(parameters, () => {}).get("Control Type（控制类型）")!;
+        expect(complete.options?.find((option) => option.value === "depth")?.disabled).toBe(false);
+        expect(complete.options?.find((option) => option.value === "mlsd")).toMatchObject({ disabled: true, label: "MLSD（直线）（当前底模无兼容控制模型）" });
+    });
+
+    test("type switching chooses an available processor when the model allowlist excludes the first one", () => {
+        const embedding = "3a8267c7d45c11ee9b5e00163e365853";
+        const limited = { ...profile, models: [embedding] };
+        expect(controlNetTypeUnavailableReason("instant-id", limited)).toBe("");
+        const selected = switchControlNetType(defaultControlNetBinding("unit").parameters, "instant-id", limited);
+        expect(selected).toMatchObject({ preprocessor: "instant_id_face_embedding", model: embedding });
+        expect(controlNetConfigurationError(selected, limited)).toBe("");
+    });
+
+    test("preprocessor allowlist aliases use the same case-insensitive policy as the backend", () => {
+        const aliases = { ...profile, preprocessors: [" CANNY ", "DEPTH_LERES"] };
+        expect(controlNetTypeUnavailableReason("depth", aliases)).toBe("");
+        const selected = switchControlNetType(defaultControlNetBinding("unit").parameters, "depth", aliases);
+        expect(selected.preprocessor).toBe("depth_leres");
+        expect(controlNetConfigurationError(selected, aliases)).toBe("");
+        expect(controlNetPreprocessors(aliases).map((processor) => processor.id)).toEqual(["canny", "depth_leres"]);
+    });
+
     test("the real shared fields switch type, model and dedicated parameters together", () => {
         const initial = { ...defaultControlNetBinding("unit").parameters, model: cannyXL, strength: 1.2 };
         let selected = initial;

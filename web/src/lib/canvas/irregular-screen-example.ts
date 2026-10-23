@@ -18,3 +18,9 @@ export const screenCarExample = {
         negativePrompt: "split screen, diptych, collage, multiple cars, duplicated car, disconnected body, cut vehicle, inconsistent perspective, flat composition, building, billboard frame, people, text, watermark, logo, blurry, deformed wheels",
     } satisfies Partial<ScreenGenerationSettings>,
 };
+
+export function applyScreenCarExample(settings: ScreenGenerationSettings): ScreenGenerationSettings {
+    const { strength, start, end, resolution, lowThreshold, highThreshold, ...generation } = screenCarExample.settings;
+    const canny = (settings.controlType || settings.preprocessor || "canny") === "canny";
+    return { ...settings, ...generation, ...(canny ? { strength, start, end, resolution, lowThreshold, highThreshold } : {}) };
+}

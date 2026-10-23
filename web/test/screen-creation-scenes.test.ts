@@ -28,6 +28,7 @@ afterEach(() => {
 
 function scene(id: string, updatedAt = "2026-10-01T00:00:00Z"): CanvasProject {
     const template = buildIrregularScreenTemplate({
+        generationMode: "text2img",
         controlImage: { storageKey: "resource:original", width: 1024, height: 1024 },
         outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
         prompt: "水下世界",

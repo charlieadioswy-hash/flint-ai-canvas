@@ -61,7 +61,8 @@ export function controlNetTypeLabel(type: string) {
 }
 
 export function controlNetPreprocessors(profile?: ControlNetProfile, type?: string) {
-    return CONTROLNET_PREPROCESSORS.filter((processor) => (!type || controlNetPreprocessorSupportsType(processor.id, type)) && (!profile || profile.preprocessors.includes(processor.id)));
+    const allowed = profile ? new Set(profile.preprocessors.map((id) => id.trim().toLowerCase())) : undefined;
+    return CONTROLNET_PREPROCESSORS.filter((processor) => (!type || controlNetPreprocessorSupportsType(processor.id, type)) && (!allowed || allowed.has(processor.id)));
 }
 
 export function controlNetTypes(profile?: ControlNetProfile) {
@@ -77,6 +78,20 @@ export function controlNetModels(profile: ControlNetProfile | undefined, type: s
     return controlNetModelCatalog(profile).filter((model) => model.baseModel === base && model.controlTypes.includes(type) && (!preprocessor || !model.preprocessors?.length || model.preprocessors.includes(preprocessor)) && ((type === "reference" && model.id === "") || !allowed?.length || allowed.includes(controlNetModelId(model.id)))).sort((left, right) => rank(left.id) - rank(right.id));
 }
 
+export function controlNetTypeUnavailableReason(type: string, profile?: ControlNetProfile, defaults: Record<string, unknown> = {}) {
+    const definition = CONTROLNET_TYPES.find((item) => item.id === type);
+    if (!definition?.supported) return "暂不支持";
+    if (type === "none") return "请选择实际控制类型";
+    if (!profile?.supported) return "后台未启用 ControlNet";
+    const processors = controlNetPreprocessors(profile, type);
+    if (!processors.length) return "后台未启用预处理器";
+    if (controlNetBaseModelError(profile, defaults)) return "基础算法配置冲突";
+    if (!controlNetBaseModel(profile, defaults)) return "后台未配置基础算法";
+    if (processors.some((processor) => controlNetModels(profile, type, defaults, processor.id).length)) return "";
+    if (profile.models?.length && processors.some((processor) => controlNetModels({ ...profile, models: [] }, type, defaults, processor.id).length)) return "后台未开放兼容模型";
+    return "当前底模无兼容控制模型";
+}
+
 export function controlNetDefaultModel(profile: ControlNetProfile | undefined, type: string, defaults: Record<string, unknown> = {}, preprocessor?: string) {
     const models = controlNetModels(profile, type, defaults, preprocessor);
     const preferred = typeof defaults.controlNetModel === "string" ? controlNetModelId(defaults.controlNetModel) : "";
@@ -87,7 +102,7 @@ export function controlNetDefaultModel(profile: ControlNetProfile | undefined, t
 export function controlNetDefaultPreprocessor(profile: ControlNetProfile | undefined, type: string, defaults: Record<string, unknown> = {}) {
     const processors = controlNetPreprocessors(profile, type);
     const preferred = typeof defaults.controlNetModel === "string" ? controlNetModelId(defaults.controlNetModel) : "";
-    return processors.find((processor) => processor.recommendedModels?.some((id) => controlNetModelId(id) === preferred) && controlNetModels(profile, type, defaults, processor.id).some((model) => controlNetModelId(model.id) === preferred)) || processors.find((processor) => controlNetModels(profile, type, defaults, processor.id).some((model) => controlNetModelId(model.id) === preferred)) || processors[0];
+    return processors.find((processor) => processor.recommendedModels?.some((id) => controlNetModelId(id) === preferred) && controlNetModels(profile, type, defaults, processor.id).some((model) => controlNetModelId(model.id) === preferred)) || processors.find((processor) => controlNetModels(profile, type, defaults, processor.id).some((model) => controlNetModelId(model.id) === preferred)) || processors.find((processor) => controlNetModels(profile, type, defaults, processor.id).length) || processors[0];
 }
 
 export function controlNetDefaultType(profile?: ControlNetProfile, defaults: Record<string, unknown> = {}) {
@@ -126,7 +141,7 @@ export function controlNetConfigurationError(parameters: ControlNetParameters, p
     if (type === "none") return "None 只表示不预处理，请先选择实际控制类型";
     if (!processor || !controlNetPreprocessorSupportsType(processor.id, type)) return "请选择与 Control Type 对应的预处理器";
     if (mode && processor.modes?.length && !processor.modes.includes(mode)) return "所选预处理器仅支持文生图，请移除内容参考图或切换控制类型";
-    if (!profile?.supported || !profile.preprocessors.includes(parameters.preprocessor)) return "当前模型未启用所选预处理器，请联系管理员配置";
+    if (!profile?.supported || !controlNetPreprocessors(profile, type).some((item) => item.id === parameters.preprocessor)) return "当前模型未启用所选预处理器，请联系管理员配置";
     const baseError = controlNetBaseModelError(profile, defaults);
     if (baseError) return baseError;
     if (!controlNetBaseModel(profile, defaults)) return "尚未配置 ControlNet 基础算法，请联系管理员选择 SD 1.5、SDXL 或 F.1";

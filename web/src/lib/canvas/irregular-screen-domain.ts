@@ -16,7 +16,9 @@ export type IrregularScreenScene = {
 
 export type IrregularScreenImage = { storageKey: string; width: number; height: number; mimeType?: string; name?: string; bytes?: number; assetId?: string };
 export type IrregularScreenOutputSize = { width: number; height: number; size: string; scaled: boolean; aspectRatioAdjusted: boolean };
+export type ScreenGenerationMode = "text2img" | "img2img";
 export type IrregularScreenTemplateInput = {
+    generationMode: ScreenGenerationMode;
     controlImage: IrregularScreenImage;
     outputMask: IrregularScreenImage;
     contentReference?: IrregularScreenImage;
@@ -31,6 +33,11 @@ export type IrregularScreenTemplateInput = {
     maskMode?: IrregularScreenMaskMode;
     existingProject?: Pick<CanvasProject, "nodes" | "connections" | "creationScene">;
 };
+
+export function irregularScreenGenerationMode(spec: Pick<GenerationSpec, "referenceBindings">): { generationMode: ScreenGenerationMode; inpaint: boolean } {
+    const inpaint = spec.referenceBindings.some((binding) => binding.role === "mask");
+    return { generationMode: inpaint || spec.referenceBindings.some((binding) => binding.role === "reference") ? "img2img" : "text2img", inpaint };
+}
 
 export function isIrregularScreenScene(value: unknown): value is IrregularScreenScene {
     if (!value || typeof value !== "object") return false;
@@ -102,10 +109,12 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
 } {
     requireImage(input.controlImage, "结构原图");
     requireImage(input.outputMask, "输出蒙版");
-    if (input.contentReference) requireImage(input.contentReference, "内容参考图");
-    if (input.inpaint) {
-        if (!input.contentReference) throw new Error("局部重绘需要先添加内容原图");
-        if (input.contentReference.width !== input.outputMask.width || input.contentReference.height !== input.outputMask.height) throw new Error("局部重绘内容原图和屏幕蒙版必须使用完全相同的像素尺寸");
+    const contentReference = input.generationMode === "img2img" ? input.contentReference : undefined;
+    const inpaint = input.generationMode === "img2img" && input.inpaint;
+    if (input.generationMode === "img2img" && !contentReference) throw new Error("图生图需要先添加内容原图");
+    if (contentReference) requireImage(contentReference, "内容原图");
+    if (inpaint && contentReference) {
+        if (contentReference.width !== input.outputMask.width || contentReference.height !== input.outputMask.height) throw new Error("蒙版重绘内容原图和屏幕蒙版必须使用完全相同的像素尺寸");
     }
     if (input.controlImage.width !== input.outputMask.width || input.controlImage.height !== input.outputMask.height) throw new Error("结构原图和输出蒙版必须使用完全相同的像素尺寸与坐标");
     const sizeError = irregularScreenOutputSizeError(input.controlImage, input.size);
@@ -121,14 +130,14 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
     };
     const control = imageNode(owned(scene?.nodeIds.controlImage), "屏幕结构原图", { x: 200, y: 200 }, input.controlImage);
     const mask = imageNode(owned(scene?.nodeIds.outputMask), "屏幕输出蒙版", { x: 200, y: 620 }, input.outputMask);
-    const reference = input.contentReference ? imageNode(owned(scene?.nodeIds.contentReference), "内容参考图", { x: 200, y: 1040 }, input.contentReference) : undefined;
+    const reference = contentReference ? imageNode(owned(scene?.nodeIds.contentReference), "内容原图", { x: 200, y: 1040 }, contentReference) : undefined;
     const previousGeneration = owned(scene?.nodeIds.generation);
     const generation = previousGeneration || createCanvasNode(CanvasNodeType.Image, { x: 780, y: 360 });
     const referenceBindings: ReferenceBinding[] = [
         { id: "screen-control", nodeId: control.id, mediaType: "image", role: "control-image", order: 0, resolution: "latest" },
         { id: "screen-output-mask", nodeId: mask.id, mediaType: "image", role: "output-mask", order: 1, resolution: "latest" },
         ...(reference ? [{ id: "screen-content-reference", nodeId: reference.id, mediaType: "image" as const, role: "reference" as const, order: 2, resolution: "latest" as const }] : []),
-        ...(input.inpaint ? [{ id: "screen-inpaint-mask", nodeId: mask.id, mediaType: "image" as const, role: "mask" as const, order: 3, resolution: "latest" as const }] : []),
+        ...(inpaint ? [{ id: "screen-inpaint-mask", nodeId: mask.id, mediaType: "image" as const, role: "mask" as const, order: 3, resolution: "latest" as const }] : []),
         ...(controlNetType(input.controlParameters) === "inpaint" ? [{ id: "screen-control-mask", nodeId: mask.id, mediaType: "image" as const, role: "control-mask" as const, order: 4, resolution: "latest" as const }] : []),
     ];
     const spec: GenerationSpec = validateGenerationSpec({

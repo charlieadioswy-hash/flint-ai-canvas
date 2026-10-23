@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { App } from "antd";
-import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 
@@ -8,12 +8,14 @@ import { WorkspaceSidebarNav } from "../src/components/layout/workspace-sidebar-
 import { CachedResourceImage } from "../src/components/cached-resource-image";
 import { ModelPicker } from "../src/components/model-picker";
 import { Select, type SelectProps } from "../src/components/ui/base/select";
+import { Checkbox, type CheckboxProps } from "../src/components/ui/base/checkbox";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
-import { screenControlParameters, screenPickerConfig } from "../src/lib/canvas/irregular-screen-model";
+import { screenControlParameters, screenInpaintError, screenModelError, screenPickerConfig, screenProviderOptions } from "../src/lib/canvas/irregular-screen-model";
 import { ControlNetParameterFields } from "../src/components/controlnet-parameter-fields";
 import { ScreenCreationGenerationMode, ScreenCreationWorkspace } from "../src/pages/screen-creation/screen-creation-workspace";
 import { ScreenCreationMaskGuide } from "../src/pages/screen-creation/screen-creation-mask-guide";
 import { ScreenCreationPreviewImage } from "../src/pages/screen-creation/screen-creation-preview-image";
+import { ScreenCreationAdvanced } from "../src/pages/screen-creation/screen-creation-advanced";
 import type { ScreenCreationWorkspaceProps } from "../src/pages/screen-creation/screen-creation-types";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 import { useUserStore } from "../src/stores/use-user-store";
@@ -53,6 +55,8 @@ function fixture(): ScreenCreationWorkspaceProps {
         clearReference: noop,
         maskMode: "alpha",
         setMaskMode: noop,
+        generationMode: "text2img",
+        setGenerationMode: noop,
         inpaint: false,
         setInpaint: noop,
         applyExample: noop,
@@ -117,14 +121,18 @@ test("first screen keeps detailed settings collapsed and exposes both source pre
     expect(buttonAttributes(markup, "有效区域")).toContain('aria-pressed="true"');
     expect(buttonAttributes(markup, "生成画面")).toContain("disabled");
     expect(markup).toContain('aria-label="上传屏幕蒙版"');
-    expect(markup).toContain('aria-label="上传内容参考图"');
+    expect(markup).not.toContain('aria-label="上传内容原图"');
+    expect(markup).not.toContain('aria-label="上传内容参考图"');
+    expect(markup).not.toContain('aria-label="蒙版重绘"');
+    expect(buttonAttributes(markup, "文生图")).toContain('aria-pressed="true"');
+    expect(buttonAttributes(markup, "图生图")).toContain('aria-pressed="false"');
 });
 
 test("new masks accept only transparent PNG while legacy interpretation remains read-only", () => {
     const markup = render();
     const inputs = [...markup.matchAll(/<input\b([^>]*type="file"[^>]*)>/g)];
     expect(inputs.find((input) => input[1].includes('aria-label="上传屏幕蒙版"'))?.[1]).toContain('accept="image/png"');
-    expect(inputs.find((input) => input[1].includes('aria-label="上传内容参考图"'))?.[1]).toContain('accept="image/png,image/jpeg"');
+    expect(render({ generationMode: "img2img" })).toMatch(/<input\b[^>]*accept="image\/png,image\/jpeg"[^>]*aria-label="上传内容原图"/);
     for (const rule of ["不超过 10 MB", "宽、高各不超过 4096 像素", "透明处为屏幕外，不透明处显示内容"]) expect(markup).toContain(rule);
     expect(markup).not.toContain("蒙版识别方式");
     expect(markup).not.toContain("历史蒙版仍按原规则读取");
@@ -150,7 +158,7 @@ test("mask help renders opaque corner faces over a transparent SVG and explains 
 });
 
 test("advanced controls use plain labels with accessible professional explanations", () => {
-    const markup = render();
+    const markup = render({ generationMode: "img2img" });
     for (const [label, technical] of [
         ["细节迭代次数", "steps"],
         ["描述贴合程度", "CFG"],
@@ -171,10 +179,55 @@ test("advanced controls use plain labels with accessible professional explanatio
     for (const label of ["预处理器分辨率", "低阈值", "高阈值"]) expect(markup).toContain(`aria-label="${label}"`);
 });
 
-test("inpainting requires matching original and mask dimensions but keeps output sizing and ordinary references", () => {
+test("the real screen type selection initializes Inpaint weights without Canny parameter fields", () => {
+    const props = fixture();
+    props.profile!.controlNet!.preprocessors.push("inpaint_only");
+    props.profile!.controlNet!.models!.push("a311363995dd4f2fa42ee3fc9582d920");
+    props.advanced = { ...props.advanced, controlType: "canny", preprocessor: "canny", strength: 0.3, start: 0.2, end: 0.4, seed: 12345 };
+    props.setAdvanced = (patch) => { props.advanced = { ...props.advanced, ...patch }; };
+    let fields: ReactElement<Parameters<typeof ControlNetParameterFields>[0]> | undefined;
+    const visit = (node: ReactNode) => Children.forEach(node, (child) => {
+        if (!isValidElement<{ children?: ReactNode }>(child)) return;
+        if (child.type === ControlNetParameterFields) fields = child as typeof fields;
+        visit(child.props.children);
+    });
+    visit(ScreenCreationAdvanced({ ...props, disabled: false }));
+    expect(fields).toBeDefined();
+    let controlType: ReactElement<SelectProps<string>> | undefined;
+    const selectType = (node: ReactNode) => Children.forEach(node, (child) => {
+        if (!isValidElement<{ children?: ReactNode; ariaLabel?: string }>(child)) return;
+        if (child.type === Select && child.props.ariaLabel === "Control Type（控制类型）") controlType = child as ReactElement<SelectProps<string>>;
+        selectType(child.props.children);
+    });
+    selectType(ControlNetParameterFields(fields!.props));
+    expect(controlType?.props.options?.find((option) => option.value === "inpaint")?.disabled).toBe(false);
+    controlType!.props.onChange?.("inpaint", { value: "inpaint" });
+    expect(screenControlParameters(props.advanced)).toMatchObject({ controlType: "inpaint", preprocessor: "inpaint_only", model: "a311363995dd4f2fa42ee3fc9582d920", strength: 1, start: 0, end: 1, pixelPerfect: false, processorParameters: {} });
+    expect(screenControlParameters(props.advanced)).not.toHaveProperty("canny");
+    expect(props.advanced.seed).toBe(12345);
+    const markup = render(props);
+    expect(markup).not.toContain('aria-label="低阈值"');
+    expect(markup).not.toContain('aria-label="预处理器分辨率"');
+    let pixelPerfect: ReactElement<CheckboxProps> | undefined;
+    const findPixelPerfect = (node: ReactNode) => Children.forEach(node, (child) => {
+        if (!isValidElement<{ children?: ReactNode; "aria-label"?: string }>(child)) return;
+        if (child.type === Checkbox && child.props["aria-label"] === "完美像素（Pixel Perfect）") pixelPerfect = child as ReactElement<CheckboxProps>;
+        findPixelPerfect(child.props.children);
+    });
+    findPixelPerfect(ScreenCreationAdvanced({ ...props, disabled: false }));
+    expect(pixelPerfect?.props.checked).toBe(false);
+    pixelPerfect!.props.onChange?.({ target: { checked: true } } as ChangeEvent<HTMLInputElement>);
+    expect(screenControlParameters(props.advanced).pixelPerfect).toBe(true);
+    expect(render({ ...props, busy: true })).toMatch(/<input\b[^>]*disabled=""[^>]*aria-label="完美像素（Pixel Perfect）"/);
+});
+
+test("mask repaint lives in image-to-image advanced settings and requires matching dimensions", () => {
     const mask = { url: "blob:mask", name: "mask.png", width: 1200, height: 600 };
-    const inpaint = render({ inpaint: true, mask, reference: { ...mask, url: "blob:original", name: "original.png" } });
-    expect(buttonAttributes(inpaint, "局部重绘")).toContain('aria-pressed="true"');
+    const inpaint = render({ generationMode: "img2img", inpaint: true, mask, reference: { ...mask, url: "blob:original", name: "original.png" } });
+    expect(buttonAttributes(inpaint, "图生图")).toContain('aria-pressed="true"');
+    expect(inpaint).toMatch(/<input\b[^>]*aria-label="蒙版重绘"[^>]*checked=""/);
+    const advancedStart = inpaint.indexOf('class="screen-creation-advanced"');
+    expect(inpaint.indexOf('aria-label="蒙版重绘"')).toBeGreaterThan(advancedStart);
     expect(inpaint).toContain('aria-label="上传内容原图"');
     expect(inpaint).toContain("内容原图必填");
     expect(inpaint).toContain("请上传 1200 × 600 像素的原图");
@@ -186,23 +239,63 @@ test("inpainting requires matching original and mask dimensions but keeps output
     expect(inpaint).toContain("输出尺寸可按蒙版的相同比例缩放");
     expect(inpaint).toContain("最终屏外保持黑色");
     expect(inpaint).not.toContain("屏外保留原图");
-    const regular = render({ mask });
-    expect(buttonAttributes(regular, "文生图")).toContain('aria-pressed="true"');
-    expect(regular).toContain('aria-label="上传内容参考图"');
-    expect(regular).toContain("<small>可选</small>");
+    const regular = render({ generationMode: "img2img", mask });
+    expect(buttonAttributes(regular, "图生图")).toContain('aria-pressed="true"');
+    expect(regular).toContain('aria-label="上传内容原图"');
+    expect(regular).not.toContain("<small>可选</small>");
+    expect(regular).not.toContain("请上传 1200 × 600 像素的原图");
+    const text = render({ generationMode: "text2img", mask, reference: { ...mask, url: "blob:stale-original" } });
+    expect(buttonAttributes(text, "文生图")).toContain('aria-pressed="true"');
+    expect(text).not.toContain('aria-label="上传内容原图"');
+    expect(text).not.toContain('aria-label="蒙版重绘"');
+    expect(text).not.toContain("blob:stale-original");
 });
 
-test("an unavailable inpaint model explains why and leaves ordinary generation selectable", () => {
-    const markup = render({ inpaintUnavailableReason: "当前模型不支持局部重绘，请选择其他模型" });
-    expect(buttonAttributes(markup, "局部重绘")).toContain("disabled");
+test("unavailable mask repaint remains independent from image-to-image availability", () => {
+    const markup = render({ generationMode: "img2img", inpaintUnavailableReason: "当前模型不支持蒙版重绘，请选择其他模型" });
+    expect(markup).toMatch(/<input\b[^>]*disabled=""[^>]*aria-label="蒙版重绘"/);
+    expect(buttonAttributes(markup, "图生图")).not.toContain("disabled");
     expect(buttonAttributes(markup, "文生图")).not.toContain("disabled");
-    expect(markup).toContain("当前模型不支持局部重绘，请选择其他模型");
+    expect(markup).toContain("当前模型不支持蒙版重绘，请选择其他模型");
+    expect(buttonAttributes(render({ imageToImageUnavailableReason: "当前模型缺少图生图模板" }), "图生图")).toContain("disabled");
     expect(buttonAttributes(render({ busy: true }), "文生图")).toContain("disabled");
 });
 
+test("an enabled mask repaint can be turned off after switching to a model without masks", () => {
+    const props = fixture();
+    props.config.channels[0].modelCosts![0].defaultOptions = { family: "sd", controlNetModel: controlId, textToImageTemplateUuid: "text-template", imageToImageTemplateUuid: "image-template" };
+    props.generationMode = "img2img";
+    props.inpaint = true;
+    const original = { url: "blob:original", storageKey: "resource:original", name: "original.png", width: 1600, height: 900 };
+    props.reference = original;
+    props.inpaintUnavailableReason = screenInpaintError(props.config, props.model);
+    expect(props.inpaintUnavailableReason).toContain("未启用蒙版重绘");
+    props.setInpaint = (value) => { props.inpaint = value; };
+    let repaint: ReactElement<CheckboxProps> | undefined;
+    const visit = (node: ReactNode) => Children.forEach(node, (child) => {
+        if (!isValidElement<{ children?: ReactNode; "aria-label"?: string }>(child)) return;
+        if (child.type === Checkbox && child.props["aria-label"] === "蒙版重绘") repaint = child as ReactElement<CheckboxProps>;
+        visit(child.props.children);
+    });
+    visit(ScreenCreationAdvanced({ ...props, disabled: false }));
+    expect(repaint?.props.checked).toBe(true);
+    expect(repaint?.props.disabled).toBe(false);
+    expect(render({ ...props, busy: true })).toMatch(/<input\b[^>]*disabled=""[^>]*aria-label="蒙版重绘"/);
+    repaint!.props.onChange?.({ target: { checked: false } } as ChangeEvent<HTMLInputElement>);
+    expect(props.inpaint).toBe(false);
+    expect(props.generationMode).toBe("img2img");
+    expect(props.reference).toBe(original);
+    expect(screenModelError(props.config, props.model, true)).toBe("");
+    expect(screenProviderOptions(props.config, props.model, props.advanced, props.generationMode, props.inpaint)["liblib-image"]).toMatchObject({ templateUuid: "image-template" });
+    expect(screenProviderOptions(props.config, props.model, props.advanced, props.generationMode, props.inpaint)["liblib-image"]).not.toHaveProperty("inpaintMaskMode");
+    const markup = render(props);
+    expect(markup).toContain("original.png");
+    expect(markup).toMatch(/<input\b[^>]*disabled=""[^>]*aria-label="蒙版重绘"/);
+});
+
 test("mode buttons only choose a mode and the example entry respects active work", () => {
-    const selected: boolean[] = [];
-    const element = ScreenCreationGenerationMode({ inpaint: false, setInpaint: (value) => selected.push(value), disabled: false });
+    const selected: string[] = [];
+    const element = ScreenCreationGenerationMode({ generationMode: "text2img", setGenerationMode: (value) => selected.push(value), disabled: false });
     const actions: (() => void)[] = [];
     const visit = (node: ReactNode) =>
         Children.forEach(node, (child) => {
@@ -214,7 +307,7 @@ test("mode buttons only choose a mode and the example entry respects active work
     expect(actions).toHaveLength(2);
     actions[1]();
     actions[0]();
-    expect(selected).toEqual([true, false]);
+    expect(selected).toEqual(["img2img", "text2img"]);
     expect(buttonAttributes(render(), "使用科幻跑车示例")).not.toContain("disabled");
     expect(buttonAttributes(render({ uploading: true }), "使用科幻跑车示例")).toContain("disabled");
     expect(render({ applyExample: undefined })).not.toContain("使用科幻跑车示例");
@@ -222,6 +315,7 @@ test("mode buttons only choose a mode and the example entry respects active work
 
 test("unsaved mask, derived region and reference images have browser-ready local previews", () => {
     const markup = render({
+        generationMode: "img2img",
         mask: { url: "blob:local-mask", name: "mask.png", width: 1200, height: 600 },
         reference: { url: "blob:local-reference", name: "reference.jpg", width: 1200, height: 600 },
         effectiveMaskUrl: "blob:derived-region",

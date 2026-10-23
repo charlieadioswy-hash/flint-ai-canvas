@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { defaultControlNetBinding } from "../src/lib/canvas/controlnet";
+import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
+import { resolveCanvasControlNetInputs } from "../src/lib/canvas/controlnet";
 import { switchControlNetPreprocessor } from "../src/lib/canvas/controlnet-options";
 import { readNodeGenerationSpec } from "../src/lib/canvas/generation-contract";
-import { buildIrregularScreenTemplate, irregularScreenOutputSizeError, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
+import { buildIrregularScreenTemplate, irregularScreenGenerationMode, irregularScreenOutputSizeError, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 function input(): IrregularScreenTemplateInput {
     return {
+        generationMode: "text2img",
         controlImage: { storageKey: "resource:control", width: 1600, height: 900, assetId: "asset-control" },
         outputMask: { storageKey: "resource:mask", width: 1600, height: 900 },
         prompt: "A colorful landscape",
@@ -61,9 +64,9 @@ describe("irregular screen canvas template", () => {
         expect(generator.width / generator.height).toBeCloseTo(16 / 9);
     });
 
-    test("binds an optional content image as ordinary reference rather than structural control", () => {
+    test("image-to-image binds its required original as ordinary reference rather than structural control", () => {
         const providerOptions = { "liblib-image": { steps: 20 } };
-        const template = buildIrregularScreenTemplate({ ...input(), contentReference: { storageKey: "resource:reference", width: 800, height: 1200 }, providerOptions });
+        const template = buildIrregularScreenTemplate({ ...input(), generationMode: "img2img", contentReference: { storageKey: "resource:reference", width: 800, height: 1200 }, providerOptions });
         expect(template.nodes).toHaveLength(4);
         const generator = template.nodes.find((node) => node.id === template.generationNodeId)!;
         const spec = readNodeGenerationSpec(generator)!;
@@ -73,7 +76,7 @@ describe("irregular screen canvas template", () => {
 
     test("persists inpainting as a separate mask binding while reusing the screen mask node", () => {
         const contentReference = { storageKey: "resource:reference", width: 1600, height: 900 };
-        const first = buildIrregularScreenTemplate({ ...input(), contentReference, inpaint: true });
+        const first = buildIrregularScreenTemplate({ ...input(), generationMode: "img2img", contentReference, inpaint: true });
         expect(first.nodes).toHaveLength(4);
         expect(first.connections).toHaveLength(3);
         expect(first.creationScene.version).toBe(1);
@@ -83,17 +86,29 @@ describe("irregular screen canvas template", () => {
         expect(spec.referenceBindings.find((binding) => binding.role === "mask")).toMatchObject({ id: "screen-inpaint-mask", nodeId: first.creationScene.nodeIds.outputMask });
         expect(spec.referenceBindings.find((binding) => binding.role === "output-mask")?.nodeId).toBe(first.creationScene.nodeIds.outputMask);
         expect(spec.options.outputMask?.bindingId).toBe("screen-output-mask");
+        expect(irregularScreenGenerationMode(spec)).toEqual({ generationMode: "img2img", inpaint: true });
 
-        const disabled = buildIrregularScreenTemplate({ ...input(), contentReference, inpaint: false, existingProject: saved });
+        const disabled = buildIrregularScreenTemplate({ ...input(), generationMode: "img2img", contentReference, inpaint: false, existingProject: saved });
         const next = readNodeGenerationSpec(disabled.nodes.find((node) => node.id === disabled.generationNodeId)!)!;
         expect(next.referenceBindings.some((binding) => binding.role === "mask")).toBe(false);
         expect(next.referenceBindings.find((binding) => binding.role === "output-mask")?.nodeId).toBe(first.creationScene.nodeIds.outputMask);
         expect(disabled.creationScene.nodeIds).toEqual(first.creationScene.nodeIds);
+        expect(irregularScreenGenerationMode(next)).toEqual({ generationMode: "img2img", inpaint: false });
+
+        const text = buildIrregularScreenTemplate({ ...input(), generationMode: "text2img", contentReference, inpaint: true, existingProject: saved });
+        const textGenerator = text.nodes.find((node) => node.id === text.generationNodeId)!;
+        const textSpec = readNodeGenerationSpec(textGenerator)!;
+        expect(irregularScreenGenerationMode(textSpec)).toEqual({ generationMode: "text2img", inpaint: false });
+        expect(text.creationScene.nodeIds.contentReference).toBeUndefined();
+        expect(textSpec.referenceBindings.map((binding) => binding.role)).toEqual(["control-image", "output-mask"]);
+        expect(buildNodeGenerationContext(text.generationNodeId, text.nodes, text.connections, textSpec.prompt, [], true).referenceImages).toEqual([]);
+        expect(resolveCanvasControlNetInputs(textGenerator, text.nodes).mask).toBeUndefined();
     });
 
     test("requires a matching original image only when inpainting is enabled", () => {
-        expect(() => buildIrregularScreenTemplate({ ...input(), inpaint: true })).toThrow("内容原图");
-        expect(() => buildIrregularScreenTemplate({ ...input(), inpaint: true, contentReference: { storageKey: "resource:reference", width: 800, height: 450 } })).toThrow("相同的像素尺寸");
+        expect(() => buildIrregularScreenTemplate({ ...input(), generationMode: "img2img" })).toThrow("内容原图");
+        expect(() => buildIrregularScreenTemplate({ ...input(), generationMode: "img2img", inpaint: true })).toThrow("内容原图");
+        expect(() => buildIrregularScreenTemplate({ ...input(), generationMode: "img2img", inpaint: true, contentReference: { storageKey: "resource:reference", width: 800, height: 450 } })).toThrow("相同的像素尺寸");
     });
 
     test("updating inputs retains node IDs, previous results, user placement and unrelated nodes/edges", () => {

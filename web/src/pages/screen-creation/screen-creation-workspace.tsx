@@ -113,22 +113,22 @@ function ImageUpload({
     );
 }
 
-export function ScreenCreationGenerationMode({ inpaint, setInpaint, inpaintUnavailableReason, reference, disabled }: Pick<ScreenCreationWorkspaceProps, "inpaint" | "setInpaint" | "inpaintUnavailableReason"> & { reference?: ScreenCreationWorkspaceProps["reference"]; disabled: boolean }) {
+export function ScreenCreationGenerationMode({ generationMode, setGenerationMode, imageToImageUnavailableReason, disabled }: Pick<ScreenCreationWorkspaceProps, "generationMode" | "setGenerationMode" | "imageToImageUnavailableReason"> & { disabled: boolean }) {
     return (
         <div className="screen-creation-generation-mode">
             <span className="screen-creation-field-label">生成方式</span>
             <div className="screen-creation-mode-options" role="group" aria-label="生成方式">
-                <button type="button" aria-pressed={!inpaint} disabled={disabled} onClick={() => setInpaint(false)}>
-                    {reference ? "图生图" : "文生图"}
+                <button type="button" aria-pressed={generationMode === "text2img"} disabled={disabled} onClick={() => setGenerationMode("text2img")}>
+                    文生图
                 </button>
-                <button type="button" aria-pressed={inpaint} disabled={disabled || Boolean(inpaintUnavailableReason)} onClick={() => setInpaint(true)}>
-                    局部重绘
+                <button type="button" aria-pressed={generationMode === "img2img"} disabled={disabled || Boolean(imageToImageUnavailableReason)} onClick={() => setGenerationMode("img2img")}>
+                    图生图
                 </button>
             </div>
-            <p className="screen-creation-hint">{inpaint ? "在屏幕范围内重绘内容原图，原图尺寸必须与屏幕蒙版完全一致。选择方式后，点击“生成画面”才会开始。" : "按描述创作新画面，也可添加内容参考图，借鉴色彩、风格与内容。"}</p>
-            {inpaintUnavailableReason ? (
+            <p className="screen-creation-hint">{generationMode === "img2img" ? "在内容原图基础上生成画面，可在高级设置中开启蒙版重绘。" : "按描述创作新画面，使用屏幕蒙版约束形状与显示范围。"}</p>
+            {imageToImageUnavailableReason ? (
                 <p className="screen-creation-hint" role="status">
-                    {inpaintUnavailableReason}
+                    {imageToImageUnavailableReason}
                 </p>
             ) : null}
         </div>
@@ -200,13 +200,12 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     ) : null}
                                     <ScreenCreationMaskGuide />
                                 </div>
-                                <ScreenCreationGenerationMode inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} reference={props.reference} disabled={disabled} />
-                                <div>
+                                <ScreenCreationGenerationMode generationMode={props.generationMode} setGenerationMode={props.setGenerationMode} imageToImageUnavailableReason={props.imageToImageUnavailableReason} disabled={disabled} />
+                                {props.generationMode === "img2img" ? <div>
                                     <ImageUpload
-                                        label={props.inpaint ? "内容原图" : "内容参考图"}
-                                        hint={props.inpaint ? "必填 · 宽、高须与屏幕蒙版完全一致" : "参考画面的色彩、风格与内容"}
+                                        label="内容原图"
+                                        hint={props.inpaint ? "必填 · 宽、高须与屏幕蒙版完全一致" : "必填 · 在原图基础上调整色彩、风格与内容"}
                                         value={props.reference}
-                                        optional={!props.inpaint}
                                         disabled={disabled}
                                         onUpload={props.uploadReference}
                                         onClear={props.clearReference}
@@ -216,7 +215,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                             内容原图必填；{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"} 输出尺寸可按蒙版的相同比例缩放。
                                         </p>
                                     ) : null}
-                                </div>
+                                </div> : null}
                                 <label className="screen-creation-field screen-creation-prompt">
                                     <span>画面描述</span>
                                     <Input.TextArea
@@ -272,7 +271,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     </Callout>
                                 ) : null}
                             </fieldset>
-                            <ScreenCreationAdvanced advanced={props.advanced} setAdvanced={props.setAdvanced} profile={props.profile} config={props.config} model={props.model} inpaint={props.inpaint} disabled={disabled} />
+                            <ScreenCreationAdvanced advanced={props.advanced} setAdvanced={props.setAdvanced} profile={props.profile} config={props.config} model={props.model} generationMode={props.generationMode} inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} disabled={disabled} />
                             <div className="screen-creation-submit">
                                 <div className="screen-creation-quote" aria-live="polite">
                                     <span>生成 1 张</span>

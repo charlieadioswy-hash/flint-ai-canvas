@@ -1,6 +1,7 @@
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ScreenGenerationSettings } from "@/lib/canvas/irregular-screen-model";
+import type { ScreenGenerationMode } from "@/lib/canvas/irregular-screen-domain";
 
 export type ScreenAdvancedSettings = ScreenGenerationSettings;
 
@@ -40,6 +41,9 @@ export type ScreenCreationWorkspaceProps = {
     clearMask: () => void;
     clearReference: () => void;
     maskMode: ScreenMaskMode;
+    generationMode: ScreenGenerationMode;
+    setGenerationMode: (value: ScreenGenerationMode) => void;
+    imageToImageUnavailableReason?: string;
     inpaint: boolean;
     setInpaint: (value: boolean) => void;
     inpaintUnavailableReason?: string;

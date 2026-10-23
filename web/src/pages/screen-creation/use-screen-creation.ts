@@ -9,9 +9,9 @@ import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capab
 import { requestCreditCost } from "@/lib/model-pricing";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
-import { isIrregularScreenScene, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize } from "@/lib/canvas/irregular-screen-domain";
-import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl } from "@/lib/canvas/irregular-screen-model";
-import { screenCarExample } from "@/lib/canvas/irregular-screen-example";
+import { isIrregularScreenScene, irregularScreenGenerationMode, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize, type ScreenGenerationMode } from "@/lib/canvas/irregular-screen-domain";
+import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl, screenSettingsFromControlSelection, screenSettingsForGenerationMode } from "@/lib/canvas/irregular-screen-model";
+import { applyScreenCarExample, screenCarExample } from "@/lib/canvas/irregular-screen-example";
 import { validateControlNetBindings } from "@/lib/canvas/controlnet";
 import { controlNetConfigurationError, switchControlNetPreprocessor, switchControlNetType } from "@/lib/canvas/controlnet-options";
 import { loadCanvasProjectForEditing } from "@/services/user-data-sync";
@@ -51,6 +51,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const [reference, setReference] = useState<ScreenImage | null>(null);
     const [outputMask, setOutputMask] = useState<ScreenImage | null>(null);
     const [maskMode, setMaskModeValue] = useState<ScreenMaskMode>("alpha");
+    const [generationMode, setGenerationModeValue] = useState<ScreenGenerationMode>("text2img");
     const [inpaint, setInpaint] = useState(false);
     const [results, setResults] = useState<ScreenCreationResult[]>([]);
     const [selectedResultId, setSelectedResultId] = useState("");
@@ -95,6 +96,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         setReference(null);
         setOutputMask(null);
         setMaskModeValue("alpha");
+        setGenerationModeValue("text2img");
         setInpaint(false);
         setSizeValue("");
         setQuality("auto");
@@ -123,7 +125,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             const images = await Promise.all([screenImageFromNode(control), screenImageFromNode(output), content ? screenImageFromNode(content) : null]);
             session.assertActive();
             const params = spec.options.controlNet?.[0]?.parameters;
-            const defaults = screenDefaultSettings(baseConfig, selected);
+            const restoredMode = irregularScreenGenerationMode(spec);
+            const defaults = screenDefaultSettings(baseConfig, selected, restoredMode.generationMode);
             const provider = node.metadata?.providerOptions?.[screenModelDefaults(baseConfig, selected).protocol] || {};
             let next = { ...defaults };
             for (const key of ["steps", "sampler", "cfgScale", "seed", "denoisingStrength"] as const) if (typeof provider[key] === "number") next[key] = provider[key] as number;
@@ -142,9 +145,10 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             setImageResolution(restored.imageResolution || "auto");
             setMask(images[0]);
             setOutputMask(images[1]);
-            setReference(images[2]);
+            setReference(restoredMode.generationMode === "img2img" ? images[2] : null);
             setMaskModeValue(loaded.creationScene.maskMode || "auto");
-            setInpaint(spec.referenceBindings.some((binding) => binding.role === "mask"));
+            setGenerationModeValue(restoredMode.generationMode);
+            setInpaint(restoredMode.inpaint);
             setStorageNotice("已读取保存的画布设置");
         })()
             .catch((failure) => {
@@ -164,9 +168,9 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         if (!loading && !canvasId && !model && availableModels[0]) {
             setModelValue(availableModels[0]);
             setImageResolution(modelCapabilityConfigFor(baseConfig, availableModels[0]).image?.resolution.default || "auto");
-            setAdvancedValue(screenDefaultSettings(baseConfig, availableModels[0]));
+            setAdvancedValue(screenDefaultSettings(baseConfig, availableModels[0], generationMode));
         }
-    }, [canvasId, model, availableModels, baseConfig, loading, newVersion]);
+    }, [canvasId, model, availableModels, baseConfig, loading, newVersion, generationMode]);
 
     const recover = useCallback(async (id: string, session: ScreenCreationSession, signal: AbortSignal) => {
         await recoverScreenGeneration(id, signal, (task) => {
@@ -261,7 +265,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const setModel = (value: string) => {
         setModelValue(value);
         setImageResolution(modelCapabilityConfigFor(baseConfig, value).image?.resolution.default || "auto");
-        setAdvancedValue(screenDefaultSettings(baseConfig, value));
+        setAdvancedValue(screenDefaultSettings(baseConfig, value, generationMode));
         setError("");
         if (mask)
             try {
@@ -304,16 +308,19 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         }
     };
     const inpaintUnavailableReason = screenInpaintError(baseConfig, model);
-    let disabledReason = screenModelError(baseConfig, model, Boolean(reference));
-    if (!disabledReason && inpaint) disabledReason = inpaintUnavailableReason;
-    if (!disabledReason && inpaint && !reference) disabledReason = "局部重绘需要上传内容原图";
-    if (!disabledReason && inpaint && reference && mask && (reference.width !== mask.width || reference.height !== mask.height)) disabledReason = "内容原图与屏幕蒙版的像素宽高必须相同，请使用同一尺寸的图片";
+    const imageToImageUnavailableReason = screenModelError(baseConfig, model, true);
+    const hasReference = generationMode === "img2img";
+    const maskRepaint = hasReference && inpaint;
+    let disabledReason = screenModelError(baseConfig, model, hasReference);
+    if (!disabledReason && hasReference && !reference) disabledReason = "图生图需要上传内容原图";
+    if (!disabledReason && maskRepaint) disabledReason = inpaintUnavailableReason;
+    if (!disabledReason && maskRepaint && reference && mask && (reference.width !== mask.width || reference.height !== mask.height)) disabledReason = "内容原图与屏幕蒙版的像素宽高必须相同，请使用同一尺寸的图片";
     if (!disabledReason && !mask) disabledReason = "请上传屏幕蒙版";
     if (!disabledReason && !outputMask) disabledReason = "请先确认有效屏幕区域";
     if (!disabledReason && !prompt.trim()) disabledReason = "请输入画面描述";
     if (!disabledReason && !size) disabledReason = "当前模型没有与蒙版匹配的输出尺寸";
     if (!disabledReason && mask) disabledReason = irregularScreenOutputSizeError(mask, size);
-    if (!disabledReason) disabledReason = controlNetConfigurationError(screenControlParameters(advanced), profile?.controlNet, screenModelDefaults(baseConfig, model).defaults, reference ? "img2img" : "text2img");
+    if (!disabledReason) disabledReason = controlNetConfigurationError(screenControlParameters(advanced), profile?.controlNet, screenModelDefaults(baseConfig, model).defaults, generationMode);
     try {
         validateControlNetBindings([{ id: "screen", imageBindingId: "screen", parameters: screenControlParameters(advanced) }]);
     } catch (failure) {
@@ -332,7 +339,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         const region = await persistScreenImage(outputMask!, outputMask!.uploadKey || nanoid(), signal);
         session.assertActive();
         setOutputMask(region);
-        const content = reference ? await persistScreenImage(reference, reference.uploadKey || nanoid(), signal) : undefined;
+        const content = hasReference && reference ? await persistScreenImage(reference, reference.uploadKey || nanoid(), signal) : undefined;
         session.assertActive();
         if (content) setReference(content);
         const id = draftId.current || useCanvasStore.getState().createProject(`异形屏 · ${prompt.trim().slice(0, 24)}`);
@@ -343,6 +350,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             {
                 controlImage: original,
                 outputMask: region,
+                generationMode,
                 contentReference: content,
                 prompt,
                 modelSelection: { kind: "channel", channelId: channel.id, modelKey: modelOptionName(model) },
@@ -351,8 +359,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 quality,
                 imageResolution,
                 maskMode,
-                inpaint,
-                providerOptions: screenProviderOptions(baseConfig, model, advanced, Boolean(content), inpaint),
+                inpaint: maskRepaint,
+                providerOptions: screenProviderOptions(baseConfig, model, advanced, generationMode, maskRepaint),
             },
             signal,
         );
@@ -432,7 +440,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         count: 1,
         capability: "image",
         config: { ...baseConfig, model, size, quality, imageResolution },
-        requirements: { capability: "image", controlNetUnits: 1, imageSize: size, input: { imageCount: reference ? 1 : 0, characterCount: 0, videoCount: 0, audioCount: 0, textCount: 0 } },
+        requirements: { capability: "image", controlNetUnits: 1, imageSize: size, input: { imageCount: hasReference ? 1 : 0, characterCount: 0, videoCount: 0, audioCount: 0, textCount: 0 } },
     });
 
     return {
@@ -449,7 +457,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             if (nextResolution !== undefined) setImageResolution(nextResolution);
         },
         mask: mask ? { ...mask, name: mask.name || "屏幕蒙版" } : null,
-        reference: reference ? { ...reference, name: reference.name || "内容参考图" } : null,
+        reference: hasReference && reference ? { ...reference, name: reference.name || "内容原图" } : null,
         uploadMask: (file) => upload(file, "mask"),
         uploadReference: (file) => upload(file, "reference"),
         clearMask: () => {
@@ -464,12 +472,25 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             setUploading(false);
         },
         maskMode,
-        inpaint,
-        setInpaint,
+        generationMode,
+        setGenerationMode: (value) => {
+            if (value === generationMode) return;
+            setAdvancedValue((settings) => screenSettingsForGenerationMode(baseConfig, model, settings, generationMode, value));
+            setGenerationModeValue(value);
+            if (value === "text2img") {
+                uploadEpoch.current++;
+                setReference(null);
+                setInpaint(false);
+                setUploading(false);
+            }
+        },
+        imageToImageUnavailableReason,
+        inpaint: maskRepaint,
+        setInpaint: (value) => setInpaint(generationMode === "img2img" && value),
         inpaintUnavailableReason,
         applyExample: () => {
             setPrompt(screenCarExample.prompt);
-            setAdvancedValue((value) => ({ ...value, ...screenCarExample.settings }));
+            setAdvancedValue(applyScreenCarExample);
             setStorageNotice("已填入科幻超跑提示词与调试起始参数；请按当前模型生成后检查构图效果");
         },
         prompt,
@@ -477,7 +498,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         advanced,
         setAdvanced: (patch) => setAdvancedValue((value) => {
             const next = { ...value, ...patch };
-            if (patch.controlType !== undefined && patch.controlType !== value.controlType) return screenSettingsFromControl(next, switchControlNetType(screenControlParameters(value), patch.controlType, profile?.controlNet, screenModelDefaults(baseConfig, model).defaults));
+            if (patch.controlType !== undefined && patch.controlType !== value.controlType) return screenSettingsFromControlSelection(next, switchControlNetType(screenControlParameters(value), patch.controlType, profile?.controlNet, screenModelDefaults(baseConfig, model).defaults), value);
             if (patch.preprocessor !== undefined && patch.preprocessor !== value.preprocessor) return screenSettingsFromControl(next, switchControlNetPreprocessor(screenControlParameters(value), patch.preprocessor, profile?.controlNet, screenModelDefaults(baseConfig, model).defaults));
             return next;
         }),

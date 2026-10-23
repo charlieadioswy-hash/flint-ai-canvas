@@ -2,6 +2,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelCompatibilityError } from "@/lib/model-selection";
 import { encodeChannelModel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import type { ControlNetParameters } from "./generation-contract.generated";
+import type { ScreenGenerationMode } from "./irregular-screen-domain";
 import { controlNetBaseModel, controlNetBaseModelError, controlNetDefaultModel, controlNetDefaultPreprocessor, controlNetDefaultType, controlNetModels, controlNetPreprocessors, controlNetType, controlNetTypes } from "./controlnet-options";
 
 export type ScreenGenerationSettings = {
@@ -12,6 +13,7 @@ export type ScreenGenerationSettings = {
     strength: number;
     start: number;
     end: number;
+    pixelPerfect?: boolean;
     lowThreshold: number;
     highThreshold: number;
     resolution: number;
@@ -54,8 +56,8 @@ export function screenInpaintError(config: AiConfig, model: string) {
     const error = screenModelError(config, model, true);
     if (error) return error;
     const { protocol, defaults } = screenModelDefaults(config, model);
-    if (protocol !== "liblib-image" || defaults.family !== "sd") return "局部重绘目前支持 Liblib SD / SDXL 模型，请选择对应模型";
-    if (!modelCapabilityConfigFor(config, model).image?.references.maskSupported) return "当前模型未启用局部重绘，请管理员确认模板支持后开启蒙版能力";
+    if (protocol !== "liblib-image" || defaults.family !== "sd") return "蒙版重绘目前支持 Liblib SD / SDXL 模型，请选择对应模型";
+    if (!modelCapabilityConfigFor(config, model).image?.references.maskSupported) return "当前模型未启用蒙版重绘，请管理员确认模板支持后开启蒙版能力";
     return "";
 }
 
@@ -72,21 +74,28 @@ export function screenPickerConfig(config: AiConfig): AiConfig {
     return { ...config, channels, models, imageModels: models };
 }
 
-export function screenDefaultSettings(config: AiConfig, model: string): ScreenGenerationSettings {
-    const { defaults } = screenModelDefaults(config, model);
+export function screenDefaultSettings(config: AiConfig, model: string, generationMode: ScreenGenerationMode = "text2img"): ScreenGenerationSettings {
+    const { defaults, protocol } = screenModelDefaults(config, model);
     const number = (key: string, fallback: number) => (typeof defaults[key] === "number" && Number.isFinite(defaults[key]) ? (defaults[key] as number) : fallback);
     const controls = modelCapabilityConfigFor(config, model).image?.controlNet;
-    const controlType = controlNetDefaultType(controls, defaults);
-    const preprocessor = controlNetDefaultPreprocessor(controls, controlType, defaults);
-    const controlModel = controlNetDefaultModel(controls, controlType, defaults, preprocessor?.id);
+    const inpaintProcessor = protocol === "liblib-image" && generationMode === "text2img" && controls?.supported
+        ? controlNetPreprocessors(controls, "inpaint").find((processor) => controlNetModels(controls, "inpaint", defaults, processor.id).length)
+        : undefined;
+    const controlType = inpaintProcessor ? "inpaint" : controlNetDefaultType(controls, defaults);
+    const preprocessor = inpaintProcessor || controlNetDefaultPreprocessor(controls, controlType, defaults);
+    // Keep defaults for base inference; Inpaint uses the catalog's recommendation order.
+    const controlModel = inpaintProcessor
+        ? controlNetModels(controls, controlType, defaults, inpaintProcessor.id)[0]?.id || ""
+        : controlNetDefaultModel(controls, controlType, defaults, preprocessor?.id);
     return {
         controlType,
         preprocessor: preprocessor?.id || "",
         processorParameters: Object.fromEntries((preprocessor?.parameters || []).map((parameter) => [parameter.name, parameter.default])),
         controlModel,
-        strength: 0.9,
+        strength: controlType === "inpaint" ? 1 : 0.9,
         start: 0,
-        end: 0.9,
+        end: controlType === "inpaint" ? 1 : 0.9,
+        pixelPerfect: controlType !== "inpaint",
         lowThreshold: 100,
         highThreshold: 200,
         resolution: 1024,
@@ -108,7 +117,7 @@ export function screenControlParameters(settings: ScreenGenerationSettings): Con
         strength: settings.strength,
         start: settings.start,
         end: settings.end,
-        pixelPerfect: true,
+        pixelPerfect: settings.pixelPerfect ?? true,
         controlMode: "balanced",
         resizeMode: "stretch",
         ...(preprocessor === "canny" ? { canny: { resolution: settings.resolution, lowThreshold: settings.lowThreshold, highThreshold: settings.highThreshold } } : { processorParameters: settings.processorParameters || {} }),
@@ -116,17 +125,27 @@ export function screenControlParameters(settings: ScreenGenerationSettings): Con
 }
 
 export function screenSettingsFromControl(settings: ScreenGenerationSettings, parameters: ControlNetParameters): ScreenGenerationSettings {
-    return { ...settings, controlType: controlNetType(parameters), preprocessor: parameters.preprocessor, controlModel: parameters.model, strength: parameters.strength, start: parameters.start, end: parameters.end, processorParameters: parameters.processorParameters ? { ...parameters.processorParameters } : undefined, resolution: parameters.canny?.resolution ?? settings.resolution, lowThreshold: parameters.canny?.lowThreshold ?? settings.lowThreshold, highThreshold: parameters.canny?.highThreshold ?? settings.highThreshold };
+    return { ...settings, controlType: controlNetType(parameters), preprocessor: parameters.preprocessor, controlModel: parameters.model, strength: parameters.strength, start: parameters.start, end: parameters.end, pixelPerfect: parameters.pixelPerfect, processorParameters: parameters.processorParameters ? { ...parameters.processorParameters } : undefined, resolution: parameters.canny?.resolution ?? settings.resolution, lowThreshold: parameters.canny?.lowThreshold ?? settings.lowThreshold, highThreshold: parameters.canny?.highThreshold ?? settings.highThreshold };
 }
 
-export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, hasReference: boolean, inpaint = false) {
+export function screenSettingsFromControlSelection(settings: ScreenGenerationSettings, parameters: ControlNetParameters, previousSettings = settings): ScreenGenerationSettings {
+    const selectsInpaint = controlNetType(parameters) === "inpaint" && controlNetType(screenControlParameters(previousSettings)) !== "inpaint";
+    return screenSettingsFromControl(settings, selectsInpaint ? { ...parameters, strength: 1, start: 0, end: 1, pixelPerfect: false } : parameters);
+}
+
+export function screenSettingsForGenerationMode(config: AiConfig, model: string, settings: ScreenGenerationSettings, previousMode: ScreenGenerationMode, generationMode: ScreenGenerationMode): ScreenGenerationSettings {
+    if (previousMode === generationMode || generationMode !== "text2img") return settings;
+    return screenSettingsFromControl(settings, screenControlParameters(screenDefaultSettings(config, model, generationMode)));
+}
+
+export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, generationMode: ScreenGenerationMode, inpaint = false) {
     const { defaults, protocol } = screenModelDefaults(config, model);
     const options: Record<string, unknown> = { ...defaults };
     if (protocol === "liblib-image") {
         Object.assign(options, { steps: settings.steps, sampler: settings.sampler, cfgScale: settings.cfgScale, seed: settings.seed, denoisingStrength: settings.denoisingStrength, negativePrompt: settings.negativePrompt });
-        options.templateUuid = defaults.templateUuid || (hasReference ? defaults.imageToImageTemplateUuid : defaults.textToImageTemplateUuid);
+        options.templateUuid = defaults.templateUuid || (generationMode === "img2img" ? defaults.imageToImageTemplateUuid : defaults.textToImageTemplateUuid);
         // The screen mask is opaque grayscale: white redraws, black preserves.
-        if (inpaint) options.inpaintMaskMode = "luminance";
+        if (generationMode === "img2img" && inpaint) options.inpaintMaskMode = "luminance";
         else delete options.inpaintMaskMode;
     }
     return { [protocol]: options };
