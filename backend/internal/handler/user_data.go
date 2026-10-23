@@ -50,7 +50,17 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		if err := svc.PurgeUserAssets(user.ID, ids); err != nil {
+		status := c.Query("status")
+		if status != "" && status != "archived" {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("不支持的删除状态条件"))
+			return
+		}
+		if status == "archived" {
+			err = svc.PurgeArchivedUserAssets(user.ID, ids)
+		} else {
+			err = svc.PurgeUserAssets(user.ID, ids)
+		}
+		if err != nil {
 			failService(c, err)
 			return
 		}

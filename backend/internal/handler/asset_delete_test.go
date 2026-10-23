@@ -127,4 +127,58 @@ func TestAssetBatchDeleteHTTP(t *testing.T) {
 	if err := db.Model(&model.Task{}).Where("id = ?", "running-task").Count(&tasks).Error; err != nil || tasks != 1 {
 		t.Fatalf("task history must be kept: count=%d err=%v", tasks, err)
 	}
+
+	t.Run("archived condition protects restored assets and shared resources", func(t *testing.T) {
+		sharedPayload := `{"url":"/api/resources/shared-trash-resource/file"}`
+		for _, record := range []any{
+			&model.Resource{ID: "shared-trash-resource", UserID: "batch-user", Provider: "unsupported-test-provider", ObjectKey: "shared.png"},
+			&model.Asset{ID: "clear-archived", UserID: "batch-user", Status: model.AssetVersionStatusArchived, PayloadJSON: sharedPayload},
+			&model.Asset{ID: "keep-active", UserID: "batch-user", Status: model.AssetVersionStatusConfirmed, PayloadJSON: sharedPayload},
+			&model.Asset{ID: "restored", UserID: "batch-user", Status: model.AssetVersionStatusArchived, PayloadJSON: `{}`},
+		} {
+			if err := db.Create(record).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		guardedPath := path + "?status=archived"
+		if w := call(http.MethodPost, path+"?status=active", `["clear-archived"]`, true); w.Code != http.StatusBadRequest {
+			t.Fatalf("unsupported condition: %d %s", w.Code, w.Body.String())
+		}
+		if w := call(http.MethodPost, guardedPath, `["clear-archived","keep-active"]`, true); w.Code != http.StatusConflict {
+			t.Fatalf("active asset must reject entire batch: %d %s", w.Code, w.Body.String())
+		}
+		assertAssets(4)
+
+		// Restore after the service's first read, so only the transaction's locked
+		// state check can prevent deletion. No sleeps or timing-dependent goroutines.
+		restoreOnRead := true
+		const callbackName = "test:restore_before_trash_delete"
+		if err := db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+			if restoreOnRead && tx.Statement.Table == "assets" {
+				restoreOnRead = false
+				if err := db.Model(&model.Asset{}).Where("id = ?", "restored").Update("status", model.AssetVersionStatusConfirmed).Error; err != nil {
+					t.Error(err)
+				}
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		w := call(http.MethodPost, guardedPath, `["clear-archived","restored"]`, true)
+		_ = db.Callback().Query().Remove(callbackName)
+		if restoreOnRead || w.Code != http.StatusConflict {
+			t.Fatalf("restore race must reject entire batch: %d %s", w.Code, w.Body.String())
+		}
+		assertAssets(4)
+		if w := call(http.MethodPost, guardedPath, `["clear-archived"]`, true); w.Code != http.StatusOK {
+			t.Fatalf("archived delete: %d %s", w.Code, w.Body.String())
+		}
+		assertAssets(3)
+		var resources, jobs int64
+		if err := db.Model(&model.Resource{}).Where("id = ?", "shared-trash-resource").Count(&resources).Error; err != nil || resources != 1 {
+			t.Fatalf("active asset's shared resource must remain: count=%d err=%v", resources, err)
+		}
+		if err := db.Model(&model.ResourceDeletionJob{}).Where("resource_id = ?", "shared-trash-resource").Count(&jobs).Error; err != nil || jobs != 0 {
+			t.Fatalf("shared resource must not be scheduled for deletion: jobs=%d err=%v", jobs, err)
+		}
+	})
 }

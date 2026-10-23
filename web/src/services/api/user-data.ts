@@ -138,8 +138,8 @@ export function deleteRemoteAsset(id: string) {
     return http.delete<{ id: string }>(`/assets/${encodeURIComponent(id)}`);
 }
 
-export function deleteRemoteAssets(ids: string[]) {
-    return http.post<{ ids: string[] }>("/assets/batch-delete", ids);
+export function deleteRemoteAssets(ids: string[], options?: { status: "archived" }) {
+    return http.post<{ ids: string[] }>("/assets/batch-delete", ids, options ? { params: options } : undefined);
 }
 
 export function listRemoteCanvasProjects() {

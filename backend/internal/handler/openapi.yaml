@@ -2216,7 +2216,15 @@ paths:
     post:
       tags: [assets]
       summary: 批量彻底删除当前用户素材
-      description: 顶层 JSON 数组，一次请求、一个数据库事务。所有 ID 必须属于当前用户，不受任务、画布或历史引用阻塞；共享文件保留，其余通过 Outbox 异步清理，失败重试。任一素材不存在、越权或数据库写入失败时整批不删除。
+      description: 顶层 JSON 数组，一次请求、一个数据库事务。所有 ID 必须属于当前用户，不受任务、画布或历史引用阻塞；共享文件保留，其余通过 Outbox 异步清理，失败重试。任一素材不存在、越权或数据库写入失败时整批不删除。清空回收站传 status=archived，在删除事务中确认整批素材仍为归档状态；任一项已还原返回 409，整批不删除。
+      parameters:
+        - in: query
+          name: status
+          required: false
+          description: 清空回收站时要求所有素材仍为 archived；省略时保留普通批量彻底删除语义。
+          schema:
+            type: string
+            enum: [archived]
       requestBody:
         required: true
         content:
@@ -2252,6 +2260,12 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "409":
+          description: 任一素材已还原或不再是归档状态，整批保留，请刷新后重试。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
         "500":
           $ref: "#/components/responses/Error"
   /assets/{id}:

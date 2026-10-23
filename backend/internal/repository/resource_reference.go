@@ -2,6 +2,7 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+var ErrAssetNotArchived = errors.New("asset is no longer archived")
 
 // ResourceReferenceDocument 是资源删除校验使用的只读业务文档快照。
 // repository 只按用户范围读取记录；JSON 中的资源引用合同由 service 统一解释。
@@ -451,7 +454,7 @@ func (r *Repository) DeleteAssetAndResources(userID string, assetID string, reso
 	return r.DeleteAssetsAndResources(userID, []string{assetID}, resourceIDs, deletionJobs, deleteReferencedResources)
 }
 
-func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, deleteReferencedResources bool) error {
+func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, resourceIDs []string, deletionJobs []model.ResourceDeletionJob, deleteReferencedResources bool, archivedOnly ...bool) error {
 	moderationProtection := r.db.Migrator().HasTable(&model.ImageModerationCheck{})
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := New(tx).RequireNoModel3DReferences(resourceIDs); err != nil {
@@ -472,6 +475,13 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, 
 		}
 		if len(assetIDs) == 0 || len(ownedAssets) != len(assetIDs) {
 			return gorm.ErrRecordNotFound
+		}
+		if len(archivedOnly) > 0 && archivedOnly[0] {
+			for _, asset := range ownedAssets {
+				if asset.Status != model.AssetVersionStatusArchived {
+					return ErrAssetNotArchived
+				}
+			}
 		}
 		if deleteReferencedResources {
 			// 彻底删除：移除被删资源的画布历史索引，让删除 worker 可以释放物理对象；

@@ -990,7 +990,7 @@ export async function deleteAssetWithRemoteSync(id: string) {
     return deleteAssetsWithRemoteSync([id]);
 }
 
-export async function deleteAssetsWithRemoteSync(ids: string[]) {
+export async function deleteAssetsWithRemoteSync(ids: string[], options?: { status: "archived" }) {
     const epoch = sessionEpoch;
     if (!ids.length || ids.length > 1000) throw new Error("每次请选择 1–1000 个素材删除");
     const assetIds = [...new Set(ids.map((id) => id.trim()))];
@@ -999,7 +999,7 @@ export async function deleteAssetsWithRemoteSync(ids: string[]) {
         if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新选择要删除的素材");
         if (activeRemoteUserId) {
             requireRemoteUserDataBaseline();
-            await deleteRemoteAssets(assetIds);
+            await deleteRemoteAssets(assetIds, options);
             if (epoch !== sessionEpoch) throw new Error("账号已切换，请刷新原账号素材库确认删除结果");
             for (const id of assetIds) acknowledgedAssets.delete(id);
         }
@@ -1012,6 +1012,32 @@ export async function deleteAssetsWithRemoteSync(ids: string[]) {
     void Promise.all([appQueryClient.invalidateQueries({ queryKey: ["asset-library"] }, { throwOnError: true }), appQueryClient.invalidateQueries({ queryKey: ["asset-picker"] }, { throwOnError: true })]).catch((error) => {
         console.warn("素材删除后列表刷新失败", error);
     });
+}
+
+export async function emptyAssetTrashWithRemoteSync(): Promise<number> {
+    const epoch = sessionEpoch;
+    const ensureSession = () => {
+        if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新确认要清空的回收站");
+    };
+    // 先提交本机尚未同步的还原，避免把用户刚还原的素材重新列入删除范围。
+    await saveRemoteUserDataNow([]);
+    ensureSession();
+    const ids = new Set<string>();
+    // 必须先收集所有页再删除；边翻页边删除会让后续页向前移动而漏删。
+    for (let page = 1; ; page++) {
+        const result = await listRemoteAssetsPage({ page, pageSize: 120, status: "archived" });
+        ensureSession();
+        for (const asset of result.assets) if (asset.status === "archived") ids.add(asset.id);
+        if (!result.hasMore) break;
+    }
+    const assetIds = [...ids];
+    for (let offset = 0; offset < assetIds.length; offset += 1000) {
+        ensureSession();
+        // 服务端在删除事务中再次验证归档状态，保护列举后已在其他端还原的素材。
+        await deleteAssetsWithRemoteSync(assetIds.slice(offset, offset + 1000), { status: "archived" });
+    }
+    if (!assetIds.length) void appQueryClient.invalidateQueries({ queryKey: ["asset-library"] });
+    return assetIds.length;
 }
 
 export async function deleteCanvasProjectsWithRemoteSync(ids: string[]) {

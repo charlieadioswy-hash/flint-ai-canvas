@@ -55,12 +55,13 @@ function text(value: any): string {
     return value === null || value === undefined || typeof value === "boolean" ? "" : String(value);
 }
 
-function harness(initialAssets: Asset[], initialRemote: PageData | undefined) {
+function harness(initialAssets: Asset[], initialRemote: PageData | undefined, archivedTotal?: number) {
     let localAssets = initialAssets;
     let remote = initialRemote;
     const cells: any[] = [];
     let cursor = 0;
     const requests: Record<string, unknown>[] = [];
+    let emptyTrashCalls = 0;
     let queryOptions: any;
     const hooks = {
         useState(initial: any) {
@@ -96,6 +97,10 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined) {
             useQueryClient: () => ({ invalidateQueries: noop }),
             useQuery: (options: { queryKey: unknown[]; queryFn: (context: { signal: AbortSignal }) => unknown }) => {
                 if (options.queryKey[0] === "asset-folders") return { data: { folders: [{ id: "folder-a", name: "场景" }] } };
+                if (options.queryKey[2] === "archived-total") {
+                    options.queryFn({ signal: new AbortController().signal });
+                    return { data: archivedTotal === undefined ? undefined : { total: archivedTotal } };
+                }
                 queryOptions = options;
                 options.queryFn({ signal: new AbortController().signal });
                 return { data: remote, isSuccess: remote !== undefined, isFetching: false };
@@ -103,7 +108,7 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined) {
         },
         antd: {
             ...Object.fromEntries(["Popconfirm", "Button", "Dropdown", "Modal", "Space", "Tag", "Progress"].map((name) => [name, name])),
-            App: { useApp: () => ({ message: ui }) },
+            App: { useApp: () => ({ message: { success: noop, error: noop } }) },
             Form: Object.assign(() => {}, { useForm: () => [form], useWatch: noop, Item: "Form.Item" }),
             Input: { Search: "Input.Search", TextArea: "Input.TextArea" },
             Typography: { Text: "Typography.Text" },
@@ -116,6 +121,10 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined) {
         "@/stores/use-asset-store": { useAssetStore: Object.assign((selector: (value: ReturnType<typeof store>) => unknown) => selector(store()), { getState: store }) },
         "@/stores/use-user-store": { useUserStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, runtimeLimits: { recycleBinRetentionDays: 30 } }) },
         "@/services/user-data-sync": {
+            emptyAssetTrashWithRemoteSync: async () => {
+                emptyTrashCalls++;
+                return archivedTotal ?? 0;
+            },
             loadAssetLibraryPage: (options: Record<string, unknown>) => {
                 requests.push(options);
                 return Promise.resolve(remote);
@@ -144,6 +153,19 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined) {
     }
     return {
         requests,
+        get emptyTrashCalls() { return emptyTrashCalls; },
+        trashCount() {
+            const button = find((element) => element.type === "button" && descendants(element).some((child) => child.type === "span" && text(child) === "回收站"));
+            return Number(text(find((element) => element.props.className === "assets-filter-count", button)));
+        },
+        canEmptyTrash() {
+            return descendants(find((element) => element.type === "PageHeader").props.actions).some((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？");
+        },
+        async emptyTrash() {
+            const actions = find((element) => element.type === "PageHeader").props.actions;
+            await find((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？", actions).props.onConfirm();
+            render();
+        },
         placeholder(previous: PageData, userId: string, viewMode: string) {
             return queryOptions.placeholderData(previous, { queryKey: ["asset-library", userId, 1, 40, viewMode] });
         },
@@ -185,6 +207,26 @@ test("folder total stays at the remote total across pages and local cache update
     h.setRemote(pageData(remoteAssets.slice(40), 80));
     expect([firstPageCount, h.folderCount("全部")]).toEqual([80, 80]);
     expect(h.requests.at(-1)?.page).toBe(2);
+});
+
+test("uncached remote archived assets determine the trash badge and clear action even with an empty filtered page", async () => {
+    const h = harness([], pageData([], 0), 121);
+    expect(h.trashCount()).toBe(121);
+    h.openTrash();
+    h.clickFolder("场景");
+    expect(h.folderCount("场景")).toBe(0);
+    expect(h.trashCount()).toBe(121);
+    expect(h.canEmptyTrash()).toBe(true);
+    await h.emptyTrash();
+    expect(h.emptyTrashCalls).toBe(1);
+    expect(h.requests.some((request) => request.status === "archived" && request.pageSize === 1 && request.folderId === undefined && request.query === undefined)).toBe(true);
+});
+
+test("an empty remote trash does not show stale cached archived counts or a clear action", () => {
+    const h = harness(assets(2, { status: "archived" }), pageData([], 0), 0);
+    expect(h.trashCount()).toBe(0);
+    h.openTrash();
+    expect(h.canEmptyTrash()).toBe(false);
 });
 
 test("a missing remote folder facet is zero even if deleted assets remain in the local cache", () => {

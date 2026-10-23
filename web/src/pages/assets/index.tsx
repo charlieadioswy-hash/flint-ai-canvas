@@ -25,7 +25,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
 import { downloadBrowserMedia } from "@/services/browser-download";
 import { flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
-import { loadAssetLibraryPage, loadAssetsForUse, saveRemoteUserDataNow, localSavedRemotePendingMessage, deleteAssetsWithRemoteSync, deleteAssetWithRemoteSync } from "@/services/user-data-sync";
+import { loadAssetLibraryPage, loadAssetsForUse, saveRemoteUserDataNow, localSavedRemotePendingMessage, deleteAssetsWithRemoteSync, deleteAssetWithRemoteSync, emptyAssetTrashWithRemoteSync } from "@/services/user-data-sync";
 import { useUserStore } from "@/stores/use-user-store";
 import { createAssetFolder, deleteAssetFolder, listAssetFolders, updateAssetFolder, type AssetFolder, moveRemoteAssetsToFolder } from "@/services/api/user-data";
 import { assetCountMap, assetSearchText, readAssetGridDensity, assetKindIcons } from "./asset-library-format";
@@ -138,6 +138,13 @@ export default function AssetsPage() {
             return assetSearchText(asset).includes(query);
         });
     }, [validAssets, keyword, kindFilter, categoryFilter, folderFilter]);
+
+    const archivedTotalQuery = useQuery({
+        queryKey: [...ASSET_LIBRARY_QUERY_KEY, userId, "archived-total"],
+        queryFn: ({ signal }) => loadAssetLibraryPage({ page: 1, pageSize: 1, status: "archived", signal }),
+        enabled: Boolean(userId),
+    });
+    const trashCount = archivedTotalQuery.data?.total ?? trashAssets.length;
 
     const assetPageQuery = useQuery({
         queryKey: [...ASSET_LIBRARY_QUERY_KEY, userId, page, pageSize, viewMode, kindFilter, categoryFilter, folderFilter, debouncedKeyword],
@@ -485,14 +492,16 @@ export default function AssetsPage() {
     };
 
     const emptyTrash = async () => {
-        const count = trashAssets.length;
-        if (!count) return;
+        if (batchWorking) return;
+        setBatchWorking(true);
         try {
-            await deleteAssetsWithRemoteSync(trashAssets.map((asset) => asset.id));
+            const count = await emptyAssetTrashWithRemoteSync();
             setSelectedIds([]);
             message.success(`已彻底清空回收站 ${count} 个素材`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "清空回收站失败");
+        } finally {
+            setBatchWorking(false);
         }
     };
 
@@ -551,16 +560,17 @@ export default function AssetsPage() {
                                 <div className="assets-header-action-buttons">
                                     {viewMode === "trash" ? (
                                         <>
-                                            {trashAssets.length > 0 ? (
+                                            {trashCount > 0 ? (
                                                 <Popconfirm
                                                     title="确定清空回收站吗？"
                                                     description="清空后所有回收站素材及其文件将被彻底永久删除，不可恢复。"
-                                                    onConfirm={() => void emptyTrash()}
+                                                    onConfirm={emptyTrash}
+                                                    disabled={batchWorking}
                                                     okText="清空"
                                                     okButtonProps={{ danger: true }}
                                                     cancelText="取消"
                                                 >
-                                                    <Button danger icon={<Trash2 className="size-3.5" />}>
+                                                    <Button danger loading={batchWorking} icon={<Trash2 className="size-3.5" />}>
                                                         清空回收站
                                                     </Button>
                                                 </Popconfirm>
@@ -708,7 +718,7 @@ export default function AssetsPage() {
                                         <Trash2 className="size-3.5" />
                                         <span>回收站</span>
                                     </span>
-                                    <span className="assets-filter-count">{trashAssets.length}</span>
+                                    <span className="assets-filter-count">{trashCount}</span>
                                 </button>
                             </div>
                         </aside>

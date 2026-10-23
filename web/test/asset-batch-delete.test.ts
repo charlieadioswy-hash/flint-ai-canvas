@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import localforage from "localforage";
 
 import { apiClient } from "@/services/api/request";
-import { deleteAssetsWithRemoteSync, initializeRemoteUserDataSession, loadAssetLibraryPage, loadAssetsForUse, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { deleteAssetsWithRemoteSync, emptyAssetTrashWithRemoteSync, initializeRemoteUserDataSession, loadAssetLibraryPage, loadAssetsForUse, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { flushAssetStorePersistence, useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { appQueryClient } from "@/lib/query-client";
 
@@ -81,6 +81,134 @@ afterEach(async () => {
 });
 
 describe("素材批量删除", () => {
+    test("未建立登录同步会话时清空不发远端请求，也不删除本地缓存", async () => {
+        resetRemoteUserDataSync();
+        const archived = { ...asset("local-only"), status: "archived" as const };
+        useAssetStore.setState({ assets: [archived] });
+        let requests = 0;
+        apiClient.defaults.adapter = async () => {
+            requests++;
+            throw new Error("不应发出请求");
+        };
+        await expect(emptyAssetTrashWithRemoteSync()).rejects.toThrow("云端同步会话尚未建立");
+        expect(requests).toBe(0);
+        expect(useAssetStore.getState().assets).toEqual([archived]);
+    });
+
+    test("清空先收集未筛选的全部归档页，再分批删除，保留服务端活跃但本地过期归档的素材", async () => {
+        const archived = Array.from({ length: 1201 }, (_, i) => ({ ...asset(`archived-${i}`), status: "archived" as const }));
+        const active = { ...asset("active"), status: "confirmed" as const };
+        useAssetStore.setState({ assets: [archived[0], { ...active, status: "archived" }] });
+        await initializeRemoteUserDataSession("batch-test-user");
+        const pages: number[] = [];
+        const batches: string[][] = [];
+        apiClient.defaults.adapter = async (config) => {
+            let data: unknown;
+            if (config.method === "get") {
+                const page = config.params.page;
+                expect(config.params).toEqual({ page, pageSize: 120, status: "archived" });
+                pages.push(page);
+                const start = (page - 1) * 120;
+                data = { assets: archived.slice(start, start + 120), total: archived.length, hasMore: start + 120 < archived.length };
+            } else {
+                expect(pages).toHaveLength(11);
+                expect(config.url).toBe("/assets/batch-delete");
+                expect(config.params).toEqual({ status: "archived" });
+                const ids: string[] = JSON.parse(config.data);
+                batches.push(ids);
+                data = { ids };
+            }
+            return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data, msg: "ok" } };
+        };
+        expect(await emptyAssetTrashWithRemoteSync()).toBe(1201);
+        expect(pages).toEqual(Array.from({ length: 11 }, (_, i) => i + 1));
+        expect(batches.map((ids) => ids.length)).toEqual([1000, 201]);
+        expect(batches.flat()).toEqual(archived.map((item) => item.id));
+        expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["active"]);
+    });
+
+    test("列举后的还原冲突不会删除本地素材或报告清空成功", async () => {
+        const archived = { ...asset("restored"), status: "archived" as const };
+        useAssetStore.setState({ assets: [archived] });
+        await initializeRemoteUserDataSession("batch-test-user");
+        apiClient.defaults.adapter = async (config) => {
+            if (config.method === "get") return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { assets: [archived], hasMore: false }, msg: "ok" } };
+            return { config, headers: {}, status: 409, statusText: "Conflict", data: { code: 409, data: null, msg: "素材已还原" } };
+        };
+        await expect(emptyAssetTrashWithRemoteSync()).rejects.toThrow("素材已还原");
+        expect(useAssetStore.getState().assets).toEqual([archived]);
+    });
+
+    test("任一归档页读取失败时不开始删除", async () => {
+        const archived = { ...asset("keep"), status: "archived" as const };
+        useAssetStore.setState({ assets: [archived] });
+        await initializeRemoteUserDataSession("batch-test-user");
+        const methods: string[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            methods.push(config.method!);
+            if (config.params.page === 2) throw new Error("第二页读取失败");
+            return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { assets: [archived], hasMore: true }, msg: "ok" } };
+        };
+        await expect(emptyAssetTrashWithRemoteSync()).rejects.toThrow("第二页读取失败");
+        expect(methods).toEqual(["get", "get"]);
+        expect(useAssetStore.getState().assets).toEqual([archived]);
+    });
+
+    test("后续删除批次失败时只移除已确认成功的本地项，整次清空仍报告失败", async () => {
+        const archived = Array.from({ length: 1001 }, (_, i) => ({ ...asset(`archived-${i}`), status: "archived" as const }));
+        useAssetStore.setState({ assets: [archived[0], archived[1000], asset("keep")] });
+        await initializeRemoteUserDataSession("batch-test-user");
+        const batches: number[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            if (config.method === "get") {
+                const start = (config.params.page - 1) * 120;
+                return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { assets: archived.slice(start, start + 120), hasMore: start + 120 < archived.length }, msg: "ok" } };
+            }
+            const ids: string[] = JSON.parse(config.data);
+            batches.push(ids.length);
+            return batches.length === 1
+                ? { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { ids }, msg: "ok" } }
+                : { config, headers: {}, status: 409, statusText: "Conflict", data: { code: 409, data: null, msg: "素材已还原" } };
+        };
+        await expect(emptyAssetTrashWithRemoteSync()).rejects.toThrow("素材已还原");
+        expect(batches).toEqual([1000, 1]);
+        expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["archived-1000", "keep"]);
+    });
+
+    test("归档列举期间切换账号不继续删除，也不动新账号缓存", async () => {
+        const methods: string[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            methods.push(config.method!);
+            resetRemoteUserDataSync();
+            useAssetStore.setState({ assets: [asset("new-account")] });
+            return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { assets: [{ ...asset("old-account"), status: "archived" }], hasMore: false }, msg: "ok" } };
+        };
+        await expect(emptyAssetTrashWithRemoteSync()).rejects.toThrow("账号已切换");
+        expect(methods).toEqual(["get"]);
+        expect(useAssetStore.getState().assets.map((item) => item.id)).toEqual(["new-account"]);
+    });
+
+    test("清空前先同步本机待保存的还原，不把它列入归档删除集合", async () => {
+        const archived = { ...asset("restoring"), status: "archived" as const };
+        useAssetStore.setState({ assets: [archived] });
+        await initializeRemoteUserDataSession("batch-test-user");
+        useAssetStore.getState().updateAsset(archived.id, { status: "confirmed" });
+        const methods: string[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            methods.push(config.method!);
+            if (config.url === "/assets/restoring") return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { asset: archived }, msg: "ok" } };
+            if (config.method === "put") {
+                const body = JSON.parse(config.data);
+                expect(body.asset.status).toBe("confirmed");
+                return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { asset: body.asset }, msg: "ok" } };
+            }
+            expect(methods).toEqual(["get", "put", "get"]);
+            return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: { assets: [], hasMore: false }, msg: "ok" } };
+        };
+        expect(await emptyAssetTrashWithRemoteSync()).toBe(0);
+        expect(useAssetStore.getState().assets[0].status).toBe("confirmed");
+    });
+
     test("100 个素材只发一个 POST 数组请求，成功后只更新一次本地素材集合", async () => {
         const ids = Array.from({ length: 100 }, (_, i) => `asset-${i}`);
         useAssetStore.setState({ assets: [...ids.map(asset), asset("keep")] });
@@ -269,10 +397,9 @@ describe("素材批量删除", () => {
         expect(bodies).toEqual([["first", "second"]]);
     });
 
-    test("素材页和选择器的批量及清空入口使用数组同步方法", () => {
+    test("素材页和选择器的跨页批量入口使用数组同步方法", () => {
         const page = readFileSync(new URL("../src/pages/assets/index.tsx", import.meta.url), "utf8");
         const picker = readFileSync(new URL("../src/components/assets/asset-library-picker-modal.tsx", import.meta.url), "utf8");
-        expect(page).toContain("deleteAssetsWithRemoteSync(trashAssets.map");
         expect(page).toContain("const ids = [...selectedIds]");
         expect(page).toContain("deleteAssetsWithRemoteSync(ids)");
         expect(page).not.toContain("validAssets.filter((asset) => selectedIds.includes(asset.id))");

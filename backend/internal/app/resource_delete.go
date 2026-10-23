@@ -20,7 +20,15 @@ func (s *Service) deleteUserAssetWithResources(userID string, assetID string, pu
 	return s.deleteUserAssetsWithResources(userID, []string{assetID}, purge)
 }
 
-func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, purge bool) error {
+// PurgeArchivedUserAssets 保留普通彻底删除合同；只有清空回收站要求所有素材仍为归档状态。
+func (s *Service) PurgeArchivedUserAssets(userID string, ids []string) error {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	return s.deleteUserAssetsWithResources(userID, ids, true, true)
+}
+
+func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, purge bool, archivedOnly ...bool) error {
+	requireArchived := len(archivedOnly) > 0 && archivedOnly[0]
 	if strings.TrimSpace(userID) == "" || len(ids) == 0 || len(ids) > 1000 {
 		return BadAuthRequest("每次删除须提供 1–1000 个素材 ID 和有效用户")
 	}
@@ -42,6 +50,13 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 	}
 	if len(assetRecords) != len(assetIDs) {
 		return NotFound("素材不存在或无权删除")
+	}
+	if requireArchived {
+		for _, asset := range assetRecords {
+			if asset.Status != model.AssetVersionStatusArchived {
+				return NewAppError(409, "回收站素材已还原或状态已变化，请刷新后重新清空")
+			}
+		}
 	}
 	// 删除语义（产品约定，勿收紧）：
 	//   - purge=true 是用户在素材库确认后的「彻底删除」（单个 DELETE、批量删除、清空回收站），
@@ -187,7 +202,10 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 	deletionJobs := resourceDeletionJobs(userID, physicalObjects)
 	// 业务记录和 Outbox 必须在同一事务提交。事务失败时物理文件完全不动；
 	// 提交成功后由幂等 worker 清理，进程退出或对象存储暂时失败都可继续重试。
-	if err := s.repo.DeleteAssetsAndResources(userID, assetIDs, ownedIDs, deletionJobs, deleteReferencedResources); err != nil {
+	if err := s.repo.DeleteAssetsAndResources(userID, assetIDs, ownedIDs, deletionJobs, deleteReferencedResources, requireArchived); err != nil {
+		if errors.Is(err, repository.ErrAssetNotArchived) {
+			return NewAppError(409, "回收站素材已还原或状态已变化，请刷新后重新清空")
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return NotFound("素材不存在或无权删除")
 		}
