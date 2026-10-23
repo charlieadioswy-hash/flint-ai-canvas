@@ -17,7 +17,7 @@ const channelProviderDefaultsSnapshotKey = "channelProviderDefaultsSnapshot"
 // Other models must have explicit administrator defaults.
 func channelModelProviderDefaults(cm model.ChannelModel) map[string]any {
 	defaults := make(map[string]any)
-	checkpoint := firstNonEmpty(metadataString(cm.ProviderDefaults, "checkPointId"), cm.ProviderModelKey, cm.ModelKey)
+	checkpoint := protocol.CanonicalLiblibModelID(firstNonEmpty(metadataString(cm.ProviderDefaults, "checkPointId"), cm.ProviderModelKey, cm.ModelKey))
 	if string(cm.Protocol) == protocol.LiblibImageProtocolID && checkpoint == verifiedLiblibSDCheckpoint && (metadataString(cm.ProviderDefaults, "family") == "" || metadataString(cm.ProviderDefaults, "family") == "sd") {
 		capability, err := normalizedChannelModelCapability(&cm)
 		if err == nil && capability != nil && capability.Image != nil && capability.Image.ControlNet != nil && capability.Image.ControlNet.Supported {
@@ -170,7 +170,13 @@ func applyChannelProviderDefaults(input map[string]any, cm model.ChannelModel) {
 			if parameters == nil {
 				continue
 			}
-			controlModel := firstNonEmpty(stringValue(controlModels[metadataString(unit, "id")]), metadataString(options, "controlNetModel"))
+			controlModel := stringValue(controlModels[metadataString(unit, "id")])
+			if controlModel == "" {
+				profile, err := normalizedChannelModelCapability(&selected)
+				if err == nil && profile != nil && profile.Image != nil && profile.Image.ControlNet != nil {
+					controlModel = defaultChannelControlNetModel(profile.Image.ControlNet, options, selectedModelKey, parameters)
+				}
+			}
 			parameters["model"] = controlModel
 		}
 	}

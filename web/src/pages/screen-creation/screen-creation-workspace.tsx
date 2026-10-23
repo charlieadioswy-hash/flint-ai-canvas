@@ -113,16 +113,16 @@ function ImageUpload({
     );
 }
 
-export function ScreenCreationGenerationMode({ inpaint, setInpaint, inpaintUnavailableReason, disabled }: Pick<ScreenCreationWorkspaceProps, "inpaint" | "setInpaint" | "inpaintUnavailableReason"> & { disabled: boolean }) {
+export function ScreenCreationGenerationMode({ inpaint, setInpaint, inpaintUnavailableReason, reference, disabled }: Pick<ScreenCreationWorkspaceProps, "inpaint" | "setInpaint" | "inpaintUnavailableReason"> & { reference?: ScreenCreationWorkspaceProps["reference"]; disabled: boolean }) {
     return (
         <div className="screen-creation-generation-mode">
             <span className="screen-creation-field-label">生成方式</span>
             <div className="screen-creation-mode-options" role="group" aria-label="生成方式">
                 <button type="button" aria-pressed={!inpaint} disabled={disabled} onClick={() => setInpaint(false)}>
-                    从描述生成
+                    {reference ? "图生图" : "文生图"}
                 </button>
                 <button type="button" aria-pressed={inpaint} disabled={disabled || Boolean(inpaintUnavailableReason)} onClick={() => setInpaint(true)}>
-                    按原图局部重绘
+                    局部重绘
                 </button>
             </div>
             <p className="screen-creation-hint">{inpaint ? "在屏幕范围内重绘内容原图，原图尺寸必须与屏幕蒙版完全一致。选择方式后，点击“生成画面”才会开始。" : "按描述创作新画面，也可添加内容参考图，借鉴色彩、风格与内容。"}</p>
@@ -200,7 +200,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     ) : null}
                                     <ScreenCreationMaskGuide />
                                 </div>
-                                <ScreenCreationGenerationMode inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} disabled={disabled} />
+                                <ScreenCreationGenerationMode inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} reference={props.reference} disabled={disabled} />
                                 <div>
                                     <ImageUpload
                                         label={props.inpaint ? "内容原图" : "内容参考图"}

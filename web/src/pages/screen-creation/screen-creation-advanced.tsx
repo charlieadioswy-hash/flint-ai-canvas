@@ -2,13 +2,13 @@ import { Input, InputNumber } from "antd";
 import { ChevronDown, CircleHelp, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Select } from "@/components/ui/base/select";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { screenModelDefaults } from "@/lib/canvas/irregular-screen-model";
+import { ControlNetParameterFields } from "@/components/controlnet-parameter-fields";
+import { screenControlParameters, screenModelDefaults, screenSettingsFromControl } from "@/lib/canvas/irregular-screen-model";
 import type { ScreenAdvancedSettings, ScreenCreationWorkspaceProps } from "./screen-creation-types";
 
 type Props = Pick<ScreenCreationWorkspaceProps, "advanced" | "setAdvanced" | "profile" | "config" | "model" | "inpaint"> & { disabled: boolean };
-type NumericSetting = Exclude<keyof ScreenAdvancedSettings, "controlModel" | "negativePrompt">;
+type NumericSetting = Exclude<keyof ScreenAdvancedSettings, "controlModel" | "negativePrompt" | "controlType" | "preprocessor" | "processorParameters">;
 
 const settingHelp: Record<NumericSetting, string> = {
     strength: "控制强度（ControlNet strength）：越高越贴合蒙版轮廓，越低越允许画面自由变化。",
@@ -45,11 +45,6 @@ function SettingField({ label, children, hint, help }: { label: string; children
 
 export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config, model, inpaint, disabled }: Props) {
     const defaults = screenModelDefaults(config, model).defaults;
-    const recommendedModel = String(defaults.controlNetModel || profile?.controlNet?.models?.[0] || "");
-    const configuredModels = profile?.controlNet?.models || [];
-    const catalogModels = Array.from(new Set(configuredModels.length ? configuredModels : [recommendedModel].filter(Boolean)));
-    const controlModels = catalogModels.map((value, index) => ({ value, label: value === recommendedModel ? "推荐轮廓模型" : `轮廓模型 ${index + 1}`, title: value, disabled: false }));
-    if (advanced.controlModel && !catalogModels.includes(advanced.controlModel)) controlModels.push({ value: advanced.controlModel, label: "原轮廓模型已不可用，请重新选择", title: advanced.controlModel, disabled: true });
     const numberField = (key: NumericSetting, label: string, min: number, max?: number, step = 1, hint?: string) => (
         <SettingField label={label} hint={hint} help={settingHelp[key]}>
             <InputNumber
@@ -77,34 +72,17 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config,
                 <ChevronDown className="screen-creation-disclosure size-4" />
             </summary>
             <div className="screen-creation-advanced-body">
-                <section className="screen-creation-settings-section" aria-label="轮廓贴合设置">
+                <section className="screen-creation-settings-section" aria-label="ControlNet 设置">
                     <div>
-                        <h3>轮廓贴合</h3>
-                        <p className="screen-creation-hint">让画面沿屏幕边界与转角线展开。</p>
+                        <h3>ControlNet 结构控制</h3>
+                        <p className="screen-creation-hint">按控制类型提取轮廓、深度、姿态或其他画面信息。</p>
                     </div>
-                    <SettingField label="轮廓识别模型" help="轮廓控制模型（ControlNet）：帮助画面遵循蒙版的边界和转角，通常选择推荐模型即可。" hint={!catalogModels.length ? "请联系管理员补充轮廓模型配置。" : undefined}>
-                        <Select
-                            ariaLabel="轮廓识别模型"
-                            value={advanced.controlModel || undefined}
-                            placeholder="暂无可用的轮廓模型"
-                            disabled={disabled || !catalogModels.length}
-                            onChange={(controlModel) => setAdvanced({ controlModel })}
-                            options={controlModels}
-                        />
-                    </SettingField>
-                    {advanced.controlModel ? (
-                        <details className="screen-creation-model-detail">
-                            <summary>查看模型标识</summary>
-                            <code>{advanced.controlModel}</code>
-                        </details>
-                    ) : null}
+                    <ControlNetParameterFields parameters={screenControlParameters(advanced)} profile={profile?.controlNet} defaults={defaults} disabled={disabled} onChange={(parameters) => setAdvanced(screenSettingsFromControl(advanced, parameters))} />
+                    {advanced.controlType === "inpaint" ? <p className="screen-creation-hint">屏幕有效区域同时作为 ControlNet Inpaint 的控制区域蒙版。</p> : null}
                     <div className="screen-creation-settings-grid">
-                        {numberField("strength", "轮廓约束强度", 0, 2, 0.05)}
-                        {numberField("resolution", "轮廓识别精细度", 64, 2048, 64)}
+                        {numberField("strength", "控制强度", 0, 2, 0.05)}
                         {numberField("start", "开始控制时点", 0, 1, 0.05)}
                         {numberField("end", "结束控制时点", 0, 1, 0.05)}
-                        {numberField("lowThreshold", "边缘灵敏度下限", 1, 255)}
-                        {numberField("highThreshold", "边缘灵敏度上限", 1, 255)}
                     </div>
                 </section>
                 <section className="screen-creation-settings-section" aria-label="画面细节设置">

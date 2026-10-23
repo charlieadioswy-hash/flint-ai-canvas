@@ -1,21 +1,8 @@
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
 import type { AiConfig } from "@/stores/use-config-store";
+import type { ScreenGenerationSettings } from "@/lib/canvas/irregular-screen-model";
 
-export type ScreenAdvancedSettings = {
-    controlModel: string;
-    strength: number;
-    start: number;
-    end: number;
-    lowThreshold: number;
-    highThreshold: number;
-    resolution: number;
-    steps: number;
-    sampler: number;
-    cfgScale: number;
-    seed: number;
-    denoisingStrength: number;
-    negativePrompt: string;
-};
+export type ScreenAdvancedSettings = ScreenGenerationSettings;
 
 export type ScreenCreationImage = {
     url: string;

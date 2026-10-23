@@ -6,6 +6,7 @@ import { kemeiSeedreamPresets } from "./kemei-image-presets";
 import { type WorkflowVideoFieldLike, workflowImageCapabilityConfig, workflowVideoCapabilityConfig } from "./model-capabilities-workflow";
 import { resolveWorkflowVideoScreenSpec } from "./video-screen-specs";
 import { wangsuImageCapability, wangsuVideoCapability } from "./model-capabilities-wangsu";
+import { CONTROLNET_PREPROCESSORS, CONTROLNET_TYPES } from "./canvas/controlnet-catalog.generated";
 
 export {
     workflowFieldChoiceValues,
@@ -71,7 +72,14 @@ export type ImageResponseFormat = "auto" | "b64_json" | "url";
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
 
 export type ImageCapabilityConfig = {
-    controlNet?: { supported: boolean; maxUnits: number; preprocessors: string[]; models?: string[] };
+    controlNet?: {
+        supported: boolean;
+        maxUnits: number;
+        preprocessors: string[];
+        models?: string[];
+        baseModel?: "sd15" | "sdxl" | "f1";
+        modelCatalog?: { id: string; name: string; controlTypes: string[]; baseModel: "sd15" | "sdxl" | "f1" }[];
+    };
     parameters?: import("./image-parameters").ImageParameter[];
     references: {
         promptMaxChars: number;
@@ -178,6 +186,7 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
                                 ...config.image.controlNet,
                                 preprocessors: normalizeCapabilityStrings(config.image.controlNet.preprocessors || []),
                                 models: config.image.controlNet.models ? normalizeCapabilityStrings(config.image.controlNet.models) : undefined,
+                                modelCatalog: config.image.controlNet.modelCatalog?.map((model) => ({ ...model, id: model.id.trim(), name: model.name.trim(), controlTypes: normalizeCapabilityStrings(model.controlTypes) })),
                             },
                         }
                       : {}),
@@ -293,7 +302,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         maxOutputs: 15,
     };
     if (protocol === "liblib-image") {
-        image.controlNet = { supported: true, maxUnits: 4, preprocessors: ["canny"] };
+        image.controlNet = { supported: true, maxUnits: 4, preprocessors: CONTROLNET_PREPROCESSORS.filter((processor) => CONTROLNET_TYPES.some((type) => type.id === processor.controlType && type.supported)).map((processor) => processor.id) };
         image.references = { ...image.references, maxImages: 1, maxImageBytes: 10 * 1024 * 1024, maskSupported: false };
         image.size = { parameter: "size", values: ["1024x1024", "1344x768", "768x1344"], default: "1024x1024", allowCustom: true };
         image.quality = { supported: false, values: [], default: "auto" };

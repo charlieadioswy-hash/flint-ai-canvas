@@ -15,7 +15,7 @@ import (
 
 func controlNetTestInput() canvasGenerationInput {
 	media := generation.Media{StorageKey: "resource:ref-one", Width: 2, Height: 2, Bytes: 100, MimeType: "image/png"}
-	return canvasGenerationInput{Mode: "image", Prompt: "panda", Config: providerConfig{InterfaceType: "liblib-image", Size: "1024x1024"}, ControlNet: []generation.ControlNetUnit{{ID: "unit1", Image: media, Parameters: generation.ControlNetParameters{Preprocessor: "canny", Model: "control-model", Strength: .6, End: .6, ControlMode: "balanced", ResizeMode: "stretch", Canny: &generation.CannyParameters{Resolution: 512, LowThreshold: 100, HighThreshold: 200}}}}, OutputMask: &generation.OutputMask{Image: media, Mode: "non-black", ResizeMode: "stretch"}}
+	return canvasGenerationInput{Mode: "image", Prompt: "panda", Config: providerConfig{InterfaceType: "liblib-image", Model: verifiedLiblibSDCheckpoint, Size: "1024x1024"}, ControlNet: []generation.ControlNetUnit{{ID: "unit1", Image: media, Parameters: generation.ControlNetParameters{Preprocessor: "canny", Model: "b6806516962f4e1599a93ac4483c3d23", Strength: .6, End: .6, ControlMode: "balanced", ResizeMode: "stretch", Canny: &generation.CannyParameters{Resolution: 512, LowThreshold: 100, HighThreshold: 200}}}}, OutputMask: &generation.OutputMask{Image: media, Mode: "non-black", ResizeMode: "stretch"}}
 }
 
 func TestControlNetCapabilityAndGeometryValidation(t *testing.T) {

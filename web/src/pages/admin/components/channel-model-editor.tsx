@@ -422,7 +422,7 @@ export function ChannelModelEditor({
                                             <SectionHeading title="生成默认参数" description="按当前协议配置默认值；任务创建时采用所选渠道模型的默认值，用户在高级设置中填写的值优先。" />
                                             <div className="admin-model-editor-section-content">
                                                 {modelProtocol === "liblib-image" && (
-                                                    <p className="mb-3 text-xs text-muted-foreground">文生图与图生图分别配置模板，系统根据内容参考图自动选择。默认 Canny 模型用于未指定控制模型的任务；固定模板留空即可自动选择。</p>
+                                                    <p className="mb-3 text-xs text-muted-foreground">文生图与图生图分别配置模板，系统根据内容参考图自动选择。默认控制模型须匹配 Control Type 与基础算法；固定模板留空即可自动选择。</p>
                                                 )}
                                                 <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                                                     {providerParameters.map((parameter) => (

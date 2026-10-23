@@ -9,9 +9,9 @@ import { CachedResourceImage } from "../src/components/cached-resource-image";
 import { ModelPicker } from "../src/components/model-picker";
 import { Select, type SelectProps } from "../src/components/ui/base/select";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
-import { screenPickerConfig } from "../src/lib/canvas/irregular-screen-model";
+import { screenControlParameters, screenPickerConfig } from "../src/lib/canvas/irregular-screen-model";
+import { ControlNetParameterFields } from "../src/components/controlnet-parameter-fields";
 import { ScreenCreationGenerationMode, ScreenCreationWorkspace } from "../src/pages/screen-creation/screen-creation-workspace";
-import { ScreenCreationAdvanced } from "../src/pages/screen-creation/screen-creation-advanced";
 import { ScreenCreationMaskGuide } from "../src/pages/screen-creation/screen-creation-mask-guide";
 import { ScreenCreationPreviewImage } from "../src/pages/screen-creation/screen-creation-preview-image";
 import type { ScreenCreationWorkspaceProps } from "../src/pages/screen-creation/screen-creation-types";
@@ -93,11 +93,11 @@ function renderedControlOptions(props: ScreenCreationWorkspaceProps) {
     const visit = (node: ReactNode) => {
         Children.forEach(node, (child) => {
             if (!isValidElement<{ children?: ReactNode; ariaLabel?: string }>(child)) return;
-            if (child.type === Select && child.props.ariaLabel === "轮廓识别模型") controlSelect = child as ReactElement<SelectProps<string>>;
+            if (child.type === Select && child.props.ariaLabel === "Model（控制模型）") controlSelect = child as ReactElement<SelectProps<string>>;
             visit(child.props.children);
         });
     };
-    visit(ScreenCreationAdvanced({ ...props, disabled: false }));
+    visit(ControlNetParameterFields({ parameters: screenControlParameters(props.advanced), profile: props.profile?.controlNet, defaults: props.config.channels[0].modelCosts?.[0].defaultOptions, disabled: false, onChange: noop }));
     expect(controlSelect).toBeDefined();
     return controlSelect!.props.options || [];
 }
@@ -109,7 +109,7 @@ test("first screen keeps detailed settings collapsed and exposes both source pre
     expect(disclosure![1]).not.toMatch(/\bopen(?:=|\s|$)/);
     const common = markup.slice(0, disclosure!.index);
     const advanced = markup.slice(disclosure!.index, markup.indexOf('<div class="screen-creation-submit"'));
-    for (const label of ["细节迭代次数", "边缘灵敏度下限", "避免出现的内容", "复现种子"]) {
+    for (const label of ["细节迭代次数", "低阈值", "避免出现的内容", "复现种子"]) {
         expect(common).not.toContain(label);
         expect(advanced).toContain(label);
     }
@@ -155,10 +155,7 @@ test("advanced controls use plain labels with accessible professional explanatio
         ["细节迭代次数", "steps"],
         ["描述贴合程度", "CFG"],
         ["画面变化幅度", "denoising"],
-        ["轮廓约束强度", "strength"],
-        ["轮廓识别精细度", "processor resolution"],
-        ["边缘灵敏度下限", "Canny low threshold"],
-        ["边缘灵敏度上限", "Canny high threshold"],
+        ["控制强度", "strength"],
         ["开始控制时点", "start"],
         ["结束控制时点", "end"],
         ["复现种子", "seed"],
@@ -171,12 +168,13 @@ test("advanced controls use plain labels with accessible professional explanatio
     }
     expect(markup).not.toContain("Liblib 生成参数");
     expect(markup).not.toContain("蒙版识别方式");
+    for (const label of ["预处理器分辨率", "低阈值", "高阈值"]) expect(markup).toContain(`aria-label="${label}"`);
 });
 
 test("inpainting requires matching original and mask dimensions but keeps output sizing and ordinary references", () => {
     const mask = { url: "blob:mask", name: "mask.png", width: 1200, height: 600 };
     const inpaint = render({ inpaint: true, mask, reference: { ...mask, url: "blob:original", name: "original.png" } });
-    expect(buttonAttributes(inpaint, "按原图局部重绘")).toContain('aria-pressed="true"');
+    expect(buttonAttributes(inpaint, "局部重绘")).toContain('aria-pressed="true"');
     expect(inpaint).toContain('aria-label="上传内容原图"');
     expect(inpaint).toContain("内容原图必填");
     expect(inpaint).toContain("请上传 1200 × 600 像素的原图");
@@ -189,17 +187,17 @@ test("inpainting requires matching original and mask dimensions but keeps output
     expect(inpaint).toContain("最终屏外保持黑色");
     expect(inpaint).not.toContain("屏外保留原图");
     const regular = render({ mask });
-    expect(buttonAttributes(regular, "从描述生成")).toContain('aria-pressed="true"');
+    expect(buttonAttributes(regular, "文生图")).toContain('aria-pressed="true"');
     expect(regular).toContain('aria-label="上传内容参考图"');
     expect(regular).toContain("<small>可选</small>");
 });
 
 test("an unavailable inpaint model explains why and leaves ordinary generation selectable", () => {
     const markup = render({ inpaintUnavailableReason: "当前模型不支持局部重绘，请选择其他模型" });
-    expect(buttonAttributes(markup, "按原图局部重绘")).toContain("disabled");
-    expect(buttonAttributes(markup, "从描述生成")).not.toContain("disabled");
+    expect(buttonAttributes(markup, "局部重绘")).toContain("disabled");
+    expect(buttonAttributes(markup, "文生图")).not.toContain("disabled");
     expect(markup).toContain("当前模型不支持局部重绘，请选择其他模型");
-    expect(buttonAttributes(render({ busy: true }), "从描述生成")).toContain("disabled");
+    expect(buttonAttributes(render({ busy: true }), "文生图")).toContain("disabled");
 });
 
 test("mode buttons only choose a mode and the example entry respects active work", () => {
@@ -246,11 +244,11 @@ test("saved previews retain resource authorization instead of reusing an old ses
 
 test("available models have a readable recommendation while unknown saved models are marked unavailable", () => {
     const markup = render();
-    expect(markup).toContain("推荐轮廓模型");
+    expect(markup).toContain("xinsir_controlnet-canny-sdxl_V2");
     expect(markup).not.toContain('placeholder="控制模型 UUID / 标识"');
     expect(markup).toContain("<summary>查看模型标识</summary><code>" + controlId + "</code>");
     const unavailable = render({ advanced: { ...fixture().advanced, controlModel: "unlisted-control" } });
-    expect(unavailable).toContain("原轮廓模型已不可用，请重新选择");
+    expect(unavailable).toContain("原控制模型已不可用，请重新选择");
     expect(unavailable).not.toContain("当前场景的轮廓模型");
 });
 

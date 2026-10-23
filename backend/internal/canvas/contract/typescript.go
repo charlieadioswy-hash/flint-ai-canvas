@@ -60,6 +60,8 @@ func tsType(typ reflect.Type) string {
 		return "boolean"
 	case reflect.Int, reflect.Float64:
 		return "number"
+	case reflect.Map:
+		return "Record<string, " + tsType(typ.Elem()) + ">"
 	default:
 		return typ.Name()
 	}

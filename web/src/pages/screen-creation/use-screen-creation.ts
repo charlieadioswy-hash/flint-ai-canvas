@@ -10,9 +10,10 @@ import { requestCreditCost } from "@/lib/model-pricing";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
 import { isIrregularScreenScene, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize } from "@/lib/canvas/irregular-screen-domain";
-import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions } from "@/lib/canvas/irregular-screen-model";
+import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl } from "@/lib/canvas/irregular-screen-model";
 import { screenCarExample } from "@/lib/canvas/irregular-screen-example";
 import { validateControlNetBindings } from "@/lib/canvas/controlnet";
+import { controlNetConfigurationError, switchControlNetPreprocessor, switchControlNetType } from "@/lib/canvas/controlnet-options";
 import { loadCanvasProjectForEditing } from "@/services/user-data-sync";
 import { getImageBlob, resolveImageUrl } from "@/services/image-storage";
 import { readScreenImage, readScreenMask, deriveScreenOutputMask, persistScreenImage, screenImageFromNode, type ScreenImage } from "@/services/irregular-screen-media";
@@ -124,19 +125,10 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             const params = spec.options.controlNet?.[0]?.parameters;
             const defaults = screenDefaultSettings(baseConfig, selected);
             const provider = node.metadata?.providerOptions?.[screenModelDefaults(baseConfig, selected).protocol] || {};
-            const next = { ...defaults };
+            let next = { ...defaults };
             for (const key of ["steps", "sampler", "cfgScale", "seed", "denoisingStrength"] as const) if (typeof provider[key] === "number") next[key] = provider[key] as number;
             if (typeof provider.negativePrompt === "string") next.negativePrompt = provider.negativePrompt;
-            if (params)
-                Object.assign(next, {
-                    controlModel: params.model,
-                    strength: params.strength,
-                    start: params.start,
-                    end: params.end,
-                    resolution: params.canny?.resolution ?? 1024,
-                    lowThreshold: params.canny?.lowThreshold ?? 100,
-                    highThreshold: params.canny?.highThreshold ?? 200,
-                });
+            if (params) next = screenSettingsFromControl(next, params);
             setModelValue(selected);
             setAdvancedValue(next);
             setPrompt(spec.prompt);
@@ -321,7 +313,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     if (!disabledReason && !prompt.trim()) disabledReason = "请输入画面描述";
     if (!disabledReason && !size) disabledReason = "当前模型没有与蒙版匹配的输出尺寸";
     if (!disabledReason && mask) disabledReason = irregularScreenOutputSizeError(mask, size);
-    if (!disabledReason && profile?.controlNet?.models?.length && !profile.controlNet.models.includes(advanced.controlModel)) disabledReason = "所选控制模型与当前图片模型不兼容";
+    if (!disabledReason) disabledReason = controlNetConfigurationError(screenControlParameters(advanced), profile?.controlNet, screenModelDefaults(baseConfig, model).defaults, reference ? "img2img" : "text2img");
     try {
         validateControlNetBindings([{ id: "screen", imageBindingId: "screen", parameters: screenControlParameters(advanced) }]);
     } catch (failure) {
@@ -483,7 +475,12 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         prompt,
         setPrompt,
         advanced,
-        setAdvanced: (patch) => setAdvancedValue((value) => ({ ...value, ...patch })),
+        setAdvanced: (patch) => setAdvancedValue((value) => {
+            const next = { ...value, ...patch };
+            if (patch.controlType !== undefined && patch.controlType !== value.controlType) return screenSettingsFromControl(next, switchControlNetType(screenControlParameters(value), patch.controlType, profile?.controlNet, screenModelDefaults(baseConfig, model).defaults));
+            if (patch.preprocessor !== undefined && patch.preprocessor !== value.preprocessor) return screenSettingsFromControl(next, switchControlNetPreprocessor(screenControlParameters(value), patch.preprocessor, profile?.controlNet, screenModelDefaults(baseConfig, model).defaults));
+            return next;
+        }),
         effectiveMaskUrl: outputMask?.url,
         effectiveMaskStorageKey: outputMask?.storageKey,
         results,

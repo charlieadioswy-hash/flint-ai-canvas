@@ -30,7 +30,7 @@ function setup(options: { id?: string; scope?: "system" | "user"; enabled?: bool
                     image: {
                         ...profile,
                         references: { ...profile.references, maxImages: options.maxImages ?? 1 },
-                        controlNet: { supported: options.supported ?? true, maxUnits: 1, preprocessors: options.preprocessors || ["canny"], models: options.controlModels || ["canny-model"] },
+                        controlNet: { supported: options.supported ?? true, maxUnits: 1, baseModel: "sdxl", preprocessors: options.preprocessors || ["canny"], models: options.controlModels || ["canny-model"], modelCatalog: (options.controlModels || ["canny-model"]).map((id) => ({ id, name: id, baseModel: "sdxl", controlTypes: ["canny"] })) },
                     },
                 },
             },
@@ -90,11 +90,11 @@ describe("irregular screen model settings", () => {
         expect(config.channels).toHaveLength(1);
     });
 
-    test("rejects a recommended control model outside the configured model allowlist", () => {
+    test("falls back to an allowed control model when the configured recommendation was removed", () => {
         const { config, model } = setup({ defaults: { family: "sd", templateUuid: "template", controlNetModel: "removed-model" } });
-        expect(screenModelError(config, model)).not.toBe("");
-        expect(screenModels(config)).toEqual([]);
-        expect(screenDefaultSettings(config, model).controlModel).toBe("");
+        expect(screenModelError(config, model)).toBe("");
+        expect(screenModels(config)).toEqual([model]);
+        expect(screenDefaultSettings(config, model).controlModel).toBe("canny-model");
     });
 
     test("rejects unknown and disabled selections instead of falling back to another channel", () => {
@@ -152,6 +152,7 @@ describe("irregular screen model settings", () => {
         const { config, model } = setup();
         const settings = { ...screenDefaultSettings(config, model), strength: 1.1, start: 0.1, end: 0.8, lowThreshold: 80, highThreshold: 160, resolution: 768 };
         expect(screenControlParameters(settings)).toEqual({
+            controlType: "canny",
             preprocessor: "canny",
             model: "canny-model",
             strength: 1.1,
@@ -170,7 +171,7 @@ describe("irregular screen model settings", () => {
         channel.modelCosts![0].capabilityConfig!.image!.references.maskSupported = true;
         expect(screenInpaintError(config, model)).toBe("");
         channel.modelCosts![0].defaultOptions!.family = "f1";
-        expect(screenInpaintError(config, model)).toContain("SD / SDXL");
+        expect(screenInpaintError(config, model)).toContain("F.1");
         channel.modelCosts![0].defaultOptions!.family = "sd";
         delete channel.modelCosts![0].defaultOptions!.imageToImageTemplateUuid;
         expect(screenInpaintError(config, model)).toContain("模板");

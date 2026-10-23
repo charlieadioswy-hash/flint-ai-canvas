@@ -5,7 +5,7 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 
 # 画布结构控制与 Liblib
 
-「结构控制生图」复用图片节点、模型选择、持久任务、结果资源和图片批次。它通过独立的控制图引导画面结构，再用输出蒙版确定最终图片的可见范围。第一条平台适配为 Liblib，第一种已映射的预处理器为 Canny。
+「结构控制生图」复用图片节点、模型选择、持久任务、结果资源和图片批次。它通过独立的控制图引导画面结构，再用输出蒙版确定最终图片的可见范围。Liblib 的设置分为 Control Type（控制类型）、Preprocessor（预处理器）和 Model（控制模型），三者与生成底模共同决定有效参数，不再固定为 Canny。
 
 代码和模拟协议测试可在没有 Liblib 账号的情况下运行。模板、基础模型与控制模型的实际组合、生成质量及供应商费用仍需部署者配置账号后联调；测试图片和接口桩不能证明真实模型效果。
 
@@ -13,7 +13,7 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 
 ### 异形屏快捷创作
 
-从工作台侧栏进入「异形屏创作」（`/screen-creation`），上传屏幕蒙版，选择「从描述生成」或「按原图局部重绘」，再输入画面描述。页面提供原始蒙版、有效区域和结果预览，以及透明背景的转角屏示意。「高级设置」默认折叠，使用「细节迭代次数」「描述贴合程度」「轮廓约束强度」「画面变化幅度」等名称，并通过提示说明对应的 steps、CFG、ControlNet 与 denoising 参数。模型候选只保留已启用、可用并配置了 Canny 控制能力与生成默认参数的系统渠道模型。
+从工作台侧栏进入「异形屏创作」（`/screen-creation`），上传屏幕蒙版，选择「文生图」或「局部重绘」，再输入画面描述；文生图添加内容参考图后显示为「图生图」。生成方式与 Control Type 分别设置。页面提供原始蒙版、有效区域和结果预览，以及透明背景的转角屏示意。「高级设置」默认折叠，提供类型、预处理器、控制模型及对应参数。模型候选只保留已启用、可用并配置了兼容 ControlNet 能力与生成默认参数的系统渠道模型，不要求必须支持 Canny。
 
 再次进入默认恢复当前账号最近更新的异形屏场景；登录用户按需读取云端场景摘要，未登录时从当前浏览器的本地场景恢复。点击「新建场景」才进入空白设置，进入页面本身不会创建画布；首次生成或打开完整画布时才保存场景。场景读取失败会显示重试提示，不将网络错误当作没有历史场景。异形屏内部画布不显示在自由画布列表，但仍可从「最近场景」或「打开完整画布」进入，已有素材与生成结果保留。
 
@@ -23,9 +23,11 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 
 平台保存的原始 PNG 保持不变。向 Liblib 提交含透明像素的 Canny 控制图时，宿主先将透明背景确定性合成为黑底再上传，保留不透明区域的 RGB 与内部转角边界，避免隐藏在透明像素中的 RGB 影响边缘检测。此策略不依赖上游对 alpha 的解释，也不代表已经验证供应商的透明图处理效果。
 
-「从描述生成」允许添加普通内容参考图，绑定为 `reference`；屏幕原图绑定为 `control-image`，派生蒙版绑定为 `output-mask`。未指定固定模板时，有内容参考图选择渠道的图生图模板，没有时选择文生图模板；管理员明确配置的固定模板优先。上传屏幕蒙版本身不会切换到普通图生图。Canny 约束轮廓与内部边界，不会把不同颜色绑定为独立区域提示词。
+「文生图」允许添加普通内容参考图，添加后按「图生图」执行并绑定为 `reference`；屏幕原图绑定为 `control-image`，派生蒙版绑定为 `output-mask`。未指定固定模板时，有内容参考图选择渠道的图生图模板，没有时选择文生图模板；管理员明确配置的固定模板优先。上传屏幕蒙版本身不会切换到普通图生图。Canny 约束轮廓与内部边界，不会把不同颜色绑定为独立区域提示词。
 
-「按原图局部重绘」要求一张与屏幕蒙版像素尺寸完全一致的内容原图，同时将派生灰度蒙版绑定为独立的 `mask`。当前支持启用蒙版能力的 Liblib SD / SDXL 图生图模型；能力或模板不满足时显示具体原因，仍可选择「从描述生成」。原图、重绘蒙版、ControlNet 控制图与最终输出蒙版各自生效。重绘后仍执行输出蒙版合成，屏幕外输出纯黑；原图与蒙版的输入尺寸一致，不要求模型输出与输入像素数相同。
+「局部重绘」要求一张与屏幕蒙版像素尺寸完全一致的内容原图，同时将派生灰度蒙版绑定为独立的 `mask`。当前支持启用蒙版能力的 Liblib SD / SDXL 图生图模型；能力或模板不满足时显示具体原因，仍可选择「文生图」。原图、重绘蒙版、ControlNet 控制图与最终输出蒙版各自生效。重绘后仍执行输出蒙版合成，屏幕外输出纯黑；原图与蒙版的输入尺寸一致，不要求模型输出与输入像素数相同。
+
+Control Type 选择 Inpaint 时，快捷入口另将派生灰度蒙版绑定为该控制单元的 `control-mask`。这不会自动切换生成方式，也不会替代顶层局部重绘的原图与 `mask`。通用画布中需要单独选择该区域蒙版；这是本产品的提交约束，不能据此声称官方通用字段始终必填。
 
 快捷入口创建三个标准图片节点：结构原图、派生蒙版、生成节点；添加内容参考图或重绘原图时增加第四个图片节点。派生蒙版始终有 `output-mask` 引用，启用局部重绘时另有 `mask` 引用。`CanvasProject.creationScene` 仅记录 `kind: "irregular-screen"`、版本、节点 ID 映射与蒙版识别模式；生成配置以生成节点的 `generationSpec` 为唯一合同，局部重绘状态从 `mask` 引用恢复，平台参数保留在该节点的 `providerOptions` 中。再次打开 `/screen-creation/:canvasId` 复用同一场景；更新输入和提示词时保留节点身份、已有结果、用户布局及不属于场景的画布内容，也可进入完整画布继续编辑。
 
@@ -35,7 +37,7 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 
 ### 通用画布节点
 
-在画布添加「结构控制生图」，选择声明了 ControlNet 能力的图片模型，绑定或上传控制图，填写该平台的控制模型标识，再输入提示词。普通参考图仍走现有图生图入口；控制图不会混入普通参考图数组。
+在画布添加「结构控制生图」，选择声明了 ControlNet 能力的图片模型，绑定或上传控制图，选择 Control Type、预处理器与兼容控制模型，再输入提示词。模型显示官方名称，并可展开查看 UUID。普通参考图仍走现有图生图入口；控制图不会混入普通参考图数组。
 
 首版画布入口选择明确的系统渠道或自定义渠道模型。逻辑模型隐藏供应商协议，目前无法可靠展示其平台专有模板参数，因此不开放给此节点；后端仍保留独立 `control_image` 能力合同，后续需补全逻辑模型的参数投影后再开放。
 
@@ -56,8 +58,9 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 
 | 通用字段 | 范围或含义 |
 | --- | --- |
-| `preprocessor` | 预处理器标识；Liblib 当前映射 `canny` |
-| `model` | 选定平台的控制模型标识；Liblib 使用模型 UUID |
+| `controlType` | Liblib 控制类别；明确选择类型后筛选预处理器与模型 |
+| `preprocessor` | 官方目录中的预处理器标识，如 `canny`、`depth_leres`、`openpose_full` |
+| `model` | 兼容当前类型、预处理器及底模的 Liblib 模型 UUID；Reference 使用空标识的 None 模型 |
 | `strength` | 0–2 |
 | `start`、`end` | 0–1 的采样进程比例，起点不晚于终点 |
 | `pixelPerfect` | 按生成尺寸自动选择检测分辨率 |
@@ -65,10 +68,23 @@ description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平�
 | `resizeMode` | `stretch`、`crop`、`fill`；启用输出蒙版固定为 `stretch` |
 | `canny.resolution` | 64–2048，推荐起点 512 |
 | `canny.lowThreshold`、`highThreshold` | 1–255，推荐起点 100、200 |
+| `processorParameters` | 非 Canny 预处理器的专有参数；字段、默认值、范围与整数约束来自官方目录 |
 
 节点提供可编辑的推荐参数，提交时冻结有效参数。推荐值仅是调试起点，不表示所有基础模型、控制模型与题材使用同一最优设置。
 
-Liblib 网页还提供 Depth、OpenPose、Lineart、SoftEdge 等类型。网页展示的模型名称、预处理器菜单与版本不能直接代替 API 枚举或 UUID；新增类型应先完成参数映射、校验与模拟协议测试，再加入能力目录。
+### Control Type 与联动目录
+
+当前通用流程接入 Canny、SoftEdge、MLSD、Scribble/Sketch、Lineart、Depth、Segment、Normal、OpenPose、Tile/Blur、Reference、IP-Adapter、T2I-Adapter、Shuffle、Recolor、Inpaint、Instant ID 和 puLID。类型可用仍取决于管理员开放的预处理器、生成底模与控制模型目录，并非所有类型都适配每个底模。
+
+目录依据 [Liblib 官方预处理器表](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ)、[控制模型表](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic)及明确的专用示例维护。唯一源为 `backend/internal/protocol/controlnet_catalog.json`；Go 校验、前端生成文件和插件镜像保持一致。目录包含 64 个通用预处理器，以及禁用执行的主体参考专用条目；模型 UUID 合并为 119 个目录项，包含 None、Qwen Image 和专用流程记录，不表示这些记录都可在当前模板执行。
+
+- 切换类型时选择该类型的预处理器、兼容模型与默认参数，保留控制强度及起止时点，移除旧预处理器专有参数。切换预处理器时优先采用官方建议模型；建议列表不是排他的兼容白名单。
+- 模型依次按 Control Type、SD 1.5 / SDXL / F.1 底模、明确的预处理器限制和管理员白名单筛选。管理员可登记额外 UUID 的名称、底模和类型，不能覆盖已知官方 UUID 的兼容关系。底模不能从用户当前选中的控制模型反推；显式底模与已知 checkpoint 或 `family` 冲突时拒绝提交。
+- `None` 表示不预处理，保留明确的控制类型，仅用于官方列出的已处理线稿、深度图、骨骼图等输入；`Invert` 只用于官方线稿模型组合，不开放给任意类别。Reference 使用 SD 1.5 与 None 控制模型，不能套用 Canny UUID。
+- Instant ID 的关键点与特征嵌入预处理器分别绑定官方对应模型；单个控制单元不等同于专用模板中身份图、姿态图组成的完整换脸流程。
+- 主体参考的官方示例需要专用模板和 `unitOrder=0`；光影、二维码尚无已核实的对应预处理器，Revision 尚无官方 API 映射。这些类型显示限制并禁止执行。Qwen Image 模型仅留目录，当前 SD / F.1 适配器不执行其模板。
+
+任务提交校验未知键、缺失参数、范围、整数、类型和模型兼容关系。Canny 与其他预处理器参数不能混用。已保存的类型、预处理器与参数恢复后保持原值，不会被重写为 Canny；任务快照继续冻结当时有效参数。
 
 ## 复用与扩展合同
 
@@ -76,7 +92,7 @@ Liblib 网页还提供 Depth、OpenPose、Lineart、SoftEdge 等类型。网页�
 
 任务提交使用顶层 `controlNet[]`、`outputMask` 和独立的重绘 `mask`：每个控制单元包含稳定 ID、图片资源、可选区域蒙版和通用参数。`outputMask` 包含图片、灰度/非黑模式及显式 `resizeMode: "stretch"`。资源必须先入库为 `resource:` 引用，服务端在入队前校验归属并读取图片真实字节，拒绝损坏、超限或伪造尺寸的图片。通用控制输入接受 PNG/JPEG、单图不超过 10 MB、每边不超过 4096；快捷入口的透明 PNG 约束不改变通用控制图格式。
 
-模型能力通过 `image.controlNet` 声明 `supported`、`maxUnits`、`preprocessors` 和可选 `models` 目录。逻辑路由使用独立的 `control_image` 输入数量，普通图片模型不会接收后静默忽略控制图。协议适配器还必须明确声明并实现 ControlNet；仅修改前端渠道名称或能力布尔值不足以执行。
+模型能力通过 `image.controlNet` 声明 `supported`、`maxUnits`、`preprocessors`、`baseModel`，以及可选 `models` 白名单和 `modelCatalog` 自定义目录。已有显式预处理器白名单保持不变；升级代码不会自动为管理员只开放 Canny 的模型启用所有类型。逻辑路由使用独立的 `control_image` 输入数量，普通图片模型不会接收后静默忽略控制图。协议适配器还必须明确声明并实现 ControlNet；仅修改前端渠道名称或能力布尔值不足以执行。
 
 新增平台时复用相同节点、引用、资源校验与最终蒙版合成，只新增平台协议适配、媒体准备和兼容模型目录。平台专有字段保留在各自 `providerOptions` 命名空间，通用契约不包含 AK/SK、签名或上传临时凭证。
 
@@ -84,7 +100,7 @@ Liblib 网页还提供 Depth、OpenPose、Lineart、SoftEdge 等类型。网页�
 
 安装官方 `liblib-image` 插件后，在渠道中选择「Liblib 图片与 ControlNet」，配置 AccessKey 与 SecretKey，再配置图片模型能力。节点的「生成参数」按插件参数声明显示，`family` 选择 `f1` 或 `sd`，填写当前生成模式对应的 `templateUuid` 与采样步数。`sd` 还需要 checkpoint UUID、采样器枚举和 CFG；图生图需要 `denoisingStrength`。模板与模型 UUID 不使用臆造默认值。
 
-局部重绘需要配套的后端媒体处理和 `liblib-image 1.1.0` 插件。模型默认仍为 `image.references.maskSupported=false`；管理员确认所用 SD / SDXL 图生图模板支持局部重绘后，才开启该能力。插件升级本身不会替全部模型启用蒙版。
+多 Control Type 需要配套的后端校验、前端目录和 `liblib-image 1.2.0` 插件。局部重绘沿用已接入的媒体处理，模型默认仍为 `image.references.maskSupported=false`；管理员确认所用 SD / SDXL 图生图模板支持局部重绘后，才开启该能力。插件升级本身不会替全部模型启用蒙版。
 
 `family=sd` 且同时提供普通内容原图和独立重绘蒙版时，协议使用 `mode: 4`，发送 `maskImage` 及 `inpaintParam`（`maskBlur: 4`、`maskPadding: 32`、`maskMode: 0`、`inpaintArea: 0`、`inpaintingFill: 1`）。普通图生图仍为 `mode: 0`；输出宽高通过 `resizedWidth` / `resizedHeight` 传递，`controlNet[]` 独立保留。
 
@@ -92,7 +108,7 @@ Liblib 网页还提供 Depth、OpenPose、Lineart、SoftEdge 等类型。网页�
 
 ### 手工配置 SD 示例模型
 
-不依赖 `/models` 自动发现。`scripts/sql/configure-liblib-sd.sql` 是 PostgreSQL 的显式配置脚本，只对已存在、已启用且保存了 AK/SK 的 `liblib` 系统渠道添加一个模型与价格档，不属于全站自动迁移。脚本按 [liblibai SDK 0.0.11 的接口示例](https://www.npmjs.com/package/liblibai/v/0.0.11)使用基础模型版本 UUID `0ea388c7eb854be3ba3c6f65aac6bfd3`，同时作为产品模型标识和上游模型 ID。飞书原文未能直接抓取，SDK 示例不能替代真实上游可用性验证。
+不依赖 `/models` 自动发现。`scripts/sql/configure-liblib-sd.sql` 是 PostgreSQL 的显式配置脚本，只对已存在、已启用且保存了 AK/SK 的 `liblib` 系统渠道添加一个模型与价格档，不属于全站自动迁移。脚本按 [liblibai SDK 0.0.11 的接口示例](https://www.npmjs.com/package/liblibai/v/0.0.11)使用基础模型版本 UUID `0ea388c7eb854be3ba3c6f65aac6bfd3`，同时作为产品模型标识和上游模型 ID。本轮已核对官方 ControlNet 表；基础模型与模板的实际可用性仍需分别验证，不能用目录表替代真实上游验证。
 
 脚本采用事务、渠道行锁和现有 `id_sequences` 分配 ID，重复执行不会新增重复模型或价格档；遇到已有配置冲突时终止，不覆盖管理员后续配置。执行前备份目标配置；可先用 `psql -X -v ON_ERROR_STOP=1 -v dry_run=true -f scripts/sql/configure-liblib-sd.sql` 演练并回滚，正式执行去掉 `dry_run`。完成后递增 Redis 的 `canvas:logical-model-route-catalog:version` 使目录缓存失效。脚本不包含密钥，不创建前台模型或线路。
 
@@ -131,7 +147,7 @@ Liblib 的生成请求包装为 `templateUuid` 与 `generateParams`；控制数�
 「使用科幻跑车示例」填入一辆银白色科幻超跑跨越转角、从深蓝空间舱冲出的描述，以及对应推荐参数。完整提示词和避免内容以 `web/src/lib/canvas/irregular-screen-example.ts` 中的 `screenCarExample` 为准，避免文档维护另一份长提示词。按钮只填表，保留当前模型、输入素材和生成方式，不发起生成或扣费；推荐值仍需与实际模型核对。
 
 1. 准备目标转角屏的透明 PNG：屏外透明，两侧屏面不透明，共享同一转角。上传后核对原始图、有效区域、像素尺寸与实际屏幕比例。
-2. 选择可用的 Canny 模型与控制模型。选择「从描述生成」时可添加普通内容参考图；选择「按原图局部重绘」时，先由管理员确认模板并开启蒙版能力，再上传与屏幕蒙版宽高完全相同的内容原图。
+2. 选择可用的基础模型与 Control Type。示例原有调参以 Canny 为起点，不适用于所有预处理器。选择「文生图」时可添加普通内容参考图并切换图生图；选择「局部重绘」时，先由管理员确认模板并开启蒙版能力，再上传与屏幕蒙版宽高完全相同的内容原图。
 3. 选择模型支持的同比例输出尺寸，再点击「使用科幻跑车示例」，展开高级设置核对参数。输入可大于输出，但不得因输出尺寸改变屏幕比例。
 4. 核对下表、模型价格与预计消耗后，手动点击生成。保存任务与结果，并按下述标准验收；调整参数后另存一组记录以便比较。
 
@@ -159,7 +175,7 @@ Liblib 的生成请求包装为 `templateUuid` 与 `generateParams`；控制数�
 
 单元测试覆盖合同往返、参数边界、引用角色、路由能力、真实图片尺寸、资源权限、黑色范围、透明像素、灰度合成、PNG 保存以及保存失败后的幂等恢复。供应商协议测试使用本地桩服务验证签名、上传、提交、查询和错误处理，不消耗真实生成额度。
 
-当前异形屏组件与本地专项覆盖透明 PNG 校验、有效区域派生、模式切换、示意与参数说明、示例仅填表、独立原图与重绘蒙版、三／四节点模板、同像素输入与同比例输出、旧结果保留、模型能力和模板选择。Liblib 模拟协议测试覆盖重绘蒙版像素转换、独立 `mask` 与 `controlNet`、SD 局部重绘请求，以及普通图生图与输出蒙版回归。原始 RGB、白框排除、JPEG 噪声容差及旧灰度识别属于历史规则回归，不能作为新上传格式说明。这些本地测试已通过；新的真实付费生成、账务与恢复联调、目标图片质量及浏览器体验仍按待测试清单验收。
+当前异形屏组件与本地专项覆盖透明 PNG 校验、有效区域派生、模式切换、示意与参数说明、示例仅填表、独立原图与重绘蒙版、三／四节点模板、同像素输入与同比例输出、旧结果保留、模型能力和模板选择。多 Control Type 专项覆盖真实共享组件的切换回调、模型过滤、预处理器专有参数清理、Instant ID 配对、Reference 空模型、目录保护和持久参数恢复；后端覆盖底模匹配、默认模型及路由快照。Liblib 模拟协议测试覆盖官方枚举和参数键、独立 `mask` 与 `controlNet`、SD 局部重绘请求，以及普通图生图与输出蒙版回归。原始 RGB、白框排除、JPEG 噪声容差及旧灰度识别属于历史规则回归，不能作为新上传格式说明。新增类型未做真实付费生成，目标图片质量及浏览器体验仍按待测试清单验收。
 
 - [Liblib 官方 API 说明](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d)
 - [Liblib 官方上传说明](https://resonate.feishu.cn/wiki/A9M2whHxsiKtu8kpIn3cZp0PnVw)

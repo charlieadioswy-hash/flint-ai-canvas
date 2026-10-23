@@ -49,7 +49,7 @@ func TestChannelProviderDefaultsChooseOperationAndFreeze(t *testing.T) {
 	for _, withReference := range []bool{false, true} {
 		cm := verifiedLiblibChannelModel(t)
 		cm.ProviderDefaults = map[string]any{"negativePrompt": "administrator default"}
-		input := map[string]any{"mode": "image", "metadata": map[string]any{"providerOptions": map[string]any{protocol.LiblibImageProtocolID: map[string]any{"steps": 32, "seed": 0, "negativePrompt": ""}}}, "controlNet": []any{map[string]any{"id": "canny", "parameters": map[string]any{"model": ""}}}}
+		input := map[string]any{"mode": "image", "metadata": map[string]any{"providerOptions": map[string]any{protocol.LiblibImageProtocolID: map[string]any{"steps": 32, "seed": 0, "negativePrompt": ""}}}, "controlNet": []any{map[string]any{"id": "canny", "parameters": map[string]any{"preprocessor": "canny", "model": ""}}}}
 		if withReference {
 			input["referenceImages"] = []any{map[string]any{"storageKey": "resource:content"}}
 		}

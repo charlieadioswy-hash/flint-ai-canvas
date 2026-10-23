@@ -12,11 +12,21 @@
 
 同时存在原图和重绘蒙版时发送 `mode: 4` 与 `inpaintParam`，采用 SDK 示例的 `maskBlur: 4`、`maskPadding: 32`、`maskMode: 0`、`inpaintArea: 0`、`inpaintingFill: 1`，`maskImage` 为转换后的上传地址；输出尺寸仍为 `resizedWidth/resizedHeight`。Canny 继续在独立 `controlNet[]` 中引导边缘，其 `maskImage` 只限定控制影响范围。最终 `outputMask` 只在宿主保存结果时裁出黑底，不会隐式启用局部重绘或代替重绘蒙版。SDK 的同一图生图示例同时声明局部重绘与 ControlNet；离线测试确认本地参数和像素转换，当前模板、账号及内容效果仍需实图验收。
 
-渠道模型的 `providerDefaults` 保存上述协议标量参数，并支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`。服务端按是否有普通内容参考图选择模板，显式 `templateUuid` 优先；控制图不触发图生图。未指定控制模型的单元使用 `controlNetModel`。这些辅助字段仅用于解析配置，真实上游 payload 仍只有 `templateUuid` 与 `generateParams`。当前实际选定渠道的默认值与用户显式值在创建任务时合并并冻结，后台后续修改不影响已排队任务；自动切换渠道只带用户原有显式值。
+渠道模型的 `providerDefaults` 保存上述协议标量参数，并支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`。服务端按是否有普通内容参考图选择模板，显式 `templateUuid` 优先；控制图不触发图生图。未指定控制模型的单元先使用已登记且与 Control Type、预处理器及基础算法兼容的 `controlNetModel`，否则按官方预处理器推荐和兼容目录选择；不能把 Canny 专用模型套用于其他类型。Reference 允许空模型并省略上游 `model`。这些辅助字段仅用于解析配置，真实上游 payload 仍只有 `templateUuid` 与 `generateParams`。当前实际选定渠道的默认值与用户显式值在创建任务时合并并冻结，后台后续修改不影响已排队任务；自动切换渠道只带用户原有显式值。
 
 仅已验证 checkpoint `0ea388c7eb854be3ba3c6f65aac6bfd3` 且启用兼容的 ControlNet 能力时提供默认值：`family=sd`、文生图模板 `e10adc3949ba59abbe56e057f20f883e`、图生图模板 `9c7d531dc75f476aa833b3d452b8f7ad`、Canny XL `b6806516962f4e1599a93ac4483c3d23`、`steps=20`、`sampler=15`、`cfgScale=7`、`seed=-1`、`denoisingStrength=0.75`。管理员配置覆盖这些值，其他 checkpoint 不套用此组合。
 
-独立 `controlNet` 单元映射 `unitOrder`（1–4）、`sourceImage`、参考图 `width/height`、`preprocessor`、`annotationParameters`、`model`、`controlWeight`、`startingControlStep/endingControlStep`、`pixelPerfect`、`controlMode`、`resizeMode` 与可选 `maskImage`。首版 Canny 枚举为 1，参数为分辨率64–2048、阈值1–255。控制影响蒙版须与参考图同尺寸；该蒙版不保证外部像素为黑。
+独立 `controlNet` 单元映射 `unitOrder`（1–4）、`sourceImage`、参考图 `width/height`、`preprocessor`、`annotationParameters`、`model`、`controlWeight`、`startingControlStep/endingControlStep`、`pixelPerfect`、`controlMode`、`resizeMode` 与可选 `maskImage`。控制影响蒙版须与参考图同尺寸；该蒙版不保证外部像素为黑。
+
+### Control Type、预处理器与 Model
+
+1.2.0 使用与宿主和前端相同的 `docs/controlnet-catalog.json`，覆盖[官方 64 项预处理器表](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ)、[模型名称与 UUID 表](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic)及 F.1 主体参考示例。相同 UUID 的多个官方类型合并到 `controlTypes`；F.1 Union Pro 在预处理器表额外推荐的 Scribble、Lineart、OpenPose，以及 xinsir_anime_painter 被推荐的 Lineart 同时保留。预处理器的 `recommendedModels` 按官方完整名称与基础算法匹配为 UUID，用于优先默认和排序；推荐表不替代完整模型表，不把其他兼容变体视为不支持。明确区分的 Instant ID 两个模型使用 `preprocessors` 约束。模型基础算法区分 `sd15`、`sdxl`、`f1`、`qwen-image`，不得混配。自定义 UUID 必须由管理员在模型能力目录登记类型和基础算法后使用。
+
+公共任务合同的 `parameters.controlType` 保存类型；旧 Canny 可省略该字段，其类型由预处理器推导。`parameters.preprocessor` 使用稳定英文 ID，宿主按目录映射整数枚举和 `annotationParameters` 对象键。Canny 继续使用独立 `canny` 对象，其他预处理器使用 `processorParameters` 数值对象：中立键 `resolution` 映射为 `preprocessorResolution`，其余参数按目录 `wireName` 映射。所有专有参数都必须存在且符合各自整数/数值范围；切换预处理器时不能携带旧参数、Canny 对象或未知键。None 和 invert 没有专有参数，必须明确选择对应的 Control Type，不能由它们猜模型类型。None 仅用于已处理的线稿、深度图、骨骼图与官方 PuLID 专例；invert 仅用于白色线条、黑色背景并使用线稿模型的输入，不能泛化到任意控制类型。
+
+例如 Depth LeRes 使用 `preprocessor: "depth_leres"` 与 `processorParameters: { "resolution": 512, "removeNear": 0, "removeBackground": 0 }`，上游写为 `preprocessor: 3` 和 `annotationParameters.depthLeres`。MLSD 使用 `valueThreshold`（0.01–2）和 `distanceThreshold`（0.01–20）；Tile 的部分预处理器只有 `downSamplingRate` 或 `variation`/`sharpness`，不能隐式加上分辨率。Reference 使用 `styleFidelity`，并省略 `model`；Canny 的分辨率范围为 64–2048、阈值为 1–255。每个枚举、对象键、参数范围和默认值都在随包目录中列出。
+
+本产品当前要求 Inpaint 40、41、42 单元提供独立控制蒙版，不能以顶层局部重绘蒙版或最终 `outputMask` 替代；官方公共表将 `maskImage` 标为可选，专用 Inpaint 文生图示例确实提供该字段。Instant ID 59/60 可用于通用控制单元，并分别匹配 `control_instant_id_sdxl` / `ip-adapter_instant_id_sdxl`；[完整换脸示例](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-QXsCdTFkloh1Vfxi9PhcDbcQnnh)使用专用模板和两组有顺序的人脸输入，不能把单组结构控制等同于该流程。主体参考 `entityControl=68` 的[官方示例](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Y0SAdKA8Yob6yuxMtMWci1A7nKe)仅用于 F.1 文生图，并使用专用模板及 `unitOrder=0`；本次保留目录证据但不开放执行。Revision 未出现在官方预处理器/模型表中；`clipVision=15` 属于 T2I-Adapter，不能当作 Revision 映射。Qwen Image 模型只保留官方目录信息，当前 `family=sd/f1` 拒绝运行。宿主通用单元沿用公共表的 `unitOrder` 1–4，不将专用示例的0扩展到通用流程。
 
 含透明像素的 PNG Canny 控制图在上传前按原尺寸合成到黑底，保留可见颜色和内部边缘，屏蔽透明区域隐藏的 RGB；远端透明控制图也会重新上传。全不透明控制图保持原始字节或公开 URL。此处理仅作用于 Liblib 的 `control_image` 上传副本，普通内容图、各类蒙版、平台资源及界面原图保持各自内容，合成后仍不得超过 10 MB。
 
@@ -34,7 +44,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "liblib-image",
   "name": "Liblib 图片与 ControlNet",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "影策",
   "description": "Liblib 官方异步图片 API：独立控制图、服务端签名、上传与审核后结果。",
   "runtime": {
@@ -109,7 +119,7 @@
             "name": "controlNetModel",
             "type": "string",
             "mapping": "providerOptions.liblib-image.controlNetModel",
-            "description": "默认 Canny 控制模型 UUID；控制单元未指定模型时使用。"
+            "description": "默认控制模型 UUID；仅在 Control Type、预处理器与基础算法兼容时使用，否则按推荐和兼容目录选择。"
           },
           {
             "name": "templateUuid",
@@ -186,7 +196,7 @@
             "name": "controlNet",
             "type": "controlNet[]",
             "mapping": "controlNet",
-            "description": "独立控制单元，最多4组；首版支持Canny，不混入普通参考图。"
+            "description": "独立控制单元，最多4组；Control Type 联动官方预处理器、兼容模型和专有参数，不混入普通参考图。"
           }
         ],
         "create": {

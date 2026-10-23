@@ -2,8 +2,12 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { modelCompatibilityError } from "@/lib/model-selection";
 import { encodeChannelModel, modelOptionName, resolveModelChannel, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import type { ControlNetParameters } from "./generation-contract.generated";
+import { controlNetBaseModel, controlNetBaseModelError, controlNetDefaultModel, controlNetDefaultPreprocessor, controlNetDefaultType, controlNetModels, controlNetPreprocessors, controlNetType, controlNetTypes } from "./controlnet-options";
 
 export type ScreenGenerationSettings = {
+    controlType?: string;
+    preprocessor?: string;
+    processorParameters?: Record<string, number>;
     controlModel: string;
     strength: number;
     start: number;
@@ -33,10 +37,11 @@ export function screenModelError(config: AiConfig, model: string, hasReference =
     const { channel, cost, defaults, protocol } = screenModelDefaults(config, model);
     if (channel.scope !== "system" || channel.enabled === false || cost?.available === false) return "请选择可用的后台渠道模型";
     const controls = modelCapabilityConfigFor(config, model).image?.controlNet;
-    if (!controls?.preprocessors.includes("canny")) return "当前模型没有启用 Canny 结构控制";
-    const defaultControl = typeof defaults.controlNetModel === "string" ? defaults.controlNetModel.trim() : "";
-    if (!defaultControl && !controls.models?.length) return "当前模型未配置推荐控制模型，请联系管理员";
-    if (defaultControl && controls.models?.length && !controls.models.includes(defaultControl)) return "推荐控制模型不在当前允许的控制模型目录中，请联系管理员";
+    if (!controls?.supported || !controlNetPreprocessors(controls).length) return "当前模型没有启用受支持的 ControlNet 预处理器";
+    const baseError = controlNetBaseModelError(controls, defaults);
+    if (baseError) return baseError;
+    if (!controlNetBaseModel(controls, defaults)) return "尚未配置 ControlNet 基础算法，请联系管理员选择 SD 1.5、SDXL 或 F.1";
+    if (!controlNetTypes(controls).some((type) => controlNetModels(controls, type.id, defaults).length)) return "当前模型未配置兼容的 ControlNet 控制模型，请联系管理员";
     if (protocol === "liblib-image" && (!defaults.family || !(hasReference ? defaults.imageToImageTemplateUuid || defaults.templateUuid : defaults.textToImageTemplateUuid || defaults.templateUuid))) return "当前模型缺少生成模板默认参数，请联系管理员";
     return "";
 }
@@ -70,10 +75,14 @@ export function screenPickerConfig(config: AiConfig): AiConfig {
 export function screenDefaultSettings(config: AiConfig, model: string): ScreenGenerationSettings {
     const { defaults } = screenModelDefaults(config, model);
     const number = (key: string, fallback: number) => (typeof defaults[key] === "number" && Number.isFinite(defaults[key]) ? (defaults[key] as number) : fallback);
-    const controls = modelCapabilityConfigFor(config, model).image?.controlNet?.models;
-    const defaultControl = typeof defaults.controlNetModel === "string" ? defaults.controlNetModel.trim() : "";
-    const controlModel = defaultControl && (!controls?.length || controls.includes(defaultControl)) ? defaultControl : defaultControl ? "" : controls?.[0] || "";
+    const controls = modelCapabilityConfigFor(config, model).image?.controlNet;
+    const controlType = controlNetDefaultType(controls, defaults);
+    const preprocessor = controlNetDefaultPreprocessor(controls, controlType, defaults);
+    const controlModel = controlNetDefaultModel(controls, controlType, defaults, preprocessor?.id);
     return {
+        controlType,
+        preprocessor: preprocessor?.id || "",
+        processorParameters: Object.fromEntries((preprocessor?.parameters || []).map((parameter) => [parameter.name, parameter.default])),
         controlModel,
         strength: 0.9,
         start: 0,
@@ -91,8 +100,10 @@ export function screenDefaultSettings(config: AiConfig, model: string): ScreenGe
 }
 
 export function screenControlParameters(settings: ScreenGenerationSettings): ControlNetParameters {
+    const preprocessor = settings.preprocessor ?? "canny";
     return {
-        preprocessor: "canny",
+        ...(settings.controlType ? { controlType: settings.controlType } : {}),
+        preprocessor,
         model: settings.controlModel,
         strength: settings.strength,
         start: settings.start,
@@ -100,8 +111,12 @@ export function screenControlParameters(settings: ScreenGenerationSettings): Con
         pixelPerfect: true,
         controlMode: "balanced",
         resizeMode: "stretch",
-        canny: { resolution: settings.resolution, lowThreshold: settings.lowThreshold, highThreshold: settings.highThreshold },
+        ...(preprocessor === "canny" ? { canny: { resolution: settings.resolution, lowThreshold: settings.lowThreshold, highThreshold: settings.highThreshold } } : { processorParameters: settings.processorParameters || {} }),
     };
+}
+
+export function screenSettingsFromControl(settings: ScreenGenerationSettings, parameters: ControlNetParameters): ScreenGenerationSettings {
+    return { ...settings, controlType: controlNetType(parameters), preprocessor: parameters.preprocessor, controlModel: parameters.model, strength: parameters.strength, start: parameters.start, end: parameters.end, processorParameters: parameters.processorParameters ? { ...parameters.processorParameters } : undefined, resolution: parameters.canny?.resolution ?? settings.resolution, lowThreshold: parameters.canny?.lowThreshold ?? settings.lowThreshold, highThreshold: parameters.canny?.highThreshold ?? settings.highThreshold };
 }
 
 export function screenProviderOptions(config: AiConfig, model: string, settings: ScreenGenerationSettings, hasReference: boolean, inpaint = false) {

@@ -21,8 +21,17 @@ type OutputMask struct {
 }
 
 type ControlNetCapability struct {
-	Supported     bool     `json:"supported"`
-	MaxUnits      int      `json:"maxUnits"`
-	Preprocessors []string `json:"preprocessors"`
-	Models        []string `json:"models,omitempty"`
+	Supported     bool                    `json:"supported"`
+	MaxUnits      int                     `json:"maxUnits"`
+	Preprocessors []string                `json:"preprocessors"`
+	Models        []string                `json:"models,omitempty"`
+	BaseModel     string                  `json:"baseModel,omitempty"`
+	ModelCatalog  []ControlNetModelConfig `json:"modelCatalog,omitempty"`
+}
+
+type ControlNetModelConfig struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	BaseModel    string   `json:"baseModel"`
+	ControlTypes []string `json:"controlTypes"`
 }

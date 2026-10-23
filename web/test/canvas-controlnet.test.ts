@@ -6,6 +6,8 @@ import { isolateCopiedNodeMetadata } from "../src/lib/canvas/canvas-node-copy";
 import { defaultControlNetBinding, resolveCanvasControlNetInputs, setControlNetReference, structureControlNodeMetadata, validateControlNetBindings } from "../src/lib/canvas/controlnet";
 import { generationSpecMetadata, readNodeGenerationSpec, validateGenerationSpec } from "../src/lib/canvas/generation-contract";
 import type { GenerationSpec } from "../src/lib/canvas/generation-contract.generated";
+import { CONTROLNET_PREPROCESSORS, CONTROLNET_TYPES } from "../src/lib/canvas/controlnet-catalog.generated";
+import { switchControlNetType } from "../src/lib/canvas/controlnet-options";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { modelCompatibilityError } from "../src/lib/model-selection";
 import { prepareBackendGenerationTask } from "../src/services/api/generation-task";
@@ -40,7 +42,7 @@ function recipe(): GenerationSpec {
 function controlledNode(spec = recipe()): CanvasNodeData { return { ...image("target"), metadata: { structureControl: true, ...generationSpecMetadata(spec) } }; }
 
 function config(supported = true) {
-    const channel = createModelChannel({ id: "controls", name: "Control provider", baseUrl: "https://provider.example", apiKey: "test-key", interfaceType: "control-test", models: ["base-model"], modelCosts: [{ model: "base-model", capability: "image", protocol: "control-test", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: { version: 1, image: { ...defaultImageCapabilityConfig(), controlNet: { supported, maxUnits: 4, preprocessors: ["canny"] } } } }] });
+    const channel = createModelChannel({ id: "controls", name: "Control provider", baseUrl: "https://provider.example", apiKey: "test-key", interfaceType: "control-test", models: ["base-model"], modelCosts: [{ model: "base-model", capability: "image", protocol: "control-test", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: { version: 1, image: { ...defaultImageCapabilityConfig(), controlNet: { supported, maxUnits: 4, baseModel: "sd15", preprocessors: ["canny"], modelCatalog: [{ id: "control-model", name: "test control", baseModel: "sd15", controlTypes: ["canny"] }] } } } }] });
     const model = encodeChannelModel(channel.id, "base-model");
     return { ...defaultConfig, channels: [channel], model, imageModel: model };
 }
@@ -160,11 +162,76 @@ describe("canvas structure control contract and resource roles", () => {
         expect(profile.references.maskSupported).toBe(false);
         expect(profile.transparentBackground.supported).toBe(false);
         expect(profile.maxOutputs).toBe(4);
-        expect(profile.controlNet).toEqual({ supported: true, maxUnits: 4, preprocessors: ["canny"] });
+        expect(profile.controlNet).toEqual({ supported: true, maxUnits: 4, preprocessors: CONTROLNET_PREPROCESSORS.filter((processor) => CONTROLNET_TYPES.some((type) => type.id === processor.controlType && type.supported)).map((processor) => processor.id) });
+        expect(profile.controlNet?.preprocessors).not.toContain("entity_control");
+        expect(profile.controlNet?.preprocessors).toContain("none");
     });
 });
 
 describe("structure control task preparation and frozen retry", () => {
+    test("actual canvas submission validates and submits merged node protocol overrides", async () => {
+        const selected = config();
+        selected.channels[0].modelCosts![0].defaultOptions = { family: "f1", checkPointId: "0ea388c7eb854be3ba3c6f65aac6bfd3", steps: 20 };
+        const resolved = resolveCanvasControlNetInputs(controlledNode(), [image("screen"), image("region"), image("output")]);
+        const submitted: CreateTaskInput[] = [];
+        const queued: GenerationTask = { id: "overridden-task", type: "canvas_image", status: "queued", prompt: "panda", attempts: 0, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+        const createTask = mock(async (input: CreateTaskInput) => { submitted.push(input); return queued; });
+        const waitTask = mock(async () => ({ ...queued, status: "succeeded" as const, resultJson: JSON.stringify({ mode: "image", images: [{ storageKey: "resource:result" }] }) }));
+        const overrides = { family: "sd", checkPointId: "custom-sd15-checkpoint", controlNetModel: "control-model" };
+        await generationProject.runBackendCanvasGenerationTask({
+            projectId: "project", nodeId: "target", mode: "image", prompt: "panda", config: selected, ...resolved,
+            metadata: { providerOptions: { "control-test": overrides } },
+        }, { createTask, waitTask, createId: () => "override-request" });
+        expect(createTask).toHaveBeenCalledTimes(1);
+        expect(submitted[0].input?.metadata).toMatchObject({ providerOptions: { "control-test": { ...overrides, steps: 20 } } });
+    });
+
+    test.each([
+        { family: "f1" },
+        { checkPointId: "0ea388c7eb854be3ba3c6f65aac6bfd3" },
+    ])("rejects incompatible current protocol overrides before uploading: %j", async (overrides) => {
+        const selected = config();
+        selected.channels[0].modelCosts![0].defaultOptions = { family: "sd", checkPointId: "custom-sd15-checkpoint" };
+        const resolved = resolveCanvasControlNetInputs(controlledNode(), [image("screen"), image("region"), image("output")]);
+        await expect(prepareBackendGenerationTask({ mode: "image", prompt: "panda", config: selected, ...resolved, metadata: { providerOptions: { "control-test": overrides } } })).rejects.toThrow("不一致");
+    });
+
+    test("control compatibility ignores overrides in another protocol namespace", async () => {
+        const selected = config();
+        const defaults = { family: "sd", checkPointId: "custom-sd15-checkpoint" };
+        selected.channels[0].modelCosts![0].defaultOptions = defaults;
+        const resolved = resolveCanvasControlNetInputs(controlledNode(), [image("screen"), image("region"), image("output")]);
+        const task = await prepareBackendGenerationTask({ mode: "image", prompt: "panda", config: selected, ...resolved, metadata: { providerOptions: { "other-protocol": { family: "f1", checkPointId: "0ea388c7eb854be3ba3c6f65aac6bfd3" } } } });
+        expect(task.input?.metadata).toMatchObject({ providerOptions: { "control-test": defaults } });
+    });
+
+    test("Reference with an empty model submits under a nonempty Canny model allowlist", async () => {
+        const selected = config();
+        const profile = selected.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!;
+        profile.preprocessors.push("reference_only");
+        profile.models = ["control-model"];
+        const spec = recipe();
+        spec.options.controlNet![0].parameters = switchControlNetType(spec.options.controlNet![0].parameters, "reference", profile);
+        const resolved = resolveCanvasControlNetInputs(controlledNode(spec), [image("screen"), image("region"), image("output")]);
+        const task = await prepareBackendGenerationTask({ mode: "image", prompt: "panda", config: selected, ...resolved });
+        expect((task.input?.controlNet as typeof resolved.controlNet)[0].parameters).toMatchObject({ controlType: "reference", preprocessor: "reference_only", model: "" });
+    });
+
+    test("Depth parameters reach the actual task request and incompatible Canny models are rejected", async () => {
+        const selected = config();
+        const profile = selected.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!;
+        profile.preprocessors.push("depth_midas");
+        profile.modelCatalog!.push({ id: "control-depth", name: "Depth", baseModel: "sd15", controlTypes: ["depth"] });
+        const spec = recipe();
+        spec.options.controlNet![0].parameters = switchControlNetType(spec.options.controlNet![0].parameters, "depth", profile);
+        const resolved = resolveCanvasControlNetInputs(controlledNode(spec), [image("screen"), image("region"), image("output")]);
+        const task = await prepareBackendGenerationTask({ mode: "image", prompt: "panda", config: selected, ...resolved });
+        const parameters = (task.input!.controlNet as typeof resolved.controlNet)[0].parameters;
+        expect(parameters).toMatchObject({ controlType: "depth", preprocessor: "depth_midas", processorParameters: { resolution: 512 } });
+        expect(parameters).not.toHaveProperty("canny");
+        resolved.controlNet[0].parameters.model = "control-model";
+        await expect(prepareBackendGenerationTask({ mode: "image", prompt: "panda", config: selected, ...resolved })).rejects.toThrow("不兼容");
+    });
     test.each(["both", "control only", "output mask only"] as const)("actual canvas submission preserves %s", async (variant) => {
         const resolved = resolveCanvasControlNetInputs(controlledNode(), [image("screen"), image("region"), image("output")]);
         const controlNet = variant === "output mask only" ? undefined : resolved.controlNet;

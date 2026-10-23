@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaultControlNetBinding } from "../src/lib/canvas/controlnet";
+import { switchControlNetPreprocessor } from "../src/lib/canvas/controlnet-options";
 import { readNodeGenerationSpec } from "../src/lib/canvas/generation-contract";
 import { buildIrregularScreenTemplate, irregularScreenOutputSizeError, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
@@ -25,6 +26,15 @@ test("screen readiness rejects stale or manually stretched sizes while allowing 
 });
 
 describe("irregular screen canvas template", () => {
+    test("ControlNet Inpaint binds its own region without enabling local repaint", () => {
+        const controlParameters = switchControlNetPreprocessor(input().controlParameters, "inpaint_only");
+        const template = buildIrregularScreenTemplate({ ...input(), controlParameters });
+        const spec = readNodeGenerationSpec(template.nodes.find((node) => node.id === template.generationNodeId)!)!;
+        expect(spec.referenceBindings.find((binding) => binding.role === "control-mask")).toMatchObject({ id: "screen-control-mask", nodeId: template.creationScene.nodeIds.outputMask });
+        expect(spec.options.controlNet?.[0].maskBindingId).toBe("screen-control-mask");
+        expect(spec.options.outputMask?.bindingId).toBe("screen-output-mask");
+        expect(spec.referenceBindings.some((binding) => binding.role === "mask")).toBe(false);
+    });
     test("persists independent image resolution without changing ordinary quality", () => {
         const template = buildIrregularScreenTemplate({ ...input(), imageResolution: "4k", quality: "auto" });
         const generator = template.nodes.find((node) => node.id === template.generationNodeId)!;

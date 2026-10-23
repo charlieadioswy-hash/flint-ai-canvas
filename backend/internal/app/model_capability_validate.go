@@ -51,6 +51,9 @@ func validateImageCapabilityConfig(value *ImageCapabilityConfig) error {
 				return BadAuthRequest("结构控制预处理器不能为空")
 			}
 		}
+		if err := validateControlNetModelCatalog(control); err != nil {
+			return err
+		}
 	}
 	if value.ResponseFormat.Supported {
 		switch strings.ToLower(strings.TrimSpace(value.ResponseFormat.Default)) {

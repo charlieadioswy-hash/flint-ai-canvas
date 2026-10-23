@@ -15,7 +15,17 @@ import (
 )
 
 func defaultLiblibControlNetCapability() *generation.ControlNetCapability {
-	return &generation.ControlNetCapability{Supported: true, MaxUnits: 4, Preprocessors: []string{"canny"}}
+	supportedTypes := map[string]bool{}
+	for _, controlType := range protocol.ControlNetTypes() {
+		supportedTypes[controlType.ID] = controlType.Supported
+	}
+	var processors []string
+	for _, processor := range protocol.ControlNetPreprocessors() {
+		if supportedTypes[processor.ControlType] {
+			processors = append(processors, processor.ID)
+		}
+	}
+	return &generation.ControlNetCapability{Supported: true, MaxUnits: 4, Preprocessors: processors}
 }
 
 func validateControlNetTask(profile *ImageCapabilityConfig, input canvasGenerationInput) error {
@@ -45,8 +55,17 @@ func validateControlNetTask(profile *ImageCapabilityConfig, input canvasGenerati
 			if !containsCapabilityString(capability.Preprocessors, unit.Parameters.Preprocessor) {
 				return BadAuthRequest("当前模型不支持所选预处理器")
 			}
-			if len(capability.Models) > 0 && !containsCapabilityString(capability.Models, unit.Parameters.Model) {
+			modelID := unit.Parameters.Model
+			if input.Config.InterfaceType == protocol.LiblibImageProtocolID {
+				modelID = protocol.CanonicalLiblibModelID(modelID)
+			}
+			if modelID != "" && len(capability.Models) > 0 && !containsCapabilityString(capability.Models, modelID) {
 				return BadAuthRequest("控制模型不在当前渠道模型的兼容目录内")
+			}
+			if input.Config.InterfaceType == protocol.LiblibImageProtocolID {
+				if err := validateLiblibControlNetSelection(capability, input, unit); err != nil {
+					return err
+				}
 			}
 			if err := validateControlMedia(unit.Image); err != nil {
 				return BadAuthRequest(fmt.Sprintf("控制图 %d：%s", i+1, err))

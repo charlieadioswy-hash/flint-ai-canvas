@@ -11,6 +11,7 @@ export type CannyParameters = {
 };
 
 export type ControlNetParameters = {
+    controlType?: string;
     preprocessor: string;
     model: string;
     strength: number;
@@ -20,6 +21,7 @@ export type ControlNetParameters = {
     controlMode: "balanced" | "prompt" | "control";
     resizeMode: "stretch" | "crop" | "fill";
     canny?: CannyParameters;
+    processorParameters?: Record<string, number>;
 };
 
 export type ControlNetBinding = {

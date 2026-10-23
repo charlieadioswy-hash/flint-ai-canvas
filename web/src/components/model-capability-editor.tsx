@@ -12,6 +12,8 @@ import { updateImageParameterSchema, resolveImageParameters, type ImageParameter
 import { cleanVideoScreenSpecValues, resolveWorkflowVideoScreenSpec, updateWorkflowVideoScreenSpec } from "@/lib/video-screen-specs";
 import { VIDEO_RESOLUTION_CAPABILITY_OPTIONS } from "@/lib/video-generation-options";
 import { Select } from "@/components/ui/base/select";
+import { CONTROLNET_PREPROCESSORS, CONTROLNET_TYPES } from "@/lib/canvas/controlnet-catalog.generated";
+import { controlNetBaseModel, controlNetModelCatalog, controlNetModelId } from "@/lib/canvas/controlnet-options";
 
 const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 const operationOptions = [
@@ -678,11 +680,30 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
 }
 
 function ControlNetCapabilityFields({ value, available, disabled, onChange }: { value: ImageCapabilityConfig["controlNet"]; available: boolean; disabled: boolean; onChange: (value: NonNullable<ImageCapabilityConfig["controlNet"]>) => void }) {
-    const current = value || { supported: false, maxUnits: 4, preprocessors: ["canny"], models: [] };
+    const current = value || { supported: false, maxUnits: 4, preprocessors: defaultImageCapabilityConfig("liblib-image").controlNet!.preprocessors, models: [] };
     const update = (patch: Partial<typeof current>) => onChange({ ...current, ...patch });
+    const baseModel = controlNetBaseModel(current);
+    const catalog = controlNetModelCatalog(current).filter((model) => model.baseModel !== "qwen-image" && (!baseModel || model.baseModel === baseModel));
+    const locked = disabled || !available;
+    const baseOptions = [{ value: "sd15", label: "SD 1.5" }, { value: "sdxl", label: "SDXL" }, { value: "f1", label: "F.1" }];
+    const updateCatalog = (index: number, patch: Partial<NonNullable<typeof current.modelCatalog>[number]>) => update({ modelCatalog: (current.modelCatalog || []).map((model, modelIndex) => modelIndex === index ? { ...model, ...patch } : model) });
     return <div className="space-y-2">
-        <ParameterField label="结构控制生图" description={available ? "允许提交独立控制图及 ControlNet 参数" : "当前调用协议未声明结构控制能力"} supported={current.supported} disabled={disabled || !available} onChange={(supported) => update({ supported })} />
-        {current.supported ? <><NumberField label="最大控制组数" value={current.maxUnits} min={1} max={4} disabled={disabled || !available} onChange={(maxUnits) => update({ maxUnits: maxUnits || 1 })} /><Field label="支持的预处理器"><Select mode="tags" className="w-full" aria-label="支持的预处理器" value={current.preprocessors} tokenSeparators={[","]} disabled={disabled || !available} options={[{ label: "Canny", value: "canny" }]} onChange={(preprocessors) => update({ preprocessors })} /></Field><Field label="控制模型标识（可选目录）"><Select mode="tags" className="w-full" aria-label="控制模型标识目录" value={current.models || []} tokenSeparators={[","]} disabled={disabled || !available} placeholder="未配置目录时，画布中手动填写控制模型标识" onChange={(models) => update({ models })} /></Field></> : null}
+        <ParameterField label="结构控制生图" description={available ? "允许提交独立控制图及 ControlNet 参数" : "当前调用协议未声明结构控制能力"} supported={current.supported} disabled={locked} onChange={(supported) => update({ supported })} />
+        {current.supported ? <>
+            <NumberField label="最大控制组数" value={current.maxUnits} min={1} max={4} disabled={locked} onChange={(maxUnits) => update({ maxUnits: maxUnits || 1 })} />
+            <Field label="ControlNet 基础算法"><Select className="w-full" ariaLabel="ControlNet 基础算法" value={current.baseModel || baseModel} placeholder="必须与生成模型的 Checkpoint 一致" disabled={locked} options={baseOptions} onChange={(next) => update({ baseModel: next as NonNullable<typeof current.baseModel> })} /></Field>
+            <Field label="支持的预处理器"><Select mode="multiple" className="w-full" ariaLabel="支持的预处理器" value={current.preprocessors} disabled={locked} showSearch optionFilterProp="label" options={CONTROLNET_TYPES.filter((type) => type.supported).map((type) => ({ label: type.label, options: CONTROLNET_PREPROCESSORS.filter((processor) => processor.controlType === type.id).map((processor) => ({ value: processor.id, label: processor.label })) }))} onChange={(preprocessors) => update({ preprocessors })} /></Field>
+            <Field label="控制模型标识白名单（可选）"><Select mode="multiple" className="w-full" ariaLabel="控制模型标识目录" value={(current.models || []).map((id) => catalog.find((model) => controlNetModelId(model.id) === controlNetModelId(id))?.id || id)} disabled={locked} showSearch optionFilterProp="label" placeholder="留空允许当前基础算法的官方与自定义目录" options={[...catalog.filter((model) => model.id).map((model) => ({ value: model.id, label: `${model.name} · ${model.baseModel}`, title: model.id, disabled: false })), ...(current.models || []).filter((id) => !catalog.some((model) => controlNetModelId(model.id) === controlNetModelId(id))).map((id) => ({ value: id, label: `${id}（请核对基础算法或补充自定义目录）`, disabled: true }))]} onChange={(models) => update({ models })} /></Field>
+            <p className="text-xs text-foreground/60">控制模型按 Control Type 与基础算法筛选。只知道 UUID 时，请补充其类型与基础算法后使用。</p>
+            {(current.modelCatalog || []).map((model, index) => <div key={index} className="space-y-2 rounded-md border border-border p-2">
+                <Field label="自定义控制模型名称"><Input aria-label={`自定义控制模型 ${index + 1} 名称`} value={model.name} disabled={locked} onChange={(event) => updateCatalog(index, { name: event.target.value })} /></Field>
+                <Field label="自定义控制模型 UUID"><Input aria-label={`自定义控制模型 ${index + 1} UUID`} value={model.id} disabled={locked} onChange={(event) => updateCatalog(index, { id: event.target.value })} /></Field>
+                <Field label="自定义模型基础算法"><Select className="w-full" ariaLabel={`自定义控制模型 ${index + 1} 基础算法`} value={model.baseModel} disabled={locked} options={baseOptions} onChange={(next) => updateCatalog(index, { baseModel: next as typeof model.baseModel })} /></Field>
+                <Field label="自定义模型 Control Type"><Select mode="multiple" className="w-full" ariaLabel={`自定义控制模型 ${index + 1} Control Type`} value={model.controlTypes} disabled={locked} options={CONTROLNET_TYPES.filter((type) => type.supported && type.id !== "none").map((type) => ({ value: type.id, label: type.label }))} onChange={(controlTypes) => updateCatalog(index, { controlTypes })} /></Field>
+                <button type="button" className="text-xs text-destructive" disabled={locked} onClick={() => update({ modelCatalog: current.modelCatalog?.filter((_, modelIndex) => modelIndex !== index) })}>移除自定义模型</button>
+            </div>)}
+            <button type="button" className="text-xs text-foreground underline underline-offset-4" disabled={locked} onClick={() => update({ modelCatalog: [...(current.modelCatalog || []), { id: "", name: "", baseModel: baseModel || "sd15", controlTypes: [] }] })}>添加自定义控制模型</button>
+        </> : null}
     </div>;
 }
 

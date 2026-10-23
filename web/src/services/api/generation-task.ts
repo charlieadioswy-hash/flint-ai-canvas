@@ -4,6 +4,7 @@ import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import { importResourceFromUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import type { ControlNetInput, OutputMaskInput } from "@/lib/canvas/controlnet";
+import { controlNetConfigurationError, controlNetType } from "@/lib/canvas/controlnet-options";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
@@ -106,7 +107,7 @@ export async function runBackendGenerationTask(
     throwIfAborted(signal);
     assertClientPromptLimit(mode, prompt, config, metadata);
     assertBackendRuntimeConfigured(config, mode);
-    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask, controlNet, outputMask });
+    const prepared = await prepareGenerationReferences({ config, mode, referenceImages, referenceVideos, referenceAudios, mask, controlNet, outputMask, metadata });
     throwIfAborted(signal);
     return createAndWaitGenerationTask({ projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId }, prepared, dependencies);
 }
@@ -252,11 +253,23 @@ async function prepareGenerationReferences({
     mask,
     controlNet,
     outputMask,
-}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask" | "controlNet" | "outputMask">): Promise<PreparedGenerationReferences> {
+    metadata,
+}: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask" | "controlNet" | "outputMask" | "metadata">): Promise<PreparedGenerationReferences> {
     if ((controlNet?.length || outputMask) && mode !== "image") throw new Error("结构控制与输出蒙版仅用于图片生成");
     if (controlNet?.length) {
         const error = modelCompatibilityError(config, config.model, { capability: "image", controlNetUnits: controlNet.length });
         if (error) throw new Error(error);
+        const channel = resolveModelChannel(config, config.model);
+        const modelCost = channel.modelCosts?.find((item) => item.model === modelOptionName(config.model));
+        const protocol = modelCost?.protocol || channel.interfaceType || "";
+        const providerOptions = generationMetadata(config, metadata)?.providerOptions as Record<string, Record<string, unknown>> | undefined;
+        const effectiveOptions = providerOptions?.[protocol] || modelCost?.defaultOptions || {};
+        const profile = modelCapabilityConfigFor(config, config.model).image?.controlNet;
+        for (const unit of controlNet) {
+            const controlError = controlNetConfigurationError(unit.parameters, profile, effectiveOptions, referenceImages.length ? "img2img" : "text2img");
+            if (controlError) throw new Error(controlError);
+            if (controlNetType(unit.parameters) === "inpaint" && !unit.mask) throw new Error("ControlNet Inpaint 需要控制区域蒙版");
+        }
     }
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
     const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);

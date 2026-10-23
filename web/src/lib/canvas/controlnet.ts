@@ -2,6 +2,7 @@ import type { ControlNetBinding, ControlNetParameters, GenerationSpec, OutputMas
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import { resourceStorageKey } from "@/services/api/resources";
+import { controlNetPreprocessor, controlNetPreprocessorSupportsType, controlNetType } from "./controlnet-options";
 
 export type ControlNetInput = { id: string; image: ReferenceImage; mask?: ReferenceImage; parameters: ControlNetParameters };
 export type OutputMaskInput = { image: ReferenceImage; mode: OutputMaskBinding["mode"]; resizeMode: "stretch" };
@@ -61,21 +62,30 @@ export function validateControlNetBindings(value: unknown): ControlNetBinding[] 
         if (typeof unit.imageBindingId !== "string") throw new Error(`${label}缺少控制图绑定`);
         if (unit.maskBindingId !== undefined && (typeof unit.maskBindingId !== "string" || !unit.maskBindingId)) throw new Error(`${label}的区域蒙版绑定无效`);
         const params = record(unit.parameters, label);
-        keys(params, ["preprocessor", "model", "strength", "start", "end", "pixelPerfect", "controlMode", "resizeMode", "canny"], label);
+        keys(params, ["controlType", "preprocessor", "model", "strength", "start", "end", "pixelPerfect", "controlMode", "resizeMode", "canny", "processorParameters"], label);
         if (typeof params.preprocessor !== "string" || !params.preprocessor || typeof params.model !== "string") throw new Error(`${label}的预处理器或控制模型无效`);
+        const processor = controlNetPreprocessor(params.preprocessor);
+        if (!processor) throw new Error(`${label}的预处理器不受支持`);
+        if (params.controlType !== undefined && (typeof params.controlType !== "string" || !controlNetPreprocessorSupportsType(params.preprocessor, params.controlType))) throw new Error(`${label}的 Control Type 与预处理器不匹配`);
         number(params.strength, 0, 2, "控制强度");
         number(params.start, 0, 1, "开始比例");
         number(params.end, 0, 1, "结束比例");
         if ((params.start as number) > (params.end as number)) throw new Error("控制开始比例不能大于结束比例");
         if (typeof params.pixelPerfect !== "boolean" || !["balanced", "prompt", "control"].includes(String(params.controlMode)) || !["stretch", "crop", "fill"].includes(String(params.resizeMode))) throw new Error(`${label}的控制方式无效`);
-        if (params.preprocessor === "canny" && params.canny === undefined) throw new Error("Canny 预处理需要检测分辨率与阈值参数");
-        if (params.canny !== undefined) {
+        if (params.preprocessor === "canny") {
+            if (params.canny === undefined) throw new Error("Canny 预处理需要检测分辨率与阈值参数");
+            if (params.processorParameters !== undefined) throw new Error("Canny 必须使用专属阈值参数");
             const canny = record(params.canny, "Canny 参数");
             keys(canny, ["resolution", "lowThreshold", "highThreshold"], "Canny 参数");
             number(canny.resolution, 64, 2048, "检测分辨率", true);
             number(canny.lowThreshold, 1, 255, "Canny 低阈值", true);
             number(canny.highThreshold, 1, 255, "Canny 高阈值", true);
             if ((canny.lowThreshold as number) > (canny.highThreshold as number)) throw new Error("Canny 低阈值不能大于高阈值");
+        } else {
+            if (params.canny !== undefined) throw new Error("当前预处理器不能包含 Canny 参数");
+            const values = record(params.processorParameters ?? {}, "预处理器参数");
+            keys(values, processor.parameters.map((parameter) => parameter.name), "预处理器参数");
+            for (const parameter of processor.parameters) number(values[parameter.name], parameter.min, parameter.max, parameter.label, parameter.type === "integer");
         }
         return structuredClone(raw) as ControlNetBinding;
     });
@@ -116,9 +126,10 @@ export function resolveCanvasControlNetInputs(node: CanvasNodeData | undefined, 
         return image;
     };
     const controlNet = validateControlNetBindings(nodeControlNet(node)).map((unit) => {
-        if (!unit.parameters.model.trim()) throw new Error("请填写或选择控制模型标识");
+        if (!unit.parameters.model.trim() && controlNetType(unit.parameters) !== "reference") throw new Error("请填写或选择控制模型标识");
         const image = read(unit.imageBindingId, "control-image", "控制图");
         const mask = unit.maskBindingId ? read(unit.maskBindingId, "control-mask", "控制区域蒙版") : undefined;
+        if (controlNetType(unit.parameters) === "inpaint" && !mask) throw new Error("ControlNet Inpaint 需要控制区域蒙版");
         return { id: unit.id, image, mask, parameters: structuredClone(unit.parameters) };
     });
     const output = nodeOutputMask(node);

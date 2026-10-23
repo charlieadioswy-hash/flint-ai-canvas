@@ -3,6 +3,7 @@ import { generationSpecMetadata, validateGenerationSpec } from "@/lib/canvas/gen
 import { GENERATION_CONTRACT_VERSION, type ControlNetParameters, type GenerationSpec, type ModelSelection, type ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
 import type { IrregularScreenMaskMode } from "@/lib/canvas/irregular-screen-mask";
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { controlNetType } from "./controlnet-options";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
@@ -128,6 +129,7 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
         { id: "screen-output-mask", nodeId: mask.id, mediaType: "image", role: "output-mask", order: 1, resolution: "latest" },
         ...(reference ? [{ id: "screen-content-reference", nodeId: reference.id, mediaType: "image" as const, role: "reference" as const, order: 2, resolution: "latest" as const }] : []),
         ...(input.inpaint ? [{ id: "screen-inpaint-mask", nodeId: mask.id, mediaType: "image" as const, role: "mask" as const, order: 3, resolution: "latest" as const }] : []),
+        ...(controlNetType(input.controlParameters) === "inpaint" ? [{ id: "screen-control-mask", nodeId: mask.id, mediaType: "image" as const, role: "control-mask" as const, order: 4, resolution: "latest" as const }] : []),
     ];
     const spec: GenerationSpec = validateGenerationSpec({
         version: GENERATION_CONTRACT_VERSION,
@@ -139,7 +141,7 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
             size: input.size,
             ...(input.quality ? { quality: input.quality } : {}),
             ...(input.imageResolution ? { imageResolution: input.imageResolution } : {}),
-            controlNet: [{ id: "screen-control-unit", imageBindingId: "screen-control", parameters: input.controlParameters }],
+            controlNet: [{ id: "screen-control-unit", imageBindingId: "screen-control", ...(controlNetType(input.controlParameters) === "inpaint" ? { maskBindingId: "screen-control-mask" } : {}), parameters: input.controlParameters }],
             outputMask: { bindingId: "screen-output-mask", mode: "luminance", resizeMode: "stretch" },
         },
         referenceBindings,

@@ -15,14 +15,14 @@ const LiblibImageProtocolID = "liblib-image"
 
 func liblibImageAdapter() Adapter {
 	info := metadata(LiblibImageProtocolID, "Liblib 图片与 ControlNet", "LiblibAI", CapabilityImage, "POST /api/generate/webui/text2img", "POST /api/generate/webui/status", "application/json")
-	info.Version = "1.1.0"
+	info.Version = "1.2.0"
 	info.SupportsControlNet = true
 	info.Parameters = []Parameter{
 		{Name: "family", Type: "string", Values: []string{"f1", "sd"}, Description: "基础算法", Mapping: "providerOptions.liblib-image.family"},
 		{Name: "templateUuid", Type: "string", Description: "固定模板 UUID（覆盖按生成方式选择的模板）", Mapping: "providerOptions.liblib-image.templateUuid"},
 		{Name: "textToImageTemplateUuid", Type: "string", Description: "文生图模板 UUID", Mapping: "providerOptions.liblib-image.textToImageTemplateUuid"},
 		{Name: "imageToImageTemplateUuid", Type: "string", Description: "图生图模板 UUID", Mapping: "providerOptions.liblib-image.imageToImageTemplateUuid"},
-		{Name: "controlNetModel", Type: "string", Description: "默认 Canny 控制模型 UUID", Mapping: "providerOptions.liblib-image.controlNetModel"},
+		{Name: "controlNetModel", Type: "string", Description: "默认控制模型 UUID（仅在类型、预处理器与基础算法兼容时使用）", Mapping: "providerOptions.liblib-image.controlNetModel"},
 		{Name: "checkPointId", Type: "string", Description: "基础模型 UUID（留空使用渠道上游模型）", Mapping: "providerOptions.liblib-image.checkPointId"},
 		{Name: "steps", Type: "integer", Description: "采样步数", Mapping: "providerOptions.liblib-image.steps"},
 		{Name: "sampler", Type: "integer", Description: "采样器枚举", Mapping: "providerOptions.liblib-image.sampler"},
@@ -116,11 +116,15 @@ func ValidateLiblibRequest(r GenerationRequest) error {
 		if err := unit.Parameters.Validate(false); err != nil {
 			return fmt.Errorf("ControlNet 单元 %d：%w", index+1, err)
 		}
-		if unit.Parameters.Preprocessor != "canny" {
-			return fmt.Errorf("Liblib 首版仅支持 Canny 轮廓控制")
+		if err := ValidateLiblibControlNetModel(unit.Parameters, family); err != nil {
+			return fmt.Errorf("ControlNet 单元 %d：%w", index+1, err)
 		}
-		if !liblibUUID(unit.Parameters.Model) {
-			return fmt.Errorf("ControlNet 单元 %d 需要有效的平台控制模型 UUID", index+1)
+		processor, _ := ControlNetPreprocessor(unit.Parameters.Preprocessor)
+		if (processor.WireValue == 40 || processor.WireValue == 41 || processor.WireValue == 42) && unit.Mask == nil {
+			return fmt.Errorf("ControlNet 单元 %d 的 Inpaint 预处理器需要独立控制蒙版", index+1)
+		}
+		if len(processor.Modes) > 0 && source != nil && !containsControlNetString(processor.Modes, "img2img") {
+			return fmt.Errorf("ControlNet 单元 %d 的预处理器仅支持文生图", index+1)
 		}
 	}
 	return nil
@@ -165,7 +169,7 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 	}
 	params := map[string]any{"prompt": r.Prompt, "imgCount": count, "steps": o["steps"], "seed": -1}
 	if liblibOptionString(o, "family") == "sd" {
-		params["checkPointId"] = model
+		params["checkPointId"] = CanonicalLiblibModelID(model)
 		params["sampler"] = o["sampler"]
 		params["cfgScale"] = o["cfgScale"]
 	}
@@ -214,10 +218,24 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 			return RequestSpec{}, fmt.Errorf("ControlNet 参考图必须提供真实宽高，分别不超过4096")
 		}
 		p := unit.Parameters
-		wire := map[string]any{"unitOrder": index + 1, "sourceImage": imageURL, "width": w, "height": h, "preprocessor": 1,
-			"annotationParameters": map[string]any{"canny": map[string]any{"preprocessorResolution": p.Canny.Resolution, "lowThreshold": p.Canny.LowThreshold, "highThreshold": p.Canny.HighThreshold}},
-			"model":                p.Model, "controlWeight": p.Strength, "startingControlStep": p.Start, "endingControlStep": p.End,
+		processor, _ := ControlNetPreprocessor(p.Preprocessor)
+		annotation := make(map[string]any, len(processor.Parameters))
+		for _, parameter := range processor.Parameters {
+			if p.Preprocessor == "canny" {
+				annotation[parameter.WireName] = map[string]int{"resolution": p.Canny.Resolution, "lowThreshold": p.Canny.LowThreshold, "highThreshold": p.Canny.HighThreshold}[parameter.Name]
+			} else if parameter.Type == "integer" {
+				annotation[parameter.WireName] = int(p.ProcessorParameters[parameter.Name])
+			} else {
+				annotation[parameter.WireName] = p.ProcessorParameters[parameter.Name]
+			}
+		}
+		wire := map[string]any{"unitOrder": index + 1, "sourceImage": imageURL, "width": w, "height": h, "preprocessor": processor.WireValue,
+			"annotationParameters": map[string]any{processor.AnnotationKey: annotation},
+			"controlWeight":        p.Strength, "startingControlStep": p.Start, "endingControlStep": p.End,
 			"pixelPerfect": liblibBool(p.PixelPerfect), "controlMode": map[string]int{"balanced": 0, "prompt": 1, "control": 2}[p.ControlMode], "resizeMode": map[string]int{"stretch": 0, "crop": 1, "fill": 2}[p.ResizeMode]}
+		if modelID := CanonicalLiblibModelID(p.Model); modelID != "" {
+			wire["model"] = modelID
+		}
 		if unit.Mask != nil {
 			maskURL, err := liblibPublicURL(*unit.Mask)
 			if err != nil {

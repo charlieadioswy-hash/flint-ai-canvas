@@ -1,0 +1,2899 @@
+{
+  "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d",
+  "types": [
+    {
+      "id": "canny",
+      "label": "Canny（硬边缘）",
+      "direction": "线稿类",
+      "supported": true
+    },
+    {
+      "id": "softedge",
+      "label": "SoftEdge（软边缘）",
+      "direction": "线稿类",
+      "supported": true
+    },
+    {
+      "id": "mlsd",
+      "label": "MLSD（直线）",
+      "direction": "线稿类",
+      "supported": true
+    },
+    {
+      "id": "scribble",
+      "label": "Scribble/Sketch（涂鸦/草图）",
+      "direction": "线稿类",
+      "supported": true
+    },
+    {
+      "id": "lineart",
+      "label": "Lineart（线稿）",
+      "direction": "线稿类",
+      "supported": true
+    },
+    {
+      "id": "depth",
+      "label": "Depth（深度图）",
+      "direction": "空间关系类",
+      "supported": true
+    },
+    {
+      "id": "segment",
+      "label": "Segment（语义分割）",
+      "direction": "空间关系类",
+      "supported": true
+    },
+    {
+      "id": "normal",
+      "label": "Normal（正态）",
+      "direction": "空间关系类",
+      "supported": true
+    },
+    {
+      "id": "openpose",
+      "label": "OpenPose（姿态）",
+      "direction": "姿态类",
+      "supported": true
+    },
+    {
+      "id": "tile",
+      "label": "Tile/Blur（分块/模糊）",
+      "direction": "画面参考",
+      "supported": true
+    },
+    {
+      "id": "reference",
+      "label": "Reference（参考）",
+      "direction": "画面参考",
+      "supported": true
+    },
+    {
+      "id": "ip-adapter",
+      "label": "IP-Adapter",
+      "direction": "风格迁移",
+      "supported": true
+    },
+    {
+      "id": "t2i-adapter",
+      "label": "T2I-Adapter",
+      "direction": "风格迁移",
+      "supported": true
+    },
+    {
+      "id": "shuffle",
+      "label": "Shuffle (随机洗牌)",
+      "direction": "风格迁移",
+      "supported": true
+    },
+    {
+      "id": "recolor",
+      "label": "Recolor（重上色）",
+      "direction": "上色",
+      "supported": true
+    },
+    {
+      "id": "inpaint",
+      "label": "Inpaint（局部重绘）",
+      "direction": "局部重绘",
+      "supported": true
+    },
+    {
+      "id": "instant-id",
+      "label": "Instant ID",
+      "direction": "换脸",
+      "supported": true,
+      "description": "可配置官方 59/60 通用单元；单组结构控制不等同于专用模板中的双图完整换脸流程。"
+    },
+    {
+      "id": "none",
+      "label": "None",
+      "direction": "其他",
+      "supported": true
+    },
+    {
+      "id": "pulid",
+      "label": "puLID",
+      "direction": "换脸",
+      "supported": true
+    },
+    {
+      "id": "illumination",
+      "label": "光影",
+      "direction": "其他",
+      "supported": false,
+      "description": "官方目录列出模型，尚无已核实的对应预处理器配置。"
+    },
+    {
+      "id": "qrcode",
+      "label": "二维码",
+      "direction": "其他",
+      "supported": false,
+      "description": "官方目录列出模型，尚无已核实的对应预处理器配置。"
+    },
+    {
+      "id": "entity",
+      "label": "主体参考",
+      "direction": "画面参考",
+      "supported": false,
+      "description": "官方示例使用专用模板与 unitOrder=0，当前通用控制单元尚未接通该流程。"
+    },
+    {
+      "id": "revision",
+      "label": "Revision",
+      "direction": "风格迁移",
+      "supported": false,
+      "description": "Liblib 官方预处理器和模型表未公开 Revision 映射。"
+    }
+  ],
+  "preprocessors": [
+    {
+      "id": "canny",
+      "label": "Canny（硬边缘）",
+      "controlType": "canny",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "lowThreshold",
+          "wireName": "lowThreshold",
+          "label": "低阈值",
+          "type": "integer",
+          "min": 1.0,
+          "max": 255.0,
+          "default": 100,
+          "step": 1
+        },
+        {
+          "name": "highThreshold",
+          "wireName": "highThreshold",
+          "label": "高阈值",
+          "type": "integer",
+          "min": 1.0,
+          "max": 255.0,
+          "default": 200,
+          "step": 1
+        }
+      ],
+      "wireValue": 1,
+      "annotationKey": "canny",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "7d917ec7e55c5805db737d3b493c91ce",
+        "b6806516962f4e1599a93ac4483c3d23",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "hed",
+      "label": "hed",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 5,
+      "annotationKey": "hed",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "83286d0e66a845c58f7d23442f9dedf9",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "hed_safe",
+      "label": "hed_safe",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 6,
+      "annotationKey": "hedSafe",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "83286d0e66a845c58f7d23442f9dedf9",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "pidinet",
+      "label": "pidinet",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 17,
+      "annotationKey": "pidinet",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "83286d0e66a845c58f7d23442f9dedf9",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "pidinet_safe",
+      "label": "pidinet_safe",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 18,
+      "annotationKey": "pidinetSafe",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "83286d0e66a845c58f7d23442f9dedf9",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "softedge_teed",
+      "label": "softedge_teed",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "safeSteps",
+          "wireName": "safeSteps",
+          "label": "离散程度",
+          "type": "integer",
+          "min": 0.0,
+          "max": 64.0,
+          "default": 2,
+          "step": 1
+        }
+      ],
+      "wireValue": 58,
+      "annotationKey": "softedgeTeed",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "37bddde3d45c11ee9b5e00163e365853",
+        "3e6860a3b9444f25ae07d9c1b5d1ba9e"
+      ]
+    },
+    {
+      "id": "softedge_anyline",
+      "label": "softedge_anyline",
+      "controlType": "softedge",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "safeSteps",
+          "wireName": "safeSteps",
+          "label": "离散程度",
+          "type": "integer",
+          "min": 0.0,
+          "max": 64.0,
+          "default": 2,
+          "step": 1
+        }
+      ],
+      "wireValue": 65,
+      "annotationKey": "softedgeAnyline",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "0929722d9047ec6498a50ff5d1081629",
+        "83286d0e66a845c58f7d23442f9dedf9",
+        "37bddde3d45c11ee9b5e00163e365853",
+        "3e6860a3b9444f25ae07d9c1b5d1ba9e"
+      ]
+    },
+    {
+      "id": "mlsd",
+      "label": "mlsd (M-LSD 直线线条检测)",
+      "controlType": "mlsd",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "valueThreshold",
+          "wireName": "valueThreshold",
+          "label": "值阈值",
+          "type": "number",
+          "min": 0.01,
+          "max": 2.0,
+          "default": 0.1,
+          "step": 0.01
+        },
+        {
+          "name": "distanceThreshold",
+          "wireName": "distanceThreshold",
+          "label": "距离阈值",
+          "type": "number",
+          "min": 0.01,
+          "max": 20.0,
+          "default": 0.1,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 8,
+      "annotationKey": "mlsd",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "7168cece6a0d491375aa1753ff3bdc21"
+      ]
+    },
+    {
+      "id": "scribble_pidinet",
+      "label": "scribble_pidinet(涂鸦- 手绘)",
+      "controlType": "scribble",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 20,
+      "annotationKey": "scribblePidinet",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "fe57911f7ba1b84eb27f1e1ecead3367",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "scribble_xdog",
+      "label": "scribble_xdog (涂鸦- 强化边缘)",
+      "controlType": "scribble",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "XDoGThreshold",
+          "wireName": "XDoGThreshold",
+          "label": "二值化阈值",
+          "type": "integer",
+          "min": 1.0,
+          "max": 64.0,
+          "default": 32,
+          "step": 1
+        }
+      ],
+      "wireValue": 21,
+      "annotationKey": "scribbleXdog",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "fe57911f7ba1b84eb27f1e1ecead3367",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "scribble_hed",
+      "label": "scribble_hed(涂鸦 -合成)",
+      "controlType": "scribble",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 22,
+      "annotationKey": "scribbleHed",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "fe57911f7ba1b84eb27f1e1ecead3367",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "lineart_realistic",
+      "label": "lineart_realistic (写实线稿提取)",
+      "controlType": "lineart",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 29,
+      "annotationKey": "lineartRealistic",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b06dfbd1a61c35e933d9f8caa8a0e031",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "lineart_standard",
+      "label": "lineart standard (标准线稿提取 -白底黑线反色)",
+      "controlType": "lineart",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 32,
+      "annotationKey": "lineartStandard",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b06dfbd1a61c35e933d9f8caa8a0e031",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "lineart_coarse",
+      "label": "lineart coarse (粗略线稿提取)",
+      "controlType": "lineart",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 30,
+      "annotationKey": "lineartCoarse",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b06dfbd1a61c35e933d9f8caa8a0e031",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "lineart_anime",
+      "label": "lineart_anime (动漫线稿提取)",
+      "controlType": "lineart",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 31,
+      "annotationKey": "lineartAnime",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "c263e039c57b8a958ee0a936039af654",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "lineart_anime_denoise",
+      "label": "lineart_anime_denoise(动漫线稿提取-去噪)",
+      "controlType": "lineart",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 36,
+      "annotationKey": "lineartAnimeDenoise",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "c263e039c57b8a958ee0a936039af654",
+        "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_midas",
+      "label": "depth_midas",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 2,
+      "annotationKey": "depthMidas",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "cf63d214734760dcdc108b1bd094921b",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_leres",
+      "label": "depth_leres (LeRes 深度图估算)",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "removeNear",
+          "wireName": "removeNear",
+          "label": "删除前景",
+          "type": "number",
+          "min": 0.0,
+          "max": 100.0,
+          "default": 0,
+          "step": 0.01
+        },
+        {
+          "name": "removeBackground",
+          "wireName": "removeBackground",
+          "label": "删除背景",
+          "type": "number",
+          "min": 0.0,
+          "max": 100.0,
+          "default": 0,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 3,
+      "annotationKey": "depthLeres",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "cf63d214734760dcdc108b1bd094921b",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_leres++",
+      "label": "depth_leres++",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "removeNear",
+          "wireName": "removeNear",
+          "label": "删除前景",
+          "type": "number",
+          "min": 0.0,
+          "max": 100.0,
+          "default": 0,
+          "step": 0.01
+        },
+        {
+          "name": "removeBackground",
+          "wireName": "removeBackground",
+          "label": "删除背景",
+          "type": "number",
+          "min": 0.0,
+          "max": 100.0,
+          "default": 0,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 4,
+      "annotationKey": "depthLeresPlus",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "cf63d214734760dcdc108b1bd094921b",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_zoe",
+      "label": "depth_zoe (ZoE 深度图估算)",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 25,
+      "annotationKey": "depthZoe",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "cf63d214734760dcdc108b1bd094921b",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_hand_refiner",
+      "label": "depth_hand_refiner",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 57,
+      "annotationKey": "depthHandRefiner",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "3497061cd45c11ee9b5e00163e365853",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "depth_anything",
+      "label": "depth_anything",
+      "controlType": "depth",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 64,
+      "annotationKey": "depthAnything",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "cf63d214734760dcdc108b1bd094921b",
+        "6349e9dae8814084bd9c1585d335c24c",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "segmentation",
+      "label": "segmentation",
+      "controlType": "segment",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 23,
+      "annotationKey": "segmentation",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "94571f4bb5136464afc1540a92ae3ee8"
+      ]
+    },
+    {
+      "id": "oneformer_coco",
+      "label": "oneformer_coco",
+      "controlType": "segment",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 27,
+      "annotationKey": "oneformerCoco",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "94571f4bb5136464afc1540a92ae3ee8"
+      ]
+    },
+    {
+      "id": "oneformer_ade20k",
+      "label": "oneformer_ade20k",
+      "controlType": "segment",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 28,
+      "annotationKey": "oneformerAde20k",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "94571f4bb5136464afc1540a92ae3ee8"
+      ]
+    },
+    {
+      "id": "anime_face_segment",
+      "label": "anime_face_segment",
+      "controlType": "segment",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 54,
+      "annotationKey": "animeFaceSegment",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "94571f4bb5136464afc1540a92ae3ee8"
+      ]
+    },
+    {
+      "id": "normal_map",
+      "label": "normal_map",
+      "controlType": "normal",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "backgroundThreshold",
+          "wireName": "backgroundThreshold",
+          "label": "背景阈值",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.4,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 9,
+      "annotationKey": "normalMap",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "9a85fdca18a8b58b2fb2ff13ab339be4",
+        "e51fdccdf3b8417aab246bde40b5f360"
+      ]
+    },
+    {
+      "id": "normal_bae",
+      "label": "normal bae (Bae 法线贴图提取)",
+      "controlType": "normal",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 26,
+      "annotationKey": "normalBae",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "9a85fdca18a8b58b2fb2ff13ab339be4",
+        "e51fdccdf3b8417aab246bde40b5f360"
+      ]
+    },
+    {
+      "id": "mediapipe_face",
+      "label": "mediapipe_face",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "maxFaces",
+          "wireName": "maxFaces",
+          "label": "最大数量",
+          "type": "integer",
+          "min": 1.0,
+          "max": 10.0,
+          "default": 1,
+          "step": 1
+        },
+        {
+          "name": "minConfidence",
+          "wireName": "minConfidence",
+          "label": "最小置信度",
+          "type": "number",
+          "min": 0.01,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 7,
+      "annotationKey": "mediapipeFace",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "73de0752a7a8431ba21637cda6723c95",
+        "7c6d889cb9c04b78858d8fece80f9f85"
+      ]
+    },
+    {
+      "id": "openpose",
+      "label": "openpose (OpenPose 姿态)",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 10,
+      "annotationKey": "openpose",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "openpose_hand",
+      "label": "openpose hand (OpenPose 姿态及手部)",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 11,
+      "annotationKey": "openposeHand",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "openpose_face",
+      "label": "openpose face (OpenPose 姿态及脸部)",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 12,
+      "annotationKey": "openposeFace",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "openpose_faceonly",
+      "label": "openpose_faceonly (OpenPose 仅脸部)",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 13,
+      "annotationKey": "openposeFaceonly",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "openpose_full",
+      "label": "openpose_full (OpenPose 姿态、手部及脸部)",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 14,
+      "annotationKey": "openposeFull",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "dw_openpose_full",
+      "label": "dw_openpose_full",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 45,
+      "annotationKey": "dwOpenposeFull",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "b46dd34ef9c2fe189446599d62516cbf",
+        "23ef8ab803d64288afdb7106b8967a55",
+        "13c1e1b96ba64f9cbb2b54f89b5fe873"
+      ]
+    },
+    {
+      "id": "animal_openpose",
+      "label": "animal_openpose",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 53,
+      "annotationKey": "animalOpenpose",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "329f0073d45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "densepose",
+      "label": "densepose",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 55,
+      "annotationKey": "densepose",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "3b4e0830d45c11ee9b5e00163e365853",
+        "3ae77dfdd45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "densepose_parula",
+      "label": "densepose_parula",
+      "controlType": "openpose",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 56,
+      "annotationKey": "denseposeParula",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "3b4e0830d45c11ee9b5e00163e365853",
+        "3ae77dfdd45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "tile_resample",
+      "label": "tile_resample(分块重采样)",
+      "controlType": "tile",
+      "parameters": [
+        {
+          "name": "downSamplingRate",
+          "wireName": "downSamplingRate",
+          "label": "下采样率",
+          "type": "number",
+          "min": 1.0,
+          "max": 8.0,
+          "default": 1,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 34,
+      "annotationKey": "tileResample",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "37e42c6bdb6fab4c24a662100f20f722",
+        "0f47ef6d4f4b40afab8b290c98baac0e",
+        "a696b5bdadc740119fd76505b33d6898"
+      ]
+    },
+    {
+      "id": "tile_colorfix",
+      "label": "tile_colorfix",
+      "controlType": "tile",
+      "parameters": [
+        {
+          "name": "variation",
+          "wireName": "variation",
+          "label": "变化率",
+          "type": "integer",
+          "min": 3.0,
+          "max": 32.0,
+          "default": 8,
+          "step": 1
+        }
+      ],
+      "wireValue": 43,
+      "annotationKey": "tileColorfix",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "37e42c6bdb6fab4c24a662100f20f722",
+        "0f47ef6d4f4b40afab8b290c98baac0e",
+        "a696b5bdadc740119fd76505b33d6898"
+      ]
+    },
+    {
+      "id": "tile_colorfix+sharp",
+      "label": "tile_colorfix+sharp",
+      "controlType": "tile",
+      "parameters": [
+        {
+          "name": "variation",
+          "wireName": "variation",
+          "label": "变化率",
+          "type": "integer",
+          "min": 3.0,
+          "max": 32.0,
+          "default": 8,
+          "step": 1
+        },
+        {
+          "name": "sharpness",
+          "wireName": "sharpness",
+          "label": "锐度",
+          "type": "number",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 1,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 44,
+      "annotationKey": "tileColorfixSharp",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "37e42c6bdb6fab4c24a662100f20f722",
+        "0f47ef6d4f4b40afab8b290c98baac0e",
+        "a696b5bdadc740119fd76505b33d6898"
+      ]
+    },
+    {
+      "id": "blur_gaussian",
+      "label": "blur_gaussian",
+      "controlType": "tile",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        },
+        {
+          "name": "sigma",
+          "wireName": "sigma",
+          "label": "离散程度",
+          "type": "integer",
+          "min": 0.0,
+          "max": 64.0,
+          "default": 9,
+          "step": 1
+        }
+      ],
+      "wireValue": 52,
+      "annotationKey": "blurGaussian",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "aac5fe593565f0673673731d54ecfab8",
+        "a696b5bdadc740119fd76505b33d6898"
+      ]
+    },
+    {
+      "id": "reference_only",
+      "label": "reference_only",
+      "controlType": "reference",
+      "parameters": [
+        {
+          "name": "styleFidelity",
+          "wireName": "styleFidelity",
+          "label": "风格忠实度",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 37,
+      "annotationKey": "referenceOnly",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": []
+    },
+    {
+      "id": "reference_adain",
+      "label": "reference_adain",
+      "controlType": "reference",
+      "parameters": [
+        {
+          "name": "styleFidelity",
+          "wireName": "styleFidelity",
+          "label": "风格忠实度",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 38,
+      "annotationKey": "referenceAdain",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": []
+    },
+    {
+      "id": "reference_adain+attn",
+      "label": "reference_adain+attn",
+      "controlType": "reference",
+      "parameters": [
+        {
+          "name": "styleFidelity",
+          "wireName": "styleFidelity",
+          "label": "风格忠实度",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.5,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 39,
+      "annotationKey": "referenceAdainAttn",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": []
+    },
+    {
+      "id": "ip-adapter_clip_sd15",
+      "label": "ip-adapter_clip_sd15",
+      "controlType": "ip-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 48,
+      "annotationKey": "ipAdapterClipSd15",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "18801062fe4289dd0a984e69de9f9e7c"
+      ]
+    },
+    {
+      "id": "ip-adapter_clip_sdxl",
+      "label": "ip-adapter_clip_sdxl",
+      "controlType": "ip-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 49,
+      "annotationKey": "ipAdapterClipSdxl",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "8ea2538fdd7dcdea52b2da6b5151f875",
+        "375866e3d45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "ip-adapter_clip_sdxl_plus_vith",
+      "label": "ip-adapter_clip_sdxl_plus_vith",
+      "controlType": "ip-adapter",
+      "parameters": [],
+      "wireValue": 61,
+      "annotationKey": "ipAdapterClipSdxlPlusVith",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "38ee73f1d45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "ip-adapter-siglip",
+      "label": "ip-adapter-siglip",
+      "controlType": "ip-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 66,
+      "annotationKey": "ipAdapterSiglip",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "c6ed70879cf011ef96d600163e37ec70"
+      ]
+    },
+    {
+      "id": "clip_vision",
+      "label": "clip_vision",
+      "controlType": "t2i-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 15,
+      "annotationKey": "clipVision",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "e33777a1f374eccd9464623c56a82c91"
+      ]
+    },
+    {
+      "id": "color",
+      "label": "color",
+      "controlType": "t2i-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 16,
+      "annotationKey": "color",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "8e581a4e7c986950d71f1102accad5d0"
+      ]
+    },
+    {
+      "id": "pidinet_sketch",
+      "label": "pidinet_sketch",
+      "controlType": "t2i-adapter",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 19,
+      "annotationKey": "pidinetSketch",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "bd6c5dbb73c2c2e538850c23ab2dcbf5"
+      ]
+    },
+    {
+      "id": "shuffle",
+      "label": "shuffle (随机洗牌)",
+      "controlType": "shuffle",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 33,
+      "annotationKey": "shuffle",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "9efba1cc2d469bf4be8fc135689bc8a0"
+      ]
+    },
+    {
+      "id": "recolor_luminance",
+      "label": "recolor_luminance",
+      "controlType": "recolor",
+      "parameters": [
+        {
+          "name": "gammaCorrection",
+          "wireName": "gammaCorrection",
+          "label": "伽马修正",
+          "type": "number",
+          "min": 0.1,
+          "max": 2.0,
+          "default": 1,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 50,
+      "annotationKey": "recolorLuminance",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "e0db5b9e227eac932c71498cf7e03a78",
+        "03051a3606b4974ec02fc55b079757e7"
+      ]
+    },
+    {
+      "id": "recolor_intensity",
+      "label": "recolor_intensity",
+      "controlType": "recolor",
+      "parameters": [
+        {
+          "name": "gammaCorrection",
+          "wireName": "gammaCorrection",
+          "label": "伽马修正",
+          "type": "number",
+          "min": 0.1,
+          "max": 2.0,
+          "default": 1,
+          "step": 0.01
+        }
+      ],
+      "wireValue": 51,
+      "annotationKey": "recolorIntensity",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "e0db5b9e227eac932c71498cf7e03a78",
+        "03051a3606b4974ec02fc55b079757e7"
+      ]
+    },
+    {
+      "id": "inpaint_global_harmonious",
+      "label": "inpaint_global_harmonious",
+      "controlType": "inpaint",
+      "parameters": [],
+      "wireValue": 40,
+      "annotationKey": "inpaintGlobalHarmonious",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "14aa553bf6534a419a9a465eba900f3a",
+        "a311363995dd4f2fa42ee3fc9582d920",
+        "31df01fc271d484ca4d496179d69a665"
+      ]
+    },
+    {
+      "id": "inpaint_only",
+      "label": "inpaint_only",
+      "controlType": "inpaint",
+      "parameters": [],
+      "wireValue": 41,
+      "annotationKey": "inpaintOnly",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "14aa553bf6534a419a9a465eba900f3a",
+        "a311363995dd4f2fa42ee3fc9582d920",
+        "31df01fc271d484ca4d496179d69a665"
+      ]
+    },
+    {
+      "id": "inpaint_only+lama",
+      "label": "inpaint_only+lama",
+      "controlType": "inpaint",
+      "parameters": [],
+      "wireValue": 42,
+      "annotationKey": "inpaintOnlyLama",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "14aa553bf6534a419a9a465eba900f3a",
+        "a311363995dd4f2fa42ee3fc9582d920",
+        "31df01fc271d484ca4d496179d69a665"
+      ]
+    },
+    {
+      "id": "ip-adapter_face_id",
+      "label": "ip-adapter_face_id",
+      "controlType": "ip-adapter",
+      "parameters": [],
+      "wireValue": 62,
+      "annotationKey": "ipAdapterFaceId",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "368e6a37d45c11ee9b5e00163e365853",
+        "38879e1ad45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "ip-adapter_face_id_plus",
+      "label": "ip-adapter_face_id_plus",
+      "controlType": "ip-adapter",
+      "parameters": [],
+      "wireValue": 63,
+      "annotationKey": "ipAdapterFaceIdPlus",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "34fb8ef6d45c11ee9b5e00163e365853",
+        "3953f672d45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "instant_id_face_keypoints",
+      "label": "instant_id_face_keypoints",
+      "controlType": "instant-id",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 59,
+      "annotationKey": "instantIdFaceKeypoints",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "3560664ad45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "instant_id_face_embedding",
+      "label": "instant_id_face_embedding",
+      "controlType": "instant-id",
+      "parameters": [
+        {
+          "name": "resolution",
+          "wireName": "preprocessorResolution",
+          "label": "预处理器分辨率",
+          "type": "integer",
+          "min": 64.0,
+          "max": 2048.0,
+          "default": 512,
+          "step": 1
+        }
+      ],
+      "wireValue": 60,
+      "annotationKey": "instantIdFaceEmbedding",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": [
+        "3a8267c7d45c11ee9b5e00163e365853"
+      ]
+    },
+    {
+      "id": "none",
+      "label": "None",
+      "controlType": "none",
+      "controlTypes": [
+        "canny",
+        "softedge",
+        "mlsd",
+        "scribble",
+        "lineart",
+        "depth",
+        "openpose",
+        "pulid"
+      ],
+      "description": "仅用于已处理的线稿、深度图、骨骼图；PuLID 是官方专用示例支持的例外。",
+      "parameters": [],
+      "wireValue": 0,
+      "annotationKey": "none",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": []
+    },
+    {
+      "id": "invert",
+      "label": "invert (白底黑线反色)",
+      "controlType": "none",
+      "controlTypes": [
+        "canny",
+        "softedge",
+        "mlsd",
+        "scribble",
+        "lineart"
+      ],
+      "description": "仅用于白色线条、黑色背景并使用线稿模型的控制图。",
+      "parameters": [],
+      "wireValue": 35,
+      "annotationKey": "invert",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Z2zjdfLzGoAJcrx0twhcLxb5nnJ",
+      "recommendedModels": []
+    },
+    {
+      "id": "entity_control",
+      "label": "entity_control",
+      "controlType": "entity",
+      "parameters": [],
+      "wireValue": 68,
+      "annotationKey": "entityControl",
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Y0SAdKA8Yob6yuxMtMWci1A7nKe",
+      "modes": [
+        "text2img"
+      ],
+      "recommendedModels": [
+        "6f1767b5f9eb47289525d06ae882a0e5"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "id": "7d917ec7e55c5805db737d3b493c91ce",
+      "name": "control_v11p_sd15_canny",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "a2c41c4e97944f3aa71f913bdc45b1ca",
+      "name": "t2iadapter_canny_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "canny",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "c04144bcf017232483181cd8607097c2",
+      "name": "t2iadapter_canny_sd15v2",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "canny",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "56de5edadb6f2891aff05ff078dc0470",
+      "name": "diffusers_xl_canny_full",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "efb97e9d8c237573298c3a5a7869b89c",
+      "name": "diffusers_xl_canny_mid",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "dccde738064e9748f93b48ec5868968e",
+      "name": "diffusers_xl_canny_small",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "5242e3d18cc18689bd8af11dd2d675c1",
+      "name": "kohya_controllllite_xl_canny",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4f3e1cfe79f87496ec69a37826c3afeb",
+      "name": "kohya_controllllite_xl_canny_anime",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "63c7f2c6c354336513831aa522d7e0f4",
+      "name": "sai_xl_canny_128lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "5bf551f53651764cad56363e17900d87",
+      "name": "sai_xl_canny_256lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "618390ab2957a422612cb2ba92a2788f",
+      "name": "t2i-adapter_diffusers_xl_canny",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "7cd56501c336c1edba78430355c9d081",
+      "name": "t2i-adapter_xl_canny",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "b6806516962f4e1599a93ac4483c3d23",
+      "name": "xinsir_controlnet-canny-sdxl_V2",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "017997cd6ba44c4dbe8f60e0a26cd0df",
+      "name": "XLabs-flux-canny-controlnet_v3",
+      "baseModel": "f1",
+      "controlTypes": [
+        "canny"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "13c1e1b96ba64f9cbb2b54f89b5fe873",
+      "name": "InstantX-FLUX.1-dev-Controlnet-Union-Pro",
+      "baseModel": "f1",
+      "controlTypes": [
+        "canny",
+        "softedge",
+        "depth",
+        "scribble",
+        "lineart",
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "5b5f21d2b80445598db19e924bd3a409",
+      "name": "InstantX-Qwen-Image-Controlnet-Union",
+      "baseModel": "qwen-image",
+      "controlTypes": [
+        "canny",
+        "softedge",
+        "scribble",
+        "lineart",
+        "depth",
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "0929722d9047ec6498a50ff5d1081629",
+      "name": "control_v11p_sd15_softedge",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "dda1a0c480bfab9833d9d9a1e4a71fff",
+      "name": "sargezt_xl_softedge",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "37bddde3d45c11ee9b5e00163e365853",
+      "name": "controlnet-sd-xl-1.0-softedge-dexined",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4f6726be104a432f8039b018c92ed4bf",
+      "name": "mistoLine_softedge_sdxl_fp16",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "83286d0e66a845c58f7d23442f9dedf9",
+      "name": "mistoLine_rank256",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "6c4d620df3644514903b8189735c6ae9",
+      "name": "XLabs-flux-hed-controlnet_v3",
+      "baseModel": "f1",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3e6860a3b9444f25ae07d9c1b5d1ba9e",
+      "name": "F.1_mistoline_dev_v1",
+      "baseModel": "f1",
+      "controlTypes": [
+        "softedge"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "7168cece6a0d491375aa1753ff3bdc21",
+      "name": "control_v11p_sd15_mlsd",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "mlsd"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "fe57911f7ba1b84eb27f1e1ecead3367",
+      "name": "control_v11p_sd15_scribble",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "scribble"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4a399a87f1ffbc26d065a38765d30d24",
+      "name": "kohya_controllllite_xl_scribble_anime",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "scribble"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "888cf8985bd6442cba1f2d975b6eb022",
+      "name": "xinsir_controlnet-scribble-sdxl-1.0",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "scribble"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "f936bf22cb8e4dcfa6b0f3b96cdd8eb7",
+      "name": "xinsir_anime_painter",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "scribble",
+        "lineart"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "b06dfbd1a61c35e933d9f8caa8a0e031",
+      "name": "control_v11p_sd15_lineart",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "lineart"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "c263e039c57b8a958ee0a936039af654",
+      "name": "control_v11p_sd15s2_lineart_anime",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "lineart"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "a0f01da42bf48b0ba02c86b6c26b5699",
+      "name": "t2i-adapter_diffusers_xl_lineart",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "lineart"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "cf63d214734760dcdc108b1bd094921b",
+      "name": "control_v11f1p_sd15_depth",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "f08a4a889b56d4099e8a947503cabc14",
+      "name": "t2iadapter_depth_sd15v2",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "depth",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "8b74bf9ea84f592c069b523d9bef9dab",
+      "name": "t2iadapter_depth_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "depth",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "fc8b79f97eeceda388b43df12509c311",
+      "name": "t2iadapter_zoedepth_sd15v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "depth",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3497061cd45c11ee9b5e00163e365853",
+      "name": "control_sd15_inpaint_depth_hand_fp16",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "a35993a2d1cde4a6c800364a68731c67",
+      "name": "t2i-adapter_diffusers_xl_depth_zoe",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3156f3428afc7122c66b2b950f09d4cd",
+      "name": "sai_xl_depth_128lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "c22ec6a7a24eed6b91889ae1a1e94b2e",
+      "name": "t2i-adapter_diffusers_xl_depth_midas",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "740d6d428e70d4b40888efa4d9eb642a",
+      "name": "diffusers_xl_depth_mid",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "6349e9dae8814084bd9c1585d335c24c",
+      "name": "xinsir_controlnet_depth_sdxl_1.0",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "08d0fbb72d7fab601218df26978a46e0",
+      "name": "sai_xl_depth_256lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "feb9ee5779bf2eb3fdd669f2e3e6b1aa",
+      "name": "sargezt_xl_depth",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4216d4b49a6b559d76d181908f866eb8",
+      "name": "sargezt_xl_depth_zeed",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "dea707d52e3a8f243da5579579cb3a3d",
+      "name": "kohya_controllllite_xl_depth_anime",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "693d7182db5293c0087524580111fd96",
+      "name": "kohya_controllllite_xl_depth",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "1c6d32d0fb004cf1becc2b526fd83690",
+      "name": "sargezt_xl_depth_faid_vidit",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "6a786af31a13776100e9c6a90f99aebf",
+      "name": "diffusers_xl_depth_small",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "04dcab4b18c7b821e96660d6c19de50b",
+      "name": "diffusers_xl_depth_full",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "0cc4e6b8206b44cdab51e30fb8b9c328",
+      "name": "XLabs-flux-depth-controlnet_v3",
+      "baseModel": "f1",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "64dd7a6c714f4512a4500f6a01b016b7",
+      "name": "Flux.1-dev-Controlnet-Depth",
+      "baseModel": "f1",
+      "controlTypes": [
+        "depth"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "94571f4bb5136464afc1540a92ae3ee8",
+      "name": "control_v11p_sd15_seg",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "segment"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "9a85fdca18a8b58b2fb2ff13ab339be4",
+      "name": "control_v11p_sd15_normalbae",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "normal"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "e51fdccdf3b8417aab246bde40b5f360",
+      "name": "Flux.1-dev-Controlnet-Surface-Normal",
+      "baseModel": "f1",
+      "controlTypes": [
+        "normal"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "b46dd34ef9c2fe189446599d62516cbf",
+      "name": "control_v11p_sd15_openpose",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "5a8b19a8809e00be4e17517e8ab174ad",
+      "name": "t2iadapter_openpose_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "openpose",
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3b4e0830d45c11ee9b5e00163e365853",
+      "name": "control_v11p_sd15_densepose_fp16",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "329f0073d45c11ee9b5e00163e365853",
+      "name": "control_sd15_animal_openpose_fp16",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "73de0752a7a8431ba21637cda6723c95",
+      "name": "control_v2p_sd15_mediapipe_face",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4cbbd2483088ef5f0d41bfef0d7141fb",
+      "name": "kohya_controllllite_xl_openpose_anime_v2",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "abb5d55cf94c504f6f8c64abc0b1483f",
+      "name": "kohya_controllllite_xl_openpose_anime",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "4dd1f4df2a9d3a9db8aeaa9480196d02",
+      "name": "thibaud_xl_openpose_256lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "9deac5a5c60abfd03261bd174ddba47d",
+      "name": "t2i-adapter_xl_openpose",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "9cd43e1856040c2436f00802d5b54ee5",
+      "name": "t2i-adapter_diffusers_xl_openpose",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "2fe4f992a81c5ccbdf8e9851c8c96ff2",
+      "name": "thibaud_xl_openpose",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3ae77dfdd45c11ee9b5e00163e365853",
+      "name": "controlnet-densepose-sdxl",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "23ef8ab803d64288afdb7106b8967a55",
+      "name": "xinsir_controlnet-openpose-sdxl-1.0",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "7c6d889cb9c04b78858d8fece80f9f85",
+      "name": "F.1-ControlNet-Pose-V1",
+      "baseModel": "f1",
+      "controlTypes": [
+        "openpose"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "37e42c6bdb6fab4c24a662100f20f722",
+      "name": "control_v11f1e_sd15_tile",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "46a34a643f6855e9b3861515712df5d9",
+      "name": "kohya_controllllite_xl_blur_anime",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "0f47ef6d4f4b40afab8b290c98baac0e",
+      "name": "xinsir_controlnet_tile_sdxl_1.0",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "44199bb6dcf4f65e09a4e5e57ebdf9b4",
+      "name": "kohya_controllllite_xl_blur_anime_beta",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "aac5fe593565f0673673731d54ecfab8",
+      "name": "kohya_controllllite_xl_blur",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "13bfaf39f9214c658507a92cd15fd02d",
+      "name": "TTPLanet_SDXL_Controlnet_Tile_Realistic_v1",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "163d505651a64d6bac9a907b213dc8b0",
+      "name": "TTPLanet_SDXL_Controlnet_Tile_Realistic_v2",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "a696b5bdadc740119fd76505b33d6898",
+      "name": "Flux.1-dev-Controlnet-Upscaler",
+      "baseModel": "f1",
+      "controlTypes": [
+        "tile"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "",
+      "name": "None",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "reference"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "18801062fe4289dd0a984e69de9f9e7c",
+      "name": "ip-adapter_sd15",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "ad4bd9b4b05c4ac8faf7f81d9fdcadc8",
+      "name": "ip-adapter_sd15_plus",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3a1ddfd0d45c11ee9b5e00163e365853",
+      "name": "ip-adapter_sd15_light",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "36f3d2a0d45c11ee9b5e00163e365853",
+      "name": "ip-adapter_sd15_vit-G",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "8ea2538fdd7dcdea52b2da6b5151f875",
+      "name": "ip-adapter_xl",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "38ee73f1d45c11ee9b5e00163e365853",
+      "name": "ip-adapter-plus_sdxl_vit-h",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "375866e3d45c11ee9b5e00163e365853",
+      "name": "ip-adapter_sdxl_vit-h",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "c6ed70879cf011ef96d600163e37ec70",
+      "name": "InstantX-F.1-dev-IP-Adapter",
+      "baseModel": "f1",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "8ddf6f3ba8a111efbb1700163e031cf1",
+      "name": "F.1-redux-dev",
+      "baseModel": "f1",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "8e581a4e7c986950d71f1102accad5d0",
+      "name": "t2iadapter_color_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "181d8d213381458cb6e326760637d4b4",
+      "name": "t2iadapter_keypose_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3c680cc8edfbc4479423549e01f21897",
+      "name": "t2iadapter_seg_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "0d19dd02091ec2d01f3cdd99a4f4b442",
+      "name": "t2iadapter_sketch_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "bd6c5dbb73c2c2e538850c23ab2dcbf5",
+      "name": "t2iadapter_sketch_sd15v2",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "e33777a1f374eccd9464623c56a82c91",
+      "name": "t2iadapter_style_sd14v1",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "t2i-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "9efba1cc2d469bf4be8fc135689bc8a0",
+      "name": "control_v11e_sd15_shuffle",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "shuffle"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "e0db5b9e227eac932c71498cf7e03a78",
+      "name": "ioclab_sd15_recolor",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "recolor"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "af92235f1de682ceac136c06450c9a51",
+      "name": "sai_xl_recolor_128lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "recolor"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "03051a3606b4974ec02fc55b079757e7",
+      "name": "sai_xl_recolor_256lora",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "recolor"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "ebeada0aa92959b4e905ab6980d5d203",
+      "name": "control_v11p_sd15_inpaint",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "14aa553bf6534a419a9a465eba900f3a",
+      "name": "segmentation_mask_brushnet_ckpt",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "de44488f84a74e02a1fac604d790698c",
+      "name": "random_mask_brushnet_cpkt",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "a311363995dd4f2fa42ee3fc9582d920",
+      "name": "segmentation_mask_brushnet_ckpt_sdxl_v1",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3161fc68c59847b0ad826a9fb18c857f",
+      "name": "random_mask_brushnet_ckpt_sdxl",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "012d2f780c0b44dba829bb223207e608",
+      "name": "F.1-dev-Controlnet-Inpainting-Alpha",
+      "baseModel": "f1",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "31df01fc271d484ca4d496179d69a665",
+      "name": "F.1-dev-Controlnet-Inpainting-Beta",
+      "baseModel": "f1",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "2228ab9234a34aa5abf77caa907c0de1",
+      "name": "InstantX-Qwen-Image-ControlNet-Inpainting",
+      "baseModel": "qwen-image",
+      "controlTypes": [
+        "inpaint"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "368e6a37d45c11ee9b5e00163e365853",
+      "name": "ip-adapter_face_id",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "330504bcd45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid-portrait_sd15",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "34fb8ef6d45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid-plusv2_sd15",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "362a215ad45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid-plus_sd15",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "35c50016d45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid-portrait-v11_sd15",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "38879e1ad45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid_sdxl",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3953f672d45c11ee9b5e00163e365853",
+      "name": "ip-adapter-faceid-plusv2_sdxl",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "336955e4d45c11ee9b5e00163e365853",
+      "name": "ip-adapter-plus-face_sdxl_vit-h",
+      "baseModel": "sdxl",
+      "controlTypes": [
+        "ip-adapter"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3a8267c7d45c11ee9b5e00163e365853",
+      "name": "ip-adapter_instant_id_sdxl",
+      "baseModel": "sdxl",
+      "preprocessors": [
+        "instant_id_face_embedding"
+      ],
+      "controlTypes": [
+        "instant-id"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3560664ad45c11ee9b5e00163e365853",
+      "name": "control_instant_id_sdxl",
+      "baseModel": "sdxl",
+      "preprocessors": [
+        "instant_id_face_keypoints"
+      ],
+      "controlTypes": [
+        "instant-id"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "405836d1ae2646b4ba2716ed6bd5453a",
+      "name": "pulid_flux_v0.9.1",
+      "baseModel": "f1",
+      "controlTypes": [
+        "pulid"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "3109072a5cf6403faba6162003b8f483",
+      "name": "control_v1u_sd15_illumination",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "illumination"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "39b8eac0d45c11ee9b5e00163e365853",
+      "name": "control_v1p_sd15_brightness",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "illumination"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "1fa6070c35626e760b1473926852cbbc",
+      "name": "control_v1p_sd15_qrcode_monster",
+      "baseModel": "sd15",
+      "controlTypes": [
+        "qrcode"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
+    },
+    {
+      "id": "6f1767b5f9eb47289525d06ae882a0e5",
+      "name": "主体参考（官方 F.1 示例）",
+      "baseModel": "f1",
+      "controlTypes": [
+        "entity"
+      ],
+      "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-Y0SAdKA8Yob6yuxMtMWci1A7nKe"
+    }
+  ],
+  "notes": [
+    "Revision is not named in the official preprocessor or model tables. clipVision 15 belongs to T2I-Adapter there.",
+    "The preprocessor recommendation table names the F.1 Union Pro model for Scribble, Lineart, and ordinary OpenPose even though that UUID is not repeated under those groups in the model table.",
+    "The dedicated F.1 subject-reference example additionally documents preprocessor=68, annotationParameters.entityControl={}, model=6f1767b5f9eb47289525d06ae882a0e5, text2img only. It is not listed in the 64-row preprocessor table.",
+    "The dedicated F.1 PuLID example uses preprocessor=0 and annotationParameters.none={}, model=405836d1ae2646b4ba2716ed6bd5453a.",
+    "unitOrder parameter table specifies 1 through 4, while dedicated F.1 examples use 0. This is an official documentation inconsistency, not evidence for a new range."
+  ]
+}
