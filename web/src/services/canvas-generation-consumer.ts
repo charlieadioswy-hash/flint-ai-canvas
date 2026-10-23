@@ -531,14 +531,14 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
     try {
         return await withCanvasStorePersistenceLock(
             scope,
-            async () => {
+            async (guard) => {
             let latestDurable: ReturnType<typeof parseCanvasStorageDocument> | undefined;
             let generationCommittedProject: CanvasProject | undefined;
             let reconcileLiveOnFailure = false;
             try {
                 throwIfAborted(input.signal);
-                const storage = localForageStorageForScope(scope);
-                await commitPendingCanvasStorePersistenceLocked(scope);
+                const storage = localForageStorageForScope(scope, guard);
+                await commitPendingCanvasStorePersistenceLocked(scope, guard);
                 throwIfAborted(input.signal);
 
                 const durable = parseCanvasStorageDocument(await storage.getItem(CANVAS_STORE_KEY), memoryProjects);
@@ -578,7 +578,7 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
                 rebasePendingCanvasStorePersistenceAfterGenerationCommitLocked(scope, rebased.document);
 
                 while (pendingCanvasStorePersistence(scope)) {
-                    const ordinaryDocument = await commitPendingCanvasStorePersistenceLocked(scope);
+                    const ordinaryDocument = await commitPendingCanvasStorePersistenceLocked(scope, guard);
                     if (ordinaryDocument) {
                         latestDurable = ordinaryDocument;
                         recordCanvasStorageDocument(scope, ordinaryDocument);
@@ -607,6 +607,10 @@ export async function persistCanvasGenerationEffect(input: CanvasGenerationEffec
                 }
                 return persistedProject;
             } catch (error) {
+                // A lost fallback mutex can already have admitted another page.
+                // Its newer durable state must not be replaced in memory by this
+                // callback's last snapshot, including after our own commit.
+                guard?.assertHeld();
                 if (generationCommittedProject) {
                     if (latestDurable) {
                         recordCanvasStorageDocument(scope, latestDurable);

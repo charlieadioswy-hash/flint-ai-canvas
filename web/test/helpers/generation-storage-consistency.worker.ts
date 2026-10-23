@@ -32,6 +32,8 @@ function installStorageHarness() {
     const originalGetItem = localforage.getItem.bind(localforage);
     const originalSetItem = localforage.setItem.bind(localforage);
     const originalRemoveItem = localforage.removeItem.bind(localforage);
+    const originalReady = localforage.ready.bind(localforage);
+    const originalDriver = localforage.driver.bind(localforage);
     const originalWindow = (globalThis as { window?: unknown }).window;
     const originalNavigator = (globalThis as { navigator?: unknown }).navigator;
     const originalDocument = (globalThis as { document?: unknown }).document;
@@ -144,11 +146,33 @@ function installStorageHarness() {
         hooks,
         scheduled,
         realSetTimeout,
+        async enableIndexedDB() {
+            const { name, storeName } = localforage.config();
+            const database = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open(name!, 1);
+                request.onupgradeneeded = () => request.result.createObjectStore(storeName!);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            const access = (mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest) => new Promise<unknown>((resolve, reject) => {
+                const transaction = database.transaction(storeName!, mode);
+                const request = operation(transaction.objectStore(storeName!));
+                transaction.oncomplete = () => resolve(request.result);
+                transaction.onabort = () => reject(transaction.error);
+            });
+            localforage.ready = (() => Promise.resolve()) as typeof localforage.ready;
+            localforage.driver = () => localforage.INDEXEDDB;
+            localforage.getItem = ((key: string) => access("readonly", (store) => store.get(key)).then((value) => value ?? null)) as typeof localforage.getItem;
+            localforage.setItem = ((key: string, value: unknown) => access("readwrite", (store) => store.put(value, key)).then(() => value)) as typeof localforage.setItem;
+            localforage.removeItem = ((key: string) => access("readwrite", (store) => store.delete(key)).then(() => undefined)) as typeof localforage.removeItem;
+        },
         restore() {
             localforage.createInstance = originalCreateInstance as typeof localforage.createInstance;
             localforage.getItem = originalGetItem;
             localforage.setItem = originalSetItem;
             localforage.removeItem = originalRemoveItem;
+            localforage.ready = originalReady;
+            localforage.driver = originalDriver;
             if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
             else Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: originalWindow });
             if (originalNavigator === undefined) delete (globalThis as { navigator?: unknown }).navigator;
@@ -640,6 +664,7 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     const harness = installStorageHarness();
     const previousScope = getActiveUserScope();
     const originalCrypto = globalThis.crypto;
+    const originalIndexedDB = globalThis.indexedDB;
     const { apiClient } = await import("../../src/services/api/request");
     const originalAdapter = apiClient.defaults.adapter;
     const assetId = "generation_e8a36a9adf905e4dfd72cd164c1f5b412e6464d00dc490e3d988121db742e6e4";
@@ -721,12 +746,16 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
         const { Window } = await import("happy-dom");
         Object.defineProperty(globalThis, "document", { configurable: true, value: new Window({ url: "http://canvas.test" }).document });
         Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto) } });
+        const { IDBFactory } = await import("fake-indexeddb");
+        Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: new IDBFactory() });
+        await import("../../src/lib/localforage-storage");
+        await harness.enableIndexedDB();
         setActiveUserScope("http-registered-generation");
         const { useCanvasStore, flushCanvasStorePersistence, CANVAS_STORE_KEY } = await import("../../src/stores/canvas/use-canvas-store");
         const { useAssetStore } = await import("../../src/stores/use-asset-store");
         const { initializeRemoteUserDataSession, saveRemoteUserDataNow, resetRemoteUserDataSync } = await import("../../src/services/user-data-sync");
         const { materializeGenerationTaskAssets, consumeGenerationTaskNode, consumeGenerationTaskMessage, projectGenerationTaskResult } = await import("../../src/services/project-asset-sync");
-        const { applyGenerationTaskResultToNodes, generationTaskOutputsApplied, shouldRecoverCanvasMediaAsset } = await import("../../src/lib/canvas/canvas-generation-task-sync");
+        const { generationTaskOutputsApplied, shouldRecoverCanvasMediaAsset } = await import("../../src/lib/canvas/canvas-generation-task-sync");
         const { canvasContentHash } = await import("../../src/lib/canvas/canvas-content");
         const { localForageStorageForScope } = await import("../../src/lib/localforage-storage");
         const { parseCanvasStorageDocument } = await import("../../src/lib/canvas/canvas-storage-revision");
@@ -740,7 +769,7 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             position: { x: 700, y: 100 },
             width: 320,
             height: 240,
-            metadata: { content: "/api/resources/http-image/file", storageKey, taskId: "task-http-recovery", taskStatus: "succeeded", status: "success", generationOutputCount: 1 },
+            metadata: { taskId: "task-http-recovery", taskStatus: "succeeded", status: "loading", size: "640x480", manualSize: true },
         };
         if (screen) node.metadata = { taskId: "task-http-recovery", taskStatus: "succeeded", status: "loading", size: "640x480" };
         useCanvasStore.getState().updateProject(projectId, {
@@ -812,42 +841,42 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             resetRemoteUserDataSync();
             return result;
         }
-        const needsRecovery = shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task);
+        const needsRecovery = node.metadata?.status === "loading" || shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task);
+        const { applyCanvasGenerationTaskNodeEffect } = await import("../../src/services/canvas-generation-consumer");
+        const nodesRef = { get current() { return useCanvasStore.getState().projects.find((project) => project.id === projectId)!.nodes; } };
+        const setNodes: import("react").Dispatch<import("react").SetStateAction<import("../../src/types/canvas").CanvasNodeData[]>> = (update) => {
+            useCanvasStore.getState().updateProject(projectId, { nodes: typeof update === "function" ? update(nodesRef.current) : update });
+        };
+        let applied = 0;
+        const consume = () => consumeGenerationTaskNode(task, node.id, 0, async (input) => {
+            applied++;
+            await applyCanvasGenerationTaskNodeEffect({ ...input, projectId, nodeId: node.id, nodesRef, setNodes });
+        });
         if (variant !== "registered") {
             let rejection = "";
             try {
-                await materializeGenerationTaskAssets(task);
+                await consume();
             } catch (error) {
                 rejection = error instanceof Error ? error.message : String(error);
             }
-            const raw = await applyGenerationTaskResultToNodes([node], task, node.id);
             resetRemoteUserDataSync();
-            return { rejection, boundAssetId: raw.node?.metadata?.assetId, requests };
+            return { rejection, boundAssetId: nodesRef.current[0].metadata?.assetId, requests };
         }
         const materialized = await materializeGenerationTaskAssets(task);
         const projected = projectGenerationTaskResult(materialized);
-        let lockError = "";
-        try {
-            await consumeGenerationTaskNode(task, node.id, 0, () => {
-                throw new Error("HTTP 无锁环境不应写入 attach effect");
-            });
-        } catch (error) {
-            lockError = error instanceof Error ? error.message : String(error);
-        }
-        const recovered = await applyGenerationTaskResultToNodes([node], task, node.id);
-        useCanvasStore.getState().updateProject(projectId, { nodes: recovered.nodes });
+        await consume();
+        await consume();
         await saveRemoteUserDataNow(projectId);
         await flushCanvasStorePersistence();
         const restored = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
-        const replayed = await applyGenerationTaskResultToNodes(restored.nodes, task, node.id);
         const result = {
             needsRecovery,
-            lockError,
+            applied,
             materializedId: materialized.outputs?.[0]?.materializedAssetId,
             projectedId: projected.outputs?.[0]?.materializedAssetId,
             saved: savedProject?.nodes[0],
             restored: restored.nodes[0],
-            replayed: replayed.nodes[0],
+            replayed: nodesRef.current[0],
             assets: useAssetStore.getState().assets,
             requests,
         };
@@ -856,6 +885,8 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
     } finally {
         apiClient.defaults.adapter = originalAdapter;
         Object.defineProperty(globalThis, "crypto", { configurable: true, value: originalCrypto });
+        if (originalIndexedDB === undefined) delete (globalThis as { indexedDB?: unknown }).indexedDB;
+        else Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: originalIndexedDB });
         setActiveUserScope(previousScope);
         harness.restore();
     }

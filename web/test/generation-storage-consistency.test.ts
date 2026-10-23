@@ -62,7 +62,7 @@ test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建
 test("HTTP 创作回填拒绝不匹配或未登记的素材，不能无锁创建或完成消息", async () => {
     for (const variant of ["mismatch", "missing"] as const) {
         const result = await runScenario<{ rejection: string; applied: number; message: { status: string }; requests: string[] }>(`http-creation-generation-${variant}`);
-        expect(result.rejection).toContain(variant === "mismatch" ? "生成素材与任务资源不一致" : "跨页面生成副作用互斥");
+        expect(result.rejection).toContain(variant === "mismatch" ? "生成素材与任务资源不一致" : "跨标签存储锁");
         expect(result.applied).toBe(0);
         expect(result.message.status).toBe("error");
         expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
@@ -72,10 +72,10 @@ test("HTTP 创作回填拒绝不匹配或未登记的素材，不能无锁创建
 test("内网 HTTP 从原任务恢复已登记图片，缺少 Web Lock 和 Web Crypto 仍复用素材并保存", async () => {
     type Node = import("../src/types/canvas").CanvasNodeData;
     type Asset = import("../src/stores/use-asset-store").Asset;
-    const result = await runScenario<{ needsRecovery: boolean; lockError: string; materializedId: string; projectedId: string; saved: Node; restored: Node; replayed: Node; assets: Asset[]; requests: string[] }>("http-registered-generation");
+    const result = await runScenario<{ needsRecovery: boolean; applied: number; materializedId: string; projectedId: string; saved: Node; restored: Node; replayed: Node; assets: Asset[]; requests: string[] }>("http-registered-generation");
     const assetId = "generation_e8a36a9adf905e4dfd72cd164c1f5b412e6464d00dc490e3d988121db742e6e4";
     expect(result.needsRecovery).toBe(true);
-    expect(result.lockError).toContain("跨页面生成副作用互斥");
+    expect(result.applied).toBe(1);
     expect(result.materializedId).toBe(assetId);
     expect(result.projectedId).toBe(assetId);
     for (const node of [result.saved, result.restored, result.replayed])
@@ -93,7 +93,7 @@ test("HTTP 恢复拒绝资源不匹配的登记身份，缺失素材也不能绕
     expect(mismatch.rejection).toContain("生成素材与任务资源不一致");
     expect(mismatch.boundAssetId).toBeUndefined();
     const missing = await runScenario<{ rejection: string; boundAssetId?: string; requests: string[] }>("http-generation-missing");
-    expect(missing.rejection).toContain("跨页面生成副作用互斥");
+    expect(missing.rejection).toContain("跨标签存储锁");
     expect(missing.boundAssetId).toBeUndefined();
     for (const result of [mismatch, missing]) expect(result.requests.some((request) => request.startsWith("put:") || request.startsWith("patch:") || request.includes("/tasks"))).toBe(false);
 });

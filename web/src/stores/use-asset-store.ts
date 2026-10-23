@@ -439,9 +439,9 @@ export const useAssetStore = create<AssetStore>()(
                     window.setTimeout(() =>
                         withGenerationArtifactCommitLock(scope, async () => {
                             // 固定锁序：artifact -> Canvas（释放）-> Asset，避免跨 store 锁重入。
-                            const canvasProjects = await withCanvasStorePersistenceLock(scope, async () => {
-                                await commitPendingCanvasStorePersistenceLocked(scope);
-                                const durableCanvas = parseCanvasStorageDocument(await localForageStorageForScope(scope).getItem(CANVAS_STORE_KEY));
+                            const canvasProjects = await withCanvasStorePersistenceLock(scope, async (guard) => {
+                                await commitPendingCanvasStorePersistenceLocked(scope, guard);
+                                const durableCanvas = parseCanvasStorageDocument(await localForageStorageForScope(scope, guard).getItem(CANVAS_STORE_KEY));
                                 return pendingCanvasStorePersistence(scope)?.projects ?? durableCanvas.state.projects;
                             });
                             await withGenerationAssetStorageLock(scope, async () => {

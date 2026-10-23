@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
+import { withBrowserStorageLock, type BrowserStorageLockedOperation, type BrowserStorageLockGuard } from "@/lib/browser-storage-lock";
 import { sameCanvasContent } from "@/lib/canvas/canvas-content";
 import { canvasAppearanceForPreset, DEFAULT_CANVAS_BACKGROUND_MODE, NEW_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
@@ -234,12 +235,13 @@ type CanvasStorageLockOptions = {
 const CANVAS_STORAGE_LOCK_PREFIX = "yingce:canvas-generation-storage-lock:";
 const canvasStorageTails = new Map<string, Promise<void>>();
 
-function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions) {
+function runWithBrowserCanvasStorageLock<T>(scope: string, operation: BrowserStorageLockedOperation<T>, options: CanvasStorageLockOptions) {
     const locks = typeof window !== "undefined" && typeof navigator !== "undefined" ? (navigator.locks as AsyncCanvasStorageLock | undefined) : undefined;
     const lockName = `${CANVAS_STORAGE_LOCK_PREFIX}${scope}`;
-    if (locks) return locks.request(lockName, operation);
-    if (options.requireCrossRealmLock && typeof window !== "undefined" && typeof document !== "undefined") {
-        throw new Error("当前浏览器不支持跨标签存储锁，已停止画布生成持久化");
+    if (locks) return locks.request(lockName, () => operation());
+    if (typeof window !== "undefined" && typeof document !== "undefined" && (globalThis.indexedDB || options.requireCrossRealmLock)) {
+        // Ordinary saves must share the mutex with generated-result commits.
+        return withBrowserStorageLock("canvas-storage", lockName, operation);
     }
     return operation();
 }
@@ -250,7 +252,7 @@ function runWithBrowserCanvasStorageLock<T>(scope: string, operation: () => Prom
  * `pending` 必须把当前写入的真实结果返回给调用方；只有前一个 tail 的失败被
  * 转换成已处理的 void，才不会让一次旧失败永久毒化后续保存队列。
  */
-export function withCanvasStorePersistenceLock<T>(scope: string, operation: () => Promise<T>, options: CanvasStorageLockOptions = {}): Promise<T> {
+export function withCanvasStorePersistenceLock<T>(scope: string, operation: BrowserStorageLockedOperation<T>, options: CanvasStorageLockOptions = {}): Promise<T> {
     const previous = canvasStorageTails.get(scope) ?? Promise.resolve();
     const pending = previous.then(() => undefined, () => undefined).then(() => runWithBrowserCanvasStorageLock(scope, operation, options));
     const tail = pending.then(
@@ -292,8 +294,8 @@ export function recordCanvasStorageDocument(scope: string, document: CanvasStora
     }
 }
 
-export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
-    const storage = localForageStorageForScope(scope);
+export async function commitPendingCanvasStorePersistenceLocked(scope: string, guard?: BrowserStorageLockGuard) {
+    const storage = localForageStorageForScope(scope, guard);
     let committed: CanvasStorageDocument | null = null;
 
     while (true) {
@@ -331,7 +333,7 @@ export async function commitPendingCanvasStorePersistenceLocked(scope: string) {
 
 async function writeQueuedCanvasPersist(scope: string, _token: number) {
     try {
-        await withCanvasStorePersistenceLock(scope, () => commitPendingCanvasStorePersistenceLocked(scope));
+        await withCanvasStorePersistenceLock(scope, (guard) => commitPendingCanvasStorePersistenceLocked(scope, guard));
     } catch (error) {
         const queued = queuedCanvasPersists.get(scope);
         if (queued) markCanvasLocalPersistencePending(queued.state.projects, error instanceof Error ? error.message : "本地画布保存失败");
@@ -558,11 +560,11 @@ export function reconcileCanvasGenerationFailure(scope: string, durableProjects:
 
 const failedCanvasJournalRecoveries = new Map<string, string>();
 
-async function recoverCanvasPersistenceJournalLocked(scope: string, name: string, initial: CanvasStorageDocument) {
+async function recoverCanvasPersistenceJournalLocked(scope: string, name: string, initial: CanvasStorageDocument, guard?: BrowserStorageLockGuard) {
     const journals = readCanvasPersistenceJournals(scope).filter((journal) => journal.name === name)
         .sort((left, right) => left.savedAt.localeCompare(right.savedAt) || left.writerId.localeCompare(right.writerId) || left.token - right.token);
     if (!journals.length) return initial;
-    const storage = localForageStorageForScope(scope);
+    const storage = localForageStorageForScope(scope, guard);
     let durable = parseCanvasStorageDocument(await storage.getItem(name), initial.state.projects);
     for (const journal of journals) {
         const rebased = applyCanvasPersistenceJournal(durable, journal);
@@ -579,7 +581,7 @@ async function recoverCanvasPersistenceJournalLocked(scope: string, name: string
 
 async function recoverCanvasPersistenceJournal(scope: string, name: string, initial: CanvasStorageDocument) {
     try {
-        return await withCanvasStorePersistenceLock(scope, () => recoverCanvasPersistenceJournalLocked(scope, name, initial));
+        return await withCanvasStorePersistenceLock(scope, (guard) => recoverCanvasPersistenceJournalLocked(scope, name, initial, guard));
     } catch (error) {
         failedCanvasJournalRecoveries.set(scope, name);
         const projects = new Map(initial.state.projects.map((project) => [project.id, project]));

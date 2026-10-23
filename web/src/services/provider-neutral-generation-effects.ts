@@ -1,4 +1,6 @@
 import { localForageStorageForScope } from "@/lib/localforage-storage";
+import { withBrowserStorageLock, type BrowserStorageLockedOperation, type BrowserStorageLockGuard } from "@/lib/browser-storage-lock";
+import { createClientId } from "@/lib/client-id";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { GenerationTaskEffectClaim, GenerationTaskEffectResult, GenerationTaskEffectStore } from "@/services/generation-task-materializer";
 
@@ -25,7 +27,7 @@ type EffectLease = {
 };
 
 type AsyncLock = {
-    request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+    request<T>(name: string, callback: BrowserStorageLockedOperation<T>): Promise<T>;
 };
 
 type EffectStorage = {
@@ -39,8 +41,8 @@ const DEFAULT_LEASE_MS = 30_000;
 const inProcessRecords = new Map<string, string>();
 const inProcessLockTails = new Map<string, Promise<void>>();
 
-function effectStorage(scope: string): EffectStorage {
-    if (typeof window !== "undefined") return localForageStorageForScope(scope);
+function effectStorage(scope: string, guard?: BrowserStorageLockGuard): EffectStorage {
+    if (typeof window !== "undefined") return localForageStorageForScope(scope, guard);
     return {
         getItem: async (name) => inProcessRecords.get(name) ?? null,
         setItem: async (name, value) => {
@@ -51,9 +53,7 @@ function effectStorage(scope: string): EffectStorage {
 
 function effectLock(): AsyncLock {
     if (typeof window !== "undefined") {
-        const locks = globalThis.navigator?.locks;
-        if (!locks) throw new Error("当前浏览器不支持跨页面生成副作用互斥");
-        return locks;
+        return { request: (name, callback) => withBrowserStorageLock("generation-effect", name, callback) };
     }
     return {
         async request<T>(name: string, callback: () => Promise<T>) {
@@ -159,8 +159,8 @@ export function createProviderNeutralGenerationTaskEffectStore(
     }
 
     async function withRecord<T>(scope: string, taskId: string, effectKey: string, action: (record: EffectRecord | undefined, storage: EffectStorage, key: string) => Promise<T>) {
-        return effectLock().request(lockKey(scope, effectKey), async () => {
-            const storage = effectStorage(scope);
+        return effectLock().request(lockKey(scope, effectKey), async (guard) => {
+            const storage = effectStorage(scope, guard);
             const key = recordKey(scope, effectKey);
             return action(parseRecord(await storage.getItem(key), taskId, effectKey), storage, key);
         });
@@ -181,7 +181,7 @@ export function createProviderNeutralGenerationTaskEffectStore(
                     scope,
                     taskId,
                     effectKey,
-                    leaseToken: crypto.randomUUID(),
+                    leaseToken: createClientId(),
                     expiresAt: new Date(current.getTime() + leaseMs).toISOString(),
                     fence: (record?.fence ?? 0) + 1,
                 };
