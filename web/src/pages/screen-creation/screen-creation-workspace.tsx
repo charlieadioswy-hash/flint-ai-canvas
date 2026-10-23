@@ -250,8 +250,9 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                                         profile={props.profile}
                                                         size={props.size}
                                                         quality={props.quality}
-                                                        onChange={(size, quality) => {
-                                                            props.setSize(size, quality);
+                                                        imageResolution={props.imageResolution}
+                                                        onChange={(size, quality, resolution) => {
+                                                            props.setSize(size, quality, resolution);
                                                             setSizeOpen(false);
                                                         }}
                                                     />

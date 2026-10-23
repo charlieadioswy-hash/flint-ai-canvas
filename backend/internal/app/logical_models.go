@@ -722,6 +722,9 @@ func channelModelDefaultOptions(channelModel model.ChannelModel, spec Capability
 		case "image":
 			if config.Image != nil {
 				defaults["size"] = config.Image.Size.Default
+				if config.Image.Resolution.Supported {
+					defaults["imageResolution"] = config.Image.Resolution.Default
+				}
 				if config.Image.Quality.Supported {
 					defaults["quality"] = config.Image.Quality.Default
 				}

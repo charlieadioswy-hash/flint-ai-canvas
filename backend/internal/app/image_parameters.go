@@ -405,7 +405,7 @@ func applyImageParameterValues(config *providerConfig, profile *ImageCapabilityC
 	}, profile.Parameters)
 	for _, field := range profile.Parameters {
 		if field.Name == "size" && !field.Accepts(values["size"]) {
-			size, resolution := fmt.Sprint(values["size"]), config.ImageResolution
+			size, resolution := fmt.Sprint(values["size"]), stringValue(values["imageResolution"])
 			if pixels := resolveImageTaskSize(profile, config.InterfaceType, size, resolution); field.Encoding == "pixels" && field.Accepts(pixels) {
 				values["size"] = pixels
 			} else if ratio := imageSizeRatioForDeclaredPreset(profile, size, resolution); ratio != "" && field.Accepts(ratio) {

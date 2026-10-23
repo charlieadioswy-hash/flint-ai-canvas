@@ -25,6 +25,7 @@ export type IrregularScreenTemplateInput = {
     controlParameters: ControlNetParameters;
     size: string;
     quality?: string;
+    imageResolution?: string;
     providerOptions?: Record<string, Record<string, unknown>>;
     maskMode?: IrregularScreenMaskMode;
     existingProject?: Pick<CanvasProject, "nodes" | "connections" | "creationScene">;
@@ -137,6 +138,7 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
             count: 1,
             size: input.size,
             ...(input.quality ? { quality: input.quality } : {}),
+            ...(input.imageResolution ? { imageResolution: input.imageResolution } : {}),
             controlNet: [{ id: "screen-control-unit", imageBindingId: "screen-control", parameters: input.controlParameters }],
             outputMask: { bindingId: "screen-output-mask", mode: "luminance", resizeMode: "stretch" },
         },

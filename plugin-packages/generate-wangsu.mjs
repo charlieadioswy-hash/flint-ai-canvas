@@ -39,6 +39,9 @@ async function cloneProvider(packageID, sourceID, id, label, prefix = "") {
   if (!template) throw new Error(`missing source provider ${sourceID}`);
   const result = JSON.parse(JSON.stringify(template).replaceAll(`request.providerOptions.${sourceID}.`, `request.providerOptions.${id}.`));
   Object.assign(result, { id, label: `Wangsu · ${label}`, baseUrl, scopes });
+  // Keep Wangsu's existing parameter and price selectors until their model
+  // configuration is migrated; native packages can own a newer typed contract.
+  delete result.imageParameters;
   delete result.legacyAliases;
   for (const operation of ["create", "agent", "poll", "cancel", "result"]) {
     if (!result[operation]) continue;
@@ -63,6 +66,7 @@ for (const [id, label, prefix, pkg, source] of [
 ]) {
   const provider = await cloneProvider(pkg, source, id, label, prefix);
   if (source === "openai-response") {
+    provider.create.body.input = filter(ref("request.messages"), "message", { $ne: [ref("message.role"), "system"] });
     provider.response.text = coalesce(ref("response.output_text"), map(
       filter(ref("response.output"), "item", eq(ref("item.type"), "message")), "item",
       map(filter(ref("item.content"), "part", eq(ref("part.type"), "output_text")), "part", ref("part.text"))));
@@ -104,6 +108,10 @@ for (const [id, label, prefix] of [["wangsu-images", "Images 兼容", ""], ["wan
   });
   delete provider.create.body.images;
   delete provider.create.body.mask;
+  delete provider.create.body.resolution;
+  provider.requiresPublicMediaUrls = true;
+  // Wangsu Images quality is independent from image resolution tiers.
+  provider.create.body.quality = omit(iff(not(oneOf(lower({ $trim: ref("request.quality") }), ["", "auto"])), ref("request.quality")));
   // The Qwen generation contract has no output_format/background/quality.
   const qwen = oneOf(model, ["qwen-image", "qwen-image-plus"]);
   for (const name of ["output_format", "background", "quality", "output_compression", "moderation", "style"]) {
@@ -117,6 +125,12 @@ for (const [id, label, prefix] of [["wangsu-images", "Images 兼容", ""], ["wan
 }
 
 const geminiImage = await cloneProvider("google-gemini-image", "gemini-image", "wangsu-gemini-image", "Gemini 图片", "/gemini");
+const imageTier = (value) => iff(oneOf(lower(value), ["1k", "2k", "4k"]), upper(value));
+// Preserve only the historical K-tier quality values; ordinary quality is not
+// a resolution. An explicit resolution always owns imageSize.
+geminiImage.create.body.generationConfig.imageConfig.imageSize = omit(coalesce(
+  imageTier(ref("request.resolution")), imageTier(ref("request.quality")),
+));
 geminiImage.validations = [{ assert: eq(len(mask), 0), message: "Gemini 图片不支持蒙版编辑" }];
 const chatImage = await cloneProvider("openai-chat-completions", "chat-completion", "wangsu-chat-image", "Chat 图片兼容");
 const geminiChatImage = { $eq: [{ $at: [{ $split: [model, "-"] }, 0] }, "gemini"] };
@@ -145,6 +159,11 @@ delete video.response.progress;
 const seedance = oneOf(model, ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-5-260628"]);
 const veo = oneOf(model, ["veo-3.1-generate-001", "veo-3.1-fast-generate-001"]);
 const hailuo = oneOf(model, ["minimax-hailuo-02", "minimax-hailuo-2.3"]);
+const hailuo02LowResolutionImageVideo = and(eq(model, "minimax-hailuo-02"), eq(lower(ref("request.resolution")), "512p"), gt(len(roleImages(["first_frame"])), 0));
+const seedanceFast = eq(model, "doubao-seedance-2-0-fast-260128");
+const kling = oneOf(model, ["kling-v3", "kling-v3-omni"]);
+const klingResolution = lower(ref("request.resolution"));
+const klingMode = coalesce(iff(oneOf(klingResolution, ["720", "720p", "std"]), "std"), "pro");
 const references = filter(sourceImages, "media", not(oneOf(ref("media.role"), ["first_frame", "last_frame"])));
 const frame = (role) => first(map(roleImages([role]), "media", ref("media.value")));
 const hasReferences = gt(len(references), 0);
@@ -154,7 +173,8 @@ delete video.create.files;
 video.create.body = {
   model: ref("request.model"), prompt: ref("request.prompt"),
   seconds: omit(iff(or(gt(duration, 0), and(seedance, eq(duration, -1))), duration)),
-  size: omit(iff(hailuo, upper(ref("request.resolution")), ref("request.resolution"))),
+  size: omit(iff(not(kling), iff(hailuo, upper(ref("request.resolution")), ref("request.resolution")))),
+  eca_mode: omit(iff(kling, klingMode)),
   eca_aspect_ratio: omit(ref("request.aspectRatio")),
   eca_first_frame: omit(frame("first_frame")), eca_last_frame: omit(frame("last_frame")),
   eca_audio: iff(not(hailuo), ref("request.generateAudio")),
@@ -170,8 +190,10 @@ video.create.body = {
 video.parameters.push(param("providerOptions", "seed/eca_voice", "视频厂商扩展参数。"));
 video.validations = [
   { assert: eq(len(mask), 0), message: "网宿视频协议不支持蒙版" },
+  { assert: or(not(kling), not(ref("request.resolution")), oneOf(klingResolution, ["720", "720p", "std", "1080", "1080p", "pro"])), message: "Kling 仅支持 720P/std 或 1080P/pro" },
   { assert: or(not(hailuo), and(eq(len(ref("request.videos")), 0), eq(len(ref("request.audios")), 0), eq(len(references), 0))), message: "Hailuo 支持首尾帧输入，不支持多模态参考素材" },
-  { assert: or(not(and(hailuo, eq(duration, 10))), eq(lower(ref("request.resolution")), "768p")), message: "Hailuo 10 秒视频仅支持 768P" },
+  { assert: or(not(and(hailuo, eq(duration, 10))), eq(lower(ref("request.resolution")), "768p"), hailuo02LowResolutionImageVideo), message: "Hailuo 10 秒视频要求 768P；仅 Hailuo 02 首帧图生支持 512P" },
+  { assert: or(not(seedanceFast), not(ref("request.resolution")), oneOf(lower(ref("request.resolution")), ["480p", "720p"])), message: "Seedance 2.0 Fast 仅支持 480p 或 720p" },
   { assert: or(not(and(veo, hasReferences)), and(eq(duration, 8), eq(ref("request.aspectRatio"), "16:9"), eq(len(roleImages(["first_frame", "last_frame"])), 0), { $lte: [len(references), 3] })), message: "Veo 参考图模式要求最多 3 张、16:9、8 秒，且不能同时使用首尾帧" },
   { assert: or(not(veo), eq(len(roleImages(["last_frame"])), 0), gt(len(roleImages(["first_frame"])), 0)), message: "Veo 尾帧必须同时提供首帧" },
   { assert: { $lte: [len(roleImages(["first_frame"])), 1] }, message: "首帧最多一张" },
@@ -204,7 +226,7 @@ await cloneProvider("openai-audio", "openai-audio", "wangsu-audio", "语音合�
 await cloneProvider("openai-audio", "openai-audio", "wangsu-openai-audio", "OpenAI 语音合成直连", "/openai");
 
 const manifest = {
-  apiVersion: "yingce.plugin/v2", id: "wangsu", name: "Wangsu 网宿 AI 网关", version: "1.0.0", author: "Wangsu / 影策",
+  apiVersion: "yingce.plugin/v2", id: "wangsu", name: "Wangsu 网宿 AI 网关", version: "1.0.1", author: "Wangsu / 影策",
   description: "网宿系统渠道专用的文本、图片、视频和语音合成协议。",
   documentation: "接口说明见 README.md 与 docs/interface.md。",
   permissions: ["generation.run", "media.read"],

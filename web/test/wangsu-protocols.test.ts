@@ -75,7 +75,9 @@ describe("Wangsu independent protocols", () => {
         for (const protocol of ["wangsu-gemini-image", "wangsu-chat-image"]) {
             const gemini = defaultModelCapabilityConfig(protocol, "gemini-3-pro-image").image!;
             expect(gemini.size.parameter).toBe("aspect_ratio");
-            expect(gemini.quality.values).toEqual(["1k", "2k", "4k"]);
+            expect(gemini.resolution).toEqual({ supported: true, values: ["1k", "2k", "4k"], default: "1k" });
+            expect(gemini.quality.supported).toBe(false);
+            expect(gemini.resolutionUsesQuality).toBe(false);
             expect(gemini.references.maskSupported).toBe(false);
         }
     });
@@ -92,7 +94,8 @@ describe("Wangsu independent protocols", () => {
         expect(defaultModelCapabilityConfig("wangsu-videos", "doubao-seedance-2-0-fast-260128").video!.references.maxVideos).toBe(1);
         const kling = defaultModelCapabilityConfig("wangsu-videos", "kling-v3").video!;
         expect(kling.duration.default).toBe(5);
-        expect(kling.resolutions).toEqual([]);
+        expect(kling.resolutions).toEqual(["720P", "1080P"]);
+        expect(kling.defaultResolution).toBe("1080P");
     });
     test("native OpenAI video defaults stay independent from gateway model overrides", () => {
         for (const name of ["sora-2", "MiniMax-Hailuo-02", "doubao-seedance-2-5-260628"]) {

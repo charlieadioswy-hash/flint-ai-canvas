@@ -8,6 +8,8 @@ export function wangsuImageCapability(protocol: string | undefined, model: strin
         ...fallback,
         references: { ...fallback.references, maxImages: 0, maskSupported: false },
         size: { parameter: "size", values: ["1024x1024", "1536x1024", "1024x1536"], default: "1024x1024", allowCustom: true },
+        resolution: { supported: false, values: [], default: "auto" },
+        resolutionUsesQuality: false,
         quality: { supported: false, values: [], default: "auto" },
         transparentBackground: { supported: false, default: false },
         responseFormat: { supported: true },
@@ -17,7 +19,11 @@ export function wangsuImageCapability(protocol: string | undefined, model: strin
     if (gemini) {
         image.references.maxImages = fallback.references.maxImages;
         image.size = { parameter: "aspect_ratio", values: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"], default: "1:1", allowCustom: false };
-        image.quality = { supported: true, values: ["1k", "2k", "4k"], default: "1k" };
+        image.resolution = { supported: true, values: ["1k", "2k", "4k"], default: "1k" };
+        if (name === "gemini-nano-banana-2.1") {
+            image.references.maxImages = 14;
+            image.size.values.push("1:4", "1:8", "4:1", "8:1");
+        }
         image.responseFormat.supported = false;
     } else if (protocol === "wangsu-chat-image") {
         image.references.maxImages = 1;
@@ -26,6 +32,7 @@ export function wangsuImageCapability(protocol: string | undefined, model: strin
     } else if (name.startsWith("gpt-image-")) {
         image.references.maxImages = 1;
         image.references.maskSupported = true;
+        // GPT Image 2 medium stays closed until its retail pricing is explicit.
         image.quality = { supported: true, values: name.startsWith("gpt-image-2.5-") ? ["auto", "low", "medium", "high", "xhigh", "max"] : ["auto", "low", "high"], default: "auto" };
         image.transparentBackground.supported = true;
         image.outputFormat.supported = true;
@@ -79,10 +86,15 @@ export function wangsuVideoCapability(protocol: string | undefined, model: strin
         video.duration = { selection: "range", min: 4, max: v25 ? 30 : 15, step: 1, default: 5 };
         video.ratios = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"];
         video.defaultRatio = "16:9";
-        video.resolutions = v25 ? ["480p", "720p", "1080p"] : ["480p", "720p", "4k"];
+        video.resolutions = v25 ? ["480p", "720p", "1080p"] : name.startsWith("doubao-seedance-2-0-fast") ? ["480p", "720p"] : ["480p", "720p", "4k"];
         video.defaultResolution = "720p";
         video.generateAudio = { supported: true, default: true };
         video.operations.push("reference_to_video", "audio_to_video");
+    } else if (name === "kling-v3" || name === "kling-v3-omni") {
+        video.resolutions = ["720P", "1080P"];
+        video.defaultResolution = "1080P";
+        video.ratios = ["16:9", "9:16", "1:1"];
+        video.defaultRatio = "16:9";
     } else if (name === "veo-3.1-generate-001" || name === "veo-3.1-fast-generate-001") {
         video.references.maxImages = 3;
         video.duration = { selection: "enum", values: [4, 6, 8], default: 8 };

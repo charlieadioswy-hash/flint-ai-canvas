@@ -5,7 +5,7 @@ import { saveAs } from "file-saver";
 import { useEffectiveConfig, modelOptionName } from "@/stores/use-config-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { requestCreditCost } from "@/lib/model-pricing";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
@@ -43,6 +43,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const [model, setModelValue] = useState("");
     const [size, setSizeValue] = useState("");
     const [quality, setQuality] = useState("auto");
+    const [imageResolution, setImageResolution] = useState("auto");
     const [prompt, setPrompt] = useState("");
     const [advanced, setAdvancedValue] = useState(() => screenDefaultSettings(baseConfig, ""));
     const [mask, setMask] = useState<ScreenImage | null>(null);
@@ -96,6 +97,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         setInpaint(false);
         setSizeValue("");
         setQuality("auto");
+        setImageResolution(modelCapabilityConfigFor(baseConfig, initialModel).image?.resolution.default || "auto");
         setModelValue(initialModel);
         setAdvancedValue(screenDefaultSettings(baseConfig, initialModel));
         if (!canvasId) {
@@ -138,8 +140,14 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             setModelValue(selected);
             setAdvancedValue(next);
             setPrompt(spec.prompt);
-            setSizeValue(spec.options.size || "");
-            setQuality(spec.options.quality || "auto");
+            const restored = normalizeImageValue(modelCapabilityConfigFor(baseConfig, selected).image!, {
+                size: spec.options.size,
+                quality: spec.options.quality,
+                imageResolution: spec.options.imageResolution,
+            }, screenModelDefaults(baseConfig, selected).protocol);
+            setSizeValue(restored.size);
+            setQuality(restored.quality);
+            setImageResolution(restored.imageResolution || "auto");
             setMask(images[0]);
             setOutputMask(images[1]);
             setReference(images[2]);
@@ -163,6 +171,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     useEffect(() => {
         if (!loading && !canvasId && !model && availableModels[0]) {
             setModelValue(availableModels[0]);
+            setImageResolution(modelCapabilityConfigFor(baseConfig, availableModels[0]).image?.resolution.default || "auto");
             setAdvancedValue(screenDefaultSettings(baseConfig, availableModels[0]));
         }
     }, [canvasId, model, availableModels, baseConfig, loading, newVersion]);
@@ -259,6 +268,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     };
     const setModel = (value: string) => {
         setModelValue(value);
+        setImageResolution(modelCapabilityConfigFor(baseConfig, value).image?.resolution.default || "auto");
         setAdvancedValue(screenDefaultSettings(baseConfig, value));
         setError("");
         if (mask)
@@ -347,6 +357,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 controlParameters: screenControlParameters(advanced),
                 size,
                 quality,
+                imageResolution,
                 maskMode,
                 inpaint,
                 providerOptions: screenProviderOptions(baseConfig, model, advanced, Boolean(content), inpaint),
@@ -376,7 +387,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             const saved = await persist(session);
             session.assertActive();
             setStatusText("正在提交生成任务…");
-            await submitScreenGeneration(saved, { ...baseConfig, model, imageModel: model, size, quality, count: "1", transparentBackground: "false" }, session.signal);
+            await submitScreenGeneration(saved, { ...baseConfig, model, imageModel: model, size, quality, imageResolution, count: "1", transparentBackground: "false" }, session.signal);
             session.assertActive();
             if (canvasId !== saved.id) navigate(`/screen-creation/${saved.id}`, { replace: true });
             else await recover(saved.id, session, session.signal);
@@ -428,7 +439,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         model: modelOptionName(model),
         count: 1,
         capability: "image",
-        config: { ...baseConfig, model, size, quality },
+        config: { ...baseConfig, model, size, quality, imageResolution },
         requirements: { capability: "image", controlNetUnits: 1, imageSize: size, input: { imageCount: reference ? 1 : 0, characterCount: 0, videoCount: 0, audioCount: 0, textCount: 0 } },
     });
 
@@ -439,9 +450,11 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         profile,
         size,
         quality,
-        setSize: (value, nextQuality) => {
+        imageResolution,
+        setSize: (value, nextQuality, nextResolution) => {
             setSizeValue(value);
             if (nextQuality) setQuality(nextQuality);
+            if (nextResolution !== undefined) setImageResolution(nextResolution);
         },
         mask: mask ? { ...mask, name: mask.name || "屏幕蒙版" } : null,
         reference: reference ? { ...reference, name: reference.name || "内容参考图" } : null,

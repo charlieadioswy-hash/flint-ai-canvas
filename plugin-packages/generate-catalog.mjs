@@ -520,9 +520,16 @@ const geminiImageSize = omit({
 });
 
 add({
-  id: "google-gemini-image", providerId: "gemini-image", name: "Google Gemini Image", vendor: "Google", capability: "image",
+  id: "google-gemini-image", version: "2.1.1", providerId: "gemini-image", name: "Google Gemini Image", vendor: "Google", capability: "image",
   baseUrl: "https://generativelanguage.googleapis.com", auth: { type: "google-api-key", field: "apiKey" }, params: imageParams,
-  notes: "imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须省略。多图输出由宿主按次创建，不映射 candidateCount。",
+  imageParameters: [
+    { name: "size", label: "画幅比例", type: "string", binding: "aspectRatio", encoding: "ratio", values: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"], default: "1:1" },
+    { name: "imageResolution", label: "分辨率", type: "string", binding: "resolution", values: ["1k", "2k", "4k"], default: "1k", pricing: true },
+    { name: "count", label: "生成数量", type: "integer", binding: "imageCount", min: 1, max: 1, step: 1, default: 1 },
+    { name: "seed", label: "随机种子", type: "integer", binding: "providerOptions.gemini-image.seed", enabled: false },
+    { name: "temperature", label: "随机程度", type: "number", binding: "providerOptions.gemini-image.temperature", min: 0, max: 2, enabled: false },
+  ],
+  notes: "imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须省略。多图输出由宿主按次创建，不映射 candidateCount。响应仅排除 thought=true 的推理中间图，保留所有非 thought 最终图。",
   create: jsonCreate("/v1beta/models/{{model}}:generateContent", {
     contents: [{ role: "user", parts: { $concatArrays: [
       [{ text: ref("request.prompt") }],
@@ -538,9 +545,9 @@ add({
   }),
   response: {
     status: "succeeded",
-    images: map(filter(ref("response.candidates.0.content.parts"), "part", { $or: [ref("part.inlineData"), ref("part.inline_data")] }), "part", {
+    images: map(ref("response.candidates"), "candidate", map(filter(ref("candidate.content.parts"), "part", and(ne(ref("part.thought"), true), { $or: [ref("part.inlineData"), ref("part.inline_data")] })), "part", {
       dataUrl: { $concat: ["data:", coalesce(ref("part.inlineData.mimeType"), ref("part.inline_data.mime_type"), "image/png"), ";base64,", coalesce(ref("part.inlineData.data"), ref("part.inline_data.data"))] }
-    }),
+    })),
     text: map(filter(ref("response.candidates.0.content.parts"), "part", ref("part.text")), "part", ref("part.text")),
     usage: ref("response.usageMetadata"), errorPaths: ["error.code"], messagePaths: ["error.message"]
   }
@@ -1349,6 +1356,7 @@ function manifestFor(spec) {
         baseUrl: spec.baseUrl,
         requiresPublicMediaUrls: spec.requiresPublicMediaUrls === true,
         auth: spec.auth,
+        ...(spec.imageParameters ? { imageParameters: spec.imageParameters } : {}),
         parameters: parameters(spec.params),
         ...(spec.validations ? { validations: spec.validations } : {}),
         create: spec.create,

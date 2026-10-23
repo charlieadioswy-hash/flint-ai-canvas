@@ -244,6 +244,7 @@ export function projectLogicalCapability(spec: CapabilitySpec, defaults: Record<
         projected.image.references.maskSupported = (spec.inputs?.mask?.max ?? 0) > 0;
         projected.image.size = { parameter: "none", values: [], default: "auto", allowCustom: false };
         projected.image.quality = { supported: false, values: [], default: "auto" };
+        projected.image.resolution = { supported: false, values: [], default: "auto" };
         projected.image.transparentBackground = { supported: false, default: false };
         const sizeOption = spec.options?.size || spec.options?.aspectRatio;
         const sizeValues = stringValues(sizeOption);
@@ -255,6 +256,9 @@ export function projectLogicalCapability(spec: CapabilitySpec, defaults: Record<
             projected.image.size = { parameter, values: sizePresets, default: concreteDefault(defaults.size, sizePresets, "1:1"), allowCustom: sizeAllowsCustom };
             if (spec.imageSize?.presets?.length) projected.image.size = imageSizeConfigWithPresets(projected.image, spec.imageSize.presets);
         }
+        applyStringOption(spec.options?.imageResolution, defaults.imageResolution, (values, initial) => {
+            projected.image!.resolution = { supported: true, values, default: initial };
+        });
         applyStringOption(spec.options?.quality, defaults.quality, (values, initial) => {
             projected.image!.quality = { supported: true, values, default: initial };
         });

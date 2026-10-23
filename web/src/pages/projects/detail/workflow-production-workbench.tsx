@@ -41,7 +41,7 @@ import {
 } from "@/services/api/projects";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey } from "@/services/api/resources";
 import { skillRuntime } from "@/services/skill-runtime";
-import { configuredModelMatchesCapability, modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { configuredModelMatchesCapability, modelDisplayName, modelOptionName, resolveModelChannel, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { SkillRuntimePicker, useSkillRuntimeCatalog } from "@/components/skills/skill-runtime-picker";
 
@@ -127,6 +127,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const [aspectRatio, setAspectRatio] = useState(detail.project.aspectRatio || "16:9");
     const [resolution, setResolution] = useState(effectiveConfig.vquality || "720");
     const [imageQuality, setImageQuality] = useState(effectiveConfig.quality || "auto");
+    const [imageResolution, setImageResolution] = useState(effectiveConfig.imageResolution || "auto");
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
     const { skills: availableSkills, loading: skillsLoading } = useSkillRuntimeCatalog();
     const shotAssetReferenceContext = useMemo(() => buildShotAssetReferenceContext(detail, selectedShot?.id || ""), [detail, selectedShot?.id]);
@@ -149,8 +150,8 @@ export default function WorkflowProductionWorkbench(props: Props) {
         imageSize: generationCapability === "image" ? aspectRatio : undefined,
         options: generationCapability === "video"
             ? { size: aspectRatio, vquality: resolution, videoSeconds: Number(generationSeconds) }
-            : { size: aspectRatio, quality: imageQuality },
-    }), [aspectRatio, generationCapability, generationReferenceAudios.length, generationSeconds, imageQuality, resolution, shotAssetReferenceContext.referenceImages.length, videoEditOperation]);
+            : { size: aspectRatio, quality: imageQuality, imageResolution },
+    }), [aspectRatio, generationCapability, generationReferenceAudios.length, generationSeconds, imageQuality, imageResolution, resolution, shotAssetReferenceContext.referenceImages.length, videoEditOperation]);
     const routedModel = resolveCompatibleModel(effectiveConfig, selectedModel, modelRequirements) || selectedModel;
     const activeProfile = useMemo(() => modelCapabilityConfigFor(effectiveConfig, routedModel), [effectiveConfig, routedModel]);
     const videoProfile = generationCapability === "video" ? activeProfile.video : undefined;
@@ -168,10 +169,11 @@ export default function WorkflowProductionWorkbench(props: Props) {
         videoModel: generationCapability === "video" ? routedModel : effectiveConfig.videoModel,
         size: aspectRatio,
         quality: imageQuality,
+        imageResolution,
         vquality: resolution,
         videoSeconds: generationSeconds,
         ...(videoBooleanOptions || {}),
-    }), [aspectRatio, effectiveConfig, generationCapability, generationSeconds, imageQuality, resolution, routedModel, videoBooleanOptions]);
+    }), [aspectRatio, effectiveConfig, generationCapability, generationSeconds, imageQuality, imageResolution, resolution, routedModel, videoBooleanOptions]);
     const priceChannel = resolveModelChannel(generationConfig, routedModel);
     const configuredCredits = requestCreditCost({
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
@@ -190,7 +192,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const formattedGenerationCredits = generationCredits?.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
     const modelSummary = routedModel ? modelDisplayName(effectiveConfig, routedModel) : "未选择模型";
     const durationSummary = `${Number(watchedDuration || Math.max(0.5, (selectedShot?.durationMs || 3000) / 1000))}s`;
-    const resolutionSummary = generationCapability === "video" ? formatVideoResolutionLabel(resolution) : imageQuality.toUpperCase();
+    const resolutionSummary = generationCapability === "video" ? formatVideoResolutionLabel(resolution) : (imageProfile?.resolution.supported ? imageResolution : imageQuality).toUpperCase();
 
     useEffect(() => {
         selectedModelRef.current = initialModel;
@@ -207,9 +209,10 @@ export default function WorkflowProductionWorkbench(props: Props) {
             setResolution(normalized.resolution);
             form.setFieldValue("durationSeconds", Number(normalized.seconds));
         } else if (generationCapability === "image" && profile.image) {
-            const normalized = normalizeImageValue(profile.image, { size: detail.project.aspectRatio || effectiveConfig.size, quality: effectiveConfig.quality, count: "1" });
+            const normalized = normalizeImageValue(profile.image, { size: detail.project.aspectRatio || effectiveConfig.size, quality: effectiveConfig.quality, imageResolution: effectiveConfig.imageResolution, count: "1" }, resolveModelRequestConfig(effectiveConfig, initialModel).interfaceType);
             setAspectRatio(normalized.size);
             setImageQuality(normalized.quality);
+            setImageResolution(normalized.imageResolution || "auto");
         }
     }, [detail.project.aspectRatio, effectiveConfig, form, generationCapability, initialModel]);
 
@@ -272,9 +275,10 @@ export default function WorkflowProductionWorkbench(props: Props) {
             return;
         }
         if (generationCapability === "image" && profile.image) {
-            const normalized = normalizeImageValue(profile.image, { size: aspectRatio, quality: imageQuality, count: "1" });
+            const normalized = normalizeImageValue(profile.image, { size: aspectRatio, quality: imageQuality, imageResolution, count: "1" }, resolveModelRequestConfig(effectiveConfig, nextModel).interfaceType);
             setAspectRatio(normalized.size);
             setImageQuality(normalized.quality);
+            setImageResolution(normalized.imageResolution || "auto");
         }
     };
 
@@ -520,7 +524,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                                             <Form.Item label="生成画质"><Select value={imageQuality} onChange={setImageQuality} options={imageProfile.quality.values.map((value) => ({ value, label: imageQualityLabel(value) }))} /></Form.Item>
                                         ) : <div />}
                                     </div>
-                                    {generationCapability === "image" && imageProfile ? <ImageSizePicker profile={imageProfile} size={aspectRatio} quality={imageQuality} onChange={(size, quality) => { setAspectRatio(size); if (quality) setImageQuality(quality); }} /> : null}
+                                    {generationCapability === "image" && imageProfile ? <ImageSizePicker profile={imageProfile} size={aspectRatio} quality={imageQuality} imageResolution={imageResolution} onChange={(size, quality, resolution) => { setAspectRatio(size); if (quality) setImageQuality(quality); if (resolution !== undefined) setImageResolution(resolution); }} /> : null}
                                 </div>
                                 <div className="workflow-settings-section">
                                     <div className="workflow-settings-section-title">镜头语言</div>

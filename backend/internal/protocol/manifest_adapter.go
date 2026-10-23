@@ -410,6 +410,8 @@ func mediaReferencesFromManifestValue(value any, kind string, ephemeral bool) []
 	result := make([]MediaReference, 0)
 	for _, item := range manifestArray(value) {
 		switch typed := item.(type) {
+		case []any:
+			result = append(result, mediaReferencesFromManifestValue(typed, kind, ephemeral)...)
 		case string:
 			trimmed := strings.TrimSpace(typed)
 			if trimmed == "" {

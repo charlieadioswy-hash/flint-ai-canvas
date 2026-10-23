@@ -2,7 +2,7 @@ import { useState } from "react";
 import "./image-size-picker.css";
 import { Input, Button } from "antd";
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
-import { imageResolutionTiers, imagePresetForRatio, imagePresetValue, imageQualityForSelection, imageQualityForTier, imageResolutionUsesQuality, imageSizePresets, imageTierAvailable } from "@/lib/image-size-presets";
+import { imageResolutionTiers, imagePresetForRatio, imagePresetValue, imageQualityForSelection, imageQualityForTier, imageResolutionUsesQuality, imageSizePresets, imageTierAvailable, nativeImageAspectRatios } from "@/lib/image-size-presets";
 import { buildImageResolutionOptions, type ImageResolutionOption, type ImageResolutionTier } from "@/lib/image-resolution-tiers";
 
 import { resolveImageRequestSize, validateImageSize } from "@/services/api/image-validation";
@@ -141,6 +141,36 @@ export function ImageSizePicker({
             setError(reason instanceof Error ? reason.message : "尺寸格式无效");
         }
     };
+    const nativeRatios = nativeImageAspectRatios(profile);
+    if (nativeRatios.length) {
+        const activeRatio = nativeRatios.includes(size) ? size : profile.size.default;
+        const activeResolution = profile.resolution.values.includes(imageResolution || "") ? imageResolution! : profile.resolution.default;
+        return (
+            <div className="image-size-picker">
+                <div className="image-size-label">分辨率</div>
+                <div className="image-size-tiers">
+                    {profile.resolution.values.map((value) => (
+                        <button type="button" key={value} aria-pressed={value === activeResolution} disabled={Boolean(canSelectResolution && !canSelectResolution(value))} onClick={() => onChange(activeRatio, undefined, value)}>
+                            {value.toUpperCase()}
+                        </button>
+                    ))}
+                </div>
+                <div className="image-size-label">宽高比</div>
+                <div className="image-size-ratios">
+                    {nativeRatios.map((ratio) => {
+                        const [width, height] = ratio.split(":").map(Number);
+                        return (
+                            <button type="button" key={ratio} aria-pressed={ratio === activeRatio} onClick={() => onChange(ratio, undefined, activeResolution)}>
+                                <span className="image-size-ratio-icon" style={{ width: 24 * Math.min(1, width / height), height: 24 * Math.min(1, height / width) }} />
+                                <span>{ratio}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+                <output aria-live="polite" className="image-size-output">{activeRatio} · {activeResolution.toUpperCase()}</output>
+            </div>
+        );
+    }
     if (profile.size.parameter === "none")
         return profile.resolution.supported ? (
             <div className="image-size-picker">

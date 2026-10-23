@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { ImageCapabilityConfig } from "../src/lib/model-capabilities";
+import type { ImageCapabilityConfig, ModelCapabilityConfig } from "../src/lib/model-capabilities";
 import type { AiConfig } from "../src/stores/use-config-store";
 import type { CanvasNodeData } from "../src/types/canvas";
 
@@ -27,16 +27,19 @@ for (const [key, value] of Object.entries({
     originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
-const { act } = await import("react");
+const { act, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { CanvasImageCountControl } = await import("../src/components/canvas/canvas-image-count-control");
 const { CanvasFreeformEmptyState } = await import("../src/components/canvas/canvas-short-drama-entry");
 const { defaultConfig } = await import("../src/stores/use-config-store");
-const { defaultImageCapabilityConfig } = await import("../src/lib/model-capabilities");
+const { defaultImageCapabilityConfig, normalizeModelCapabilityConfig } = await import("../src/lib/model-capabilities");
 const { buildNodeConfig } = await import("../src/components/canvas/canvas-node-prompt-config");
 const { buildGenerationConfig } = await import("../src/lib/canvas/canvas-project-generation");
 const { requestCreditCost } = await import("../src/lib/model-pricing");
 const { ImageSettingsPanel } = await import("../src/components/image-settings-panel");
+const { ModelCapabilityEditor } = await import("../src/components/model-capability-editor");
+const { capabilitySpecFromChannelModel } = await import("../src/pages/admin/logical-models/model-routing-capabilities");
+const { prepareBackendGenerationTask } = await import("../src/services/api/generation-task");
 const { canvasThemes } = await import("../src/lib/canvas-theme");
 const { MemoryRouter } = await import("react-router");
 const { App } = await import("antd");
@@ -123,6 +126,82 @@ test("visible count selection uses the same count in node config, generation and
         expect(f.host.textContent).not.toContain("生成张数");
         await f.render(<ImageSettingsPanel config={generated} theme={canvasThemes.dark} onConfigChange={() => {}} />);
         expect(f.host.textContent).toContain("生成张数");
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("native resolution clicks persist through the real settings panel, quote and task payload", async () => {
+    const f = await fixture();
+    const profile = defaultImageCapabilityConfig("wangsu-gemini-image", "gemini-nano-banana-2.1");
+    const initial = { ...configWithProfile(profile), size: "1:1", quality: "auto", imageResolution: "1k" };
+    const cost = initial.channels[0].modelCosts![0];
+    Object.assign(cost, {
+        protocol: "wangsu-gemini-image",
+        logicalModelId: "logical-native-image",
+        logicalCapabilitySpec: capabilitySpecFromChannelModel({ capability: "image", capabilityConfig: { version: 1, image: profile } } as Parameters<typeof capabilitySpecFromChannelModel>[0]),
+        pricePolicy: "channel",
+        logicalPriceTiers: [
+            { selector: { quality: "1k" }, billingMode: "fixed_request", unitPriceMicrocredits: 1_000_000 },
+            { selector: { quality: "4k" }, billingMode: "fixed_request", unitPriceMicrocredits: 4_000_000 },
+        ],
+    });
+    let selected = initial;
+    function Settings() {
+        const [config, setConfig] = useState(initial);
+        selected = config;
+        return <ImageSettingsPanel config={config} theme={canvasThemes.dark} onConfigChange={(key, value) => setConfig((previous) => ({ ...previous, [key]: value }))} />;
+    }
+    const button = (label: string) => [...f.host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label)!;
+    try {
+        await f.render(<Settings />);
+        expect(button("2K").disabled).toBe(true);
+        expect(button("4K").disabled).toBe(false);
+        await act(async () => button("4K").click());
+        await act(async () => button("1:8").click());
+        expect(selected).toMatchObject({ size: "1:8", imageResolution: "4k", quality: "auto" });
+        expect(button("4K").getAttribute("aria-pressed")).toBe("true");
+        expect(f.host.textContent).toContain("1:8 · 4K");
+        expect(requestCreditCost({ channelMode: "remote", modelCosts: selected.channels[0].modelCosts, model: "image-model", capability: "image", config: selected, count: 1 })).toBe(4);
+        const task = await prepareBackendGenerationTask({ mode: "image", prompt: "A quiet landscape", config: selected });
+        const input = task.input as { config: Record<string, unknown>; capabilityOptions: Record<string, unknown> };
+        expect(input.config.imageResolution).toBe("4k");
+        expect(input.capabilityOptions).toMatchObject({ size: "1:8", imageResolution: "4k" });
+        expect(input.capabilityOptions.quality).toBeUndefined();
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("native admin edits save ratios and resolution without creating pixel presets", async () => {
+    const f = await fixture();
+    const profile = defaultImageCapabilityConfig("wangsu-gemini-image", "gemini-nano-banana-2.1");
+    profile.resolution.default = "4k";
+    let saved: ModelCapabilityConfig = { version: 1, image: profile };
+    function Editor() {
+        const [value, setValue] = useState(saved);
+        saved = value;
+        return <ModelCapabilityEditor capability="image" protocol="wangsu-gemini-image" model="gemini-nano-banana-2.1" section="protocol" value={value} onChange={setValue} />;
+    }
+    const button = (label: string) => f.host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+    try {
+        await f.render(<Editor />);
+        for (const ratio of ["1:4", "1:8", "4:1", "8:1"]) expect(button(`支持比例 ${ratio}`)).not.toBeNull();
+        expect(f.host.querySelector(".image-size-preset-group")).toBeNull();
+        expect(f.host.textContent).not.toContain("尺寸自动换算");
+        await act(async () => button("支持比例 8:1").click());
+        await act(async () => button("支持分辨率 4K").click());
+        expect(saved.image?.size.values).toHaveLength(13);
+        expect(saved.image?.resolution).toEqual({ supported: true, values: ["1k", "2k"], default: "1k" });
+        const reopened = normalizeModelCapabilityConfig(JSON.parse(JSON.stringify(saved))).image!;
+        expect(reopened.size.presets).toBeUndefined();
+        expect(reopened.size.values).toContain("1:8");
+        expect(reopened.size.values).not.toContain("8:1");
+        expect(reopened.quality).toEqual({ supported: false, values: [], default: "auto" });
+        await act(async () => button("支持比例 8:1").click());
+        expect(saved.image?.size.values).toEqual(profile.size.values);
+        await act(async () => button("支持分辨率 2K").click());
+        expect(button("支持分辨率 1K").disabled).toBe(true);
     } finally {
         await f.dispose();
     }

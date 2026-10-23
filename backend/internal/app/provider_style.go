@@ -214,10 +214,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 			return err
 		}
 		input.ImageCapability = normalized.Image
-		if err := applyImageParameterValues(&input.Config, input.ImageCapability); err != nil {
-			return err
-		}
-		return validateImageTask(input.ImageCapability, *input)
+		return validateImageTaskWithResolvedSize(nil, input, input.ImageCapability)
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, providerChannelModelKey(input.Config))
 	if err != nil {
@@ -236,13 +233,7 @@ func (s *Service) validateResolvedImageCapability(input *canvasGenerationInput) 
 	if input.ImageCapability.Parameters == nil {
 		fillMissingImageSizePresets(input.ImageCapability, input.Config.InterfaceType)
 	}
-	if presetErr := imageSizePresetReadyError(input.ImageCapability, input.Config.InterfaceType); presetErr != nil {
-		return presetErr
-	}
-	if err := applyImageParameterValues(&input.Config, input.ImageCapability); err != nil {
-		return err
-	}
-	return validateImageTask(input.ImageCapability, *input)
+	return validateImageTaskWithResolvedSize(nil, input, input.ImageCapability)
 }
 
 func metadataStringValues(value any) map[string]string {

@@ -251,6 +251,9 @@ func geminiImageDataURLs(payload map[string]interface{}) ([]map[string]string, e
 		parts, _ := content["parts"].([]interface{})
 		for _, partValue := range parts {
 			part, _ := partValue.(map[string]interface{})
+			if thought, _ := part["thought"].(bool); thought {
+				continue
+			}
 			inlineData, _ := part["inlineData"].(map[string]interface{})
 			if inlineData == nil {
 				inlineData, _ = part["inline_data"].(map[string]interface{})

@@ -7,6 +7,8 @@ import { buildNodeConfig } from "../src/components/canvas/canvas-node-prompt-pan
 import { buildGenerationConfig } from "../src/lib/canvas/canvas-project-generation";
 import { modelRequestOptions } from "../src/lib/model-selection";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
+import { imagePriceSelector } from "../src/lib/image-pricing";
+import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 
 function systemConfig(input: { capability?: "image" | "video"; logicalModelId?: string; tiers: Array<{ selector: Record<string, string>; billingMode: "fixed_request" | "per_second" | "token"; unitPriceMicrocredits: number; outputTokenPriceMicrocredits?: number }> }) {
     const capability = input.capability || "video";
@@ -62,6 +64,18 @@ const textVideoRequirements: ModelRequirements = {
 };
 
 describe("model request pricing", () => {
+    test("uses explicit resolution for legacy prices while preserving ordinary quality", () => {
+        const config = systemConfig({ capability: "image", tiers: [
+            { selector: { quality: "high", resolution: "1k" }, billingMode: "fixed_request", unitPriceMicrocredits: 1_000_000 },
+            { selector: { quality: "high", resolution: "4k" }, billingMode: "fixed_request", unitPriceMicrocredits: 4_000_000 },
+        ] });
+        const requirements: ModelRequirements = { capability: "image", options: { size: "16:9", quality: "high", imageResolution: "4K" } };
+        expect(requestCreditCost({ channelMode: "remote", modelCosts: resolveModelChannel(config, config.model).modelCosts, model: "image-model", capability: "image", config, requirements, count: 1 })).toBe(4);
+        const profile = defaultImageCapabilityConfig("gemini-image");
+        profile.quality = { supported: true, values: ["low", "high"], default: "low" };
+        expect(imagePriceSelector("low", "16:9", profile)).toEqual({ quality: "low", size: "16:9" });
+        expect(imagePriceSelector("low", "16:9", profile, "4K")).toEqual({ quality: "low", size: "16:9", resolution: "4k" });
+    });
     test("keeps the panel quote and generation options aligned without selecting a price tier as quality", () => {
         const config = systemConfig({
             capability: "image",

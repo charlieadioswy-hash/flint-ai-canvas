@@ -39,16 +39,20 @@ Chat 的 `messages`、Responses 的 `input/instructions`、Anthropic 的 `messag
 
 Images 文生图发送 JSON：`model/prompt/n/size/quality` 等；有源图时发送 multipart `image`，蒙版使用 `mask`。兼容和 OpenAI 直连均使用文档明确支持的 multipart 编辑，避免把 `images:[{image_url}]` 当成兼容编辑请求。
 
-结果解析 `data[].url` 或 `data[].b64_json`。GPT Image 2.5 支持更高质量档位，按后台模型能力展示；Qwen Image/Plus 仅配置文生图，不发送其文档未声明的编辑、质量和输出格式参数。
+结果解析 `data[].url` 或 `data[].b64_json`。`size` 保留宿主已解析的像素尺寸，普通 `quality` 原样发送（`auto` 省略），不把 `1K/2K/4K` 转成 `low/medium/high`，也不发送额外 `resolution` 字段。GPT Image 2.5 支持更高质量档位，按后台模型能力展示；Qwen Image/Plus 仅配置文生图，不发送其文档未声明的编辑、质量和输出格式参数。
 
-Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspectRatio/imageSize`，解析 `candidates[].content.parts[].inlineData`。Chat 图片发送多模态 `messages`，Gemini 型号附带 `modalities` 和 `eca_image_config`，Qwen Edit 省略这两个专属字段；解析 `choices[0].message.content[]` 的 `image_url`，区分 URL 与 DataURL。图片调用使用非流式响应，两者不支持蒙版编辑。
+Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspectRatio/imageSize`，解析候选内容中的 `inlineData/inline_data`。仅排除布尔 `thought:true` 的推理中间图，所有非 thought 最终图按返回顺序保留，不根据图片位置、尺寸或请求数量截取。Chat 图片发送多模态 `messages`，Gemini 型号附带 `modalities` 和 `eca_image_config`，Qwen Edit 省略这两个专属字段；解析 `choices[0].message.content[]` 的 `image_url`，区分 URL 与 DataURL。图片调用使用非流式响应，两者不支持蒙版编辑。
+
+Gemini 与 Chat 图片中的分辨率取独立 `resolution`，只接受字面 `1k/2k/4k` 并转成上游 `1K/2K/4K`。仅当缺少有效独立分辨率时兼容旧 `quality=1k/2k/4k`；普通 `low/medium/high` 不作为分辨率。Wangsu 维持已有参数与价格选择合同，不继承原生插件新增的动态图片参数声明；每个模型的可用档位、质量和数量仍由渠道能力收窄。
 
 ## 视频
 
 兼容视频使用 JSON，创建 `/videos`，查询 `/videos/{id}`，完成后下载 `/videos/{id}/content`。首尾帧使用 `eca_first_frame/eca_last_frame`，比例使用 `eca_aspect_ratio`，音频开关使用 `eca_audio`；不发送旧适配器的 `resolution_name`。
 
 - Seedance：`size` 为分辨率档位，参考图为 `input_reference:[{image:URL}]`，参考视频和音频分别为 `eca_video_reference:[{video:URL}]`、`eca_audio_reference:[{audio:URL}]`。
-- Hailuo：分辨率转为大写 `512P/768P/1080P`；10 秒要求 `768P`。支持的档位、时长、首尾帧数量按具体型号后台能力约束。
+- Hailuo：分辨率转为大写 `512P/768P/1080P`；10 秒要求 `768P`，仅 Hailuo 02 存在首帧图片的图生视频允许 `512P/10s`。文生及 Hailuo 2.3 不接受该特例，`1080P/10s` 仍拒绝。支持的档位、时长、首尾帧数量按具体型号后台能力约束。
+- Seedance 2.0 Fast：分辨率仅接受 `480p/720p`，不把标准版的 `4k` 档位应用到 Fast。
+- Kling：仅 `kling-v3` 与 `kling-v3-omni` 将 `720/720p`（大小写不敏感）或 `std` 映射为 `eca_mode:std`，将 `1080/1080p` 或 `pro` 映射为 `eca_mode:pro`；缺省保持 `pro`。这两个型号不发送 `size`，拒绝其他分辨率，不将此映射套用到其他型号。
 - Veo：参考图最多 3 张，参考模式要求 16:9、8 秒，且与首尾帧互斥；尾帧必须同时提供首帧。
 - 通用主体参考：`input_reference` 的每个主体使用 `image:[URL]`，可带 `eca_id/eca_voice`；以模型专属文档为准。
 - OpenAI 直连视频：使用原生 multipart，单张 `input_reference`，`size` 为像素尺寸。16:9 与 9:16 默认映射为 1280x720 与 720x1280；不用于接收网宿多参考扩展的 Seedance/Hailuo/Kling 模型。
@@ -67,7 +71,10 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
 
 ## 官方依据
 
-- [模型与接口目录](http://doc.model-store.ai/ai-gateway/model/support-doc)
+- [模型与接口目录](https://doc.model-store.ai/model-catalog)
+- [当前 API 字段文档](https://doc.model-store.ai/cn/docs/api/model)
+- [Kling v3 视频模式](https://doc.model-store.ai/cn/docs/api/model?endpointId=48333665-3728-4134-b736-61e6674c2b99&model=kling-v3)
+- [Kling v3 Omni 视频模式](https://doc.model-store.ai/cn/docs/api/model?endpointId=48333665-3728-4134-b736-61e6674c2b99&model=kling-v3-omni)
 - [OpenAI 直连](http://doc.model-store.ai/ai-gateway/model/api-detail?code=api-openai-direct-mode1)
 - [Anthropic 直连](http://doc.model-store.ai/ai-gateway/model/api-detail?code=api-anthropic-direct-mode1)
 - [Gemini 直连](http://doc.model-store.ai/ai-gateway/model/api-detail?code=api-gemini-direct-mode1)
@@ -86,7 +93,7 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
   "apiVersion": "yingce.plugin/v2",
   "id": "wangsu",
   "name": "Wangsu 网宿 AI 网关",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Wangsu / 影策",
   "description": "网宿系统渠道专用的文本、图片、视频和语音合成协议。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -2065,81 +2072,28 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                   },
                   "then": {
                     "$omitEmpty": {
-                      "$switch": {
-                        "cases": [
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
+                      "$if": {
+                        "condition": {
+                          "$not": {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$trim": {
+                                    "$ref": "request.quality"
                                   }
-                                },
-                                [
-                                  "1k"
-                                ]
+                                }
+                              },
+                              [
+                                "",
+                                "auto"
                               ]
-                            },
-                            "then": "low"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "2k"
-                                ]
-                              ]
-                            },
-                            "then": "medium"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "4k"
-                                ]
-                              ]
-                            },
-                            "then": "high"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "",
-                                  "auto"
-                                ]
-                              ]
-                            },
-                            "then": null
+                            ]
                           }
-                        ],
-                        "default": {
+                        },
+                        "then": {
                           "$ref": "request.quality"
-                        }
+                        },
+                        "else": null
                       }
                     }
                   },
@@ -2748,81 +2702,28 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                   },
                   "then": {
                     "$omitEmpty": {
-                      "$switch": {
-                        "cases": [
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
+                      "$if": {
+                        "condition": {
+                          "$not": {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$trim": {
+                                    "$ref": "request.quality"
                                   }
-                                },
-                                [
-                                  "1k"
-                                ]
+                                }
+                              },
+                              [
+                                "",
+                                "auto"
                               ]
-                            },
-                            "then": "low"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "2k"
-                                ]
-                              ]
-                            },
-                            "then": "medium"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "4k"
-                                ]
-                              ]
-                            },
-                            "then": "high"
-                          },
-                          {
-                            "when": {
-                              "$in": [
-                                {
-                                  "$lower": {
-                                    "$trim": {
-                                      "$ref": "request.quality"
-                                    }
-                                  }
-                                },
-                                [
-                                  "",
-                                  "auto"
-                                ]
-                              ]
-                            },
-                            "then": null
+                            ]
                           }
-                        ],
-                        "default": {
+                        },
+                        "then": {
                           "$ref": "request.quality"
-                        }
+                        },
+                        "else": null
                       }
                     }
                   },
@@ -3408,113 +3309,51 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                   "$omitEmpty": {
                     "$coalesce": [
                       {
-                        "$switch": {
-                          "cases": [
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.quality"
-                                    }
-                                  },
-                                  [
-                                    "1k",
-                                    "low"
-                                  ]
-                                ]
+                        "$if": {
+                          "condition": {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$ref": "request.resolution"
+                                }
                               },
-                              "then": "1K"
-                            },
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.quality"
-                                    }
-                                  },
-                                  [
-                                    "2k",
-                                    "medium"
-                                  ]
-                                ]
-                              },
-                              "then": "2K"
-                            },
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.quality"
-                                    }
-                                  },
-                                  [
-                                    "4k",
-                                    "high"
-                                  ]
-                                ]
-                              },
-                              "then": "4K"
+                              [
+                                "1k",
+                                "2k",
+                                "4k"
+                              ]
+                            ]
+                          },
+                          "then": {
+                            "$upper": {
+                              "$ref": "request.resolution"
                             }
-                          ],
-                          "default": null
+                          },
+                          "else": null
                         }
                       },
                       {
-                        "$switch": {
-                          "cases": [
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.resolution"
-                                    }
-                                  },
-                                  [
-                                    "1k",
-                                    "low"
-                                  ]
-                                ]
+                        "$if": {
+                          "condition": {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$ref": "request.quality"
+                                }
                               },
-                              "then": "1K"
-                            },
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.resolution"
-                                    }
-                                  },
-                                  [
-                                    "2k",
-                                    "medium"
-                                  ]
-                                ]
-                              },
-                              "then": "2K"
-                            },
-                            {
-                              "when": {
-                                "$in": [
-                                  {
-                                    "$lower": {
-                                      "$ref": "request.resolution"
-                                    }
-                                  },
-                                  [
-                                    "4k",
-                                    "high"
-                                  ]
-                                ]
-                              },
-                              "then": "4K"
+                              [
+                                "1k",
+                                "2k",
+                                "4k"
+                              ]
+                            ]
+                          },
+                          "then": {
+                            "$upper": {
+                              "$ref": "request.quality"
                             }
-                          ],
-                          "default": null
+                          },
+                          "else": null
                         }
                       }
                     ]
@@ -3581,51 +3420,71 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
           "images": {
             "$map": {
               "from": {
-                "$filter": {
+                "$ref": "response.candidates"
+              },
+              "as": "candidate",
+              "in": {
+                "$map": {
                   "from": {
-                    "$ref": "response.candidates.0.content.parts"
+                    "$filter": {
+                      "from": {
+                        "$ref": "candidate.content.parts"
+                      },
+                      "as": "part",
+                      "where": {
+                        "$and": [
+                          {
+                            "$ne": [
+                              {
+                                "$ref": "part.thought"
+                              },
+                              true
+                            ]
+                          },
+                          {
+                            "$or": [
+                              {
+                                "$ref": "part.inlineData"
+                              },
+                              {
+                                "$ref": "part.inline_data"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
                   },
                   "as": "part",
-                  "where": {
-                    "$or": [
-                      {
-                        "$ref": "part.inlineData"
-                      },
-                      {
-                        "$ref": "part.inline_data"
-                      }
-                    ]
-                  }
-                }
-              },
-              "as": "part",
-              "in": {
-                "dataUrl": {
-                  "$concat": [
-                    "data:",
-                    {
-                      "$coalesce": [
+                  "in": {
+                    "dataUrl": {
+                      "$concat": [
+                        "data:",
                         {
-                          "$ref": "part.inlineData.mimeType"
+                          "$coalesce": [
+                            {
+                              "$ref": "part.inlineData.mimeType"
+                            },
+                            {
+                              "$ref": "part.inline_data.mime_type"
+                            },
+                            "image/png"
+                          ]
                         },
+                        ";base64,",
                         {
-                          "$ref": "part.inline_data.mime_type"
-                        },
-                        "image/png"
-                      ]
-                    },
-                    ";base64,",
-                    {
-                      "$coalesce": [
-                        {
-                          "$ref": "part.inlineData.data"
-                        },
-                        {
-                          "$ref": "part.inline_data.data"
+                          "$coalesce": [
+                            {
+                              "$ref": "part.inlineData.data"
+                            },
+                            {
+                              "$ref": "part.inline_data.data"
+                            }
+                          ]
                         }
                       ]
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -3856,113 +3715,51 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                     "$omitEmpty": {
                       "$coalesce": [
                         {
-                          "$switch": {
-                            "cases": [
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.quality"
-                                      }
-                                    },
-                                    [
-                                      "1k",
-                                      "low"
-                                    ]
-                                  ]
+                          "$if": {
+                            "condition": {
+                              "$in": [
+                                {
+                                  "$lower": {
+                                    "$ref": "request.resolution"
+                                  }
                                 },
-                                "then": "1K"
-                              },
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.quality"
-                                      }
-                                    },
-                                    [
-                                      "2k",
-                                      "medium"
-                                    ]
-                                  ]
-                                },
-                                "then": "2K"
-                              },
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.quality"
-                                      }
-                                    },
-                                    [
-                                      "4k",
-                                      "high"
-                                    ]
-                                  ]
-                                },
-                                "then": "4K"
+                                [
+                                  "1k",
+                                  "2k",
+                                  "4k"
+                                ]
+                              ]
+                            },
+                            "then": {
+                              "$upper": {
+                                "$ref": "request.resolution"
                               }
-                            ],
-                            "default": null
+                            },
+                            "else": null
                           }
                         },
                         {
-                          "$switch": {
-                            "cases": [
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.resolution"
-                                      }
-                                    },
-                                    [
-                                      "1k",
-                                      "low"
-                                    ]
-                                  ]
+                          "$if": {
+                            "condition": {
+                              "$in": [
+                                {
+                                  "$lower": {
+                                    "$ref": "request.quality"
+                                  }
                                 },
-                                "then": "1K"
-                              },
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.resolution"
-                                      }
-                                    },
-                                    [
-                                      "2k",
-                                      "medium"
-                                    ]
-                                  ]
-                                },
-                                "then": "2K"
-                              },
-                              {
-                                "when": {
-                                  "$in": [
-                                    {
-                                      "$lower": {
-                                        "$ref": "request.resolution"
-                                      }
-                                    },
-                                    [
-                                      "4k",
-                                      "high"
-                                    ]
-                                  ]
-                                },
-                                "then": "4K"
+                                [
+                                  "1k",
+                                  "2k",
+                                  "4k"
+                                ]
+                              ]
+                            },
+                            "then": {
+                              "$upper": {
+                                "$ref": "request.quality"
                               }
-                            ],
-                            "default": null
+                            },
+                            "else": null
                           }
                         }
                       ]
@@ -4211,6 +4008,53 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
               "$omitEmpty": {
                 "$if": {
                   "condition": {
+                    "$not": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$ref": "request.model"
+                          }
+                        },
+                        [
+                          "kling-v3",
+                          "kling-v3-omni"
+                        ]
+                      ]
+                    }
+                  },
+                  "then": {
+                    "$if": {
+                      "condition": {
+                        "$in": [
+                          {
+                            "$lower": {
+                              "$ref": "request.model"
+                            }
+                          },
+                          [
+                            "minimax-hailuo-02",
+                            "minimax-hailuo-2.3"
+                          ]
+                        ]
+                      },
+                      "then": {
+                        "$upper": {
+                          "$ref": "request.resolution"
+                        }
+                      },
+                      "else": {
+                        "$ref": "request.resolution"
+                      }
+                    }
+                  },
+                  "else": null
+                }
+              }
+            },
+            "eca_mode": {
+              "$omitEmpty": {
+                "$if": {
+                  "condition": {
                     "$in": [
                       {
                         "$lower": {
@@ -4218,19 +4062,37 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                         }
                       },
                       [
-                        "minimax-hailuo-02",
-                        "minimax-hailuo-2.3"
+                        "kling-v3",
+                        "kling-v3-omni"
                       ]
                     ]
                   },
                   "then": {
-                    "$upper": {
-                      "$ref": "request.resolution"
-                    }
+                    "$coalesce": [
+                      {
+                        "$if": {
+                          "condition": {
+                            "$in": [
+                              {
+                                "$lower": {
+                                  "$ref": "request.resolution"
+                                }
+                              },
+                              [
+                                "720",
+                                "720p",
+                                "std"
+                              ]
+                            ]
+                          },
+                          "then": "std",
+                          "else": null
+                        }
+                      },
+                      "pro"
+                    ]
                   },
-                  "else": {
-                    "$ref": "request.resolution"
-                  }
+                  "else": null
                 }
               }
             },
@@ -4700,6 +4562,50 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                         }
                       },
                       [
+                        "kling-v3",
+                        "kling-v3-omni"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "$not": {
+                    "$ref": "request.resolution"
+                  }
+                },
+                {
+                  "$in": [
+                    {
+                      "$lower": {
+                        "$ref": "request.resolution"
+                      }
+                    },
+                    [
+                      "720",
+                      "720p",
+                      "std",
+                      "1080",
+                      "1080p",
+                      "pro"
+                    ]
+                  ]
+                }
+              ]
+            },
+            "message": "Kling 仅支持 720P/std 或 1080P/pro"
+          },
+          {
+            "assert": {
+              "$or": [
+                {
+                  "$not": {
+                    "$in": [
+                      {
+                        "$lower": {
+                          "$ref": "request.model"
+                        }
+                      },
+                      [
                         "minimax-hailuo-02",
                         "minimax-hailuo-2.3"
                       ]
@@ -4818,10 +4724,98 @@ Gemini 图片发送 `generationConfig.responseModalities` 与 `imageConfig.aspec
                     },
                     "768p"
                   ]
+                },
+                {
+                  "$and": [
+                    {
+                      "$eq": [
+                        {
+                          "$lower": {
+                            "$ref": "request.model"
+                          }
+                        },
+                        "minimax-hailuo-02"
+                      ]
+                    },
+                    {
+                      "$eq": [
+                        {
+                          "$lower": {
+                            "$ref": "request.resolution"
+                          }
+                        },
+                        "512p"
+                      ]
+                    },
+                    {
+                      "$gt": [
+                        {
+                          "$len": {
+                            "$filter": {
+                              "from": {
+                                "$sortByOrder": {
+                                  "$ref": "request.images"
+                                }
+                              },
+                              "as": "media",
+                              "where": {
+                                "$in": [
+                                  {
+                                    "$ref": "media.role"
+                                  },
+                                  [
+                                    "first_frame"
+                                  ]
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  ]
                 }
               ]
             },
-            "message": "Hailuo 10 秒视频仅支持 768P"
+            "message": "Hailuo 10 秒视频要求 768P；仅 Hailuo 02 首帧图生支持 512P"
+          },
+          {
+            "assert": {
+              "$or": [
+                {
+                  "$not": {
+                    "$eq": [
+                      {
+                        "$lower": {
+                          "$ref": "request.model"
+                        }
+                      },
+                      "doubao-seedance-2-0-fast-260128"
+                    ]
+                  }
+                },
+                {
+                  "$not": {
+                    "$ref": "request.resolution"
+                  }
+                },
+                {
+                  "$in": [
+                    {
+                      "$lower": {
+                        "$ref": "request.resolution"
+                      }
+                    },
+                    [
+                      "480p",
+                      "720p"
+                    ]
+                  ]
+                }
+              ]
+            },
+            "message": "Seedance 2.0 Fast 仅支持 480p 或 720p"
           },
           {
             "assert": {

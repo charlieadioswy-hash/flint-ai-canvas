@@ -140,6 +140,25 @@ func TestSKUSelectorHandlesMissingImageOptions(t *testing.T) {
 	}
 }
 
+func TestSKUSelectorUsesExplicitImageResolutionWithoutChangingQuality(t *testing.T) {
+	for _, quality := range []string{"low", "high", "1k"} {
+		intent := ModelRequestIntent{Capability: "image", Options: map[string]any{
+			"quality": quality, "size": "16:9", "imageResolution": "4K",
+		}}
+		selector := skuSelectorForIntent(intent)
+		if selector["resolution"] != "4k" || selector["quality"] != quality {
+			t.Fatalf("quality=%s: selector=%#v", quality, selector)
+		}
+		configured := model.ChannelModel{PriceTiers: []model.ChannelModelPriceTier{
+			{ID: "1k", SelectorJSON: `{"resolution":"1k"}`, Enabled: true, PriceConfigured: true},
+			{ID: "4k", SelectorJSON: `{"resolution":"4k"}`, Enabled: true, PriceConfigured: true},
+		}}
+		if tier := channelModelPriceTierForIntent(configured, intent); tier == nil || tier.ID != "4k" {
+			t.Fatalf("quality=%s: matched tier=%#v, want 4k", quality, tier)
+		}
+	}
+}
+
 func TestSKUSelectorIncludesVideoReferenceImageCount(t *testing.T) {
 	selector := skuSelectorForIntent(ModelRequestIntent{Capability: "video", Inputs: map[string]int{"image": 5}, Options: map[string]any{"vquality": "720p"}})
 	if selector["imageCount"] != "5" || selector["vquality"] != "720p" {

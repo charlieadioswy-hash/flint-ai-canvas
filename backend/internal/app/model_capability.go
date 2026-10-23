@@ -298,7 +298,7 @@ func legacyImageResolutionTiers(protocol string) map[string]bool {
 	switch strings.TrimSpace(protocol) {
 	case string(model.ChannelInterfaceGrokImage):
 		return map[string]bool{"1k": true, "2k": true}
-	case "agnes-image":
+	case "agnes-image", "wangsu-gemini-image", "wangsu-chat-image":
 		return map[string]bool{"1k": true, "2k": true, "4k": true}
 	case "km-kemei-seedream":
 		return map[string]bool{"1k": true, "1.5k": true, "2k": true}
@@ -313,7 +313,7 @@ func normalizeLegacyImageResolutionRequest(protocol string, capability *ModelCap
 	if capability == nil || capability.Image == nil || !capability.Image.Resolution.Supported || capability.Image.Quality.Supported {
 		return ""
 	}
-	imageResolutionProtocol := strings.TrimSpace(protocol) == string(model.ChannelInterfaceGrokImage) || strings.TrimSpace(protocol) == "agnes-image" || strings.Contains(strings.TrimSpace(protocol), "seedream")
+	imageResolutionProtocol := legacyImageResolutionProtocol(protocol) || strings.Contains(strings.TrimSpace(protocol), "seedream")
 	if !imageResolutionProtocol {
 		return ""
 	}
@@ -321,7 +321,8 @@ func normalizeLegacyImageResolutionRequest(protocol string, capability *ModelCap
 	if !containsCapabilityString(capability.Image.Resolution.Values, legacy) {
 		return ""
 	}
-	if strings.TrimSpace(metadataString(config, "imageResolution")) != "" {
+	explicitResolution := strings.ToLower(strings.TrimSpace(metadataString(config, "imageResolution")))
+	if explicitResolution != "" && explicitResolution != "auto" && explicitResolution != "any" {
 		delete(config, "quality")
 		return ""
 	}

@@ -1,5 +1,5 @@
 import { ImageSizePresetsEditor } from "./image-size-presets-editor";
-import { imageSizeConfigWithPresets, imageSizePresets } from "@/lib/image-size-presets";
+import { imageSizeConfigWithPresets, imageSizePresets, nativeImageAspectRatios } from "@/lib/image-size-presets";
 import { Input, InputNumber } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
@@ -26,7 +26,8 @@ const operationOptions = [
     { label: "音频生视频", value: "audio_to_video" },
 ];
 
-function ImageSizeHelp() {
+function ImageSizeHelp({ native = false }: { native?: boolean }) {
+    if (native) return <p className="text-[var(--fs-label)] leading-relaxed text-foreground/60">宽高比与分辨率分别发送给上游。选择模型支持的值，实际像素尺寸以上游输出为准。</p>;
     return <p className="text-[var(--fs-label)] leading-relaxed text-foreground/60">按分辨率配置支持的比例，尺寸自动换算。size 发送像素，aspect_ratio 发送比例；独立分辨率由模型协议适配。实际输出尺寸以上游为准。</p>;
 }
 
@@ -439,6 +440,39 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
     );
 }
 
+function NativeImageSizeEditor({ profile, declared, disabled, onChange }: { profile: ImageCapabilityConfig; declared: ImageCapabilityConfig; disabled: boolean; onChange: (patch: Partial<ImageCapabilityConfig>) => void }) {
+    const ratios = [...new Set([...nativeImageAspectRatios(declared), ...nativeImageAspectRatios(profile)])];
+    const resolutions = [...new Set([...declared.resolution.values, ...profile.resolution.values])];
+    return <div className="space-y-3">
+        <Field label="支持分辨率">
+            <div className="image-size-tiers">
+                {resolutions.map((value) => {
+                    const selected = profile.resolution.values.includes(value);
+                    return <button type="button" key={value} aria-label={`支持分辨率 ${value.toUpperCase()}`} aria-pressed={selected} disabled={disabled || (selected && profile.resolution.values.length === 1)} onClick={() => {
+                        const values = selected ? profile.resolution.values.filter((item) => item !== value) : resolutions.filter((item) => item === value || profile.resolution.values.includes(item));
+                        onChange({ resolution: { ...profile.resolution, values, default: values.includes(profile.resolution.default) ? profile.resolution.default : values[0] } });
+                    }}>{value.toUpperCase()}</button>;
+                })}
+            </div>
+        </Field>
+        <Field label="支持宽高比">
+            <div className="image-size-ratios">
+                {ratios.map((value) => {
+                    const selected = profile.size.values.includes(value);
+                    return <button type="button" key={value} aria-label={`支持比例 ${value}`} aria-pressed={selected} disabled={disabled || (selected && profile.size.values.length === 1)} onClick={() => {
+                        const values = selected ? profile.size.values.filter((item) => item !== value) : ratios.filter((item) => item === value || profile.size.values.includes(item));
+                        onChange({ size: { ...profile.size, values, default: values.includes(profile.size.default) ? profile.size.default : values[0], presets: undefined } });
+                    }}>{value}</button>;
+                })}
+            </div>
+        </Field>
+        <div className="admin-capability-spec-grid">
+            <Field label="默认分辨率"><Select ariaLabel="默认分辨率" disabled={disabled} value={profile.resolution.default} options={profile.resolution.values.map((value) => ({ label: value.toUpperCase(), value }))} onChange={(value) => onChange({ resolution: { ...profile.resolution, default: value } })} /></Field>
+            <Field label="默认宽高比"><Select ariaLabel="默认宽高比" disabled={disabled} value={profile.size.default} options={profile.size.values.map((value) => ({ label: value, value }))} onChange={(value) => onChange({ size: { ...profile.size, default: value, presets: undefined } })} /></Field>
+        </div>
+    </div>;
+}
+
 function ImageCapabilityEditor({ value, onChange, protocol, model, imageParameters, disabled, section, supportsControlNet }: Required<Pick<Props, "model" | "disabled">> & Pick<Props, "value" | "onChange" | "protocol" | "section" | "imageParameters" | "supportsControlNet">) {
     const stored = normalizeModelCapabilityConfig(value || { version: 1, image: defaultImageCapabilityConfig(protocol, model) }).image!;
     const profile = imageParameters ? resolveImageParameters(stored, imageParameters, model) : stored;
@@ -446,6 +480,10 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
     const updateReferences = (patch: Partial<ImageCapabilityConfig["references"]>) => update({ references: { ...profile.references, ...patch } });
     const updateSize = (patch: Partial<ImageCapabilityConfig["size"]>) => update({ size: { ...profile.size, ...patch } });
     const updateQuality = (patch: Partial<ImageCapabilityConfig["quality"]>) => update({ quality: { ...profile.quality, ...patch } });
+    const nativeSize = nativeImageAspectRatios(profile).length > 0;
+    const sizeEditor = nativeSize
+        ? <NativeImageSizeEditor profile={profile} declared={defaultImageCapabilityConfig(protocol, model)} disabled={disabled} onChange={update} />
+        : <ImageSizePresetsEditor profile={profile} disabled={disabled} onChange={updateSize} />;
     const controlFields = <ControlNetCapabilityFields value={profile.controlNet} available={supportsControlNet === true} disabled={disabled} onChange={(controlNet) => update({ controlNet })} />;
 
     if (section !== "references" && profile.parameters) {
@@ -486,7 +524,7 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
                         <div className="admin-image-size-intro">
                             <SegmentedControl
                                 block
-                                disabled={disabled}
+                                disabled={disabled || nativeSize}
                                 value={profile.size.parameter}
                                 options={[
                                     { label: "不发送", value: "none" },
@@ -502,12 +540,12 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
                                     );
                                 }}
                             />
-                            <ImageSizeHelp />
+                            <ImageSizeHelp native={nativeSize} />
                         </div>
                         {profile.size.parameter !== "none" ? (
                             <>
-                                <ImageSizePresetsEditor profile={profile} disabled={disabled} onChange={updateSize} />
-                                <ParameterField label="允许自定义" description="允许支持值之外的尺寸" supported={profile.size.allowCustom} disabled={disabled} onChange={(allowCustom) => updateSize({ allowCustom })} />
+                                {sizeEditor}
+                                {!nativeSize ? <ParameterField label="允许自定义" description="允许支持值之外的尺寸" supported={profile.size.allowCustom} disabled={disabled} onChange={(allowCustom) => updateSize({ allowCustom })} /> : null}
                             </>
                         ) : null}
                     </ProtocolParameterCard>
@@ -573,10 +611,10 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
                     <NumberField label="单次生成张数" value={profile.maxOutputs} min={1} disabled={disabled} onChange={(maxOutputs) => update({ maxOutputs: maxOutputs || 1 })} />
                 </CapabilityBlock>
                 <CapabilityBlock title="尺寸参数">
-                    <ImageSizeHelp />
+                    <ImageSizeHelp native={nativeSize} />
                     <SegmentedControl
                         block
-                        disabled={disabled}
+                        disabled={disabled || nativeSize}
                         value={profile.size.parameter}
                         options={[
                             { label: "不发送", value: "none" },
@@ -592,8 +630,8 @@ function ImageCapabilityEditor({ value, onChange, protocol, model, imageParamete
                     />
                     {profile.size.parameter !== "none" ? (
                         <>
-                            <ImageSizePresetsEditor profile={profile} disabled={disabled} onChange={updateSize} />
-                            <ParameterField label="允许自定义" description="允许用户输入支持值之外的尺寸" supported={profile.size.allowCustom} disabled={disabled} onChange={(allowCustom) => updateSize({ allowCustom })} />
+                            {sizeEditor}
+                            {!nativeSize ? <ParameterField label="允许自定义" description="允许用户输入支持值之外的尺寸" supported={profile.size.allowCustom} disabled={disabled} onChange={(allowCustom) => updateSize({ allowCustom })} /> : null}
                         </>
                     ) : null}
                 </CapabilityBlock>

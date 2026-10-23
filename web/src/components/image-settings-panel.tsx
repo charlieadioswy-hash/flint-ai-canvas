@@ -10,7 +10,7 @@ import { buildImageResolutionOptions, formatImageResolutionSize } from "@/lib/im
 import { modelCapabilityConfigFor, normalizeImageValue, type ImageCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import { imagePriceSelector, normalizeImagePriceSelector } from "@/lib/image-pricing";
-import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { imageQualityLabel } from "@/lib/image-quality";
 
 export { imageQualityLabel } from "@/lib/image-quality";
@@ -53,7 +53,7 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showQuality = true, showTransparent = true, showSize = true, showCount = true, className = "w-[304px] space-y-3 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 3, bypassPriceGuard = false }: ImageSettingsPanelProps) {
     const profile = mergedImageCapabilityConfig(config, config.model || config.imageModel);
-    const normalized = normalizeImageValue(profile, config);
+    const normalized = normalizeImageValue(profile, config, resolveModelRequestConfig(config, config.model || config.imageModel).interfaceType);
     const quality = normalized.quality;
     const transparentBackground = normalized.transparentBackground === "true";
     const effectiveMaxCount = Math.min(maxCount, profile.maxOutputs);
@@ -79,7 +79,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <SettingTitle color={theme.node.muted}>{isGrokResolutionQuality(profile) ? "分辨率" : "质量"}</SettingTitle>
                     <div className={`grid gap-1.5 ${activeQualityOptions.length <= 2 ? "grid-cols-2" : "grid-cols-4"}`}>
 						{activeQualityOptions.map((item) => (
-                            <OptionPill key={item.value} selected={quality === item.value} disabled={!bypassPriceGuard && !hasPriceTierForImageSelection(priceTiers, item.value, activeSize)} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                            <OptionPill key={item.value} selected={quality === item.value} disabled={!bypassPriceGuard && !hasPriceTierForImageSelection(priceTiers, item.value, activeSize, profile, normalized.imageResolution)} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
@@ -100,7 +100,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         />
                     </span>
                 </div> : null}
-                {showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} onChange={(size, nextQuality) => applyImageSizeSelection(onConfigChange, size, nextQuality)} /> : null}
+                {showSize ? <ImageSizePicker profile={profile} size={activeSize} quality={quality} imageResolution={normalized.imageResolution} canSelectResolution={(resolution) => bypassPriceGuard || hasPriceTierForImageSelection(priceTiers, quality, activeSize, profile, resolution)} onChange={(size, nextQuality, resolution) => applyImageSizeSelection(onConfigChange, size, nextQuality, resolution)} /> : null}
                 {showCount && effectiveMaxCount > 1 ? (
                     <div className="space-y-2">
                         <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
@@ -119,9 +119,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
-export function applyImageSizeSelection(onConfigChange: ImageSettingsPanelProps["onConfigChange"], size: string, quality?: string) {
+export function applyImageSizeSelection(onConfigChange: ImageSettingsPanelProps["onConfigChange"], size: string, quality?: string, imageResolution?: string) {
     onConfigChange("size", size);
     if (quality) onConfigChange("quality", quality);
+    if (imageResolution !== undefined) onConfigChange("imageResolution", imageResolution);
 }
 
 export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; children: ReactNode }) {
@@ -153,9 +154,9 @@ function imageModelPriceTiers(config: AiConfig) {
 	return cost?.logicalPriceTiers || [];
 }
 
-function hasPriceTierForImageSelection(tiers: ReturnType<typeof imageModelPriceTiers>, quality: string, size: string) {
+function hasPriceTierForImageSelection(tiers: ReturnType<typeof imageModelPriceTiers>, quality: string, size: string, profile?: ImageCapabilityConfig, imageResolution?: string) {
     if (!tiers.length) return true;
-    const requested = imagePriceSelector(quality, size);
+    const requested = imagePriceSelector(quality, size, profile, imageResolution);
     return tiers.some((tier) => {
         const selector = normalizeImagePriceSelector(tier.selector || {});
         return Object.entries(selector).every(([key, value]) => value === "*" || requested[key] === value);

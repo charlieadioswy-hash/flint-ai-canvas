@@ -1,0 +1,51 @@
+---
+title: Wangsu 分辨率核查与修复
+description: 官方合同、真实调用证据、参数修复和两阶段配置迁移
+---
+
+# Wangsu 分辨率核查与修复
+
+核查覆盖开发、生产各 20 个已配置模型，包含停用记录：7 个图片、6 个视频、7 个文本模型。先核对官方详情和 API 文档，在缺失或冲突处实测。文本模型没有媒体输出分辨率。
+
+官方来源为 [模型目录](https://doc.model-store.ai/cn/docs/api/model) 和匿名详情接口 `GET https://doc.model-store.ai/api/aisite/v1/model-plaza/detail?modelId=<model-id>&lang=zh_CN`。共享接口、型号专属说明和真实调用分别记录，不把其他型号的上限套用到当前型号。
+
+## 逐模型结论
+
+“三种像素”指 `1024x1024 / 1536x1024 / 1024x1536`；“十比例”指 `1:1 / 2:3 / 3:2 / 3:4 / 4:3 / 4:5 / 5:4 / 9:16 / 16:9 / 21:9`。
+
+| 模型 | 已核查参数 | 处理与验证边界 |
+| --- | --- | --- |
+| `gpt-image-2` | 三种像素；自定义宽高为 16 的倍数；现开 `auto/low/high` | 保留预设，修正平台误拦截。`medium` 没有单独明确售价，本轮不开放。 |
+| `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst` | 三种像素；自定义为 16 的倍数；`auto/low/medium/high/xhigh/max` | 参数有文档依据，不造统一 1K/2K/4K 像素表。“最高 4K”未展开面积边界，不据此放宽已有安全限制。 |
+| `gemini-3-pro-image` | 十比例；独立 1K/2K/4K | 方图三档实测分别为 1024、2048、4096 像素；未遍历全部比例组合。过滤 `thought:true` 中间图。 |
+| `gemini-nano-banana-2.1` | 1K/2K/4K；十比例加 `1:4/1:8/4:1/8:1`；最多 14 参考图 | 参考图上限已收窄；新比例待新版发布后迁移。 |
+| `qwen-image`、`qwen-image-plus` | 默认 1024×1024 实调均为网关 503 `unknown_service_err` | 保留原配置；503 不能证明尺寸非法、停服或支持更多尺寸，待供应商确认。 |
+| `MiniMax-Hailuo-02` | `512P/768P/1080P`；6/10 秒 | `512P + 10 秒 + 首帧图生` 实测完成，查询报告 `512x512`；不据此开放文生 512P/10 秒。1080P/10 秒仍拒绝。 |
+| `MiniMax-Hailuo-2.3` | `768P/1080P`；10 秒仅 768P | 生产 480p 误配已修；保留既有停用及价格状态。 |
+| `doubao-seedance-2-0-fast-260128` | `480p/720p`；4–15 秒 | 4K 文生实调明确被拒，两环境移除 4K，协议同步保护。 |
+| `doubao-seedance-2-5-260628` | `480p/720p/1080p`；4–30 秒 | 与型号文档一致，保留；未付费遍历全部组合。 |
+| `kling-v3`、`kling-v3-omni` | `720P → eca_mode=std`、`1080P → pro`；`16:9/9:16/1:1` | 补模式映射，默认 pro，不发送 `size` 控制分辨率。保留已有 5 秒时长范围，本轮不扩展其他可选参数。 |
+
+## 调用链修复
+
+- `allowCustom=true` 只允许自定义尺寸，不代表提交比例。原生或自定义像素按本模型校验；实际提交比例且上游要求像素时，才要求该档位的明确换算表。
+- 普通 `quality=low/medium/high` 保持质量语义。独立 `imageResolution` 优先，贯穿控件、逻辑模型投影、报价、任务快照和协议编码，切换模型时重新校验。
+- Wangsu Gemini 原生使用 `aspectRatio + imageSize`，不需要像素换算表。旧字面 `quality=1k/2k/4k` 在读取边界迁移，普通质量不迁移；原价格档继续按明确分辨率匹配，不改售价。
+- Gemini 声明式协议与手写回退均排除布尔 `thought:true` 图片，保留所有候选的最终图，不按第一张、最后一张或请求数量猜测产物。
+- Hailuo 按时长、分辨率、输入模式组合校验；512P/10 秒例外仅限 Hailuo 02 首帧图生。
+
+生成源、manifest、接口文档及插件包同步更新：Wangsu `1.0.1`、Google Gemini Image `2.1.1`。Wangsu 保留现有参数合同，没有额外迁入 typed `imageParameters`；Google Gemini 原有 typed 合同保留。
+
+## 两阶段配置
+
+第一阶段已在开发、生产执行：备份、事务预演、写入、回读比较并刷新目录缓存。开发更新 Fast 和 Nano 两个模型；生产额外修正 Hailuo 2.3，共三个。再次预演均为零行变化，价格档、启停、密钥和供应商默认值未修改。
+
+第二阶段必须先发布本轮前后端及新版 Wangsu 插件，再迁移 Gemini 独立分辨率、Nano 新比例、Kling 分辨率和比例。目前仅准备脚本，未对旧服务执行；本地修复不代表线上缺陷已经消失。
+
+仓库 `scripts/sql/backup-wangsu-capabilities.sql` 备份相关能力路径；`repair-wangsu-capabilities-core.sql` 执行第一阶段；`repair-wangsu-capabilities-native-resolution.sql` 执行第二阶段。说明见同目录 `repair-wangsu-capabilities.md`。默认回滚；第二阶段还要求显式确认代码及插件就绪。遇到审计外的自定义配置会中止。
+
+## 实测与待验收
+
+审计共 7 次生成 POST，无自动重试：Gemini 三档成功、Hailuo 一个图生任务完成、Fast 4K 被拒、Qwen 两款各一次 503。Hailuo 只轮询原任务，未下载视频测量实际时长。后续修复验证使用离线测试和模拟供应商，未再次产生付费调用。
+
+发布后仍需真实页面验收 GPT 多图回填、Gemini 2K/4K 选择与最终图、Kling std/pro 与计价、Hailuo 合法和非法组合，以及刷新和断线后继续查询原任务。配置回读、离线测试和供应商直调不能代替应用验收，状态见 [待测试](/docs/progress/pending-test)。

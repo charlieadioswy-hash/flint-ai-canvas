@@ -150,7 +150,7 @@ function priceSelectorForRequest(capability: ModelCapability | undefined, config
         }
         const imageQuality = String(options.quality ?? "").trim().toLowerCase();
         const imageSize = String(options.size ?? "").trim();
-        Object.assign(requested, imagePriceSelector(imageQuality, imageSize, modelCapabilityConfigFor(config, config.model || config.imageModel)?.image));
+        Object.assign(requested, imagePriceSelector(imageQuality, imageSize, profile, String(options.imageResolution ?? "")));
     }
     return requested;
 }

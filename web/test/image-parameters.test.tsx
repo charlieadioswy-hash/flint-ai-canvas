@@ -231,6 +231,24 @@ describe("plugin image parameters across model configuration and generation", ()
         expect(input.config.imageParameters).toEqual(input.capabilityOptions);
         expect(input.capabilityOptions.quality).toBeUndefined();
     });
+    test("legacy logical image tasks carry independent resolution into routing and execution", async () => {
+        const image = defaultImageCapabilityConfig("wangsu-gemini-image", "gemini-3-pro-image");
+        image.resolution = { supported: true, values: ["1k", "2k", "4k"], default: "1k" };
+        image.quality = { supported: false, values: [], default: "auto" };
+        image.parameters = undefined;
+        const spec = capabilitySpecFromChannelModel({ capability: "image", capabilityConfig: { version: 1, image } } as ChannelModel)!;
+        const channel = createModelChannel({
+            id: "wangsu-test", models: ["gemini-3-pro-image"],
+            modelCosts: [{ model: "gemini-3-pro-image", capability: "image", protocol: "wangsu-gemini-image", logicalModelId: "logical-gemini", logicalCapabilitySpec: spec, capabilityConfig: { version: 1, image }, billingMode: "fixed_request", unitPriceMicrocredits: 1 }],
+        });
+        const model = encodeChannelModel(channel.id, "gemini-3-pro-image");
+        const config = { ...defaultConfig, channels: [channel], model, imageModel: model, size: "1:1", quality: "auto", imageResolution: "4k", count: "1" };
+        const task = await prepareBackendGenerationTask({ mode: "image", prompt: "blue cube", config });
+        const input = task.input as Record<string, any>;
+        expect(input.capabilityOptions.imageResolution).toBe("4k");
+        expect(input.config.imageResolution).toBe("4k");
+        expect(input.capabilityOptions.quality).toBeUndefined();
+    });
     test("submission rejects explicit invalid fields while display can normalize stored preferences", async () => {
         const { image, config } = fixture();
         const invalid = { ...config, imageParameters: JSON.stringify({ creativeAmount: 201 }) };

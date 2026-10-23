@@ -51,7 +51,7 @@ curl "{channel_base_url}/v1beta/models/YOUR_MODEL:generateContent" \
 
 ## 响应解析与安全
 
-解析器遍历 `candidates[].content.parts[]`，识别 `inlineData` 或 `inline_data`，再生成 `data:<mime>;base64,...`。只有文本、finishReason 或安全反馈而没有内联图片时请求会失败。大图片不能进入 localStorage，应立即转存到宿主资源存储。
+解析器遍历候选内容的图片部分，识别 `inlineData` 或 `inline_data`，再生成 `data:<mime>;base64,...`。布尔 `thought:true` 标记的推理中间图会被排除；所有非 thought 最终图片按返回顺序保留，不按首末位置或请求数量猜测产物。只有文本、finishReason、安全反馈或 thought 图片而没有最终图片时请求会失败。大图片不能进入 localStorage，应立即转存到宿主资源存储。
 
 ## 官方资料
 

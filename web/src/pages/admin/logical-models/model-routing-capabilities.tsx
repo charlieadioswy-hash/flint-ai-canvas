@@ -44,6 +44,7 @@ const optionDefinitions: Record<CapabilityKind, Array<{ name: string; label: str
     text: [],
     image: [
         { name: "size", label: "画面尺寸或比例" },
+        { name: "imageResolution", label: "输出分辨率" },
         { name: "quality", label: "生成质量" },
         { name: "transparentBackground", label: "透明背景" },
         { name: "count", label: "输出数量", unit: "张" },
@@ -120,6 +121,7 @@ export function capabilitySpecFromChannelModel(item?: ChannelModel): CapabilityS
             }),
             options: compactOptions({
                 size: image.size.parameter === "none" ? undefined : { values: imageSizeOptionValues(image.size.values, image.size.allowCustom) },
+                imageResolution: image.resolution?.supported ? { values: image.resolution.values } : undefined,
                 quality: image.quality.supported ? { values: image.quality.values } : undefined,
                 transparentBackground: { values: image.transparentBackground.supported ? [false, true] : [false] },
                 count: { min: 1, max: image.maxOutputs, step: 1 },

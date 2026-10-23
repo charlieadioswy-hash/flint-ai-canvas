@@ -310,3 +310,138 @@ func TestValidateImageTaskAcceptsResolvedPresetPixelSize(t *testing.T) {
 		t.Fatalf("other-tier pixel size should stay rejected, got %v", err)
 	}
 }
+
+func TestWangsuNativePixelSizePreservesQualityAndPricing(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("wangsu-images", "gpt-image-2")
+	profile.Image.Size = ImageSizeConfig{
+		Parameter: "size", Values: []string{"1024x1024", "1536x1024", "1024x1536"}, Default: "1024x1024", AllowCustom: true,
+	}
+	profile.Image.Quality = ImageQualityConfig{Supported: true, Values: []string{"auto", "low", "high"}, Default: "auto"}
+	profile.Image.Resolution = ImageResolutionConfig{}
+	profile.Image.MaxOutputs = 10
+	if err := validateImageSizePresetRequirement("image", "wangsu-images", profile); err != nil {
+		t.Fatalf("native pixel config must not require ratio mappings: %v", err)
+	}
+	svc, _, channel, channelModel := createSystemChannelSelectionFixture(t, "image", "wangsu-images", profile, []model.ChannelModelPriceTier{
+		newSelectionPriceTier("auto-square", `{"size":"1024x1024"}`, "gpt-image-2", "fixed_request"),
+		newSelectionPriceTier("low-landscape", `{"quality":"low","size":"1536x1024"}`, "gpt-image-2", "fixed_request"),
+		newSelectionPriceTier("high-portrait", `{"quality":"high","size":"1024x1536"}`, "gpt-image-2", "fixed_request"),
+		newSelectionPriceTier("low-custom", `{"quality":"low"}`, "gpt-image-2", "fixed_request"),
+	})
+	for _, tc := range []struct {
+		quality, size, tier string
+	}{
+		{"auto", "1024x1024", "auto-square"},
+		{"low", "1536x1024", "low-landscape"},
+		{"high", "1024x1536", "high-portrait"},
+		{"low", "1600x1024", "low-custom"},
+	} {
+		t.Run(tc.quality+"/"+tc.size, func(t *testing.T) {
+			input := map[string]any{
+				"mode": "image", "prompt": "A gray circle.",
+				"config": map[string]any{"channelId": channel.ID, "model": channelModel.ModelKey, "size": tc.size, "quality": tc.quality, "count": "2"},
+			}
+			resolved, err := svc.resolveSystemChannelModelSelection(input, "canvas_image", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.ValidateTaskCapability(resolved); err != nil {
+				t.Fatalf("admission rejected native pixels: %v", err)
+			}
+			config := resolved["config"].(map[string]any)
+			if config["size"] != tc.size || config["quality"] != tc.quality || config["priceTierId"] != tc.tier || config["count"] != "2" {
+				t.Fatalf("execution or price selection drifted: %#v", config)
+			}
+			encoded, err := json.Marshal(resolved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var worker canvasGenerationInput
+			if err := json.Unmarshal(encoded, &worker); err != nil {
+				t.Fatal(err)
+			}
+			if err := svc.validateResolvedImageCapability(&worker); err != nil {
+				t.Fatalf("worker rejected native pixels: %v", err)
+			}
+			if worker.Config.Size != tc.size || worker.Config.Quality != tc.quality || len(worker.ImageCapability.Size.Presets) != 0 || worker.ImageCapability.Resolution.Supported {
+				t.Fatalf("native pixels acquired an inferred resolution mapping: %#v", worker.Config)
+			}
+		})
+	}
+}
+
+func TestImagePixelOutboundRequiresMappingForRequestedRatio(t *testing.T) {
+	for _, independentResolution := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary quality", true: "independent resolution"}[independentResolution], func(t *testing.T) {
+			profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
+			profile.Image.Size = ImageSizeConfig{Parameter: "size", Values: []string{"1024x1024", "16:9"}, Default: "1024x1024", AllowCustom: true}
+			profile.Image.Quality = ImageQualityConfig{Supported: true, Values: []string{"low", "high"}, Default: "low"}
+			resolution := ""
+			if independentResolution {
+				profile.Image.Resolution = ImageResolutionConfig{Supported: true, Values: []string{"2k"}, Default: "2k"}
+				profile.Image.Quality = ImageQualityConfig{Supported: false}
+				resolution = "2k"
+			}
+			if err := validateImageSizePresetRequirement("image", "opaque-provider", profile); err == nil {
+				t.Fatal("declared ratios on a pixel field require explicit mappings")
+			}
+			for _, size := range []string{"1024x1024", "16:9", "0:1"} {
+				input := map[string]any{"mode": "image", "config": map[string]any{
+					"interfaceType": "opaque-provider", "model": "opaque-model", "size": size,
+					"imageResolution": resolution, "capabilityConfig": profile,
+				}}
+				err := (&Service{}).ValidateTaskCapability(input)
+				if size == "1024x1024" {
+					if err != nil {
+						t.Fatalf("a valid native pixel request must pass despite missing ratio mappings: %v", err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "像素尺寸映射") {
+					t.Fatalf("unmapped ratio %s must fail locally, got %v", size, err)
+				}
+			}
+		})
+	}
+	profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
+	profile.Image.Size = ImageSizeConfig{Parameter: "aspect_ratio", Values: []string{"16:9"}, Default: "16:9"}
+	profile.Image.Quality = ImageQualityConfig{Supported: false}
+	input := map[string]any{"mode": "image", "config": map[string]any{"interfaceType": "opaque-provider", "model": "opaque-model", "size": "16:9", "capabilityConfig": profile}}
+	if err := (&Service{}).ValidateTaskCapability(input); err != nil {
+		t.Fatalf("ratio-native route must not require pixel mappings: %v", err)
+	}
+}
+
+func TestImageIndependentResolutionSelectsPresetBeforeOrdinaryQuality(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
+	profile.Image.Size = ImageSizeConfig{Parameter: "size", Values: []string{"1024x1024", "2560x1440"}, Default: "1024x1024", AllowCustom: true, Presets: []ImageSizePreset{
+		{Tier: "1k", Ratio: "1:1", Size: "1024x1024", Width: 1024, Height: 1024},
+		{Tier: "2k", Ratio: "16:9", Size: "2560x1440", Width: 2560, Height: 1440},
+	}}
+	profile.Image.Resolution = ImageResolutionConfig{Supported: true, Values: []string{"1k", "2k"}, Default: "1k"}
+	profile.Image.Quality = ImageQualityConfig{Supported: true, Values: []string{"low", "high"}, Default: "low"}
+	for _, tc := range []struct {
+		quality, resolution, ratio, want string
+	}{
+		{"high", "1k", "1:1", "1024x1024"},
+		{"low", "2k", "16:9", "2560x1440"},
+		{"high", "2k", "1:1", ""},
+	} {
+		input := map[string]any{"mode": "image", "config": map[string]any{
+			"interfaceType": "opaque-provider", "model": "opaque-model", "size": tc.ratio,
+			"quality": tc.quality, "imageResolution": tc.resolution, "capabilityConfig": profile,
+		}}
+		err := (&Service{}).ValidateTaskCapability(input)
+		if tc.want == "" {
+			if err == nil {
+				t.Fatal("a ratio declared only for another resolution must be rejected")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := input["config"].(map[string]any)
+		if config["size"] != tc.want || config["quality"] != tc.quality || config["imageResolution"] != tc.resolution {
+			t.Fatalf("independent resolution or ordinary quality changed: %#v", config)
+		}
+	}
+}

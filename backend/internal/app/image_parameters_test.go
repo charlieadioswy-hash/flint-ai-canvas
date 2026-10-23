@@ -299,6 +299,66 @@ func TestImageParametersPixelSelectionKeepsExactSizeWithoutResolution(t *testing
 	}
 }
 
+func TestImageParametersCustomPixelsDoNotRequireRatioMappings(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
+	profile.Image.Parameters = []protocol.ImageParameter{
+		{Name: "size", Label: "Size", Type: "string", Default: "1024x1024", Binding: "aspectRatio", Encoding: "pixels"},
+		{Name: "quality", Label: "Quality", Type: "string", Values: []any{"low", "high"}, Default: "low", Binding: "quality"},
+	}
+	profile.Image.Size.Presets = nil
+	if err := projectImageParameters(profile.Image); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImageSizePresetRequirement("image", "opaque-provider", profile); err != nil {
+		t.Fatalf("custom pixels do not imply ratio input: %v", err)
+	}
+	for _, size := range []string{"1600x1024", "16:9"} {
+		input := canvasGenerationInput{Mode: "image", Config: providerConfig{InterfaceType: "opaque-provider", Size: size, Quality: "high"}}
+		raw := map[string]any{"config": map[string]any{"size": size, "quality": "high"}}
+		err := validateImageTaskWithResolvedSize(raw, &input, profile.Image)
+		if strings.Contains(size, ":") {
+			if err == nil || !strings.Contains(err.Error(), "像素尺寸映射") {
+				t.Fatalf("custom ratios require explicit mappings, got %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := raw["config"].(map[string]any)
+		if config["size"] != size || config["quality"] != "high" || input.Config.ImageResolution != "" || len(profile.Image.Size.Presets) != 0 {
+			t.Fatalf("custom pixels or ordinary quality changed: %#v", config)
+		}
+	}
+}
+
+func TestImageParametersUseResolvedResolutionWhenEncodingRatio(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
+	profile.Image.Parameters = []protocol.ImageParameter{
+		{Name: "size", Label: "Size", Type: "string", Values: []any{"1824x1024", "2560x1440"}, Default: "1824x1024", Binding: "aspectRatio", Encoding: "pixels"},
+		{Name: "imageResolution", Label: "Resolution", Type: "string", Values: []any{"1k", "2k"}, Default: "1k", Binding: "resolution"},
+		{Name: "quality", Label: "Quality", Type: "string", Values: []any{"low", "high"}, Default: "low", Binding: "quality"},
+	}
+	profile.Image.Size.Presets = []ImageSizePreset{
+		{Tier: "1k", Ratio: "16:9", Size: "1824x1024", Width: 1824, Height: 1024},
+		{Tier: "2k", Ratio: "16:9", Size: "2560x1440", Width: 2560, Height: 1440},
+	}
+	if err := projectImageParameters(profile.Image); err != nil {
+		t.Fatal(err)
+	}
+	input := canvasGenerationInput{Mode: "image", Config: providerConfig{
+		InterfaceType: "opaque-provider", Size: "16:9", ImageResolution: "1k", Quality: "low",
+		ImageParameters: map[string]any{"size": "16:9", "imageResolution": "2k", "quality": "high"},
+	}}
+	raw := map[string]any{"config": map[string]any{}}
+	if err := validateImageTaskWithResolvedSize(raw, &input, profile.Image); err != nil {
+		t.Fatal(err)
+	}
+	if input.Config.Size != "2560x1440" || input.Config.ImageResolution != "2k" || input.Config.Quality != "high" || input.Config.ImageParameters["size"] != "2560x1440" {
+		t.Fatalf("ratio encoded with stale core fields: %#v", input.Config)
+	}
+}
+
 func TestImageParametersDisabledResolutionUsesDefaultAndPreservesGroups(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("opaque-provider", "opaque-model")
 	disabled := false

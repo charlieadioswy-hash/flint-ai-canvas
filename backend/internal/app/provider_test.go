@@ -1368,6 +1368,26 @@ func TestRunGeminiImageTaskUsesInlineDataAndImageConfig(t *testing.T) {
 	}
 }
 
+func TestGeminiImageDataURLsExcludeThoughtPreviews(t *testing.T) {
+	result, err := geminiImageDataURLs(map[string]interface{}{
+		"candidates": []interface{}{map[string]interface{}{"content": map[string]interface{}{
+			"parts": []interface{}{
+				map[string]interface{}{"thought": true, "inlineData": map[string]interface{}{"mimeType": "image/png", "data": "cHJldmlldw=="}},
+				map[string]interface{}{"thought": true, "fileData": map[string]interface{}{"fileUri": "https://example.com/preview.png"}},
+				map[string]interface{}{"inlineData": map[string]interface{}{"mimeType": "image/png", "data": "ZmluYWw="}},
+				map[string]interface{}{"thought": false, "inline_data": map[string]interface{}{"mime_type": "image/png", "data": "c2Vjb25k"}},
+			},
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]string{{"dataUrl": "data:image/png;base64,ZmluYWw="}, {"dataUrl": "data:image/png;base64,c2Vjb25k"}}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("images = %#v, want only final images %#v", result, want)
+	}
+}
+
 func TestRunGeminiImageTaskRejectsInvalidReferenceBeforeRequest(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

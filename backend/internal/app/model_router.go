@@ -368,6 +368,7 @@ func skuSelectorForIntent(intent ModelRequestIntent) map[string]string {
 		}
 		rawQuality, _ := intent.Options["quality"].(string)
 		rawSize, _ := intent.Options["size"].(string)
+		rawResolution, _ := intent.Options["imageResolution"].(string)
 		quality := normalizeImagePriceQuality(rawQuality, "")
 		if quality != "" {
 			selector["quality"] = quality
@@ -375,7 +376,11 @@ func skuSelectorForIntent(intent ModelRequestIntent) map[string]string {
 				selector["resolution"] = quality
 			}
 		}
-		if resolution := imageResolutionFromSize(rawSize); resolution != "" {
+		resolution := strings.ToLower(strings.TrimSpace(rawResolution))
+		if resolution == "" || resolution == "auto" || resolution == "any" {
+			resolution = imageResolutionFromSize(rawSize)
+		}
+		if resolution != "" {
 			selector["resolution"] = resolution
 			// 保留存量 quality=1k/2k/4k 价格档的请求选择器。
 			if quality == "" || quality == "auto" || quality == "any" {

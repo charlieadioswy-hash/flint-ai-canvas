@@ -40,7 +40,8 @@ Chat、Responses、Anthropic 复用 JSON/SSE 和 Agent 工具调用解析；Resp
 
 - Images 生成使用 JSON，有源图时改用 multipart 编辑，源图字段为 `image`，蒙版为 `mask`；支持 URL/base64 结果。Qwen Image/Plus 仅文生图；Chat 图片中的 Gemini 配置不会发送给 Qwen Edit。
 - 视频兼容使用 JSON，首尾帧为 `eca_first_frame/eca_last_frame`，比例为 `eca_aspect_ratio`。Seedance/Veo 的参考图使用单 URL，通用主体参考使用 URL 数组；查询和下载使用同一任务 ID。未声明上游取消接口。
-- Hailuo 02 支持 512P/768P/1080P，2.3 支持 768P/1080P；10 秒仅限 768P。Veo 参考图最多三张，要求 16:9、8 秒，且与首尾帧互斥。
+- Hailuo 02 支持 512P/768P/1080P，2.3 支持 768P/1080P；10 秒通常限 768P，新版允许已实测的 Hailuo 02 首帧图生 512P/10 秒。1080P/10 秒仍拒绝。Veo 参考图最多三张，要求 16:9、8 秒，且与首尾帧互斥。
+- Gemini 独立分辨率优先，只兼容旧字面 quality=1k/2k/4k；普通质量不转换分辨率。结果排除 thought 中间图。Kling 720P/1080P 映射 eca_mode=std/pro，不发 size；Fast 仅开放 480p/720p。上述新版行为与两阶段配置迁移见 [分辨率核查与修复](/docs/backend/wangsu-resolution-audit)。
 - 原生 OpenAI 视频使用 multipart、单张参考图、4/8/12 秒；横竖比例转换为像素尺寸。它与网宿多模态视频兼容协议分开配置。
 - Seedance 适配器保留上游 `seconds:-1`，但平台时长合同和计费目前要求正数，因此 UI 只开放固定秒数。
 - TTS 使用 JSON 请求、二进制音频响应；不声明音频 SSE、语音识别或翻译能力。

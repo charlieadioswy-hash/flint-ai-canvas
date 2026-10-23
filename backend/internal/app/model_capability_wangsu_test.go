@@ -1,9 +1,12 @@
 package app
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+
+	"yingce/backend/internal/model"
 )
 
 func TestWangsuImageCapabilitiesMatchGatewayFamilies(t *testing.T) {
@@ -21,7 +24,7 @@ func TestWangsuImageCapabilitiesMatchGatewayFamilies(t *testing.T) {
 	}
 	for _, id := range []string{"wangsu-gemini-image", "wangsu-chat-image"} {
 		profile := DefaultImageCapabilityConfig(id, "gemini-3-pro-image")
-		if profile.Size.Parameter != "aspect_ratio" || profile.References.MaskSupported || profile.MaxOutputs != 1 || !reflect.DeepEqual(profile.Quality.Values, []string{"1k", "2k", "4k"}) {
+		if profile.Size.Parameter != "aspect_ratio" || profile.References.MaskSupported || profile.MaxOutputs != 1 || !profile.Resolution.Supported || !reflect.DeepEqual(profile.Resolution.Values, []string{"1k", "2k", "4k"}) || profile.Quality.Supported || profile.ResolutionUsesQuality {
 			t.Fatalf("%s Gemini image profile = %+v", id, profile)
 		}
 	}
@@ -42,12 +45,12 @@ func TestWangsuVideoDefaultsDoNotInheritUnrelatedMiniMaxProtocol(t *testing.T) {
 			t.Fatalf("%s Seedance 2.5 profile = %+v", id, seedance)
 		}
 		fast := DefaultModelCapabilityConfigForModel(id, "doubao-seedance-2-0-fast-260128").Video
-		if fast.Duration.Max != 15 || fast.References.MaxVideos != 1 || !reflect.DeepEqual(fast.Resolutions, []string{"480p", "720p", "4k"}) {
+		if fast.Duration.Max != 15 || fast.References.MaxVideos != 1 || !reflect.DeepEqual(fast.Resolutions, []string{"480p", "720p"}) {
 			t.Fatalf("%s Seedance fast profile = %+v", id, fast)
 		}
 		kling := DefaultModelCapabilityConfigForModel(id, "kling-v3").Video
-		if kling.Duration.Default != 5 || len(kling.Resolutions) != 0 || len(kling.Ratios) != 0 {
-			t.Fatalf("%s Kling invents undocumented options: %+v", id, kling)
+		if kling.Duration.Default != 5 || !reflect.DeepEqual(kling.Resolutions, []string{"720P", "1080P"}) || kling.DefaultResolution != "1080P" || !reflect.DeepEqual(kling.Ratios, []string{"16:9", "9:16", "1:1"}) {
+			t.Fatalf("%s Kling mode contract = %+v", id, kling)
 		}
 	}
 }
@@ -88,6 +91,96 @@ func TestWangsuHailuoRejectsUnsupportedDurationResolutionCombination(t *testing.
 		input.Config.VQuality = "768P"
 		if err := validateVideoTask(profile, input); err != nil {
 			t.Fatalf("rejected 10-second 768P: %v", err)
+		}
+	}
+}
+
+func TestWangsuHailuo02AllowsVerified512P10SecondImageToVideo(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel("wangsu-videos", "MiniMax-Hailuo-02").Video
+	input := canvasGenerationInput{Mode: "video", Prompt: "A quiet landscape", Config: providerConfig{InterfaceType: "wangsu-videos", ProviderModelKey: "MiniMax-Hailuo-02", VideoSeconds: "10", VQuality: "512P"}, ReferenceImages: []providerMedia{{ID: "first-frame"}}}
+	if err := validateVideoTask(profile, input); err != nil {
+		t.Fatalf("rejected verified 512P/10s image-to-video: %v", err)
+	}
+	input.Metadata = map[string]any{"videoOperation": "text_to_video"}
+	if err := validateVideoTask(profile, input); err == nil {
+		t.Fatal("allowed an explicit unverified text-to-video operation")
+	}
+	input.Metadata = nil
+	input.Config.VQuality = "1080P"
+	if err := validateVideoTask(profile, input); err == nil {
+		t.Fatal("allowed unverified 1080P/10s image-to-video")
+	}
+}
+
+func TestWangsuNanoDeclaresNativeRatiosWithoutPixelPresets(t *testing.T) {
+	profile := DefaultImageCapabilityConfig("wangsu-gemini-image", "gemini-nano-banana-2.1")
+	if profile.References.MaxImages != 14 || len(profile.Size.Values) != 14 || len(profile.Size.Presets) != 0 || !profile.Resolution.Supported || profile.ResolutionUsesQuality {
+		t.Fatalf("Nano contract = %+v", profile)
+	}
+	for _, ratio := range []string{"1:4", "1:8", "4:1", "8:1"} {
+		if !containsCapabilityString(profile.Size.Values, ratio) {
+			t.Fatalf("missing documented ratio %s", ratio)
+		}
+	}
+	if _, err := NormalizeModelCapabilityConfigForModel("image", "wangsu-gemini-image", "gemini-nano-banana-2.1", &ModelCapabilityConfig{Version: 1, Image: profile}); err != nil {
+		t.Fatalf("native Nano contract rejected: %v", err)
+	}
+}
+
+func TestWangsuGPTKeepsQualitySeparateFromResolution(t *testing.T) {
+	for _, name := range []string{"gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+		profile := DefaultImageCapabilityConfig("wangsu-images", name)
+		if profile.Resolution.Supported || profile.ResolutionUsesQuality || len(profile.Size.Presets) != 0 || !reflect.DeepEqual(profile.Size.Values, []string{"1024x1024", "1536x1024", "1024x1536"}) {
+			t.Fatalf("%s invented a resolution contract: %+v", name, profile)
+		}
+		if name == "gpt-image-2" && containsCapabilityString(profile.Quality.Values, "medium") {
+			t.Fatal("GPT Image 2 medium opened before pricing was configured")
+		}
+	}
+}
+
+func TestWangsuLegacyGeminiResolutionKeepsRouteDefaultsAndPriceSelectors(t *testing.T) {
+	for _, protocolID := range []string{"wangsu-gemini-image", "wangsu-chat-image"} {
+		config := DefaultModelCapabilityConfigForModel(protocolID, "gemini-nano-banana-2.1")
+		config.Image.Resolution = ImageResolutionConfig{Values: []string{}, Default: "auto"}
+		config.Image.Quality = ImageQualityConfig{Supported: true, Values: []string{"1k", "2k", "4k"}, Default: "2k"}
+		raw, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tiers := []model.ChannelModelPriceTier{{Selector: map[string]string{"quality": "4k"}}}
+		if err := validateChannelModelTierCapabilities(tiers, string(raw), "image", protocolID); err != nil {
+			t.Fatalf("%s rejected existing resolution price selector: %v", protocolID, err)
+		}
+		normalized, err := NormalizeModelCapabilityConfigForModel("image", protocolID, "gemini-nano-banana-2.1", config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err := CapabilitySpecFromModelCapabilityConfig(normalized, "image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(spec.Options["imageResolution"].Values, []any{"1k", "2k", "4k"}) {
+			t.Fatalf("%s lost resolution route constraints: %+v", protocolID, spec.Options)
+		}
+		defaults, err := channelModelDefaultOptions(model.ChannelModel{Capability: "image", Protocol: model.ChannelInterfaceType(protocolID), ProviderModelKey: "gemini-nano-banana-2.1", CapabilityConfigJSON: string(raw)}, spec)
+		if err != nil || defaults["imageResolution"] != "2k" {
+			t.Fatalf("%s lost configured resolution default: %+v, %v", protocolID, defaults, err)
+		}
+		request := map[string]any{"quality": "4k"}
+		if got := normalizeLegacyImageResolutionRequest(protocolID, normalized, request); got != "4k" || request["imageResolution"] != "4k" || request["quality"] != nil {
+			t.Fatalf("%s legacy request projection = %+v (%s)", protocolID, request, got)
+		}
+		for _, resolution := range []string{"auto", "any"} {
+			request = map[string]any{"quality": "4k", "imageResolution": resolution}
+			if got := normalizeLegacyImageResolutionRequest(protocolID, normalized, request); got != "4k" || request["imageResolution"] != "4k" {
+				t.Fatalf("%s lost legacy resolution with %s: %+v", protocolID, resolution, request)
+			}
+		}
+		request = map[string]any{"quality": "4k", "imageResolution": "2k"}
+		normalizeLegacyImageResolutionRequest(protocolID, normalized, request)
+		if request["imageResolution"] != "2k" || request["quality"] != nil {
+			t.Fatalf("%s legacy quality overrode explicit resolution: %+v", protocolID, request)
 		}
 	}
 }

@@ -32,6 +32,7 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/image-moderation.mdx
 !docs/content/docs/backend/controlnet.mdx
 !docs/content/docs/backend/wangsu.mdx
+!docs/content/docs/backend/wangsu-resolution-audit.mdx
 !docs/content/docs/backend/model-capabilities-progress.mdx
 !docs/content/docs/backend/model3d-workflow.mdx
 # Keep the creative Agent design versioned without unignoring generated docs.

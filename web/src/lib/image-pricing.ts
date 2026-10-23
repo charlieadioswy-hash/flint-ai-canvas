@@ -26,15 +26,16 @@ export function imagePriceSelector(quality: string, size: string, profile?: Imag
     const selector: Record<string, string> = {};
     if (quality && quality !== "auto" && quality !== "any") selector.quality = quality;
     if (size && size !== "auto" && size !== "any") selector.size = size;
+    const resolution = imageResolution?.trim().toLowerCase();
     const pixel = buildImageResolutionOptions([size])[0];
-    if (pixel) {
+    if (resolution && resolution !== "auto" && resolution !== "any") {
+        selector.resolution = resolution;
+    } else if (pixel) {
         selector.resolution = profile?.size.presets?.find((preset) => preset.size.toLowerCase() === size)?.tier || pixel.tier;
     } else if (isImageResolutionTier(quality)) {
         selector.resolution = quality;
     } else if (profile?.size.parameter === "aspect_ratio") {
-        const tier = ({ low: "1k", medium: "2k", high: "4k" } as Record<string, string>)[quality];
-        if (tier && profile.quality.supported) selector.resolution = tier;
-        else if (!profile.quality.supported) {
+        if (!profile.quality.supported) {
             const tiers = new Set(profile.size.presets?.filter((preset) => preset.ratio === size).map((preset) => preset.tier));
             if (tiers.size === 1) selector.resolution = [...tiers][0];
         }

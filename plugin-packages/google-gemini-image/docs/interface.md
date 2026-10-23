@@ -67,7 +67,7 @@
 | 映射位置 | 上游路径或转换表达式 |
 | --- | --- |
 | `response.status` | `"succeeded"` |
-| `response.images` | `{"$map":{"from":{"$filter":{"from":{"$ref":"response.candidates.0.content.parts"},"as":"part","where":{"$or":[{"$ref":"part.inlineData"},{"$ref":"part.inline_data"}]}}},"as":"part","in":{"dataUrl":{"$concat":["data:",{"$coalesce":[{"$ref":"part.inlineData.mimeType"},{"$ref":"part.inline_data.mime_type"},"image/png"]},";base64,",{"$coalesce":[{"$ref":"part.inlineData.data"},{"$ref":"part.inline_data.data"}]}]}}}}` |
+| `response.images` | `{"$map":{"from":{"$ref":"response.candidates"},"as":"candidate","in":{"$map":{"from":{"$filter":{"from":{"$ref":"candidate.content.parts"},"as":"part","where":{"$and":[{"$ne":[{"$ref":"part.thought"},true]},{"$or":[{"$ref":"part.inlineData"},{"$ref":"part.inline_data"}]}]}}},"as":"part","in":{"dataUrl":{"$concat":["data:",{"$coalesce":[{"$ref":"part.inlineData.mimeType"},{"$ref":"part.inline_data.mime_type"},"image/png"]},";base64,",{"$coalesce":[{"$ref":"part.inlineData.data"},{"$ref":"part.inline_data.data"}]}]}}}}}}` |
 | `response.text` | `{"$map":{"from":{"$filter":{"from":{"$ref":"response.candidates.0.content.parts"},"as":"part","where":{"$ref":"part.text"}}},"as":"part","in":{"$ref":"part.text"}}}` |
 | `response.usage` | `{"$ref":"response.usageMetadata"}` |
 | `response.errorPaths[0]` | `"error.code"` |
@@ -79,11 +79,7 @@
 
 ## 兼容边界
 
-imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须省略。多图输出由宿主按次创建，不映射 candidateCount。
-
-## 动态图片参数
-
-`contributes.providers[].imageParameters` 是渠道模型、前台模型与生成界面共用的参数合同。`name` 为稳定身份，`type`、`values`、`min/max/step`、`default` 描述输入；`models` 限定适用上游模型，`enabled` 为初始启用状态。只有 `pricing: true` 的启用字段允许作为价格条件；其他参数仍参与生成。渠道可收窄范围，绑定与计价资格由插件拥有。`binding` 映射到统一请求或插件自己的 `providerOptions` 命名空间。
+imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须省略。多图输出由宿主按次创建，不映射 candidateCount。响应仅排除 thought=true 的推理中间图，保留所有非 thought 最终图。
 
 <!-- YINGCE_MANIFEST_CONTRACT_START -->
 ## Manifest 完整接口定义
@@ -95,7 +91,7 @@ imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须
   "apiVersion": "yingce.plugin/v2",
   "id": "google-gemini-image",
   "name": "Google Gemini Image",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "author": "Google / 影策",
   "description": "Google Gemini Image 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -509,51 +505,71 @@ imageSize 只映射 1K/2K/4K；未知质量值（如视频清晰度 720）必须
           "images": {
             "$map": {
               "from": {
-                "$filter": {
+                "$ref": "response.candidates"
+              },
+              "as": "candidate",
+              "in": {
+                "$map": {
                   "from": {
-                    "$ref": "response.candidates.0.content.parts"
+                    "$filter": {
+                      "from": {
+                        "$ref": "candidate.content.parts"
+                      },
+                      "as": "part",
+                      "where": {
+                        "$and": [
+                          {
+                            "$ne": [
+                              {
+                                "$ref": "part.thought"
+                              },
+                              true
+                            ]
+                          },
+                          {
+                            "$or": [
+                              {
+                                "$ref": "part.inlineData"
+                              },
+                              {
+                                "$ref": "part.inline_data"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
                   },
                   "as": "part",
-                  "where": {
-                    "$or": [
-                      {
-                        "$ref": "part.inlineData"
-                      },
-                      {
-                        "$ref": "part.inline_data"
-                      }
-                    ]
-                  }
-                }
-              },
-              "as": "part",
-              "in": {
-                "dataUrl": {
-                  "$concat": [
-                    "data:",
-                    {
-                      "$coalesce": [
+                  "in": {
+                    "dataUrl": {
+                      "$concat": [
+                        "data:",
                         {
-                          "$ref": "part.inlineData.mimeType"
+                          "$coalesce": [
+                            {
+                              "$ref": "part.inlineData.mimeType"
+                            },
+                            {
+                              "$ref": "part.inline_data.mime_type"
+                            },
+                            "image/png"
+                          ]
                         },
+                        ";base64,",
                         {
-                          "$ref": "part.inline_data.mime_type"
-                        },
-                        "image/png"
-                      ]
-                    },
-                    ";base64,",
-                    {
-                      "$coalesce": [
-                        {
-                          "$ref": "part.inlineData.data"
-                        },
-                        {
-                          "$ref": "part.inline_data.data"
+                          "$coalesce": [
+                            {
+                              "$ref": "part.inlineData.data"
+                            },
+                            {
+                              "$ref": "part.inline_data.data"
+                            }
+                          ]
                         }
                       ]
                     }
-                  ]
+                  }
                 }
               }
             }

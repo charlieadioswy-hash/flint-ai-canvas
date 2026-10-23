@@ -25,6 +25,14 @@ test("screen readiness rejects stale or manually stretched sizes while allowing 
 });
 
 describe("irregular screen canvas template", () => {
+    test("persists independent image resolution without changing ordinary quality", () => {
+        const template = buildIrregularScreenTemplate({ ...input(), imageResolution: "4k", quality: "auto" });
+        const generator = template.nodes.find((node) => node.id === template.generationNodeId)!;
+        const spec = readNodeGenerationSpec(generator)!;
+        expect(spec.options.imageResolution).toBe("4k");
+        expect(spec.options.quality).toBe("auto");
+        expect(generator.metadata?.imageResolution).toBe("4k");
+    });
     test("builds three standard image nodes with separate control and output-mask bindings", () => {
         const template = buildIrregularScreenTemplate(input());
         expect(template.nodes).toHaveLength(3);

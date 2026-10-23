@@ -229,7 +229,7 @@ export function normalizeLegacyImageResolutionConfig(protocol: ModelProtocol | u
         };
     }
     if (image.resolution.supported || !image.quality.supported) return image;
-    const allowed = protocol === "grok-image" ? new Set(["1k", "2k"]) : protocol === "agnes-image" ? new Set(["1k", "2k", "4k"]) : undefined;
+    const allowed = protocol === "grok-image" ? new Set(["1k", "2k"]) : ["agnes-image", "wangsu-gemini-image", "wangsu-chat-image"].includes(protocol || "") ? new Set(["1k", "2k", "4k"]) : undefined;
     if (!allowed) return image;
     const values = image.quality.values.map((value) => value.trim().toLowerCase());
     const defaultValue = image.quality.default.trim().toLowerCase();
@@ -636,7 +636,7 @@ export function normalizeImageValue(profile: ImageCapabilityConfig, value: { siz
         .trim()
         .toLowerCase();
     const configuredResolution = profile.resolution.values.find((item) => item.trim().toLowerCase() === requestedResolution);
-    const legacyResolutionProtocols = protocol === "grok-image" || protocol === "agnes-image";
+    const legacyResolutionProtocols = ["grok-image", "agnes-image", "wangsu-gemini-image", "wangsu-chat-image"].includes(protocol || "");
     const legacyResolution = legacyResolutionProtocols && !profile.quality.supported ? profile.resolution.values.find((item) => item.trim().toLowerCase() === requestedQuality) : undefined;
     const imageResolution = profile.resolution.supported ? configuredResolution || legacyResolution || profile.resolution.default || "auto" : "auto";
     return {

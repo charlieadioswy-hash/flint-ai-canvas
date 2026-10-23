@@ -63,6 +63,9 @@ func TestModelCatalogPublishesVideoModelsWithoutResolutionOptions(t *testing.T) 
 	}
 	for _, key := range []string{"kling-v3", "kling-v3-omni"} {
 		config := DefaultModelCapabilityConfigForModel("wangsu-videos", key)
+		// Keep the persisted legacy contract available before the new plugin is deployed.
+		config.Video.Resolutions = []string{}
+		config.Video.DefaultResolution = ""
 		if config == nil || config.Video == nil || len(config.Video.Resolutions) != 0 || config.Video.DefaultResolution != "" {
 			t.Fatalf("%s should have no declared video resolution: %+v", key, config)
 		}

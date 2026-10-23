@@ -13,6 +13,8 @@ func wangsuImageCapability(protocolID, modelName string, fallback *ImageCapabili
 	image.References.MaxImages = 0
 	image.References.MaskSupported = false
 	image.Size = ImageSizeConfig{Parameter: "size", Values: []string{"1024x1024", "1536x1024", "1024x1536"}, Default: "1024x1024", AllowCustom: true}
+	image.Resolution = ImageResolutionConfig{Values: []string{}, Default: "auto"}
+	image.ResolutionUsesQuality = false
 	image.Quality = ImageQualityConfig{Default: "auto"}
 	image.TransparentBackground = VideoBooleanConfig{}
 	image.ResponseFormat = ParameterSupport{Supported: true}
@@ -21,7 +23,11 @@ func wangsuImageCapability(protocolID, modelName string, fallback *ImageCapabili
 	if protocolID == "wangsu-gemini-image" || (protocolID == "wangsu-chat-image" && name != "qwen-image-edit") {
 		image.References.MaxImages = fallback.References.MaxImages
 		image.Size = ImageSizeConfig{Parameter: "aspect_ratio", Values: []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}, Default: "1:1"}
-		image.Quality = ImageQualityConfig{Supported: true, Values: []string{"1k", "2k", "4k"}, Default: "1k"}
+		image.Resolution = ImageResolutionConfig{Supported: true, Values: []string{"1k", "2k", "4k"}, Default: "1k"}
+		if name == "gemini-nano-banana-2.1" {
+			image.References.MaxImages = 14
+			image.Size.Values = append(image.Size.Values, "1:4", "1:8", "4:1", "8:1")
+		}
 		image.ResponseFormat.Supported = false
 	} else if protocolID == "wangsu-chat-image" {
 		image.References.MaxImages = 1
@@ -31,6 +37,7 @@ func wangsuImageCapability(protocolID, modelName string, fallback *ImageCapabili
 		image.References.MaxImages = 1
 		image.References.MaskSupported = true
 		image.Quality = ImageQualityConfig{Supported: true, Values: []string{"auto", "low", "high"}, Default: "auto"}
+		// GPT Image 2 medium needs an explicit retail price before it is offered.
 		if strings.HasPrefix(name, "gpt-image-2.5-") {
 			image.Quality.Values = []string{"auto", "low", "medium", "high", "xhigh", "max"}
 		}
@@ -86,6 +93,9 @@ func wangsuVideoCapability(protocolID, modelName string, fallback *VideoCapabili
 		video.References.MaxAudioDuration = 15
 		video.Duration = VideoDurationConfig{Selection: "range", Min: 4, Max: 15, Step: 1, Default: 5}
 		video.Resolutions = []string{"480p", "720p", "4k"}
+		if strings.HasPrefix(name, "doubao-seedance-2-0-fast") {
+			video.Resolutions = []string{"480p", "720p"}
+		}
 		if v25 {
 			video.References.MaxVideos = 3
 			video.References.MaxVideoBytes = 50 * 1024 * 1024
@@ -97,6 +107,11 @@ func wangsuVideoCapability(protocolID, modelName string, fallback *VideoCapabili
 		video.DefaultRatio, video.DefaultResolution = "16:9", "720p"
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		video.Operations = append(video.Operations, "reference_to_video", "audio_to_video")
+	} else if name == "kling-v3" || name == "kling-v3-omni" {
+		video.Resolutions = []string{"720P", "1080P"}
+		video.DefaultResolution = "1080P"
+		video.Ratios = []string{"16:9", "9:16", "1:1"}
+		video.DefaultRatio = "16:9"
 	} else if name == "veo-3.1-generate-001" || name == "veo-3.1-fast-generate-001" {
 		video.References.MaxImages = 3
 		video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{4, 6, 8}, Default: 8}
@@ -128,7 +143,11 @@ func validateWangsuVideoTask(profile *VideoCapabilityConfig, input canvasGenerat
 		resolution = profile.DefaultResolution
 	}
 	if (name == "minimax-hailuo-02" || name == "minimax-hailuo-2.3") && strings.TrimSpace(input.Config.VideoSeconds) == "10" && normalizeResolution(resolution) != "768p" {
-		return BadAuthRequest("MiniMax Hailuo 的 10 秒视频仅支持 768P；其他分辨率请选择 6 秒")
+		// 512P/10s was verified for Hailuo 02 image-to-video, not text-to-video.
+		imageToVideo512 := name == "minimax-hailuo-02" && normalizeResolution(resolution) == "512p" && len(input.ReferenceImages) > 0 && operation != "text_to_video"
+		if !imageToVideo512 {
+			return BadAuthRequest("MiniMax Hailuo 的 10 秒视频仅支持 768P，Hailuo 02 图生视频另支持 512P；其他组合请选择 6 秒")
+		}
 	}
 	if name == "veo-3.1-generate-001" || name == "veo-3.1-fast-generate-001" {
 		if endID != "" && startID == "" {

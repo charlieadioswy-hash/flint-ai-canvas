@@ -44,7 +44,8 @@ export type ScreenCreationWorkspaceProps = {
     profile: ImageCapabilityConfig | undefined;
     size: string;
     quality?: string;
-    setSize: (size: string, quality?: string) => void;
+    imageResolution?: string;
+    setSize: (size: string, quality?: string, imageResolution?: string) => void;
     mask: ScreenCreationImage | null;
     reference: ScreenCreationImage | null;
     uploadMask: (file: File) => void | Promise<void>;

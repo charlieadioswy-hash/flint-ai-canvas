@@ -537,7 +537,7 @@ function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode)
     const channel = resolveModelChannel(config, config.model);
     const spec = channel.modelCosts?.find((item) => item.model === modelOptionName(config.model))?.logicalCapabilitySpec;
     const candidates: Record<string, unknown> = mode === "image"
-        ? { size: config.size, quality: omittedImageQuality(config.quality), transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
+        ? { size: config.size, imageResolution: omittedImageQuality(config.imageResolution), quality: omittedImageQuality(config.quality), transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
         : mode === "video"
             ? { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
             : mode === "audio"

@@ -35,18 +35,18 @@ description: 已配置模型、协议参数、覆盖顺序、供应商进度与�
 
 ## 开发目录中的图片模型
 
-本轮只读目录包含 25 个渠道模型，其中图片 11 个、视频 6 个、文本 8 个。以下仅审计图片和视频；没有修改服务器配置，也没有将原始目录导出写入仓库。目录中 11 个图片模型均未持久化 `image.parameters`，也未显式声明 `resolution`，读取时仍可能被已安装插件投影为新参数合同。
+下表记录首次梳理时的开发目录：25 个渠道模型，其中图片 11 个、视频 6 个、文本 8 个；当时未修改服务器配置。后续 Wangsu 专项已核对开发、生产各 20 个模型并执行部分配置修复，最新依据和发布边界见 [Wangsu 分辨率核查与修复](/docs/backend/wangsu-resolution-audit)。目录声明仍可能被已安装插件投影为新参数合同。
 
 | 已配置模型与协议                                                          | 尺寸或比例                                                   | 质量 / 分辨率声明                         | 数量与素材                                                                         |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- | ---------------------------------------------------------------------------------- |
 | Dream Tech XL · `liblib-image`                                            | 30 个像素预设，分 `1k/2k/4k` 组；默认 `768x1024`，允许自定义 | 无质量字段；分组是管理员像素预设          | 输出上限 **1**，参考图 1，已开启蒙版；Canny 最多 4 组                              |
 | `gpt-image-1.5`、`gpt-image-2`、`gpt-image-2.5-sunburst` · `openai-image` | 39 个旧配置值，默认 `1:1`，允许自定义                        | `auto/low/medium/high`                    | 输出上限 **15**，参考图 16，已开启蒙版；这些是当前配置声明，仍需按该渠道供应商核验 |
-| `gemini-3-pro-image`、`gemini-nano-banana-2.1` · `wangsu-gemini-image`    | 10 种比例，默认 `1:1`，不开放自定义                          | 旧 `quality=1k/2k/4k`，默认 `1k`          | 输出上限 **1**，参考图 16，不支持蒙版                                              |
+| `gemini-3-pro-image`、`gemini-nano-banana-2.1` · `wangsu-gemini-image`    | 当前存储为 10 比例；Nano 的 14 比例迁移待发布                | 旧存储 `quality=1k/2k/4k`；新版读为独立分辨率 | 输出上限 **1**；Nano 参考图已收窄为 14，Pro 保留原配置，不支持蒙版                  |
 | `gpt-image-2` · `wangsu-images`                                           | `1024x1024`、`1536x1024`、`1024x1536`，允许自定义            | `auto/low/high`                           | 输出上限 **10**，参考图 1，支持蒙版                                                |
 | `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst` · `wangsu-images`         | 同上                                                         | `auto/low/medium/high/xhigh/max`          | 输出上限 **10**，参考图 1，支持蒙版                                                |
 | `qwen-image`、`qwen-image-plus` · `wangsu-images`                         | 同上                                                         | 不发送质量、背景或输出格式等 GPT 专用字段 | 输出上限 **1**，仅文生图，不接受编辑参考图或蒙版                                   |
 
-Wangsu Gemini 的当前 manifest 将 `quality` 中可识别的 `1k/low`、`2k/medium`、`4k/high` 映射成 `1K/2K/4K`，再回退读取 `resolution`。因此旧字段能编码分辨率；若把界面迁移到独立分辨率参数，必须同时处理旧 `quality`，防止它覆盖新选择。开发目录中的 Gemini 价格档仍使用 `quality=1k/2k/4k`，字段迁移还须同步计价选择合同。`wangsu-chat-image` 只有 Gemini 型号发送 `eca_image_config`；`qwen-image-edit` 不接收该配置。
+修复后的 Wangsu Gemini manifest 优先读取独立 `resolution`，只兼容旧字面 `quality=1k/2k/4k`，普通 `low/medium/high` 不映射分辨率。前后端报价将旧 Gemini 价格档与明确分辨率对齐，旧字段不覆盖新选择。`wangsu-chat-image` 只有 Gemini 型号发送 `eca_image_config`；`qwen-image-edit` 不接收该配置。以上行为需部署新版代码和插件。
 
 尺寸自定义开关只表示平台允许输入，不能证明供应商接受任意正方形、比例或像素。尤其 Liblib 的 `4k` 分组是管理员维护的精确尺寸集合，不是供应商原生 `resolution=4k` 参数。
 
@@ -70,22 +70,22 @@ Wangsu Gemini 的当前 manifest 将 `quality` 中可识别的 `1k/low`、`2k/me
 | --------------------------------- | -------------------- | ------------------------------ | -------------------------------- | -------------------------------- |
 | `MiniMax-Hailuo-02`               | 6、10；默认 6        | `512P/768P/1080P`；默认 `768P` | 未声明                           | 首尾帧合计 2 张；无视频/音频参考 |
 | `MiniMax-Hailuo-2.3`              | 6、10；默认 6        | `768P/1080P`；默认 `768P`      | 未声明                           | 图片 1 张；无视频/音频参考       |
-| `doubao-seedance-2-0-fast-260128` | 4–15，步长 1；默认 5 | `480p/720p/4k`；默认 `720p`    | 7 种，含 `adaptive`；默认 `16:9` | 图片 9、视频 1、音频 3           |
+| `doubao-seedance-2-0-fast-260128` | 4–15，步长 1；默认 5 | `480p/720p`；默认 `720p`       | 7 种，含 `adaptive`；默认 `16:9` | 图片 9、视频 1、音频 3           |
 | `doubao-seedance-2-5-260628`      | 4–30，步长 1；默认 5 | `480p/720p/1080p`；默认 `720p` | 同上                             | 图片 9、视频 3、音频 3           |
-| `kling-v3`、`kling-v3-omni`       | 仅 5                 | 未声明                         | 未声明                           | 图片 1；无视频/音频参考          |
+| `kling-v3`、`kling-v3-omni`       | 仅 5                 | 新版 `720P/1080P`，迁移待发布    | 新版 `16:9/9:16/1:1`，迁移待发布 | 图片 1；无视频/音频参考          |
 
 Seedance 2.0 的单个视频参考是平台保守默认：已收录的网关文档未明确数量，不能把 1 解读成供应商绝对上限，也不能直接套用 2.5 的 3 个。2.5 已声明的视频参考大小与时长上限为 50 MiB、15 秒，音频为 15 MiB、15 秒；完整限制读取 `references`。
 
 ### 协议还会拒绝的组合
 
-- **Hailuo 10 秒只接受 768P。** Hailuo 采用首尾帧输入，不接受普通多模态参考素材。
+- **Hailuo 10 秒通常只接受 768P；Hailuo 02 首帧图生允许已实测的 512P/10 秒。** 该例外需新版宿主和插件，1080P/10 秒仍拒绝。Hailuo 采用首尾帧输入，不接受普通多模态参考素材。
 - Veo 3.1 不在本轮开发目录内，但仓库合同已明确：参考图最多 3 张，必须为 `16:9`、8 秒，与首尾帧互斥；单独尾帧必须同时提供首帧。
 - `wangsu-openai-videos` 也不在本轮开发目录内；它使用独立 multipart 合同、4/8/12 秒、720p、横竖比例及最多一张首帧，不能套用网宿多模态参考输入。
 - Seedance 上游适配器虽能保留 `seconds=-1`，平台时长与计费合同要求正数，界面不开放自动时长。
 
 组合约束由 `backend/internal/app/model_capability_wangsu.go:validateWangsuVideoTask` 和 `plugin-packages/generate-wangsu.mjs` 的声明式 validations 执行；平面枚举并不意味着任意笛卡尔组合都可用。协议路径及官方来源见 [Wangsu 渠道协议](/docs/backend/wangsu)。
 
-只读目录还发现一项配置不一致：Hailuo 02 有 `image_to_video + 10 秒 + 512p` 价格档，但当前宿主和插件均拒绝该组合。该价格档不能证明组合可生成，应核对供应商合同后由管理员修正；本轮未改动该配置。
+Hailuo 02 的 `image_to_video + 10 秒 + 512p` 已通过供应商直调验证任务完成；本地宿主和插件已修正原先误拦截，待发布后验收应用全链路。价格档未修改。
 
 ## Tripo 3D 使用独立能力合同
 
@@ -133,8 +133,8 @@ Tripo 不属于上述渠道模型表。当前代码仅开放 H3.1、H3.0、H2.5 
 
 ## 验证边界与后续核验
 
-本页矩阵通过代码、插件 manifest、既有专题和脱敏目录逐项对照，没有执行新的付费生成。公开来源包括 [网宿模型目录](http://doc.model-store.ai/ai-gateway/model/support-doc)、[Liblib 官方 API 使用说明](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d)、[Liblib SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image) 与 [Tripo H 模型接口](https://developers.tripo3d.ai/zh/docs/generation-image-to-model/standard)；这里引用已收录依据，不代表本轮逐页联网重新验证。
+首次矩阵来自代码、插件 manifest、既有专题和脱敏目录对照。公开来源包括 [网宿模型目录](http://doc.model-store.ai/ai-gateway/model/support-doc)、[Liblib 官方 API 使用说明](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d)、[Liblib SDK 图生图示例](https://github.com/gravitywp/liblib-javascript#image-to-image) 与 [Tripo H 模型接口](https://developers.tripo3d.ai/zh/docs/generation-image-to-model/standard)；其中 Liblib、Tripo 为既有收录依据，Wangsu 后续核查范围见专题。
 
-仍需实际供应商合同或授权实测确认：OpenAI 兼容渠道的通用 15 张输出与 16 张参考图配置、Kling 未声明的可选参数、Seedance 2.0 参考视频数量，以及 Liblib 各模板的实际尺寸范围。已有历史真实调用记录仅证明当时那组账号、模型和参数，不扩展为所有组合的验收结论。
+本页首次梳理没有新增付费调用；后续 Wangsu 专项的 7 次真实调用及官方依据见专题。仍需确认 OpenAI 兼容渠道的通用 15 张输出与 16 张参考图配置、Kling 其他可选参数、Seedance 2.0 参考视频数量，以及 Liblib 各模板的真实尺寸范围。真实调用仅证明该组账号、模型和参数，不扩展为所有组合的验收结论。
 
 新增或修改能力时，应分别验证模型切换保留合法值、越界值在提交前被拒绝、服务端准入与价格选择使用同一组值、协议请求字段正确；涉及真实进度时，还应区分供应商阶段与平台保存阶段。部署后的浏览器与真实供应商验收状态继续维护在 [待测试清单](/docs/progress/pending-test)。
