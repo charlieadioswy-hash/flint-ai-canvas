@@ -3,7 +3,6 @@
 package app
 
 import (
-	"strconv"
 	"strings"
 
 	"yingce/backend/internal/model"
@@ -40,9 +39,8 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		image.OutputFormat.Supported = false
 		image.MaxOutputs = 4
 	case model.ChannelInterfaceOpenAIImage:
-		// OpenAI Images 只收 WIDTHxHEIGHT：默认配置声明了 1K/2K/4K，就必须自带档位换算表，
-		// 否则运行时换算会被静默跳过（见 imageSizePresetMissing），实际出图档位与所选档位不一致。
-		image.Size.Presets = openAIImageDefaultSizePresets()
+		// 普通 quality 不提供分辨率映射；保留既有像素选项，不为比例猜测像素。
+		image.Size = ImageSizeConfig{Parameter: "size", Values: defaultImagePixelSizeValues(), Default: "1024x1024", AllowCustom: true}
 	case "km-kemei-seedream":
 		image.References.MaxImages = 10
 		image.References.MaskSupported = false
@@ -70,6 +68,9 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		image.OutputFormat = ParameterSupport{Supported: false}
 		image.MaxOutputs = 1
 	case model.ChannelInterfaceVolcengineArkImage, model.ChannelInterfaceVolcengineArkAgentPlanImage:
+		if model.ChannelInterfaceType(protocol) == model.ChannelInterfaceVolcengineArkImage {
+			image.Size = ImageSizeConfig{Parameter: "size", Values: defaultImagePixelSizeValues(), Default: "2048x2048", AllowCustom: true}
+		}
 		image.References.MaskSupported = false
 		image.Quality.Supported = false
 		image.TransparentBackground.Supported = false
@@ -115,9 +116,17 @@ func defaultImageSizeValues() []string {
 	}
 }
 
-// openAIImageDefaultSizeTable 是 openai-image 默认能力配置的档位换算表（比例 × 1K/2K/4K）。
-// 像素值与库内 openai-image 线路实际使用的预设逐项一致（gpt-image-2 / 2.5 / 4k 的 1K/2K/4K 全部命中），
-// 且都在 defaultImageSizeValues() 里，不引入未声明的尺寸。
+func defaultImagePixelSizeValues() []string {
+	values := make([]string, 0, 31)
+	for _, value := range defaultImageSizeValues() {
+		if !strings.Contains(value, ":") {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+// openAIImageDefaultSizeTable 仅用于旧 quality=K 合同的迁移，不用于新建模型默认值。
 var openAIImageDefaultSizeTable = []struct {
 	ratio     string
 	tierSizes [3]string
@@ -132,26 +141,6 @@ var openAIImageDefaultSizeTable = []struct {
 	{"4:5", [3]string{"1024x1280", "1792x2240", "2560x3200"}},
 	{"5:4", [3]string{"1280x1024", "2240x1792", "3200x2560"}},
 	{"21:9", [3]string{"2048x878", "3136x1344", "3808x1632"}},
-}
-
-// openAIImageDefaultSizePresets 把上面的表展开成 3 个档位 × 10 个比例的预设。
-// 像素值都来自 defaultImageSizeValues()，validateImageCapabilityConfig 会校验与支持值一致。
-func openAIImageDefaultSizePresets() []ImageSizePreset {
-	tiers := []string{"1k", "2k", "4k"}
-	presets := make([]ImageSizePreset, 0, len(openAIImageDefaultSizeTable)*len(tiers))
-	for _, entry := range openAIImageDefaultSizeTable {
-		for index, tier := range tiers {
-			size := entry.tierSizes[index]
-			widthText, heightText, found := strings.Cut(size, "x")
-			width, widthErr := strconv.Atoi(widthText)
-			height, heightErr := strconv.Atoi(heightText)
-			if !found || widthErr != nil || heightErr != nil {
-				continue
-			}
-			presets = append(presets, ImageSizePreset{Tier: tier, Ratio: entry.ratio, Size: size, Width: width, Height: height})
-		}
-	}
-	return presets
 }
 
 // legacyImageSizeValues 用于修复旧数据中仅保存了 "*" 的图片尺寸能力。

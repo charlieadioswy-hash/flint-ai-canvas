@@ -1,7 +1,7 @@
 import type { ModelProtocol, ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { projectImageParameters, normalizeImageParameters, imageParameterRequest } from "./image-parameters";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
-import { IMAGE_RATIOS, IMAGE_RESOLUTIONS, imagePresetForRatio } from "@/lib/image-size-presets";
+import { imagePresetForRatio } from "@/lib/image-size-presets";
 import { kemeiSeedreamPresets } from "./kemei-image-presets";
 import { type WorkflowVideoFieldLike, workflowImageCapabilityConfig, workflowVideoCapabilityConfig } from "./model-capabilities-workflow";
 import { resolveWorkflowVideoScreenSpec } from "./video-screen-specs";
@@ -371,6 +371,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.outputFormat = { supported: false };
         image.maxOutputs = 1;
     } else if (protocol === "volcengine-ark-image" || protocol === "volcengine-ark-agent-plan-image") {
+        if (protocol === "volcengine-ark-image") image.size = { parameter: "size", values: defaultImageSizes.filter((value) => !value.includes(":")), default: "2048x2048", allowCustom: true };
         image.references.maskSupported = false;
         image.quality.supported = false;
         image.transparentBackground.supported = false;
@@ -378,9 +379,8 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         image.outputFormat.supported = false;
     }
     if (protocol === "openai-image") {
-        // OpenAI Images 只收 WIDTHxHEIGHT：默认配置声明了 1K/2K/4K，就必须自带档位换算表，
-        // 否则运行时换算会被静默跳过，实际出图档位与所选档位不一致。取值来自本地唯一那张比例表。
-        image.size.presets = IMAGE_RESOLUTIONS.flatMap((tier) => IMAGE_RATIOS.map((ratio) => imagePresetForRatio(tier, ratio)));
+        // 普通 quality 不提供分辨率映射；保留既有像素选项，不为比例猜测像素。
+        image.size = { parameter: "size", values: defaultImageSizes.filter((value) => !value.includes(":")), default: "1024x1024", allowCustom: true };
     }
     if (protocol === "volcengine-jimeng-image") {
         image.references.maxImages = 14;

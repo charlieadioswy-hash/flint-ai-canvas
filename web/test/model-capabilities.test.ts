@@ -5,11 +5,30 @@ import test from "node:test";
 import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, normalizeImageValue, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
 import { imageTierAvailable, imageResolutionTiers } from "../src/lib/image-size-presets.ts";
 import { workflowFieldIsRatioChoices } from "../src/lib/model-capabilities-workflow.ts";
+import { resolveImageRequestSize } from "../src/services/api/image-validation.ts";
 
 test("workflow ratio choices use the direct selection control only for ratio values", () => {
     const field = { fieldName: "aspectRatio", fieldType: "SELECT", options: ["auto", "9:16", "16:9", "21:9"] };
     assert.equal(workflowFieldIsRatioChoices(field), true);
     assert.equal(workflowFieldIsRatioChoices({ ...field, options: ["fast", "quality"] }), false);
+});
+
+test("OpenAI and Ark defaults submit explicit pixels without inventing resolution mappings", () => {
+    for (const [protocol, expected] of [
+        ["openai-image", "1024x1024"],
+        ["volcengine-ark-image", "2048x2048"],
+    ] as const) {
+        const image = defaultModelCapabilityConfig(protocol).image!;
+        assert.equal(image.size.default, expected);
+        assert.equal(image.size.values.length, 31);
+        assert.ok(image.size.values.every((value) => value === "auto" || /^\d+x\d+$/.test(value)));
+        assert.equal(image.size.presets, undefined);
+        assert.equal(image.resolution.supported, false);
+        for (const size of [expected, "2048x878", "3840x2160"]) {
+            assert.deepEqual(resolveImageRequestSize(image, "high", size), { parameter: "size", value: size });
+        }
+    }
+    assert.equal(defaultModelCapabilityConfig("volcengine-ark-agent-plan-image").image!.size.default, "1:1");
 });
 
 test("Kemei Seedream defaults retain official 1K/1.5K/2K sizes without a 4K preset", () => {
