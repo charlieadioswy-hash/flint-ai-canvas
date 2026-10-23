@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
-import { Image as ImageIcon, LoaderCircle, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Maximize2, Minimize2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { zoomImagePreviewAt } from "@/lib/canvas/canvas-image-preview";
@@ -24,6 +24,7 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt = "图片", onClo
     const [resolvedSrc, setResolvedSrc] = useState(storageKey ? "" : src);
     const [loading, setLoading] = useState(Boolean(src || storageKey));
     const [error, setError] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const [transform, setTransform] = useState(FIT_TRANSFORM);
     const transformRef = useRef(FIT_TRANSFORM);
     const bodyRef = useRef<HTMLDivElement>(null);
@@ -106,7 +107,7 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt = "图片", onClo
             open
             flush
             title={
-                <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex min-w-0 items-center gap-2.5 py-3 pl-4 pr-14 sm:pl-6">
                     <span
                         className="grid size-7 shrink-0 place-items-center rounded-[var(--r-sm)] border"
                         style={{
@@ -117,22 +118,52 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt = "图片", onClo
                     >
                         <ImageIcon className="size-4" />
                     </span>
-                    <span className="min-w-0 truncate text-sm font-semibold" title={alt}>
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold" title={alt}>
                         {alt}
                     </span>
+                    <button
+                        type="button"
+                        data-canvas-no-zoom
+                        aria-label={isFullscreen ? "退出全屏" : "全屏查看"}
+                        aria-pressed={isFullscreen}
+                        title={isFullscreen ? "退出全屏 (Esc)" : "全屏查看"}
+                        className="flex h-7 shrink-0 items-center gap-1.5 rounded-[var(--r-sm)] border border-[var(--workspace-border)] px-2 text-xs font-normal text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-strong)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--workspace-text-muted)]"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setIsFullscreen((current) => !current);
+                        }}
+                    >
+                        {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+                        <span className="hidden sm:inline">{isFullscreen ? "退出全屏" : "全屏"}</span>
+                    </button>
                 </div>
             }
             footer={null}
-            centered
-            width="min(1160px, calc(100vw - 32px))"
-            onCancel={onClose}
+            centered={!isFullscreen}
+            width={isFullscreen ? "100vw" : "min(1160px, calc(100vw - 32px))"}
+            style={isFullscreen ? { top: 0, maxWidth: "100vw", paddingBottom: 0, margin: 0 } : undefined}
+            styles={
+                isFullscreen ? {
+                    container: { height: "100dvh", borderRadius: 0, display: "flex", flexDirection: "column" },
+                    header: { flexShrink: 0 },
+                    body: { display: "flex", flex: 1, minHeight: 0 },
+                } : undefined
+            }
+            onCancel={(event) => {
+                if (isFullscreen && event.type === "keydown") {
+                    setIsFullscreen(false);
+                    return;
+                }
+                onClose();
+            }}
             className="canvas-image-preview-modal"
         >
             <div
                 ref={bodyRef}
                 data-canvas-no-zoom
                 data-canvas-wheel-scroll
-                className="flex flex-col gap-3 border-t p-4 sm:p-6"
+                className={`flex min-h-0 flex-col gap-3 border-t p-4 sm:p-6 ${isFullscreen ? "flex-1" : ""}`}
                 onPointerDown={(event) => event.stopPropagation()}
                 onPointerMove={(event) => event.stopPropagation()}
                 onPointerUp={(event) => event.stopPropagation()}
@@ -148,9 +179,9 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt = "图片", onClo
                     role="region"
                     aria-label="图片预览，滚轮缩放，拖动查看"
                     tabIndex={0}
-                    className="relative w-full overflow-hidden rounded-[var(--r-lg)] border touch-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--workspace-text-muted)]"
+                    className={`relative w-full overflow-hidden rounded-[var(--r-lg)] border touch-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--workspace-text-muted)] ${isFullscreen ? "min-h-0 flex-1" : ""}`}
                     style={{
-                        height: "max(80px, min(66dvh, 620px, calc(100dvh - 180px)))",
+                        height: isFullscreen ? undefined : "max(80px, min(66dvh, 620px, calc(100dvh - 180px)))",
                         cursor: loading || error ? "default" : dragging ? "grabbing" : "grab",
                         borderColor: "var(--workspace-border-strong)",
                         background: "var(--workspace-surface-strong)",
@@ -243,7 +274,7 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt = "图片", onClo
                         />
                     ) : null}
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--workspace-text-muted)" }}>
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--workspace-text-muted)" }}>
                     <span>滚轮缩放 · 拖动查看 · 0 还原</span>
                     <div className="flex items-center gap-2">
                         <button

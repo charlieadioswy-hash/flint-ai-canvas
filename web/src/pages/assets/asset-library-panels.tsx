@@ -7,7 +7,7 @@ import { ModelAssetPreview } from "@/components/assets/model-asset-preview";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { assetCategoryLabel } from "@/lib/asset-category";
 import { formatBytes } from "@/lib/image-utils";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { type LibraryAsset, assetKindIcons } from "./asset-library-format";
 import { isKnownAssetKind } from "./asset-library-cards";
@@ -325,18 +325,29 @@ export function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Lib
 export function AssetImageZoom({ asset }: { asset: LibraryAsset & { kind: "image" } }) {
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const viewerRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+    useEffect(() => {
+        const viewer = viewerRef.current;
+        if (!viewer) return;
+        const handleWheel = (event: WheelEvent) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.deltaY === 0) return;
+            setScale((value) => Math.min(4, Math.max(0.25, value * (event.deltaY < 0 ? 1.12 : 0.89))));
+        };
+        // React delegates wheel as passive, so cancel scrolling on the preview itself.
+        viewer.addEventListener("wheel", handleWheel, { passive: false });
+        return () => viewer.removeEventListener("wheel", handleWheel);
+    }, []);
     const reset = () => {
         setScale(1);
         setOffset({ x: 0, y: 0 });
     };
     return (
         <div
+            ref={viewerRef}
             className="asset-zoom-viewer"
-            onWheel={(event) => {
-                event.preventDefault();
-                setScale((value) => Math.min(4, Math.max(0.25, value * (event.deltaY < 0 ? 1.12 : 0.89))));
-            }}
             onPointerDown={(event) => {
                 if (scale <= 1) return;
                 event.currentTarget.setPointerCapture(event.pointerId);
