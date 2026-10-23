@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"image"
@@ -313,10 +314,37 @@ func uploadLiblibImage(ctx context.Context, config providerConfig, data []byte, 
 	}
 	req.Header.Set("Content-Type", contentType)
 	if _, _, err := doBinary(req); err != nil {
-		return "", err
+		return "", liblibUploadFailure(err)
 	}
 	objectURL := strings.TrimRight(s.PostURL, "/") + "/" + strings.Join(liblibEscapeKey(s.Key), "/")
 	return objectURL, nil
+}
+
+type liblibUploadAuthorizationError struct {
+	Err     error
+	message string
+}
+
+func (e liblibUploadAuthorizationError) Error() string { return e.message }
+
+func (e liblibUploadAuthorizationError) Unwrap() error { return e.Err }
+
+func liblibUploadFailure(err error) error {
+	var httpErr providerHTTPError
+	if !errors.As(err, &httpErr) || (httpErr.StatusCode != http.StatusUnauthorized && httpErr.StatusCode != http.StatusForbidden) {
+		return err
+	}
+	message := "Liblib 素材上传被拒绝，请联系供应商或更换渠道"
+	// Only classify an allowlisted OSS code; never publish its XML, message,
+	// signed destination, or temporary credentials.
+	var response struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+	}
+	if xml.Unmarshal([]byte(httpErr.Body), &response) == nil && response.Code == "InvalidAccessKeyId" {
+		message = "Liblib 素材上传服务的存储凭据不可用，请联系供应商或更换渠道"
+	}
+	return liblibUploadAuthorizationError{Err: err, message: message}
 }
 
 func liblibUploadMultipart(s liblibUploadSignature, name string, data []byte, mimeType string) ([]byte, string, error) {

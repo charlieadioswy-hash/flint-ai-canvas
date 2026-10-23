@@ -39,6 +39,16 @@ type providerHTTPError struct {
 	RetryAfter time.Duration
 }
 
+// providerPreparationError marks a failure before generation create is sent.
+// It preserves the cause for existing billing and retry policies.
+type providerPreparationError struct {
+	Err error
+}
+
+func (e providerPreparationError) Error() string { return e.Err.Error() }
+
+func (e providerPreparationError) Unwrap() error { return e.Err }
+
 type providerResponseDecodeError struct {
 	Err error
 }

@@ -200,6 +200,40 @@ func TestTaskTerminalCoordinatorLogsUnrecordedProviderFailure(t *testing.T) {
 	}
 }
 
+func TestTaskTerminalPreparationDiagnosticPreservesBillingPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		failure           error
+		review            bool
+		providerRequestID string
+		providerSucceeded bool
+		outcome           string
+	}{
+		{"upload rejected", providerPreparationError{Err: providerHTTPError{StatusCode: 403}}, false, "", false, "not_submitted"},
+		{"preparation timeout still reviewed", providerPreparationError{Err: context.DeadlineExceeded}, true, "", false, "not_submitted"},
+		{"create timeout still reviewed", context.DeadlineExceeded, true, "", false, "unknown"},
+		{"accepted task stays submitted", providerPreparationError{Err: context.DeadlineExceeded}, true, "accepted-id", false, "accepted"},
+		{"successful provider stays submitted", providerPreparationError{Err: context.DeadlineExceeded}, false, "", true, "accepted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			task := &model.Task{ID: "task-1", BillingOrderID: "order-1", ProviderRequestID: test.providerRequestID}
+			billing := &taskTerminalBillingStub{review: test.review}
+			coordinator := newTaskTerminalCoordinatorForTest(&taskTerminalRepositoryStub{task: task}, billing, &taskTerminalReplayStub{}, &taskTerminalLoggerStub{}, &taskTerminalOutputStub{})
+			if err := coordinator.handleExecutionFailure(task, test.failure, test.providerSucceeded, false); !errors.Is(err, test.failure) {
+				t.Fatalf("terminal handling lost failure: %v", err)
+			}
+			diagnostic := taskExecutionDiagnostic(task)
+			if diagnostic == nil || diagnostic.SubmissionOutcome != test.outcome || diagnostic.TaskSubmitted != (test.outcome == "accepted") {
+				t.Fatalf("unexpected submission diagnostic: %+v", diagnostic)
+			}
+			wantUncertain := test.review || test.providerSucceeded
+			if (len(billing.uncertain) == 1) != wantUncertain || (len(billing.refund) == 1) == wantUncertain {
+				t.Fatalf("preparation classification changed billing: refund=%v uncertain=%v", billing.refund, billing.uncertain)
+			}
+		})
+	}
+}
+
 func TestTaskTerminalCoordinatorReturnsTerminalStateWriteError(t *testing.T) {
 	task := &model.Task{ID: "task-1", UserID: "user-1", BillingOrderID: "order-1"}
 	terminalError := errors.New("database unavailable")

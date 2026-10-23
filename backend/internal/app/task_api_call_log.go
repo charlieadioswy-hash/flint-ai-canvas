@@ -64,6 +64,10 @@ func (s *Service) ensureFailedProviderAttemptLogged(task model.Task, taskErr err
 		path = "/task/provider-state"
 		errorCode = "provider_state_unlogged"
 	}
+	var preparationErr providerPreparationError
+	if strings.TrimSpace(metadata.ProviderRequestID) == "" && errors.As(taskErr, &preparationErr) {
+		path, errorCode = "/task/provider-preflight", "request_not_sent"
+	}
 	callLog := model.ApiCallLog{
 		UserID:            metadata.UserID,
 		TraceID:           metadata.TraceID,

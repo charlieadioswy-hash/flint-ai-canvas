@@ -142,7 +142,12 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 	c.ensureFailedAttemptLogged(task, err)
 	task.Stage = "任务失败"
 	task.Error = c.userFacingMessage(err)
+	phase, code := "execution", "provider_execution_failed"
 	outcome := taskSubmissionOutcome(task, channelSlotFailedBeforeRequest)
+	var preparationErr providerPreparationError
+	if !providerSucceeded && task.ProviderRequestID == "" && errors.As(err, &preparationErr) {
+		phase, code, outcome = "preparation", "preparation_failed", "not_submitted"
+	}
 	if providerSucceeded {
 		outcome = "accepted"
 	}
@@ -150,7 +155,7 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 	if outcome == "unknown" {
 		retryClass = "reconcile_submission"
 	}
-	recordTaskDiagnostic(task, "execution", "provider_execution_failed", outcome, retryClass, err)
+	recordTaskDiagnostic(task, phase, code, outcome, retryClass, err)
 	if terminalErr := c.markTerminalState(task); terminalErr != nil {
 		return errors.Join(err, terminalErr)
 	}

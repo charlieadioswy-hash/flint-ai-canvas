@@ -51,7 +51,7 @@ func runProtocolAdapterTaskWithPolicy(ctx context.Context, input canvasGeneratio
 		var err error
 		request, err = prepareLiblibProtocolRequest(ctx, input, request)
 		if err != nil {
-			return nil, err
+			return nil, providerPreparationError{Err: err}
 		}
 		// 幂等键只存在于宿主请求元数据中，声明式插件可以把它映射到 Header，
 		// 但不能把宿主控制字段泄漏到供应商 JSON body。恢复已有 taskID 时不会进入 create 分支。
