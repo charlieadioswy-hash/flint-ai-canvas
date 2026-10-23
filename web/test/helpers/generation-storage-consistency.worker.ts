@@ -837,7 +837,19 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             }
             await flushCanvasStorePersistence();
             const restored = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
-            const result = { rejection, saved: savedProject?.nodes[0], restored: restored.nodes[0], assets: useAssetStore.getState().assets, requests };
+            let replay: { node: import("../../src/types/canvas").CanvasNodeData; nodeCount: number; effectState: string } | undefined;
+            if (!rejection) {
+                // Re-open the durable snapshot before re-reading the same task;
+                // the HTTP path must retain its committed attach identity.
+                useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project.id === projectId ? restored : project) }));
+                await recoverScreenGeneration(projectId, new AbortController().signal, () => {});
+                await flushCanvasStorePersistence();
+                const replayed = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
+                const { createProviderNeutralGenerationTaskEffectStore } = await import("../../src/services/provider-neutral-generation-effects");
+                const effect = await createProviderNeutralGenerationTaskEffectStore().claim(`attach-node:${task.id}:${node.id}:0`, task.id);
+                replay = { node: replayed.nodes[0], nodeCount: replayed.nodes.length, effectState: effect.status };
+            }
+            const result = { rejection, saved: savedProject?.nodes[0], restored: restored.nodes[0], replay, assets: useAssetStore.getState().assets, requests };
             resetRemoteUserDataSync();
             return result;
         }
