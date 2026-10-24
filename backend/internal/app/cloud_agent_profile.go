@@ -112,12 +112,18 @@ func (s *Service) UpdateCloudAgentProfile(userID string, req AgentProfileRequest
 	projectID, canvasID := req.ProjectID, req.CanvasID
 	if req.Scope == model.AgentProfileScopeProject {
 		if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				err = kernel.NotFound("项目不存在")
+			}
 			return AgentProfileView{}, err
 		}
 	}
 	if req.Scope == model.AgentProfileScopeCanvas {
 		canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				err = kernel.NotFound("画布不存在")
+			}
 			return AgentProfileView{}, err
 		}
 		if projectID != "" && canvas.ProjectID != projectID {
@@ -159,12 +165,18 @@ func (s *Service) cloudAgentProfileView(userID, projectID, canvasID string) (Age
 	}
 	if projectID != "" {
 		if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				err = kernel.NotFound("项目不存在")
+			}
 			return AgentProfileView{}, err
 		}
 	}
 	if canvasID != "" {
 		canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				err = kernel.NotFound("画布不存在")
+			}
 			return AgentProfileView{}, err
 		}
 		if projectID != "" && canvas.ProjectID != projectID {

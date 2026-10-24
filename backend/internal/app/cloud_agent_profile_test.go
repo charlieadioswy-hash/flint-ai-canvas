@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
+	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 )
 
@@ -98,6 +101,77 @@ func TestCloudAgentProfileOwnershipAndScopeValidation(t *testing.T) {
 	}
 	if _, err := s.CloudAgentProfileForScope("user", "project-mismatch", canvasID); err == nil {
 		t.Fatal("canvas was readable through a mismatched project")
+	}
+}
+
+func TestCloudAgentProfileMissingOrForeignScopeReturnsNotFound(t *testing.T) {
+	s, db, _, _ := cloudAgentProfileFixtureDB(t)
+	saveAgentProfileForTest(t, s, "user", AgentProfileRequest{Scope: model.AgentProfileScopeUser, Content: "own preference"})
+	saveAgentProfileForTest(t, s, "other", AgentProfileRequest{Scope: model.AgentProfileScopeProject, ProjectID: "project-2", Content: "private project preference"})
+	saveAgentProfileForTest(t, s, "other", AgentProfileRequest{Scope: model.AgentProfileScopeCanvas, CanvasID: "foreign-canvas", Content: "private canvas preference"})
+	var before []model.AgentProfile
+	if err := db.Order("id").Find(&before).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []AgentProfileRequest{
+		{Scope: model.AgentProfileScopeProject, ProjectID: "missing-project"},
+		{Scope: model.AgentProfileScopeProject, ProjectID: "project-2"},
+		{Scope: model.AgentProfileScopeCanvas, CanvasID: "unsynced-draft"},
+		{Scope: model.AgentProfileScopeCanvas, CanvasID: "foreign-canvas"},
+	} {
+		for _, write := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%s/write=%t", req.ProjectID, req.CanvasID, write), func(t *testing.T) {
+				var view AgentProfileView
+				var err error
+				if write {
+					req.Content = "must not be written"
+					view, err = s.UpdateCloudAgentProfile("user", req)
+				} else {
+					view, err = s.CloudAgentProfileForScope("user", req.ProjectID, req.CanvasID)
+				}
+				var appErr *kernel.AppError
+				if !errors.As(err, &appErr) || appErr.Status != http.StatusNotFound || appErr.Code != kernel.CodeNotFound || appErr.Reason != kernel.ReasonNotFound {
+					t.Fatalf("expected business not_found, got %T: %v", err, err)
+				}
+				if len(view.Layers) != 0 || view.Revision != "" {
+					t.Fatalf("unavailable scope returned a usable profile: %#v", view)
+				}
+			})
+		}
+	}
+	var after []model.AgentProfile
+	if err := db.Order("id").Find(&after).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("rejected profile requests modified stored preferences")
+	}
+}
+
+func TestCloudAgentProfileLookupKeepsUnexpectedDatabaseErrors(t *testing.T) {
+	s, db, projectID, canvasID := cloudAgentProfileFixtureDB(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []AgentProfileRequest{
+		{Scope: model.AgentProfileScopeProject, ProjectID: projectID},
+		{Scope: model.AgentProfileScopeCanvas, CanvasID: canvasID},
+	} {
+		for _, write := range []bool{false, true} {
+			if write {
+				_, err = s.UpdateCloudAgentProfile("user", req)
+			} else {
+				_, err = s.CloudAgentProfileForScope("user", req.ProjectID, req.CanvasID)
+			}
+			var appErr *kernel.AppError
+			if err == nil || errors.As(err, &appErr) && appErr.Status == http.StatusNotFound {
+				t.Fatalf("database failure became a successful or missing profile: %v", err)
+			}
+		}
 	}
 }
 
