@@ -506,7 +506,9 @@ func applyCanvasOperations(payload map[string]json.RawMessage, operations []Canv
 			if !canvasExpectedValueMatches(rawJSON(payload[op.Field]), payload[op.Field] != nil, beforeValue) {
 				return canvasOperationConflict("画布字段 %q 已被其他写入修改", op.Field)
 			}
-			if string(value) == "null" {
+			// activeChatId is nullable document content; deleting it makes a cleared
+			// selection differ from the browser's explicit null on every save.
+			if string(value) == "null" && op.Field != "activeChatId" {
 				delete(payload, op.Field)
 			} else {
 				payload[op.Field] = append(json.RawMessage(nil), value...)

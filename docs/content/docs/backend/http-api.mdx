@@ -340,7 +340,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 `GET /canvas-projects` 带非空 `page` 或 `sceneKind` 时返回画布库分页摘要，`pageSize` 控制每页条数。分页默认排除 `creationScene.kind = "irregular-screen"` 的快捷入口内部画布；传 `sceneKind=irregular-screen` 时只返回当前用户的异形屏场景，用于最近场景与快捷入口恢复。`q`、`projectId`、`sort` 可组合使用，筛选先于总数与分页计算。其他非空 `sceneKind` 返回 400 / `invalid_argument`。不带 `page` 和 `sceneKind` 的摘要列表、用户快照和按 ID 读取仍保留内部场景，所有路径继续校验用户归属。
 
-画布写入统一使用 `PATCH /canvas-projects/:id/operations`。请求只携带对象级或字段级变更，不提交整批画布快照；`mutationId` 是一次写入的幂等身份，客户端在响应丢失、断网、刷新或后台重试时必须复用同一个 ID 和原始 `operations`。`baseRevision` 记录生成请求时的已确认基线版本，用于诊断和响应；字段/对象的 `before`、`expected`、`beforeValue` 是实际并发校验，允许不同字段合并，拒绝同字段覆盖和缺失对象更新。可选顶层字段缺失时必须显式编码为 JSON `null`；服务端仅对早期客户端省略这些可选字段的 `value` 或 `beforeValue` 按 `null` 兼容处理，并继续执行基线校验。
+画布写入统一使用 `PATCH /canvas-projects/:id/operations`。请求只携带对象级或字段级变更，不提交整批画布快照；`mutationId` 是一次写入的幂等身份，客户端在响应丢失、断网、刷新或后台重试时必须复用同一个 ID 和原始 `operations`。`baseRevision` 记录生成请求时的已确认基线版本，用于诊断和响应；字段/对象的 `before`、`expected`、`beforeValue` 是实际并发校验，允许不同字段合并，拒绝同字段覆盖和缺失对象更新。可选顶层字段缺失时必须显式编码为 JSON `null`；服务端仅对早期客户端省略这些可选字段的 `value` 或 `beforeValue` 按 `null` 兼容处理，并继续执行基线校验。`activeChatId` 是可空的必需字段：`set_field` 写入 `null` 表示清空当前聊天选择，保存及回读保留显式 `null`，不删除该字段；其 `value` 和 `beforeValue` 仍必须提供。其他顶层字段的 `null` 删除语义保持。
 
 | 接口 | 行为 |
 | --- | --- |
