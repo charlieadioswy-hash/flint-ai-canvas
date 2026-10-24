@@ -43,6 +43,7 @@ docs/content/docs/overview/*
 docs/content/docs/progress/*
 !docs/content/docs/progress/todo.mdx
 !docs/content/docs/progress/pending-test.mdx
+!docs/content/docs/progress/meeting-followup.mdx
 .env*
 !.env.example
 data/

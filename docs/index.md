@@ -76,3 +76,4 @@
 - [代码地图](content/docs/backend/code-map.mdx)
 - [待办](content/docs/progress/todo.mdx)
 - [待测试](content/docs/progress/pending-test.mdx)
+- [会议与排期任务清单（非短剧）](content/docs/progress/meeting-followup.mdx)：对照原会议、排期和后续改动，汇总开发、配置及验收状态。
