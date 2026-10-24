@@ -2,6 +2,7 @@ import { defaultImageCapabilityConfig, imageSizeAllowed, modelCapabilityConfigFo
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageParameterRequest, imageParameterDefaults, imageParameterAccepts } from "./image-parameters";
 import { imageSizePresets } from "@/lib/image-size-presets";
+import { resolveImageRequestSize } from "@/services/api/image-validation";
 import { modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
@@ -343,7 +344,19 @@ export type ModelGenerationDefaults = Pick<AiConfig, "size" | "imageResolution" 
 // 切换时只修正目标模型不支持的值；与提交校验分开，避免旧草稿被静默改价。
 export function modelGenerationParamsForSwitch(config: AiConfig, model: string, capability: "image" | "video") {
     const values = resolveModelGenerationDefaults(config, model, capability, config);
-    return capability === "image" ? { ...values, imageResolution: values.imageResolution ?? "auto", imageParameters: values.imageParameters ?? "{}" } : { ...values, ...resolveModelVideoBooleanOptions(config, model, config) };
+    if (capability === "image") {
+        const profile = modelCapabilityConfigFor(config, model).image;
+        if (profile?.size.parameter === "size" && profile.size.allowCustom && values.size?.includes(":")) {
+            // Persist the same pixels the picker displays, so the task cannot remap an inherited ratio.
+            try {
+                values.size = resolveImageRequestSize(profile, values.quality, values.size)?.value ?? profile.size.default;
+            } catch {
+                values.size = profile.size.default;
+            }
+        }
+        return { ...values, imageResolution: values.imageResolution ?? "auto", imageParameters: values.imageParameters ?? "{}" };
+    }
+    return { ...values, ...resolveModelVideoBooleanOptions(config, model, config) };
 }
 
 export function modelGenerationParameterError(config: AiConfig, model: string, capability: ModelCapability, values: Partial<ModelGenerationDefaults> = config): string {
