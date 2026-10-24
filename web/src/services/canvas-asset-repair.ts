@@ -1,4 +1,4 @@
-import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
+import { bindCanvasNodeAsset, canvasNodeToAsset, isCanvasMediaNodeType, requiresMaterializedCanvasAsset } from "@/lib/canvas/canvas-node-asset";
 import { refreshResource, resourceIdFromStorageKey } from "@/services/api/resources";
 import { ApiError } from "@/services/api/request";
 import { useAssetStore, type Asset, type NewAsset } from "@/stores/use-asset-store";
@@ -58,7 +58,7 @@ export function repairMissingCanvasAssets(projectIds?: Set<string>, partialAsset
         }
         const repaired = repairProject(project, knownAssetIds, assetIdByStorageKey, storageKeyByAssetId, (node) => {
             // 受管生成结果由完成流程绑定身份，后台修复不能另建随机素材。
-            if (node.metadata?.taskId && node.metadata.storageKey?.startsWith("resource:")) return undefined;
+            if (requiresMaterializedCanvasAsset(node)) return undefined;
             const input = canvasNodeToAsset(node, { canvasId: project.id, source: "canvas-upload" });
             if (!input) return undefined;
             const assetId = useAssetStore.getState().addAsset(input);
@@ -91,7 +91,7 @@ function repairProject(
         const assetId = matchingAssetId(node.metadata?.assetId, node.metadata?.storageKey, knownAssetIds, assetIdByStorageKey, storageKeyByAssetId) || createAsset(node);
         if (!assetId || node.metadata?.assetId === assetId) return node;
         changed = true;
-        return { ...node, metadata: { ...node.metadata, assetId } };
+        return bindCanvasNodeAsset(node, assetId);
     });
     const timeline = project.timeline
         ? {
@@ -260,11 +260,11 @@ export function rebindInconsistentCanvasAssets(records: Asset[], projectIds?: Se
             if (!isCanvasMediaNodeType(node)) return node;
             const identity = mediaNodeIdentity(node.metadata?.storageKey, node.metadata?.content);
             if (!identity) return node;
-            const assetId = resolveAssetId(node.metadata?.assetId, identity, () => canvasNodeToAsset(node, { canvasId: project.id, source: "canvas-manual" }));
+            const assetId = resolveAssetId(node.metadata?.assetId, identity, () => node.type === CanvasNodeType.Model3D && requiresMaterializedCanvasAsset(node) ? null : canvasNodeToAsset(node, { canvasId: project.id, source: "canvas-manual" }));
             if (!assetId || node.metadata?.assetId === assetId) return node;
             reboundNodes += 1;
             projectChanged = true;
-            return { ...node, metadata: { ...node.metadata, assetId } };
+            return bindCanvasNodeAsset(node, assetId);
         });
         const timeline = project.timeline
             ? {
@@ -301,10 +301,6 @@ export function collectCanvasMediaAssetIds(projects: CanvasProject[]): Set<strin
         }
     }
     return ids;
-}
-
-function isCanvasMediaNodeType(node: CanvasNodeData) {
-    return node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
 }
 
 function mediaNodeIdentity(storageKey: string | undefined, content: string | undefined) {

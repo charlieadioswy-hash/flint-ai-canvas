@@ -4,6 +4,8 @@ import { createDefaultModel3DState, model3DSourceFingerprint } from "@/lib/canva
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { Model3DCapabilities, Model3DCreateRequest, Model3DTaskView } from "@/services/api/model3d";
 import { ApiError } from "@/services/api/request";
+import { remapImportedCanvasNode } from "@/lib/canvas/canvas-import";
+import { bindCanvasNodeAsset } from "@/lib/canvas/canvas-node-asset";
 
 const modules: Record<string, string> = {
     react: "export const { useState, useRef, useEffect, useCallback } = globalThis.env.hooks;",
@@ -265,6 +267,23 @@ function harness(initial = node(), initialTask: Model3DTaskView | null = null, b
         },
     };
 }
+
+test("reopening ZIP model copies never resumes or resubmits historical generation", async () => {
+    for (const status of ["succeeded", "running", "submission_unknown"] as const) {
+        const source = node();
+        const state = source.metadata!.model3d!;
+        state.run = { requestId: "old-request", taskId: "old-task", sourceFingerprint: "old", snapshot: state.draft, status, canRetryStorage: true };
+        state.result = { assetId: "old-asset", resourceId: "old-resource", storageKey: "resource:old-resource", url: "/api/resources/old-resource/file", fileName: "model.glb", mimeType: "model/gltf-binary", bytes: 50, format: "glb" };
+        const copy = bindCanvasNodeAsset(remapImportedCanvasNode(source, new Map([["resource:old-resource", { storageKey: "resource:imported", url: "/api/resources/imported/file" }]])), "imported-asset");
+        const h = harness(JSON.parse(JSON.stringify(copy)));
+        await h.flush();
+        h.advancePoll();
+        await h.flush();
+        expect(h.counters).toEqual({ creates: 0, gets: 0, requests: 0, recovers: 0, uploads: 0 });
+        expect(h.nodes[0].metadata?.model3d?.result?.storageKey).toBe("resource:imported");
+        h.unmount();
+    }
+});
 
 test("HTTP browsers without randomUUID can submit unique 3D requests", async () => {
     const browserCrypto = { getRandomValues: crypto.getRandomValues.bind(crypto) };

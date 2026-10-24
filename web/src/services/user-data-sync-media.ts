@@ -123,6 +123,7 @@ export function applyResourceReference(payload: Record<string, unknown>, storage
     }
     const url = resourceFileUrl(resourceId);
     payload.storageKey = storageKey;
+    if (typeof payload.resourceId === "string") payload.resourceId = resourceId;
     for (const key of preserveTextContent ? [] : ["content", "dataUrl", "url", "coverUrl"]) {
         if (typeof payload[key] === "string") payload[key] = url;
     }

@@ -1,5 +1,6 @@
 import type { Model3DCapabilities, Model3DMode, Model3DParameters, Model3DResult, Model3DTaskView, Model3DView } from "@/services/api/model3d";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { model3DFileName, type Model3DPreviewFormat } from "@/lib/model3d-formats";
 
 export const MODEL3D_VIEWS: Model3DView[] = ["front", "left", "back", "right"];
 export const MODEL3D_VIEW_LABELS: Record<Model3DView, string> = { front: "正面", left: "左侧", back: "背面", right: "右侧" };
@@ -38,7 +39,7 @@ export type CanvasModel3DState = {
     schemaVersion: 1;
     draft: Model3DDraft;
     run?: Model3DRun;
-    result?: Model3DResult;
+    result?: Omit<Model3DResult, "format"> & { format: Model3DPreviewFormat };
     resultFingerprint?: string;
 };
 
@@ -201,11 +202,6 @@ export function applyModel3DTask(node: CanvasNodeData, task: Model3DTaskView, ca
     };
 }
 
-export function model3DDownloadName(result: Pick<Model3DResult, "format" | "fileName">, title = "3D模型") {
-    const base =
-        (result.fileName || title)
-            .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
-            .replace(/\.(glb|fbx)$/i, "")
-            .trim() || "model";
-    return `${base}.${result.format}`;
+export function model3DDownloadName(result: { format: Model3DPreviewFormat; fileName?: string }, title = "3D模型") {
+    return model3DFileName(result.fileName || title, result.format);
 }

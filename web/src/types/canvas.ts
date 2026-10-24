@@ -541,7 +541,7 @@ export type CanvasNodeMetadata = {
     colorGrade?: CanvasColorGrade;
     mediaConversion?: MediaConversionNodeState;
     model3d?: CanvasModel3DState;
-    model3dFormat?: "glb" | "fbx";
+    model3dFormat?: import("@/lib/model3d-formats").Model3DPreviewFormat;
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
     storyboard?: StoryboardData;

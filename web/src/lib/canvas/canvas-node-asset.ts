@@ -1,5 +1,6 @@
 import { getDataUrlByteSize } from "@/lib/image-utils";
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
+import { model3DFileName, model3DFormat } from "@/lib/model3d-formats";
 import type { Asset, AssetCategory, NewAsset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
 
@@ -14,7 +15,7 @@ type CanvasNodeAssetOptions = {
 export function canvasNodeToAsset(node: CanvasNodeData, options: CanvasNodeAssetOptions): NewAsset | null {
     const content = node.metadata?.content?.trim() || "";
     const storageKey = node.metadata?.storageKey?.trim() || undefined;
-    const isMedia = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
+    const isMedia = isCanvasMediaNodeType(node);
 
     // 文本素材必须直接携带正文；媒体则允许只有持久 storageKey。后者常见于页面重载后：
     // blob/object URL 已失效，但资源定位符仍可从后端重新换取可访问地址，不能因此丢掉素材记录。
@@ -87,11 +88,44 @@ export function canvasNodeToAsset(node: CanvasNodeData, options: CanvasNodeAsset
             },
         };
     }
+    if (node.type === CanvasNodeType.Model3D) {
+        const result = node.metadata?.model3d?.result;
+        const format = model3DFormat({ format: node.metadata?.model3dFormat || result?.format, fileName: result?.fileName || node.title, mimeType: node.metadata?.mimeType, url: content });
+        if (!format) return null;
+        const mimeTypes = { glb: "model/gltf-binary", gltf: "model/gltf+json", fbx: "application/octet-stream", obj: "model/obj", stl: "model/stl" };
+        return {
+            ...base,
+            kind: "model",
+            data: { url: content, storageKey, bytes: node.metadata?.bytes || 0, mimeType: node.metadata?.mimeType || mimeTypes[format], fileName: model3DFileName(result?.fileName || node.title, format) },
+        };
+    }
     return null;
+}
+
+export function isCanvasMediaNodeType(node: CanvasNodeData) {
+    return node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio || node.type === CanvasNodeType.Model3D;
+}
+
+/** 模型预览与下载读取内部 result，素材重绑必须同步更新这份定位。 */
+export function bindCanvasNodeAsset(node: CanvasNodeData, assetId: string): CanvasNodeData {
+    const metadata = { ...node.metadata, assetId };
+    const state = metadata.model3d;
+    if (node.type === CanvasNodeType.Model3D && state?.result) {
+        const storageKey = metadata.storageKey || state.result.storageKey;
+        metadata.model3d = {
+            ...state,
+            run: storageKey === state.result.storageKey ? state.run : undefined,
+            result: { ...state.result, assetId, storageKey, url: metadata.content || (storageKey === state.result.storageKey ? state.result.url : ""), resourceId: storageKey.startsWith("resource:") ? storageKey.slice("resource:".length) : "" },
+        };
+    }
+    return { ...node, metadata };
 }
 
 export function requiresMaterializedCanvasAsset(node: CanvasNodeData, taskId?: string) {
     const metadata = node.metadata;
+    if (node.type === CanvasNodeType.Model3D && metadata?.model3d?.run?.taskId && metadata.storageKey?.startsWith("resource:")) {
+        return !metadata.model3d.result || metadata.model3d.result.storageKey === metadata.storageKey;
+    }
     if (!(taskId || metadata?.taskId) || !metadata?.storageKey?.startsWith("resource:")) return false;
     // 图层组合成与情绪局部融合保存的是浏览器加工后的文件，不是模型原始输出。
     if (metadata.imageLayerGroup || metadata.emotionEdit?.editRegion) return false;
@@ -139,7 +173,7 @@ export function declaredCanvasNodeAssetCategory(node: CanvasNodeData): AssetCate
 export function canvasNodeAssetCategory(node: CanvasNodeData): AssetCategory {
     const declared = declaredCanvasNodeAssetCategory(node);
     if (declared) return declared;
-    if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) return "material";
+    if (isCanvasMediaNodeType(node)) return "material";
     return "other";
 }
 
@@ -147,5 +181,6 @@ function canvasAssetFallbackTitle(type: CanvasNodeTypeId) {
     if (type === CanvasNodeType.Image) return "画布图片";
     if (type === CanvasNodeType.Video) return "画布视频";
     if (type === CanvasNodeType.Audio) return "画布音频";
+    if (type === CanvasNodeType.Model3D) return "画布模型";
     return "画布文本";
 }

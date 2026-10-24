@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { nanoid } from "nanoid";
 import { useNavigate, useSearchParams } from "react-router";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Input, Modal } from "antd";
@@ -19,6 +20,8 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { remapImportedCanvasNode } from "@/lib/canvas/canvas-import";
+import { bindCanvasNodeAsset, isCanvasMediaNodeType } from "@/lib/canvas/canvas-node-asset";
 import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { createCanvasProjectWithRemoteSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, scheduleRemoteUserDataSync } from "@/services/user-data-sync";
 import { listRemoteCanvasProjectsPage, type CanvasLibrarySummary } from "@/services/api/user-data";
@@ -31,6 +34,7 @@ import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
+import { getActiveUserScope } from "@/lib/user-scope";
 
 const CanvasDeleteProjectsDialog = lazy(() => import("@/components/canvas/canvas-delete-projects-dialog").then((module) => ({ default: module.CanvasDeleteProjectsDialog })));
 
@@ -178,27 +182,14 @@ export default function CanvasPage() {
                 const missing = item.files.find((entry) => !zip.get(entry.path));
                 if (missing) throw new Error(`压缩包缺少媒体文件：${missing.path}`);
             }
-            hideLoading();
             const remoteSyncEnabled = hasRemoteUserDataSyncSession();
             let remoteSyncWarning: unknown;
 
             for (const item of data.projects) {
-                const totalFiles = item.files.length;
-                const importedProjectId = importProject({
-                    ...item.project,
-                    title: item.project.title || "导入画布",
-                    nodes: item.project.nodes || [],
-                });
-
-                if (totalFiles > 0) {
-                    useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
-                        projectId: importedProjectId,
-                        total: totalFiles,
-                        completed: 0,
-                        phase: "uploading",
-                        message: "正在上传媒体至云端",
-                    });
-                }
+                const mediaImportId = nanoid();
+                let importedProjectId = "";
+                let remappedNodes: CanvasNodeData[] = [];
+                let remappedTimeline = item.project.timeline;
 
                 try {
                     const storageKeyMap = new Map<string, { storageKey: string; url: string }>();
@@ -221,39 +212,32 @@ export default function CanvasPage() {
                                 storageKeyMap.set(fileItem.storageKey, { storageKey: newStorageKey, url: newUrl });
                             } catch (uploadErr) {
                                 console.warn("上传资源到后端失败，降级保存本地", uploadErr);
-                                const localUrl = await (fileItem.storageKey.startsWith("image:") ? setImageBlob(fileItem.storageKey, typedBlob) : setMediaBlob(fileItem.storageKey, typedBlob));
-                                if (localUrl) {
-                                    storageKeyMap.set(fileItem.storageKey, { storageKey: fileItem.storageKey, url: localUrl });
-                                }
-                            } finally {
-                                useSyncProgressStore.getState().incrementProjectCompleted(importedProjectId);
+                                // 原 ZIP 的 key 可能仍被源画布使用，离线副本也必须拥有独立存储身份。
+                                const localKey = `${kind}:${getActiveUserScope()}:canvas-import:${mediaImportId}:${current}`;
+                                const localUrl = await (kind === "image" ? setImageBlob(localKey, typedBlob) : setMediaBlob(localKey, typedBlob));
+                                if (!localUrl) throw new Error(`媒体文件保存失败：${fileItem.path}`);
+                                storageKeyMap.set(fileItem.storageKey, { storageKey: localKey, url: localUrl });
                             }
                         }
                     });
-                    await Promise.all(workers);
+                    const uploads = await Promise.allSettled(workers);
+                    const failedUpload = uploads.find((result) => result.status === "rejected");
+                    if (failedUpload?.status === "rejected") throw failedUpload.reason;
 
                     const drawingEngineById = new Map((item.drawingDocuments || []).map((document) => [document.drawingId, document.engine || "tldraw"]));
                     const remapNodeMedia = (node: CanvasNodeData): CanvasNodeData => {
-                        const oldKey = node.metadata?.storageKey;
-                        const mapped = oldKey ? storageKeyMap.get(oldKey) : undefined;
-                        const isDeadBlob = (val?: string) => typeof val === "string" && val.startsWith("blob:");
-                        const nextStorageKey = mapped ? mapped.storageKey : oldKey && !isDeadBlob(oldKey) ? oldKey : undefined;
-                        const content = mapped ? mapped.url : isDeadBlob(node.metadata?.content) ? "" : node.metadata?.content;
-                        const previewContent = mapped ? mapped.url : isDeadBlob(node.metadata?.previewContent) ? "" : node.metadata?.previewContent;
+                        const remapped = remapImportedCanvasNode(node, storageKeyMap);
                         return {
-                            ...node,
+                            ...remapped,
                             metadata: {
-                                ...node.metadata,
-                                ...(nextStorageKey !== undefined ? { storageKey: nextStorageKey } : {}),
-                                ...(content !== undefined ? { content } : {}),
-                                ...(previewContent !== undefined ? { previewContent } : {}),
+                                ...remapped.metadata,
                                 drawingEngine: node.type === "drawing" && node.metadata?.drawingId ? drawingEngineById.get(node.metadata.drawingId) || node.metadata.drawingEngine || "tldraw" : node.metadata?.drawingEngine,
                             },
                         };
                     };
 
-                    let remappedNodes = (item.project.nodes || []).map(remapNodeMedia);
-                    let remappedTimeline = item.project.timeline
+                    remappedNodes = (item.project.nodes || []).map(remapNodeMedia);
+                    remappedTimeline = item.project.timeline
                         ? {
                               ...item.project.timeline,
                               clips: item.project.timeline.clips.map((clip) => {
@@ -269,53 +253,9 @@ export default function CanvasPage() {
                               }),
                           }
                         : undefined;
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
-
-                    const assetIdByStorageKey = new Map<string, string>();
-                    for (let index = 0; index < remappedNodes.length; index += 1) {
-                        const node = remappedNodes[index];
-                        const isMedia = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
-                        if (!isMedia || !node.metadata?.content) continue;
-                        const storageKey = node.metadata.storageKey || "";
-                        let assetId = storageKey ? assetIdByStorageKey.get(storageKey) : undefined;
-                        if (!assetId) {
-                            const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
-                            assetId = result.assetId;
-                            if (storageKey) assetIdByStorageKey.set(storageKey, assetId);
-                        }
-                        remappedNodes[index] = { ...node, metadata: { ...node.metadata, assetId } };
-                    }
-                    if (remappedTimeline) {
-                        const clips: typeof remappedTimeline.clips = [];
-                        for (const clip of remappedTimeline.clips) {
-                            const media = clip.directMedia;
-                            const content = media?.url || media?.dataUrl || media?.content || "";
-                            if (!media || media.assetId || !media.storageKey || !content || media.kind === "text") {
-                                clips.push(clip);
-                                continue;
-                            }
-                            let assetId = assetIdByStorageKey.get(media.storageKey);
-                            if (!assetId) {
-                                const type = media.kind === "audio" ? CanvasNodeType.Audio : media.kind === "video" ? CanvasNodeType.Video : CanvasNodeType.Image;
-                                const node: CanvasNodeData = {
-                                    id: media.id,
-                                    type,
-                                    title: media.title,
-                                    position: { x: 0, y: 0 },
-                                    width: media.width || 320,
-                                    height: media.height || (type === CanvasNodeType.Audio ? 120 : 240),
-                                    metadata: { content, storageKey: media.storageKey, naturalWidth: media.width, naturalHeight: media.height, durationMs: media.durationMs, bytes: media.bytes, mimeType: media.mimeType },
-                                };
-                                const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
-                                assetId = result.assetId;
-                                assetIdByStorageKey.set(media.storageKey, assetId);
-                            }
-                            clips.push({ ...clip, directMedia: { ...media, assetId } });
-                        }
-                        remappedTimeline = { ...remappedTimeline, clips };
-                    }
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
-
+                    // 媒体可恢复后才创建画布；登记素材会触发远端同步，因此先持久化完整草稿。
+                    importedProjectId = importProject({ ...item.project, title: item.project.title || "导入画布", nodes: [...remappedNodes], connections: item.project.connections || [] });
+                    updateProject(importedProjectId, { timeline: remappedTimeline });
                     await Promise.all(
                         (item.drawingDocuments || []).map((document) => {
                             const previewFile = document.previewPath ? zip.get(document.previewPath) : undefined;
@@ -353,6 +293,50 @@ export default function CanvasPage() {
                             );
                         }),
                     );
+                    await flushCanvasStorePersistence();
+                    const assetIdByStorageKey = new Map<string, string>();
+                    for (let index = 0; index < remappedNodes.length; index += 1) {
+                        const node = remappedNodes[index];
+                        if (!isCanvasMediaNodeType(node) || !(node.metadata?.content || node.metadata?.storageKey)) continue;
+                        const storageKey = node.metadata.storageKey || "";
+                        let assetId = storageKey ? assetIdByStorageKey.get(storageKey) : undefined;
+                        if (!assetId) {
+                            const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
+                            assetId = result.assetId;
+                            if (storageKey) assetIdByStorageKey.set(storageKey, assetId);
+                        }
+                        remappedNodes[index] = bindCanvasNodeAsset(node, assetId);
+                    }
+                    if (remappedTimeline) {
+                        const clips: typeof remappedTimeline.clips = [];
+                        for (const clip of remappedTimeline.clips) {
+                            const media = clip.directMedia;
+                            const content = media?.url || media?.dataUrl || media?.content || "";
+                            if (!media || media.assetId || !media.storageKey || !content || media.kind === "text") {
+                                clips.push(clip);
+                                continue;
+                            }
+                            let assetId = assetIdByStorageKey.get(media.storageKey);
+                            if (!assetId) {
+                                const type = media.kind === "audio" ? CanvasNodeType.Audio : media.kind === "video" ? CanvasNodeType.Video : CanvasNodeType.Image;
+                                const node: CanvasNodeData = {
+                                    id: media.id,
+                                    type,
+                                    title: media.title,
+                                    position: { x: 0, y: 0 },
+                                    width: media.width || 320,
+                                    height: media.height || (type === CanvasNodeType.Audio ? 120 : 240),
+                                    metadata: { content, storageKey: media.storageKey, naturalWidth: media.width, naturalHeight: media.height, durationMs: media.durationMs, bytes: media.bytes, mimeType: media.mimeType },
+                                };
+                                const result = await ensureCanvasNodeAsset({ canvasId: importedProjectId, domainProjectId: item.project.projectId, node, source: "canvas-upload" });
+                                assetId = result.assetId;
+                                assetIdByStorageKey.set(media.storageKey, assetId);
+                            }
+                            clips.push({ ...clip, directMedia: { ...media, assetId } });
+                        }
+                        remappedTimeline = { ...remappedTimeline, clips };
+                    }
+                    updateProject(importedProjectId, { nodes: remappedNodes, connections: item.project.connections || [], timeline: remappedTimeline });
 
                     useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
                         phase: "saving",
@@ -369,13 +353,20 @@ export default function CanvasPage() {
                         }
                     }
                 } catch (error) {
+                    if (!importedProjectId) throw error;
+                    updateProject(importedProjectId, { nodes: remappedNodes, connections: item.project.connections || [], timeline: remappedTimeline });
+                    await flushCanvasStorePersistence();
                     useSyncProgressStore.getState().setProjectProgress(importedProjectId, {
                         phase: "error",
                         message: error instanceof Error ? error.message : "画布导入未完成",
                     });
-                    throw error;
+                    scheduleRemoteUserDataSync();
+                    hideLoading();
+                    message.warning(error instanceof Error ? `已保留本地导入草稿，后续保存未完成：${error.message}` : "已保留本地导入草稿，后续保存未完成");
+                    enterProject(importedProjectId);
+                    return;
                 } finally {
-                    if (!remoteSyncEnabled) useSyncProgressStore.getState().setProjectProgress(importedProjectId, null);
+                    if (importedProjectId && !remoteSyncEnabled) useSyncProgressStore.getState().setProjectProgress(importedProjectId, null);
                 }
             }
 
@@ -390,6 +381,7 @@ export default function CanvasPage() {
             console.error("导入画布失败", error);
             message.error(error instanceof Error ? `导入失败：${error.message}` : "导入失败，请选择有效的画布压缩包");
         } finally {
+            hideLoading();
             if (inputRef.current) inputRef.current.value = "";
         }
     };

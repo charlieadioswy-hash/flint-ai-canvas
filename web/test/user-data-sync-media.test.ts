@@ -3,6 +3,15 @@ import { describe, expect, test } from "bun:test";
 import { ensureRemoteResourceReferences, restoreRemoteTextNodeContents } from "@/services/user-data-sync-media";
 
 describe("画布资源引用同步", () => {
+    test("嵌套模型结果的资源 ID 与上传后的 storageKey 同步", async () => {
+        const source = { model3d: { result: { storageKey: "file:scope:model", resourceId: "old", url: "blob:old" } } };
+        const synced = await ensureRemoteResourceReferences(source, new Map([["file:scope:model", "resource:new-model"]]));
+        expect(synced.model3d.result.resourceId).toBe("new-model");
+        expect(synced.model3d.result.storageKey).toBe("resource:new-model");
+        expect(synced.model3d.result.url).toContain("/resources/new-model/file");
+        expect(source.model3d.result.resourceId).toBe("old");
+    });
+
     test("文本节点保留正文，只同步资源定位键", async () => {
         const node = {
             type: "text",

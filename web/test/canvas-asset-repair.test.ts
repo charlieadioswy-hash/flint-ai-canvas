@@ -6,6 +6,8 @@ import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import type { TimelineClip } from "@/types/timeline";
+import { createDefaultModel3DState } from "@/lib/canvas/model3d";
+import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
 
 test("场景换图后的旧画布保留资产历史图片引用，不创建重复素材", () => {
     const image: Asset = { id: "scene", kind: "image", category: "environment", title: "阁楼", coverUrl: "", tags: [], createdAt: "", updatedAt: "", metadata: { projectAssetImageHistory: ["resource:old-image"] }, data: { dataUrl: "/api/resources/new-image/file", storageKey: "resource:new-image", width: 800, height: 600, bytes: 100, mimeType: "image/png" } };
@@ -67,6 +69,17 @@ beforeEach(() => {
 });
 
 describe("repairMissingCanvasAssets 增量会话", () => {
+    test("受管 3D 任务缺失素材时不另建随机身份替代服务端登记", () => {
+        const state = createDefaultModel3DState("v3.1");
+        state.result = { assetId: "managed-asset", resourceId: "model", storageKey: "resource:model", url: "/api/resources/model/file", format: "glb", fileName: "model.glb", bytes: 100, mimeType: "model/gltf-binary" };
+        state.run = { taskId: "managed-task", requestId: "managed-request", sourceFingerprint: "managed", snapshot: state.draft, status: "succeeded" };
+        const node = { ...videoNode("model-node", "managed-asset", "resource:model"), type: CanvasNodeType.Model3D, metadata: { storageKey: "resource:model", assetId: "managed-asset", model3d: state } };
+        useCanvasStore.setState({ projects: [project("source", [node])] });
+        expect(repairMissingCanvasAssets()).toEqual({ createdAssets: 0, updatedProjects: 0 });
+        expect(rebindInconsistentCanvasAssets([])).toEqual({ createdAssets: 0, reboundNodes: 0, updatedProjects: 0 });
+        expect(useAssetStore.getState().assets).toHaveLength(0);
+    });
+
     test("节点声明不能掩盖素材库的真实绑定，错误配对会被重绑", () => {
         useAssetStore.setState({ assets: [videoAsset("asset-a", "resource:R1"), videoAsset("asset-c", "resource:R2")] });
         useCanvasStore.setState({ projects: [project("canvas-1", [videoNode("node-1", "asset-a", "resource:R2")])] });
@@ -88,6 +101,28 @@ describe("repairMissingCanvasAssets 增量会话", () => {
 });
 
 describe("rebindInconsistentCanvasAssets 强制对齐", () => {
+    test("修复导入模型的错误配对时只创建新素材，并同步内部结果供刷新和预览使用", () => {
+        const node = { ...videoNode("model-node", "original-asset", "resource:copy"), type: CanvasNodeType.Model3D };
+        const state = createDefaultModel3DState("v3.1");
+        state.result = { assetId: "original-asset", resourceId: "original", storageKey: "resource:original", url: "/api/resources/original/file", format: "glb", fileName: "model.glb", bytes: 100, mimeType: "model/gltf-binary" };
+        state.run = { taskId: "original-task", requestId: "original-request", sourceFingerprint: "original", snapshot: state.draft, status: "succeeded" };
+        node.metadata = { ...node.metadata, content: "/api/resources/copy/file", mimeType: "model/gltf-binary", bytes: 100, model3d: state };
+        const original = { ...canvasNodeToAsset({ ...node, metadata: { ...node.metadata, storageKey: "resource:original", content: state.result.url } }, { canvasId: "source", source: "canvas-generation" }), id: "original-asset", createdAt: "", updatedAt: "" } as Asset;
+        const before = structuredClone(original);
+        useAssetStore.setState({ assets: [original] });
+        useCanvasStore.setState({ projects: [project("copy", [node])] });
+        expect(collectCanvasMediaAssetIds(useCanvasStore.getState().projects)).toEqual(new Set(["original-asset"]));
+        expect(rebindInconsistentCanvasAssets([original])).toEqual({ reboundNodes: 1, createdAssets: 1, updatedProjects: 1 });
+        const repaired = JSON.parse(JSON.stringify(useCanvasStore.getState().projects[0].nodes[0])) as CanvasNodeData;
+        const asset = useAssetStore.getState().assets.find((item) => item.id === repaired.metadata?.assetId)!;
+        expect(asset.kind).toBe("model");
+        expect(asset.data).toMatchObject({ storageKey: "resource:copy" });
+        expect(repaired.metadata?.model3d?.result).toMatchObject({ assetId: asset.id, resourceId: "copy", storageKey: "resource:copy", url: "/api/resources/copy/file" });
+        expect(repaired.metadata?.model3d?.run).toBeUndefined();
+        expect(useAssetStore.getState().assets.find((item) => item.id === original.id)).toEqual(before);
+        expect(repairMissingCanvasAssets()).toEqual({ createdAssets: 0, updatedProjects: 0 });
+    });
+
     test("声明的素材引用了其他资源时重绑到引用同一资源的素材", () => {
         useCanvasStore.setState({ projects: [project("canvas-1", [videoNode("node-1", "asset-a", "resource:R2")])] });
 
