@@ -132,6 +132,16 @@ export function CanvasToolbar({
         return () => document.removeEventListener("pointerdown", closeFloatingPanels, true);
     }, [addOpen, appearanceOpen]);
 
+    // Tab 离开工具栏时收起添加菜单，避免节点面板获焦后把仍打开的菜单压住。
+    useEffect(() => {
+        if (!addOpen) return;
+        const closeAddMenuOnOutsideFocus = (event: FocusEvent) => {
+            if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setAddOpen(false);
+        };
+        document.addEventListener("focusin", closeAddMenuOnOutsideFocus, true);
+        return () => document.removeEventListener("focusin", closeAddMenuOnOutsideFocus, true);
+    }, [addOpen]);
+
     // 构建 handlers（主工具栏只需要部分回调，其余用 no-op 占位满足类型）
     const handlers: ToolbarHandlers = {
         onToolChange,
