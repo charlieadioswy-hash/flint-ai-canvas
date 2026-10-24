@@ -40,15 +40,21 @@ description: 已配置模型、协议参数、覆盖顺序、供应商进度与�
 | 已配置模型与协议                                                          | 尺寸或比例                                                   | 质量 / 分辨率声明                         | 数量与素材                                                                         |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- | ---------------------------------------------------------------------------------- |
 | Dream Tech XL · `liblib-image`                                            | 30 个像素预设，分 `1k/2k/4k` 组；默认 `768x1024`，允许自定义 | 无质量字段；分组是管理员像素预设          | 输出上限 **1**，参考图 1，已开启蒙版；Canny 最多 4 组                              |
-| `gpt-image-1.5`、`gpt-image-2`、`gpt-image-2.5-sunburst` · `openai-image` | 39 个旧配置值，默认 `1:1`，允许自定义                        | `auto/low/medium/high`                    | 输出上限 **15**，参考图 16，已开启蒙版；这些是当前配置声明，仍需按该渠道供应商核验 |
-| `gemini-3-pro-image`、`gemini-nano-banana-2.1` · `wangsu-gemini-image`    | 当前存储为 10 比例；Nano 的 14 比例迁移待发布                | 旧存储 `quality=1k/2k/4k`；新版读为独立分辨率 | 输出上限 **1**；Nano 参考图已收窄为 14，Pro 保留原配置，不支持蒙版                  |
+| `gpt-image-1.5`、`gpt-image-2`、`gpt-image-2.5-sunburst` · `openai-image` | `auto` 与 30 个原有明确像素；默认 `1024x1024`，允许自定义 | `auto/low/medium/high`                    | 输出上限 **15**，参考图 16，已开启蒙版；这些是当前配置声明，仍需按该渠道供应商核验 |
+| `gemini-3-pro-image`、`gemini-nano-banana-2.1` · `wangsu-gemini-image`    | Pro 10 比例、Nano 14 比例；两环境已迁移                     | 独立 `imageResolution=1k/2k/4k`；旧 quality 价格档仍可匹配 | 输出上限 **1**；Nano 参考图已收窄为 14，Pro 保留原配置，不支持蒙版                  |
 | `gpt-image-2` · `wangsu-images`                                           | `1024x1024`、`1536x1024`、`1024x1536`，允许自定义            | `auto/low/high`                           | 输出上限 **10**，参考图 1，支持蒙版                                                |
 | `gpt-image-2.5-flare`、`gpt-image-2.5-sunburst` · `wangsu-images`         | 同上                                                         | `auto/low/medium/high/xhigh/max`          | 输出上限 **10**，参考图 1，支持蒙版                                                |
 | `qwen-image`、`qwen-image-plus` · `wangsu-images`                         | 同上                                                         | 不发送质量、背景或输出格式等 GPT 专用字段 | 输出上限 **1**，仅文生图，不接受编辑参考图或蒙版                                   |
 
-修复后的 Wangsu Gemini manifest 优先读取独立 `resolution`，只兼容旧字面 `quality=1k/2k/4k`，普通 `low/medium/high` 不映射分辨率。前后端报价将旧 Gemini 价格档与明确分辨率对齐，旧字段不覆盖新选择。`wangsu-chat-image` 只有 Gemini 型号发送 `eca_image_config`；`qwen-image-edit` 不接收该配置。以上行为需部署新版代码和插件。
+修复后的 Wangsu Gemini manifest 优先读取独立 `resolution`，只兼容旧字面 `quality=1k/2k/4k`，普通 `low/medium/high` 不映射分辨率。前后端报价将旧 Gemini 价格档与明确分辨率对齐，旧字段不覆盖新选择。`wangsu-chat-image` 只有 Gemini 型号发送 `eca_image_config`；`qwen-image-edit` 不接收该配置。上述代码、插件与第二阶段配置已在开发、生产发布；开发真实页面的 GPT 两图与 Gemini Pro 2K/4K 生成、结算、最终图尺寸及刷新恢复通过，未遍历全部模型、比例和入口。
 
 尺寸自定义开关只表示平台允许输入，不能证明供应商接受任意正方形、比例或像素。尤其 Liblib 的 `4k` 分组是管理员维护的精确尺寸集合，不是供应商原生 `resolution=4k` 参数。
+
+### 无映射比例的配置修复
+
+全渠道复核发现开发 OpenAI 三款和生产原厂 Seedream 5.0 Pro 均以像素编码 `size`，却默认 `1:1` 且没有比例映射。已备份并执行仓库 `scripts/sql/repair-image-pixel-sizes.sql`：从原清单移除八个无映射比例，保留 `auto` 和 30 个原有明确像素；OpenAI 默认 `1024x1024`，Ark 默认 `2048x2048`。只改两个尺寸路径并递增能力版本，价格、启停、供应商默认值及其他模型配置经回读核对不变；再次预演均为零改动。
+
+前后端的新建 OpenAI / Ark 默认值也已同步为明确像素，已随参数与报价基线工作区快照发布开发和生产，对应源码提交为 `a5917a89`。未为它们补通用 1K/2K/4K 表，也未验证原有全部像素的供应商支持范围。旧画布已保存的 `1:1` 等比例仍需重新选择明确像素，历史任务快照不改写。
 
 ### Liblib 的额外约束
 
@@ -72,7 +78,7 @@ description: 已配置模型、协议参数、覆盖顺序、供应商进度与�
 | `MiniMax-Hailuo-2.3`              | 6、10；默认 6        | `768P/1080P`；默认 `768P`      | 未声明                           | 图片 1 张；无视频/音频参考       |
 | `doubao-seedance-2-0-fast-260128` | 4–15，步长 1；默认 5 | `480p/720p`；默认 `720p`       | 7 种，含 `adaptive`；默认 `16:9` | 图片 9、视频 1、音频 3           |
 | `doubao-seedance-2-5-260628`      | 4–30，步长 1；默认 5 | `480p/720p/1080p`；默认 `720p` | 同上                             | 图片 9、视频 3、音频 3           |
-| `kling-v3`、`kling-v3-omni`       | 仅 5                 | 新版 `720P/1080P`，迁移待发布    | 新版 `16:9/9:16/1:1`，迁移待发布 | 图片 1；无视频/音频参考          |
+| `kling-v3`、`kling-v3-omni`       | 仅 5                 | `720P/1080P`，两环境已迁移      | `16:9/9:16/1:1`，两环境已迁移    | 图片 1；无视频/音频参考          |
 
 Seedance 2.0 的单个视频参考是平台保守默认：已收录的网关文档未明确数量，不能把 1 解读成供应商绝对上限，也不能直接套用 2.5 的 3 个。2.5 已声明的视频参考大小与时长上限为 50 MiB、15 秒，音频为 15 MiB、15 秒；完整限制读取 `references`。
 
@@ -85,7 +91,9 @@ Seedance 2.0 的单个视频参考是平台保守默认：已收录的网关文�
 
 组合约束由 `backend/internal/app/model_capability_wangsu.go:validateWangsuVideoTask` 和 `plugin-packages/generate-wangsu.mjs` 的声明式 validations 执行；平面枚举并不意味着任意笛卡尔组合都可用。协议路径及官方来源见 [Wangsu 渠道协议](/docs/backend/wangsu)。
 
-Hailuo 02 的 `image_to_video + 10 秒 + 512p` 已通过供应商直调验证任务完成；本地宿主和插件已修正原先误拦截，待发布后验收应用全链路。价格档未修改。
+视频设置已改为复用完整请求的价格 SKU 匹配，包含 operation、图片/视频/音频/角色参考、分辨率和时长。开发 Hailuo 02 的 512P/6 秒与 512P/10 秒只有图生价格，无图时不再可选，合法首帧图生仍保留；没有价格档的模型不因此锁死。画布及 Agent 审批均传递实际参考输入。画布报价等待或失败时禁止提交，失败显示原因并允许重试，切换参数时取消旧报价；Fast 不再显示错误的“自动 720P”说明。这些前端修复已随基线工作区快照发布两环境，对应源码提交为 `acf9cfa4`；专项、类型检查及本机真实报价组件 14 项、Hailuo 设置 13 场景 66 次断言通过。组件补验使用 API fixture，不代表登录态视频审批与供应商生成已完成；详细边界见 [待测试](/docs/progress/pending-test)。
+
+Hailuo 02 的 `image_to_video + 10 秒 + 512p` 已通过供应商直调验证任务完成；修正误拦截的宿主和插件已发布，仍待验收应用全链路。价格档未修改。
 
 ## Tripo 3D 使用独立能力合同
 
