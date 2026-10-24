@@ -127,6 +127,7 @@ export default function AssetsPage() {
     const activeAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status !== "archived"), [allLibraryAssets]);
     const trashAssets = useMemo(() => allLibraryAssets.filter((asset) => asset.status === "archived"), [allLibraryAssets]);
     const validAssets = viewMode === "trash" ? trashAssets : activeAssets;
+    const isFilteredTrash = viewMode === "trash" && (Boolean(keyword.trim()) || folderFilter !== "all");
     const filteredAssets = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return validAssets.filter((asset) => {
@@ -746,7 +747,7 @@ export default function AssetsPage() {
                                     onDelete={() => setBatchDeleteOpen(true)}
                                 />
                             ) : null}
-                            {validAssets.length === 0 && totalAssets === 0 ? (
+                            {!isFilteredTrash && validAssets.length === 0 && totalAssets === 0 ? (
                                 viewMode === "trash" ? (
                                     <WorkspaceState icon="assets" compact title="回收站是空的" description="删除画布或手动移入回收站的素材会暂存到这里，可在需要时随时还原。" />
                                 ) : (

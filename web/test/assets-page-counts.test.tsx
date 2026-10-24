@@ -161,6 +161,14 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         canEmptyTrash() {
             return descendants(find((element) => element.type === "PageHeader").props.actions).some((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？");
         },
+        emptyState() {
+            const { title, description } = find((element) => element.type === "WorkspaceState").props;
+            return { title, description };
+        },
+        search(keyword: string) {
+            find((element) => element.props.placeholder === "搜索标题、内容、标签或来源").props.onChange({ target: { value: keyword } });
+            render();
+        },
         async emptyTrash() {
             const actions = find((element) => element.type === "PageHeader").props.actions;
             await find((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？", actions).props.onConfirm();
@@ -217,9 +225,19 @@ test("uncached remote archived assets determine the trash badge and clear action
     expect(h.folderCount("场景")).toBe(0);
     expect(h.trashCount()).toBe(121);
     expect(h.canEmptyTrash()).toBe(true);
+    expect(h.emptyState()).toEqual({ title: "没有匹配的素材", description: "调整关键词或左侧分类后再试。" });
     await h.emptyTrash();
     expect(h.emptyTrashCalls).toBe(1);
     expect(h.requests.some((request) => request.status === "archived" && request.pageSize === 1 && request.folderId === undefined && request.query === undefined)).toBe(true);
+});
+
+test("a trash search with no matches explains the filtered result while retaining its total and clear action", () => {
+    const h = harness([], pageData([], 0), 1);
+    h.openTrash();
+    h.search("QA-no-match-20261024");
+    expect(h.emptyState()).toEqual({ title: "没有匹配的素材", description: "调整关键词或左侧分类后再试。" });
+    expect(h.trashCount()).toBe(1);
+    expect(h.canEmptyTrash()).toBe(true);
 });
 
 test("an empty remote trash does not show stale cached archived counts or a clear action", () => {
@@ -227,6 +245,12 @@ test("an empty remote trash does not show stale cached archived counts or a clea
     expect(h.trashCount()).toBe(0);
     h.openTrash();
     expect(h.canEmptyTrash()).toBe(false);
+});
+
+test("an unfiltered empty trash keeps its empty-bin message", () => {
+    const h = harness([], pageData([], 0), 0);
+    h.openTrash();
+    expect(h.emptyState().title).toBe("回收站是空的");
 });
 
 test("a missing remote folder facet is zero even if deleted assets remain in the local cache", () => {
