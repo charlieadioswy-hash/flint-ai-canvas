@@ -15,6 +15,7 @@ import { modelRequestOptions, type ModelRequirements } from "@/lib/model-selecti
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
+import type { NodeGenerationContext } from "./canvas-node-generation";
 import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasImageCountControl } from "./canvas-image-count-control";
@@ -55,6 +56,7 @@ type CanvasNodePromptPanelProps = {
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     mentionReferences?: CanvasResourceReference[];
+    resolveGenerationContext?: (nodeId: string, prompt: string) => NodeGenerationContext;
     controlSourceNodes?: CanvasNodeData[];
     onAddReference?: (nodeId: string, reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onRemoveReference?: (nodeId: string, reference: CanvasResourceReference) => void;
@@ -84,7 +86,7 @@ const PROMPT_EDITOR_MODAL_WIDTH = "min(1200px, 92vw)";
 const PROMPT_EDITOR_MODAL_DEFAULT_WIDTH = 1200;
 const PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT = 420;
 
-export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], controlSourceNodes, onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional", onListGenerate }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChange, onConfigChange, onGenerate, mentionReferences = [], resolveGenerationContext, controlSourceNodes, onAddReference, onRemoveReference, onReorderReferences, onReplaceReference, onReplaceReferenceFiles, onClose, onNodeMouseDown, onImageSettingsOpenChange, workspaceMode = "professional", onListGenerate }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
@@ -100,8 +102,12 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const savedPrompt = nodeGenerationPrompt(node);
-    const [prompt, setPrompt] = useState(savedPrompt);
-    const promptRef = useRef(savedPrompt);
+    const normalizedSavedPrompt = useMemo(() => normalizeCanvasNodeMentionTokens(savedPrompt, mentionReferences), [mentionReferences, savedPrompt]);
+    const [promptDraft, setPromptDraft] = useState(() => ({ nodeId: node.id, savedPrompt: normalizedSavedPrompt, value: normalizedSavedPrompt }));
+    // Props can switch before passive effects run. Never resolve a new node with
+    // another node's draft, while retaining local edits until saved props change.
+    const prompt = promptDraft.nodeId === node.id && promptDraft.savedPrompt === normalizedSavedPrompt ? promptDraft.value : normalizedSavedPrompt;
+    const promptRef = useRef({ nodeId: node.id, savedPrompt: normalizedSavedPrompt, value: prompt });
     const [presetOpen, setPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [nineGridOpen, setNineGridOpen] = useState(false);
@@ -136,17 +142,26 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     // 当前提示词持有的运镜工具标签（可多个），用于运镜按钮回显与菜单高亮。
     const activeMotionTools = useMemo(() => parseToolMentionTokens(prompt).filter((tool) => tool.type === "motion"), [prompt]);
     const activeMotionTool = activeMotionTools[0];
-    const normalizedSavedPrompt = useMemo(() => normalizeCanvasNodeMentionTokens(savedPrompt, mentionReferences), [mentionReferences, savedPrompt]);
     const activeReferences = resolvedMentionReferences.filter((item) => item.active && item.kind !== "skill" && item.kind !== "tool");
+    // 普通视频的显式素材引用与连线媒体由提交解析器统一选取，避免报价漏算或重复计数。
+    const videoInputContext = useMemo(() => {
+        if (mode !== "video" || !resolveGenerationContext) return undefined;
+        try {
+            return resolveGenerationContext(node.id, prompt);
+        } catch {
+            // 未完成或失效的引用仍由生成入口报告；编辑时保留已有连线的能力提示。
+            return undefined;
+        }
+    }, [mode, node.id, prompt, resolveGenerationContext]);
     const requirements: ModelRequirements = {
         capability: mode,
         controlNetUnits: mode === "image" && isStructureControlNode(node) ? Math.max(1, nodeControlNet(node).length) : undefined,
         input: {
             textCount: (prompt.trim() ? 1 : 0) + activeReferences.filter((item) => item.kind === "text").length,
-            imageCount: activeReferences.filter((item) => item.kind === "image").length,
-            videoCount: activeReferences.filter((item) => item.kind === "video").length,
-            audioCount: activeReferences.filter((item) => item.kind === "audio").length,
-            characterCount: activeReferences.filter((item) => item.kind === "character").length,
+            imageCount: videoInputContext?.imageCount ?? activeReferences.filter((item) => item.kind === "image").length,
+            videoCount: videoInputContext?.videoCount ?? activeReferences.filter((item) => item.kind === "video").length,
+            audioCount: videoInputContext?.audioCount ?? activeReferences.filter((item) => item.kind === "audio").length,
+            characterCount: videoInputContext?.characterReferences.length ?? activeReferences.filter((item) => item.kind === "character").length,
         },
         videoOperation: node.metadata?.videoEditOperation,
         videoSeconds: mode === "video" ? node.metadata?.seconds ?? globalConfig.videoSeconds : undefined,
@@ -191,7 +206,24 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const { quote: routeQuote, error: quoteError, pending: quotePending, retry: retryQuote } = useCanvasModelQuote(quoteRequest, creditsEnabled);
     const credits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : configuredCredits;
     const activeReferenceCount = activeReferences.length;
-    const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
+    const videoFrameOptions = useMemo(() => videoInputContext
+        ? [...new Map(videoInputContext.referenceImages.map((image) => {
+            const reference = resolvedMentionReferences.find((item) => item.nodeId === image.id && item.kind === "image");
+            // 素材输入的媒体 ID 是 asset.id，首尾帧元数据和供应商 role 判定也使用这个 ID。
+            return [image.id, { nodeId: image.id, label: reference?.label || image.name, title: reference?.title || image.name, previewUrl: reference?.previewUrl || image.dataUrl }];
+        })).values()]
+        : resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl })),
+    [resolvedMentionReferences, videoInputContext]);
+    useEffect(() => {
+        if (!videoInputContext) return;
+        const frameIds = new Set(videoFrameOptions.map((item) => item.nodeId));
+        const patch: Partial<CanvasNodeMetadata> = {};
+        for (const key of ["videoStartFrameNodeId", "videoEndFrameNodeId"] as const) {
+            const id = node.metadata?.[key];
+            if (id && !frameIds.has(id)) patch[key] = undefined;
+        }
+        if (Object.keys(patch).length) onConfigChange(node.id, patch);
+    }, [node.id, node.metadata?.videoStartFrameNodeId, node.metadata?.videoEndFrameNodeId, onConfigChange, videoFrameOptions, videoInputContext]);
     const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
     const monochromeAccent = theme.node.activeStroke;
     const composerTokens = {
@@ -224,8 +256,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const canAutoMention = autoMentionedPrompt !== prompt;
 
     useEffect(() => {
-        promptRef.current = normalizedSavedPrompt;
-        setPrompt(normalizedSavedPrompt);
+        const next = { nodeId: node.id, savedPrompt: normalizedSavedPrompt, value: normalizedSavedPrompt };
+        promptRef.current = next;
+        setPromptDraft((current) => current.nodeId === next.nodeId && current.savedPrompt === next.savedPrompt && current.value === next.value ? current : next);
     }, [node.id, normalizedSavedPrompt]);
 
     useEffect(() => {
@@ -251,12 +284,14 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
 
     const skillReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.kind === "skill"), [resolvedMentionReferences]);
 
+    const currentPrompt = () => promptRef.current.nodeId === node.id && promptRef.current.savedPrompt === normalizedSavedPrompt ? promptRef.current.value : prompt;
     const updatePrompt = (value: string) => {
         if (node.metadata?.locked) return false;
-        if (value === promptRef.current) return true;
+        if (value === currentPrompt()) return true;
         if (onPromptChange(node.id, value) === false) return false;
-        promptRef.current = value;
-        setPrompt(value);
+        const next = { nodeId: node.id, savedPrompt: normalizedSavedPrompt, value };
+        promptRef.current = next;
+        setPromptDraft(next);
         if (showPromptTemplates && /(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);
@@ -265,7 +300,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     };
 
     const updatePromptFromCurrent = (updater: (currentPrompt: string) => string) => {
-        updatePrompt(updater(promptRef.current));
+        updatePrompt(updater(currentPrompt()));
     };
 
     const applyPreset = (preset: CanvasPromptPreset) => {

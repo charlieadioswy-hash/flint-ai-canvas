@@ -28,6 +28,7 @@ import { filterCanvasDisplayConnections, persistCanvasHideNodeConnections, readC
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { flushCanvasStorePersistence } from "@/stores/canvas/use-canvas-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
@@ -2192,6 +2193,11 @@ function CanvasViewportPage() {
         [effectiveConfig, message],
     );
 
+    const resolvePromptGenerationContext = useCallback(
+        (nodeId: string, prompt: string) => buildNodeGenerationContext(nodeId, nodes, connections, prompt, assets, true),
+        [nodes, connections, assets],
+    );
+
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
             if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
@@ -2211,8 +2217,10 @@ function CanvasViewportPage() {
                 />
             ) : (
                 <CanvasNodePromptPanel
+                    key={panelNode.id}
                     projectId={projectId}
                     node={panelNode}
+                    resolveGenerationContext={resolvePromptGenerationContext}
                     controlSourceNodes={nodeGraphContext.getUpstreamNodes?.(panelNode.id)}
                     isRunning={isCanvasNodeGenerating(panelNode, runningNodeId)}
                     mentionReferences={[
@@ -2280,6 +2288,7 @@ function CanvasViewportPage() {
             mentionReferencesByNodeId,
             message,
             projectId,
+            resolvePromptGenerationContext,
             runningNodeId,
             setConnections,
             setDialogNodeId,
