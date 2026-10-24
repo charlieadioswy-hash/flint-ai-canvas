@@ -1603,8 +1603,17 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
             )
             .map((project) => project.id),
     );
-    repairMissingCanvasAssets(changedProjectIds, incrementalSession);
+    const repair = repairMissingCanvasAssets(changedProjectIds, incrementalSession);
     const currentProjects = useCanvasStore.getState().projects;
+    if (repair.updatedProjects) {
+        const beforeById = new Map(projectsBeforeRepair.map((project) => [project.id, project]));
+        for (const project of currentProjects) {
+            const previous = beforeById.get(project.id);
+            if (!previous || sameCanvasContent(previous, project)) continue;
+            // Repaired asset bindings are a sync projection, not an editor deletion.
+            for (const listener of agentCanvasListeners) listener(project, previous, "sync");
+        }
+    }
     const currentAssets = useAssetStore.getState().assets;
     const dirtyProjects = currentProjects.filter((project) => {
         const dirty = !remoteDeletedProjects.has(project.id) && (pendingCanvasMutations.has(project.id) || !sameCanvasContent(acknowledgedProjects.get(project.id), project));
