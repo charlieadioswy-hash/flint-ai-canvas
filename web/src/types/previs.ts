@@ -17,13 +17,26 @@ export type PrevisTransform = {
 };
 
 export type PrevisPrimitiveKind = "box" | "sphere" | "cylinder" | "plane" | "character";
-export type PrevisObjectKind = "primitive" | "model" | "actor" | "billboard";
+export type PrevisObjectKind = "primitive" | "model" | "actor" | "billboard" | "prop";
 export type PrevisPose = "neutral" | "stand" | "t_pose" | "walk" | "run" | "sit" | "squat" | "kneel_single" | "kneel_double" | "hands_hips" | "lean" | "bow" | "think" | "fight" | "kick" | "throw" | "push" | "wave" | "reach" | "arms_crossed" | "phone";
 export type PrevisCameraMove = "static" | "push_in" | "pull_out" | "pan_left" | "pan_right" | "tilt_up" | "tilt_down" | "orbit_left" | "orbit_right" | "handheld";
 export type PrevisShotSize = "extreme_wide" | "wide" | "full" | "medium" | "close_up" | "extreme_close_up";
 export type PrevisAspectRatio = "9:16" | "16:9" | "2.39:1";
 export type PrevisRenderMode = "beauty" | "clay" | "depth" | "normal" | "pose";
 export type PrevisKeyframeEasing = "step" | "linear" | "smooth";
+
+/** 标准人偶的程序化动作片段 ID；定义见 lib/canvas/previs/previs-motion-library.ts。 */
+export type PrevisMotionId = "idle" | "walk" | "run" | "talk" | "wave" | "nod" | "shake_head" | "look_around" | "point" | "phone_call" | "sit_idle" | "clap" | "fight_idle" | "punch" | "jump" | "fall" | "cry" | "cheer" | "slap" | "hold_hand" | "hit_react";
+
+/** 演员时间轴上的一段动作：从 start 开始播放 duration 秒，前后各有短混合。 */
+export type PrevisActorMotion = {
+    id: string;
+    motion: PrevisMotionId;
+    start: number;
+    duration: number;
+    /** 动作幅度，1 为标准。 */
+    intensity?: number;
+};
 export type PrevisMotionPath = {
     points: PrevisVec3[];
     speed: "slow" | "walk" | "run";
@@ -161,6 +174,12 @@ export type PrevisObject = {
     mimeType?: string;
     keyframes: PrevisKeyframe[];
     motionPath?: PrevisMotionPath;
+    /** kind=prop 时的程序化道具目录 ID；见 previs-prop-catalog.ts。 */
+    propId?: string;
+    /** 程序化布景生成的对象共享同一个 setId，便于整体选择与删除。 */
+    setId?: string;
+    /** 标准人偶动作片段；移动时步态由位移速度自动推导，不需要写入。 */
+    motions?: PrevisActorMotion[];
 };
 
 export type PrevisCamera = {
@@ -241,6 +260,8 @@ export type PrevisSceneOutput = {
     beauty: Blob;
     depth?: Blob;
     normal?: Blob;
+    pose?: Blob;
     clayVideo?: Blob;
     clayVideoMimeType?: string;
+    depthVideo?: Blob;
 };

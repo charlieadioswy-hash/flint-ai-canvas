@@ -7,7 +7,7 @@ import { releasePrevisFocusAfterPointer } from "@/lib/canvas/previs/previs-short
 import type { PrevisRenderMode } from "@/types/previs";
 
 type PrevisViewportDockProps = {
-    transformMode: "translate" | "rotate" | "scale";
+    transformMode: "select" | "translate" | "rotate" | "scale";
     renderMode: PrevisRenderMode;
     /** 当前模式允许的渲染视图。dock 只展示这些，避免成为绕过模式门控的第二条路径。 */
     renderModes: PrevisRenderMode[];

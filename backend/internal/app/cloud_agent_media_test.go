@@ -422,6 +422,63 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 	}
 }
 
+func TestCloudAgentApprovalRejectionMessageMatchesOperation(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		media     bool
+		wantText  string
+		forbidden string
+	}{
+		{name: "ordinary write", wantText: "已拒绝本次操作，本次操作未执行。", forbidden: "草稿节点仍保留"},
+		{name: "media generation", media: true, wantText: "已拒绝本次生成，草稿节点仍保留在画布中；未提交任务、未产生扣费。", forbidden: "本次操作未执行"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s, _, args := agentMediaFixture(t)
+			run, state := agentMediaRun(t, s, args, "request_approval")
+			call := cloudAgentCall{ID: "approval-call"}
+			call.Function.Name = "canvas_apply_ops"
+			arguments, err := json.Marshal(map[string]any{
+				"snapshotHash": args.SnapshotHash,
+				"ops":          []map[string]any{{"type": "update_node", "id": "cat", "patch": map[string]any{"title": "拒绝后不应写入"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			call.Function.Arguments = string(arguments)
+			if scenario.media {
+				call = agentMediaCall(args)
+				call.ID = "approval-call"
+			}
+			state.Calls = []cloudAgentCall{call}
+			state.Approval = &cloudAgentApproval{ID: "approval-id", Call: call}
+			if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+				current.Status = "waiting_approval"
+				return cloudAgentSave(current, &state)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DecideCloudAgentApproval("user", run.ID, "approval-id", "reject", "暂不执行"); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := s.repo.CloudAgent("user", run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err = cloudAgentDecode(stored)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Status != "rejected" || len(state.Events) == 0 {
+				t.Fatalf("approval rejection was not persisted: status=%s events=%+v", stored.Status, state.Events)
+			}
+			event := state.Events[len(state.Events)-1]
+			if event.Type != "approval_decided" || !strings.Contains(stringValue(event.Payload["text"]), scenario.wantText) || strings.Contains(stringValue(event.Payload["text"]), scenario.forbidden) {
+				t.Fatalf("rejection message does not match operation type: %+v", event)
+			}
+		})
+	}
+}
+
 func TestCloudAgentMediaChangedCanvasRollsBackAdmission(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
 	run, state := agentMediaRun(t, s, a, "auto")
@@ -655,6 +712,22 @@ func seedAgentLogicalImageModel(t *testing.T, s *Service, db *gorm.DB) model.Log
 		t.Fatal(err)
 	}
 	config := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceOpenAIImage), "gpt-image-2.5-sunburst")
+	// This fixture exercises a ratio-based model with independent resolution and
+	// quality, rather than relying on the OpenAI protocol's pixel-size defaults.
+	config.Image.Size = ImageSizeConfig{
+		Parameter: "aspect_ratio", Values: []string{"1:1", "4:3", "16:9"}, Default: "1:1",
+		Presets: []ImageSizePreset{
+			{Tier: "1k", Ratio: "1:1", Size: "1024x1024", Width: 1024, Height: 1024},
+			{Tier: "1k", Ratio: "4:3", Size: "1360x1024", Width: 1360, Height: 1024},
+			{Tier: "1k", Ratio: "16:9", Size: "1824x1024", Width: 1824, Height: 1024},
+			{Tier: "2k", Ratio: "1:1", Size: "2048x2048", Width: 2048, Height: 2048},
+			{Tier: "2k", Ratio: "4:3", Size: "2304x1728", Width: 2304, Height: 1728},
+			{Tier: "2k", Ratio: "16:9", Size: "2752x1536", Width: 2752, Height: 1536},
+			{Tier: "4k", Ratio: "1:1", Size: "4096x4096", Width: 4096, Height: 4096},
+			{Tier: "4k", Ratio: "4:3", Size: "3840x2880", Width: 3840, Height: 2880},
+			{Tier: "4k", Ratio: "16:9", Size: "3840x2160", Width: 3840, Height: 2160},
+		},
+	}
 	config.Image.Resolution = ImageResolutionConfig{Supported: true, Values: []string{"1k", "2k", "4k"}, Default: "1k"}
 	config.Image.Quality = ImageQualityConfig{Supported: true, Values: []string{"medium", "high", "max"}, Default: "medium"}
 	if err := db.Create(&model.ChannelModel{ID: "agent-image-cm", ChannelID: "agent-image-channel", ModelKey: "gpt-image-2.5-sunburst", DisplayName: "Sunburst", Capability: "image", Protocol: model.ChannelInterfaceOpenAIImage, CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, config), BillingMode: "fixed_request", PriceConfigured: true, Enabled: true}).Error; err != nil {

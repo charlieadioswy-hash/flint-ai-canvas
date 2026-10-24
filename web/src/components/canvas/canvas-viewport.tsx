@@ -4,7 +4,7 @@ import { resolveCanvasAppearance, resolveCanvasGridColor, type CanvasAppearance 
 import { resolveCanvasPointerIntent } from "@/lib/canvas/canvas-selection";
 import { isDiscreteCanvasWheel, wheelDeltaToPixels } from "@/lib/canvas/canvas-wheel";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
+import { applyCanvasLiveViewport, CANVAS_GRID_BLEED, canvasGridMetrics, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
 
@@ -51,7 +51,7 @@ export function CanvasViewport({
     containerRef,
     viewport,
     appearance,
-    backgroundMode = "lines",
+    backgroundMode = "dots",
     onViewportChange,
     onViewportPreviewChange,
     onCanvasMouseDown,
@@ -450,6 +450,7 @@ export function CanvasViewport({
         <div
             ref={containerRef}
             data-canvas-viewport
+            data-popover-anchor-container
             data-canvas-pan-state={isPanning ? "grabbing" : isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
             className={`relative h-full w-full select-none overflow-clip touch-none ${isPanning ? "cursor-grabbing" : isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
             style={
@@ -503,10 +504,10 @@ export function CanvasViewport({
                 onDrop?.(event);
             }}
         >
-            <CanvasGrid appearance={appearance} mode={backgroundMode} />
+            <CanvasGrid appearance={appearance} mode={backgroundMode} viewport={viewport} />
             {graphicsLayer}
-            <div data-canvas-world-layer className="canvas-world-layer absolute origin-top-left">
-                <div data-canvas-world-raster-layer className="canvas-world-raster-layer absolute origin-top-left">
+            <div data-canvas-world-layer data-popover-anchor-container className="canvas-world-layer absolute origin-top-left">
+                <div data-canvas-world-raster-layer data-popover-anchor-container className="canvas-world-raster-layer absolute origin-top-left">
                     {children}
                 </div>
             </div>
@@ -534,22 +535,32 @@ function canScrollHorizontally(target: Element, boundary: Element | null, delta:
     return false;
 }
 
-export function CanvasGrid({ appearance, mode }: { appearance?: CanvasAppearance; mode: CanvasBackgroundMode }) {
+const CANVAS_GRID_BASE: Record<Exclude<CanvasBackgroundMode, "blank">, number> = { dots: 24, lines: 32 };
+
+export function CanvasGrid({ appearance, mode, viewport }: { appearance?: CanvasAppearance; mode: CanvasBackgroundMode; viewport: ViewportTransform }) {
     const colorTheme = useActiveTheme();
     const gridColor = resolveCanvasGridColor(appearance, colorTheme, mode);
-    const backgroundImage = mode === "dots" ? `radial-gradient(circle, ${gridColor} 0.8px, transparent 1px)` : `linear-gradient(${gridColor} 1px, transparent 1px), linear-gradient(90deg, ${gridColor} 1px, transparent 1px)`;
     if (mode === "blank") return null;
+    const base = CANVAS_GRID_BASE[mode];
+    const backgroundImage = mode === "dots" ? `radial-gradient(circle, ${gridColor} 1px, transparent 1.4px)` : `linear-gradient(${gridColor} 1px, transparent 1px), linear-gradient(90deg, ${gridColor} 1px, transparent 1px)`;
+    // 首帧和提交后的位置由 render 给出；交互期由 applyCanvasLiveViewport 直接写 transform，不触发 React。
+    const { spacing, offsetX, offsetY } = canvasGridMetrics(viewport, base);
 
     return (
         <div
             data-canvas-grid-layer
+            data-canvas-grid-base={base}
+            aria-hidden
             className="pointer-events-none absolute"
             style={{
-                // 装饰网格固定在屏幕坐标，避免缩放时改变密度或产生亚像素位移闪烁。
-                inset: 0,
+                top: -CANVAS_GRID_BLEED,
+                left: -CANVAS_GRID_BLEED,
+                right: 0,
+                bottom: 0,
                 backgroundImage,
-                backgroundSize: "48px 48px",
-                opacity: mode === "dots" ? 0.34 : 0.46,
+                backgroundSize: `${spacing}px ${spacing}px`,
+                transform: `translate3d(${offsetX}px, ${offsetY}px, 0)`,
+                opacity: mode === "dots" ? 0.62 : 0.4,
             }}
         />
     );

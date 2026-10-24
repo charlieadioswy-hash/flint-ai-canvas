@@ -1,4 +1,5 @@
 import type { ModelCapabilityChoice } from "@/components/model-protocol-picker";
+import type { FormInstance } from "antd";
 import { defaultModelCapabilityConfig, normalizeLegacyImageResolutionConfig, normalizeModelCapabilityConfig, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { imagePresetForRatio, imageSizePresets } from "@/lib/image-size-presets";
 import { modelProtocolSupportsTokenBilling, type ModelProtocolDefinition } from "@/lib/model-protocols";
@@ -24,6 +25,14 @@ export type ChannelModelFormValues = {
 };
 
 export type EditorSection = "identity" | "capabilities" | "pricing";
+
+export function replaceChannelModelFormValues(form: Pick<FormInstance<ChannelModelFormValues>, "setFieldsValue" | "setFieldValue">, values: ChannelModelFormValues) {
+    const { capabilityConfig, providerDefaults, ...fields } = values;
+    form.setFieldsValue(fields);
+    // 整体替换协议配置，避免 setFieldsValue 深合并后残留旧协议字段。
+    form.setFieldValue("capabilityConfig", capabilityConfig);
+    form.setFieldValue("providerDefaults", providerDefaults);
+}
 
 export function editorSectionForField(name: (string | number)[]): EditorSection {
     return name[0] === "priceTiers" ? "pricing" : name[0] === "capabilityConfig" || name[0] === "providerDefaults" ? "capabilities" : "identity";
@@ -78,7 +87,7 @@ export function changeChannelModelCapability(values: ChannelModelFormValues, pro
     const capabilityConfig = capability === "audio" ? undefined : defaultModelCapabilityConfig(protocol, values.providerModelKey?.trim() || values.modelKey.trim());
     if (capabilityConfig?.image && protocols.find((p) => p.value === protocol)?.imageParameters) {
         capabilityConfig.image.parameters = [];
-        capabilityConfig.image.size.presets = undefined;
+        if (!capabilityConfig.image.resolution.supported || !protocols.find((p) => p.value === protocol)?.imageParameters?.some((p) => p.name === "size" && p.encoding === "pixels" && !p.values?.length)) capabilityConfig.image.size.presets = undefined;
     }
     return updateChannelModelUpstreamCapabilities(
         {
@@ -107,7 +116,7 @@ export function changeChannelModelProtocol(values: ChannelModelFormValues, proto
     const capabilityConfig = values.capability === "audio" ? undefined : defaultModelCapabilityConfig(protocol, values.providerModelKey?.trim() || values.modelKey.trim());
     if (capabilityConfig?.image && protocols.find((p) => p.value === protocol)?.imageParameters) {
         capabilityConfig.image.parameters = [];
-        capabilityConfig.image.size.presets = undefined;
+        if (!capabilityConfig.image.resolution.supported || !protocols.find((p) => p.value === protocol)?.imageParameters?.some((p) => p.name === "size" && p.encoding === "pixels" && !p.values?.length)) capabilityConfig.image.size.presets = undefined;
     }
     const next: ChannelModelFormValues = {
         ...values,

@@ -117,3 +117,20 @@ export function buildPrevisPathKeyframes(input: { base: PrevisTransform; points:
         },
     }));
 }
+
+/**
+ * 拖动走位路径上的一个路径点：只改该关键帧的 XZ（Y 与时间不变），
+ * orientToPath 时重新计算全部朝向，保证拖完后演员仍面朝行进方向。
+ * index 越界或坐标非法时原样返回，调用方据此跳过提交。
+ */
+export function movePrevisPathKeyframe(keyframes: readonly PrevisKeyframe[], index: number, point: { x: number; z: number }, orientToPath = false): PrevisKeyframe[] {
+    const sorted = keyframes.toSorted((left, right) => left.time - right.time);
+    if (index < 0 || index >= sorted.length || !Number.isFinite(point.x) || !Number.isFinite(point.z)) return [...keyframes];
+    const moved = sorted.map((keyframe, itemIndex) => (itemIndex === index ? { ...keyframe, transform: { ...keyframe.transform, position: [point.x, keyframe.transform.position[1], point.z] as PrevisVec3 } } : keyframe));
+    if (!orientToPath) return moved;
+    const positions = moved.map((keyframe) => keyframe.transform.position);
+    return moved.map((keyframe, itemIndex) => ({
+        ...keyframe,
+        transform: { ...keyframe.transform, rotation: [keyframe.transform.rotation[0], previsPathHeading(positions, itemIndex, keyframe.transform.rotation[1]), keyframe.transform.rotation[2]] as PrevisVec3 },
+    }));
+}

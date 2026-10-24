@@ -27,7 +27,7 @@ func TestProviderProgressMigrationFrom61PreservesUnknownHistoricalProgress(t *te
 		t.Fatalf("invented supplier percentage from legacy task: %+v", task)
 	}
 	status, err := ReadSchemaStatus(db)
-	if err != nil || !status.Ready || status.Current != 62 {
+	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion {
 		t.Fatalf("schema=%+v err=%v", status, err)
 	}
 	var record schemaMigration

@@ -152,7 +152,12 @@ export function useCanvasPrevis({
             const sourceNodeAtStart = nodesRef.current.find((item) => item.id === previsNodeId);
             if (!sourceNodeAtStart || sourceNodeAtStart.metadata?.previsSceneId !== output.scene.id) throw new Error("镜头节点不存在或场景已切换");
             const sourceNodeId = sourceNodeAtStart.id;
-            const [image, videoUpload] = await Promise.all([uploadImage(output.beauty), output.clayVideo ? uploadMediaFile(output.clayVideo, "previs-clay") : Promise.resolve(null)]);
+            const [image, videoUpload, depthImage, depthVideoUpload] = await Promise.all([
+                uploadImage(output.beauty),
+                output.clayVideo ? uploadMediaFile(output.clayVideo, "previs-clay") : Promise.resolve(null),
+                output.depth ? uploadImage(output.depth) : Promise.resolve(null),
+                output.depthVideo ? uploadMediaFile(output.depthVideo, "previs-depth") : Promise.resolve(null),
+            ]);
             // 上传期间项目、节点和镜头都可能变化。以当前权威状态重新核验并合并，
             // 不允许旧输出写入另一项目，也不允许旧 scene 快照覆盖并发编辑。
             const outputProject = useCanvasStore.getState().projects.find((item) => item.id === outputProjectId);
@@ -206,19 +211,76 @@ export function useCanvasPrevis({
                 else nextNodes.push(videoNode);
             }
 
+            // 深度图 / 深度视频：放在镜头节点旁、不自动连线，也不进 referenceAssetNodeIds。
+            // 不支持深度控制的视频模型会把它当普通参考图，用户需要时手动连到支持深度控制的节点。
+            let depthId = sourceNode.metadata?.previsDepthNodeId;
+            if (depthImage) {
+                depthId ||= `image-previs-depth-${Date.now()}`;
+                const depthSize = fitImageNodeSize(depthImage.width, depthImage.height);
+                const depthIndex = nextNodes.findIndex((item) => item.id === depthId);
+                const existingDepth = depthIndex >= 0 ? nextNodes[depthIndex] : null;
+                const depthNode: CanvasNodeData = {
+                    ...existingDepth,
+                    id: depthId,
+                    type: CanvasNodeType.Image,
+                    title: `${sourceNode.title} · 深度图`,
+                    position: existingDepth?.position || { x: sourceNode.position.x - depthSize.width - 36, y: sourceNode.position.y + previewSize.height + 36 },
+                    ...preserveImageNodeSize(existingDepth, depthSize),
+                    metadata: {
+                        ...existingDepth?.metadata,
+                        ...imageMetadata(depthImage),
+                        prompt: output.prompt,
+                        workflowKind: "reference_set",
+                        assetTags: ["预演台深度", `镜头:${sourceNode.title}`],
+                        producedModel: undefined,
+                        producedModelCandidate: undefined,
+                    },
+                };
+                if (depthIndex >= 0) nextNodes[depthIndex] = depthNode;
+                else nextNodes.push(depthNode);
+            }
+            let depthVideoId = sourceNode.metadata?.previsDepthVideoNodeId;
+            if (depthVideoUpload) {
+                depthVideoId ||= `video-previs-depth-${Date.now()}`;
+                const depthVideoIndex = nextNodes.findIndex((item) => item.id === depthVideoId);
+                const existingDepthVideo = depthVideoIndex >= 0 ? nextNodes[depthVideoIndex] : null;
+                const depthVideoNode: CanvasNodeData = {
+                    ...existingDepthVideo,
+                    id: depthVideoId,
+                    type: CanvasNodeType.Video,
+                    title: `${sourceNode.title} · 深度视频`,
+                    position: existingDepthVideo?.position || { x: sourceNode.position.x + sourceNode.width + 48, y: sourceNode.position.y + sourceNode.height + 48 },
+                    width: existingDepthVideo?.width || 360,
+                    height: existingDepthVideo?.height || 220,
+                    metadata: {
+                        ...existingDepthVideo?.metadata,
+                        ...videoMetadata(depthVideoUpload),
+                        prompt: output.prompt,
+                        workflowKind: "reference_video",
+                        assetTags: ["预演台深度", `镜头:${sourceNode.title}`],
+                        producedModel: undefined,
+                        producedModelCandidate: undefined,
+                    },
+                };
+                if (depthVideoIndex >= 0) nextNodes[depthVideoIndex] = depthVideoNode;
+                else nextNodes.push(depthVideoNode);
+            }
+
             const nextConnections = [...connectionsRef.current];
             [previewId, videoUpload ? clayVideoId : null]
                 .filter((id): id is string => Boolean(id))
                 .forEach((id) => {
                     if (!nextConnections.some((connection) => connection.fromNodeId === id && connection.toNodeId === sourceNode.id)) nextConnections.push({ id: nanoid(), fromNodeId: id, toNodeId: sourceNode.id });
                 });
-            const retiredReferenceIds = new Set([sourceNode.metadata?.previsDepthNodeId, sourceNode.metadata?.previsNormalNodeId].filter(Boolean));
+            // 深度/法线节点只作为控制素材保存，不作为普通参考进入生成；旧版本写入的引用一并剔除。
+            const retiredReferenceIds = new Set([sourceNode.metadata?.previsDepthNodeId, sourceNode.metadata?.previsDepthVideoNodeId, sourceNode.metadata?.previsNormalNodeId, depthId, depthVideoId].filter(Boolean));
             const referenceAssetNodeIds = Array.from(new Set([...(sourceNode.metadata?.referenceAssetNodeIds || []).filter((id) => !retiredReferenceIds.has(id)), previewId, ...(clayVideoId ? [clayVideoId] : [])]));
             const previsMetadata: Partial<CanvasNodeMetadata> = {
                 previsSceneId: output.scene.id,
                 previsShotId: output.shot.id,
                 previsPreviewNodeId: previewId,
-                previsDepthNodeId: undefined,
+                previsDepthNodeId: depthId,
+                previsDepthVideoNodeId: depthVideoId,
                 previsNormalNodeId: undefined,
                 previsClayVideoNodeId: clayVideoId,
                 composerContent: output.prompt,
@@ -227,7 +289,8 @@ export function useCanvasPrevis({
                 videoCameraMovePrompt: output.prompt,
                 referenceAssetNodeIds,
             };
-            const mediaNodes = nextNodes.filter((item) => item.id === previewId || Boolean(clayVideoId && item.id === clayVideoId));
+            const producedIds = new Set([previewId, videoUpload ? clayVideoId : null, depthImage ? depthId : null, depthVideoUpload ? depthVideoId : null].filter((id): id is string => Boolean(id)));
+            const mediaNodes = nextNodes.filter((item) => producedIds.has(item.id));
             const assetIds = new Map<string, string>();
             for (const mediaNode of mediaNodes) {
                 const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual" });

@@ -200,17 +200,17 @@ func TestResolveSystemChannelModelSelectionPricesImageResolutionAndQualityIndepe
 
 	resolved, err := svc.resolveSystemChannelModelSelection(map[string]any{
 		"mode":   "image",
-		"config": map[string]any{"channelId": channel.ID, "model": channelModel.ModelKey, "imageResolution": "2k", "quality": "max", "size": "1:1"},
+		"config": map[string]any{"channelId": channel.ID, "model": channelModel.ModelKey, "imageResolution": "2k", "quality": "max", "size": "2048x2048"},
 	}, "canvas_image", "")
 	if err != nil {
 		t.Fatalf("resolveSystemChannelModelSelection() error = %v", err)
 	}
 	config := resolved["config"].(map[string]any)
-	if config["priceTierId"] != "2k-max" || config["imageResolution"] != "2k" || config["quality"] != "max" {
+	if config["priceTierId"] != "2k-max" || config["imageResolution"] != "2k" || config["quality"] != "max" || config["size"] != "2048x2048" {
 		t.Fatalf("resolved request = %#v, want exact 2k-max tier and independent options", config)
 	}
 	options := resolved["capabilityOptions"].(map[string]any)
-	if options["imageResolution"] != "2k" || options["quality"] != "max" {
+	if options["imageResolution"] != "2k" || options["quality"] != "max" || options["size"] != "2048x2048" {
 		t.Fatalf("capabilityOptions = %#v, want independent imageResolution/quality", options)
 	}
 }

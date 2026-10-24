@@ -20,6 +20,7 @@ import {
     changeChannelModelProtocol,
     editorSectionForField,
     initialChannelModelValues,
+    replaceChannelModelFormValues,
     updateChannelModelUpstreamCapabilities,
     validateChannelModelPrices,
     validateChannelModelProtocol,
@@ -86,10 +87,10 @@ export function ChannelModelEditor({
     const handleFormValuesChange = (changed: Partial<FormValues>) => {
         dirtyRef.current = true;
         if (changed.capability) {
-            form.setFieldsValue(changeChannelModelCapability(form.getFieldsValue(true), protocols));
+            replaceChannelModelFormValues(form, changeChannelModelCapability(form.getFieldsValue(true), protocols));
             setConfigurationChanged(true);
         } else if (changed.protocol) {
-            form.setFieldsValue(changeChannelModelProtocol(form.getFieldsValue(true), changed.protocol, protocols));
+            replaceChannelModelFormValues(form, changeChannelModelProtocol(form.getFieldsValue(true), changed.protocol, protocols));
             setConfigurationChanged(true);
         } else if (changed.providerModelKey !== undefined || changed.modelKey !== undefined) {
             const values = form.getFieldsValue(true);

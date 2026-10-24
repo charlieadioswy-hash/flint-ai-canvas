@@ -21,7 +21,6 @@ import type {
     PrevisVec3,
 } from "@/types/previs";
 
-export const PREVIS_DEFAULT_ACTOR_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/examples/models/gltf/Xbot.glb";
 export const PREVIS_LEGACY_DEFAULT_ACTOR_COLOR = "#f1f3f5";
 export const PREVIS_ACTOR_COLORS = ["#2f7de1", "#d84949", "#dfae3f", "#34a276", "#8b5cf6", "#e879f9", "#f97316", "#06b6d4", "#84cc16", "#ec4899", "#a78bfa", "#fb7185", "#22d3ee", "#4ade80", "#facc15", "#f472b6", "#818cf8", "#34d399"] as const;
 
@@ -105,13 +104,13 @@ export function createPrevisActor(name = "演员", position: PrevisVec3 = [0, 0,
     return {
         ...createPrevisObject("box", name, position, color),
         kind: "actor",
-        primitive: undefined,
-        url: PREVIS_DEFAULT_ACTOR_URL,
-        mimeType: "model/gltf-binary",
+        // 标准人偶由代码生成：不带 url，离线可用，前端模板/工作台/Agent 三条路径外观一致。
+        primitive: "character",
         pose: "stand",
         archetype,
         actorProfile: previsActorProfileForArchetype(archetype),
         rig: { status: "unmapped", boneMap: {}, animationNames: [] },
+        motions: [],
         motionClips: [],
         boneOverrides: {},
         boneTracks: [],
@@ -142,11 +141,6 @@ export function uniquePrevisName(existing: readonly string[], requested: string)
     let index = 2;
     while (existing.includes(`${base} ${index}`)) index += 1;
     return `${base} ${index}`;
-}
-
-/** 35mm 全画幅水平视角换算。摄影机检查器与场景模板共用，避免两处各写一份光学。 */
-export function previsFocalLengthToFov(focalLength: number) {
-    return (2 * Math.atan(36 / (2 * Math.max(1, focalLength))) * 180) / Math.PI;
 }
 
 export function createPrevisLight(type: PrevisLight["type"], name: string, position: PrevisVec3, intensity = 1): PrevisLight {

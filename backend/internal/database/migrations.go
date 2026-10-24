@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 62
+const CurrentSchemaVersion int64 = 65
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -214,6 +214,13 @@ var schemaMigrations = []migration{
 		}
 		return tx.Migrator().AddColumn(&model.Task{}, "ProviderProgress")
 	}},
+	{version: 63, name: "agent_memory_proposals", checksum: "sha256:agent-memory-proposals-v58", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentLesson{}, &model.AgentMemorySetting{}, &model.AgentMemoryProposal{}, &model.AgentMemoryRevision{})
+	}},
+	{version: 64, name: "channel_model_protocol_length", checksum: "sha256:channel-model-protocol-length-v59", apply: migrateChannelModelProtocolLength},
+	{version: 65, name: "user_feedbacks", checksum: "sha256:user-feedbacks-v60-20261020", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.UserFeedback{})
+	}},
 }
 
 func migrateChannelModelProviderDefaults(tx *gorm.DB) error {
@@ -221,6 +228,13 @@ func migrateChannelModelProviderDefaults(tx *gorm.DB) error {
 		return nil
 	}
 	return tx.Migrator().AddColumn(&model.ChannelModel{}, "ProviderDefaults")
+}
+
+func migrateChannelModelProtocolLength(tx *gorm.DB) error {
+	if tx.Dialector.Name() == "postgres" {
+		return tx.Exec("ALTER TABLE channel_models ALTER COLUMN protocol TYPE varchar(64)").Error
+	}
+	return tx.Migrator().AlterColumn(&model.ChannelModel{}, "Protocol")
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {
@@ -429,6 +443,17 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 				return nil, fmt.Errorf("读取数据库迁移 55：%w", err)
 			}
 			nativeUpstream := errors.Is(err, gorm.ErrRecordNotFound) || version55.Name == "provider_catalog_source"
+			var extendedUpstream bool
+			if nativeUpstream {
+				var version58 schemaMigration
+				err := db.First(&version58, "version = ?", 58).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, fmt.Errorf("读取数据库迁移 58：%w", err)
+				}
+				// Upstream subsequently shipped memory, protocol length and feedback
+				// at v58-v60. Keep those identities, or the earlier merged 3D tail.
+				extendedUpstream = errors.Is(err, gorm.ErrRecordNotFound) || version58.Name == "agent_memory_proposals"
+			}
 			for index, item := range plan {
 				switch item.version {
 				case 45:
@@ -465,6 +490,26 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 						plan[index].version = 60
 					case "channel_model_provider_defaults":
 						plan[index].version = 61
+					}
+					if extendedUpstream {
+						switch item.name {
+						case "agent_memory_proposals":
+							plan[index].version = 58
+						case "channel_model_protocol_length":
+							plan[index].version = 59
+						case "user_feedbacks":
+							plan[index].version = 60
+						case "canvas_model3d":
+							plan[index].version = 61
+						case "model3d_base_url":
+							plan[index].version = 62
+						case "model3d_asset_timestamps":
+							plan[index].version = 63
+						case "channel_model_provider_defaults":
+							plan[index].version = 64
+						case "task_provider_progress":
+							plan[index].version = 65
+						}
 					}
 				}
 			}

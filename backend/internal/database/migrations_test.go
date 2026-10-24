@@ -20,6 +20,52 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	if CurrentSchemaVersion != latest {
 		t.Fatalf("supported schema version %d does not match latest migration %d", CurrentSchemaVersion, latest)
 	}
+	for index, item := range schemaMigrations {
+		if item.version != int64(index+1) {
+			t.Fatalf("migration %s has version %d, want %d", item.name, item.version, index+1)
+		}
+	}
+}
+
+type channelModelProtocolV58 struct {
+	ID       string `gorm:"primaryKey;size:36"`
+	Protocol string `gorm:"size:32;index"`
+}
+
+func (channelModelProtocolV58) TableName() string { return "channel_models" }
+
+func TestMigrateChannelModelProtocolLengthPreservesExistingRows(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-channel-protocol-length?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&channelModelProtocolV58{}); err != nil {
+		t.Fatal(err)
+	}
+	legacy := channelModelProtocolV58{ID: "existing", Protocol: "chat-completion"}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateChannelModelProtocolLength(db); err != nil {
+		t.Fatalf("migrateChannelModelProtocolLength() error = %v", err)
+	}
+	statement := &gorm.Statement{DB: db}
+	if err := statement.Parse(&model.ChannelModel{}); err != nil {
+		t.Fatal(err)
+	}
+	protocolField := statement.Schema.LookUpField("Protocol")
+	if protocolField == nil || protocolField.Size != 64 {
+		t.Fatalf("protocol field size = %#v, want 64", protocolField)
+	}
+	var stored struct {
+		Protocol string
+	}
+	if err := db.Table("channel_models").Select("protocol").Where("id = ?", legacy.ID).Scan(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Protocol != legacy.Protocol {
+		t.Fatalf("existing protocol = %q, want %q", stored.Protocol, legacy.Protocol)
+	}
 }
 
 func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
@@ -200,6 +246,17 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		"canvas_mutation_receipts": 50, "personal_profile_security": 51,
 		"user_avatar_presets": 52, "user_login_logs": 53, workbenchToolsMigrationName: 54,
 		"provider_catalog_source": 55, "sql_perf_indexes": 56, "canvas_multi_session_sync": 57,
+		"agent_memory_proposals": 58, "channel_model_protocol_length": 59, "user_feedbacks": 60,
+	}
+	if lineage == "native_merged_upstream" {
+		upstreamVersions["canvas_model3d"] = 58
+		upstreamVersions["model3d_base_url"] = 59
+		upstreamVersions["model3d_asset_timestamps"] = 60
+		upstreamVersions["channel_model_provider_defaults"] = 61
+		upstreamVersions["task_provider_progress"] = 62
+		delete(upstreamVersions, "agent_memory_proposals")
+		delete(upstreamVersions, "channel_model_protocol_length")
+		delete(upstreamVersions, "user_feedbacks")
 	}
 	if lineage == "merged_upstream" {
 		upstreamVersions["canvas_model3d"] = 55
@@ -209,11 +266,14 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		delete(upstreamVersions, "provider_catalog_source")
 		delete(upstreamVersions, "sql_perf_indexes")
 		delete(upstreamVersions, "canvas_multi_session_sync")
+		delete(upstreamVersions, "agent_memory_proposals")
+		delete(upstreamVersions, "channel_model_protocol_length")
+		delete(upstreamVersions, "user_feedbacks")
 	}
 	applied := map[string]bool{}
 	for _, item := range schemaMigrations {
 		switch lineage {
-		case "upstream", "legacy_workbench", "merged_upstream":
+		case "upstream", "legacy_workbench", "merged_upstream", "native_merged_upstream":
 			if item.version >= 44 && item.version != 46 && item.version != 47 {
 				version, ok := upstreamVersions[item.name]
 				if !ok {
@@ -257,6 +317,8 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		"personal_profile_security": {&model.UserAvatar{}},
 		"user_login_logs":           {&model.LoginLog{}},
 		workbenchToolsMigrationName: {&model.WorkbenchPreset{}, &model.WorkbenchTool{}},
+		"agent_memory_proposals":    {&model.AgentMemoryProposal{}, &model.AgentMemoryRevision{}},
+		"user_feedbacks":            {&model.UserFeedback{}},
 	} {
 		if !applied[name] {
 			for _, table := range tables {
@@ -276,6 +338,9 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		{"user_avatar_presets", &model.User{}, "AvatarPreset"},
 		{"provider_catalog_source", &model.ModelChannel{}, "CatalogProviderID"},
 		{"provider_catalog_source", &model.ChannelModel{}, "CatalogModelKey"},
+		{"task_provider_progress", &model.Task{}, "ProviderProgress"},
+		{"agent_memory_proposals", &model.AgentMemorySetting{}, "CompactProposalID"},
+		{"agent_memory_proposals", &model.AgentMemorySetting{}, "CompactCursor"},
 	} {
 		if !applied[column.migration] {
 			if err := db.Migrator().DropColumn(column.model, column.field); err != nil {

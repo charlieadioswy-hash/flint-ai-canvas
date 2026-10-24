@@ -82,7 +82,7 @@ func TestWangsuVideoHTTPFailureMessages(t *testing.T) {
 				}
 				wantVisible := tc.want
 				if tc.status >= 500 {
-					wantVisible = taskErrorNetworkMessage
+					wantVisible = taskErrorUnavailableMessage
 				}
 				if visible := userFacingTaskError(message); visible != wantVisible {
 					t.Errorf("%s user-visible message = %q, want %q", name, visible, wantVisible)

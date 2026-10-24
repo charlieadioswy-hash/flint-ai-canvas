@@ -1,6 +1,7 @@
 import localforage from "localforage";
 import { canvasAppearanceForPreset } from "../../src/lib/canvas/canvas-appearance";
 import { remapImportedCanvasNode } from "../../src/lib/canvas/canvas-import";
+import { bindCanvasNodeAsset } from "../../src/lib/canvas/canvas-node-asset";
 import { rebaseCanvasLocalEdits } from "../../src/lib/canvas/canvas-sync-rebase";
 import { setActiveUserScope } from "../../src/lib/user-scope";
 import { ApiError, apiClient } from "../../src/services/api/request";
@@ -14,7 +15,9 @@ import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
 
 function deferred<T = void>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((done) => { resolve = done; });
+    const promise = new Promise<T>((done) => {
+        resolve = done;
+    });
     return { promise, resolve };
 }
 
@@ -24,7 +27,11 @@ let nextTimer = 1;
 Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-        setTimeout: (callback: () => void) => { const id = nextTimer++; timers.set(id, callback); return id; },
+        setTimeout: (callback: () => void) => {
+            const id = nextTimer++;
+            timers.set(id, callback);
+            return id;
+        },
         clearTimeout: (id: number) => timers.delete(id),
         localStorage: { getItem: (key: string) => disk.get(key) ?? null, setItem: (key: string, value: string) => disk.set(key, value), removeItem: (key: string) => disk.delete(key) },
         addEventListener: () => {},
@@ -32,8 +39,13 @@ Object.defineProperty(globalThis, "window", {
     },
 });
 localforage.getItem = (async (key: string) => disk.get(key) ?? null) as typeof localforage.getItem;
-localforage.setItem = (async (key: string, value: unknown) => { disk.set(key, value); return value; }) as typeof localforage.setItem;
-localforage.removeItem = async (key: string) => { disk.delete(key); };
+localforage.setItem = (async (key: string, value: unknown) => {
+    disk.set(key, value);
+    return value;
+}) as typeof localforage.setItem;
+localforage.removeItem = async (key: string) => {
+    disk.delete(key);
+};
 
 let remote: CanvasProject | undefined;
 let remoteAsset: Asset | undefined;
@@ -71,8 +83,7 @@ apiClient.defaults.adapter = async (config) => {
                     for (const key of keys.slice(0, -1)) target = target[key] as Record<string, unknown>;
                     target[keys.at(-1)!] = value;
                 }
-            }
-            else throw new Error(`Unexpected canvas operation: ${operation.type}`);
+            } else throw new Error(`Unexpected canvas operation: ${operation.type}`);
         }
         data = { project: { id: remote!.id, revision: remote!.revision }, mutationId: request.mutationId };
     } else if (url.startsWith("/canvas-projects/") && config.method === "get") {
@@ -88,37 +99,69 @@ useAssetStore.setState({ assets: [] });
 await initializeRemoteUserDataSession("canvas-import-retry-test");
 installRemoteUserDataAutoSync();
 
-const nodes: CanvasNodeData[] = [remapImportedCanvasNode({
-    id: "model-node", type: CanvasNodeType.Model3D, title: "model.glb", position: { x: 0, y: 0 }, width: 520, height: 420,
-    metadata: {
-        assetId: "source-asset", storageKey: "resource:source-resource", content: "/api/resources/source-resource/file", status: "success",
-        model3d: {
-            schemaVersion: 1,
-            draft: { mode: "text", prompt: "A block", parameters: { model: "test-model", faceLimit: 5000, pbr: false, texture: false }, views: {} },
-            result: { assetId: "source-asset", resourceId: "source-resource", storageKey: "resource:source-resource", url: "/api/resources/source-resource/file", fileName: "model.glb", format: "glb", mimeType: "model/gltf-binary", bytes: 128 },
+const nodes: CanvasNodeData[] = [
+    remapImportedCanvasNode(
+        {
+            id: "model-node",
+            type: CanvasNodeType.Model3D,
+            title: "model.glb",
+            position: { x: 0, y: 0 },
+            width: 520,
+            height: 420,
+            metadata: {
+                assetId: "source-asset",
+                storageKey: "resource:source-resource",
+                content: "/api/resources/source-resource/file",
+                status: "success",
+                model3d: {
+                    schemaVersion: 1,
+                    draft: { mode: "text", prompt: "A block", parameters: { model: "test-model", faceLimit: 5000, pbr: false, texture: false }, views: {} },
+                    result: { assetId: "source-asset", resourceId: "source-resource", storageKey: "resource:source-resource", url: "/api/resources/source-resource/file", fileName: "model.glb", format: "glb", mimeType: "model/gltf-binary", bytes: 128 },
+                },
+            },
         },
+        new Map([["resource:source-resource", { storageKey: "resource:import-resource", url: "/api/resources/import-resource/file" }]]),
+    ),
+    {
+        id: "text-node",
+        type: CanvasNodeType.Text,
+        title: "Text",
+        position: { x: 600, y: 0 },
+        width: 340,
+        height: 240,
+        metadata: { content: "Keep this text" },
     },
-}, new Map([["resource:source-resource", { storageKey: "resource:import-resource", url: "/api/resources/import-resource/file" }]])), {
-    id: "text-node", type: CanvasNodeType.Text, title: "Text", position: { x: 600, y: 0 }, width: 340, height: 240, metadata: { content: "Keep this text" },
-}];
+];
 const id = useCanvasStore.getState().importProject({ title: "Imported canvas", createdAt: "2026-10-21T00:00:00Z", nodes, connections: [], appearance: canvasAppearanceForPreset("light") });
 await flushCanvasStorePersistence();
 
-// ZIP import registers the model before binding the returned asset identity.
-// Its catch retains the unbound draft and opens the canvas after a failed PUT.
-try {
-    await ensureCanvasNodeAsset({ canvasId: id, node: nodes[0], source: "canvas-upload" });
-    throw new Error("The initial model registration should fail");
-} catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 503) throw error;
-    useCanvasStore.getState().updateProject(id, { nodes });
-    await flushCanvasStorePersistence();
-    useSyncProgressStore.getState().setProjectProgress(id, { phase: "error", message: error.message });
+// A retryable registration failure retains the local asset and reports pending
+// sync. An interrupted import can leave its saved draft without that binding.
+const interruptedImport = Bun.argv[3] === "interrupted";
+const initialRegistration = await ensureCanvasNodeAsset({ canvasId: id, node: nodes[0], source: "canvas-upload" });
+if (interruptedImport) {
+    useSyncProgressStore.getState().setProjectProgress(id, { phase: "error", message: "model registration unavailable" });
     scheduleRemoteUserDataSync();
+} else {
+    // Match the importer: bind the retained asset, save the canvas, and schedule
+    // another attempt when registration still prevents the complete save.
+    nodes[0] = bindCanvasNodeAsset(nodes[0], initialRegistration.assetId);
+    useCanvasStore.getState().updateProject(id, { nodes });
+    useSyncProgressStore.getState().setProjectProgress(id, { phase: "saving", message: "正在保存画布结构" });
+    await flushCanvasStorePersistence();
+    try {
+        await saveRemoteUserDataNow(id);
+        throw new Error("The initial canvas save should wait for model registration");
+    } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 503) throw error;
+        scheduleRemoteUserDataSync();
+    }
 }
 await loadCanvasProjectForEditing(id);
 
 let editorNodes = useCanvasStore.getState().openProject(id)!.nodes;
+const importedModel = editorNodes.find((node) => node.id === "model-node")!;
+const importedAssetBoundBeforeRetry = Boolean(importedModel.metadata?.assetId && importedModel.metadata?.model3d?.result?.assetId);
 const dispose = subscribeAgentCanvasRefresh((project, previous, source) => {
     if (project.id !== id || source !== "sync") return;
     // The open lifecycle merges sync projections against its live node refs,
@@ -128,9 +171,10 @@ const dispose = subscribeAgentCanvasRefresh((project, previous, source) => {
     queueMicrotask(() => useCanvasStore.getState().updateProject(id, { nodes: next }));
 });
 // Keep this edit in the editor only, before its persistence effect has run.
-if (Bun.argv[2] === "edited") editorNodes = editorNodes.map((node) => node.id === "text-node" ? { ...node, title: "Edited during retry" } : node);
+if (Bun.argv[2] === "edited") editorNodes = editorNodes.map((node) => (node.id === "text-node" ? { ...node, title: "Edited during retry" } : node));
 
-for (let retry = 0; retry < 3; retry++) {
+const retryCount = interruptedImport ? 3 : 2;
+for (let retry = 0; retry < retryCount; retry++) {
     if (timers.size !== 1) throw new Error(`Expected one scheduled retry, got ${timers.size}`);
     const callback = [...timers.values()][0];
     timers.clear();
@@ -140,8 +184,10 @@ for (let retry = 0; retry < 3; retry++) {
     // Join the already-running timer's single flight while its PUT is held.
     const completion = saveRemoteUserDataNow();
     retryGate.release.resolve();
-    try { await completion; } catch (error) {
-        if (retry === 2 || !(error instanceof ApiError) || error.status !== 503) throw error;
+    try {
+        await completion;
+    } catch (error) {
+        if (retry === retryCount - 1 || !(error instanceof ApiError) || error.status !== 503) throw error;
     }
     retryGate = undefined;
     await flushCanvasStorePersistence();
@@ -161,12 +207,19 @@ const localNodes = useCanvasStore.getState().openProject(id)!.nodes;
 const model = (items: CanvasNodeData[]) => items.find((node) => node.id === "model-node")!;
 const text = (items: CanvasNodeData[]) => items.find((node) => node.id === "text-node")!;
 const nodeSets = [editorNodes, localNodes, remote!.nodes];
-console.log(JSON.stringify({
-    assetAttempts, canvasWrites, remoteRevision: remote!.revision, assetId: remoteAsset!.id,
-    nodeCounts: { editor: editorNodes.length, local: localNodes.length, remote: remote!.nodes.length },
-    bindings: nodeSets.map((items) => model(items).metadata?.assetId),
-    resultBindings: nodeSets.map((items) => model(items).metadata?.model3d?.result?.assetId),
-    titles: nodeSets.map((items) => text(items).title),
-    progress: useSyncProgressStore.getState().syncingProjects[id],
-    isAnySyncing: useSyncProgressStore.getState().isAnySyncing(),
-}));
+console.log(
+    JSON.stringify({
+        initialRegistration,
+        importedAssetBoundBeforeRetry,
+        assetAttempts,
+        canvasWrites,
+        remoteRevision: remote!.revision,
+        assetId: remoteAsset!.id,
+        nodeCounts: { editor: editorNodes.length, local: localNodes.length, remote: remote!.nodes.length },
+        bindings: nodeSets.map((items) => model(items).metadata?.assetId),
+        resultBindings: nodeSets.map((items) => model(items).metadata?.model3d?.result?.assetId),
+        titles: nodeSets.map((items) => text(items).title),
+        progress: useSyncProgressStore.getState().syncingProjects[id],
+        isAnySyncing: useSyncProgressStore.getState().isAnySyncing(),
+    }),
+);

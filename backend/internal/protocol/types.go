@@ -189,7 +189,20 @@ type Metadata struct {
 	Execution               string           `json:"-"`
 	RequiresPublicMediaURLs bool             `json:"-"`
 	UnavailableReason       string           `json:"-"`
+	// Kind 区分生成类与处理类 provider；处理类以输入媒体为主体，不要求 prompt。
+	Kind ProviderKind `json:"kind,omitempty"`
 }
+
+// ProviderKind 描述 provider 的业务形态。空值等同 generation。
+type ProviderKind string
+
+const (
+	ProviderKindGeneration ProviderKind = "generation"
+	ProviderKindProcessing ProviderKind = "processing"
+)
+
+// IsProcessing 判断 provider 是否为处理类（画质增强、字幕擦除、插帧等）。
+func (k ProviderKind) IsProcessing() bool { return k == ProviderKindProcessing }
 
 // Manifest is the single plugin contract. A plugin may contribute providers,
 // workflows, canvas nodes and other capabilities from the same package; the
@@ -340,6 +353,7 @@ type ManifestProvider struct {
 	SupportsControlNet      bool                   `json:"supportsControlNet,omitempty"`
 	ID                      string                 `json:"id"`
 	Label                   string                 `json:"label"`
+	Kind                    ProviderKind           `json:"kind,omitempty"`
 	Capabilities            []Capability           `json:"capabilities"`
 	Scopes                  []Surface              `json:"scopes"`
 	BaseURL                 string                 `json:"baseUrl,omitempty"`

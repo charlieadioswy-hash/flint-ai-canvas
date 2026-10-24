@@ -27,6 +27,7 @@ export function ImageSizePresetsEditor({
 }) {
     const IMAGE_RESOLUTIONS = tiers ?? imageResolutionTiers(profile);
     const presets = imageSizePresets(profile);
+    const defaultOptions = profile.size.values.length ? profile.size.values : [...new Set(presets.map((preset) => (profile.size.parameter === "aspect_ratio" ? preset.ratio : preset.size)).filter(Boolean))];
     const id = useId();
     const [drafts, setDrafts] = useState<Partial<Record<ImageResolutionTier, string>>>({});
     const [errors, setErrors] = useState<Partial<Record<ImageResolutionTier, string>>>({});
@@ -223,7 +224,7 @@ export function ImageSizePresetsEditor({
                     <span>用户选择模型时的初始尺寸</span>
                 </div>
                 <div className="image-size-default-options" role="group" aria-label="默认输出">
-                    {profile.size.values.map((value) => {
+                    {defaultOptions.map((value) => {
                         const preset = presets.find((item) => (profile.size.parameter === "aspect_ratio" ? item.ratio === value : item.size === value));
                         const label = value === "auto" ? "自动" : preset && profile.size.parameter === "size" ? `${grouped ? preset.tier.toUpperCase() + " · " : ""}${preset.ratio}` : value;
                         return (
