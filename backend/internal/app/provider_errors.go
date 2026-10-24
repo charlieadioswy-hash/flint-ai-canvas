@@ -37,6 +37,7 @@ type providerHTTPError struct {
 	Status     string
 	Body       string
 	RetryAfter time.Duration
+	ProtocolID string
 }
 
 // providerPreparationError marks a failure before generation create is sent.
@@ -75,6 +76,7 @@ func (e providerStatePendingError) Error() string {
 func (e providerStatePendingError) Unwrap() error { return e.Cause }
 
 type providerAnalyticsKey struct{}
+type providerProtocolContextKey struct{}
 
 type providerAnalyticsContext struct {
 	Service           *Service
@@ -144,6 +146,17 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 }
 
 func (e providerHTTPError) Error() string {
+	if e.StatusCode == http.StatusForbidden && strings.HasPrefix(e.ProtocolID, "wangsu-") {
+		var payload struct {
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(e.Body), &payload) == nil && payload.Error.Type == "aigateway_error" && strings.Contains(payload.Error.Message, "Your service order has expired.") {
+			return "模型服务订单已过期，请联系渠道管理员续费后再试"
+		}
+	}
 	if e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusUnprocessableEntity {
 		return providerErrorWithDetail(e.summary(), e.Body)
 	}

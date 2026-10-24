@@ -3,16 +3,142 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/protocol"
 )
+
+func TestWangsuVideoHTTPFailureMessages(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	const expiredBody = `{"error":{"type":"aigateway_error","message":"Your service order has expired. (request id: private-request-id)","api_key":"private-key"}}`
+	const authMessage = "模型服务鉴权失败，请检查 API Key 和模型权限"
+	const expiredMessage = "模型服务订单已过期，请联系渠道管理员续费后再试"
+	registry := loadOfficialFallbackRegistry()
+	for _, tc := range []struct {
+		name, protocolID, body, want string
+		status                       int
+	}{
+		{"expired service order", "wangsu-videos", expiredBody, expiredMessage, http.StatusForbidden},
+		{"expired openai service order", "wangsu-openai-videos", expiredBody, expiredMessage, http.StatusForbidden},
+		{"ordinary unauthorized", "wangsu-videos", `{"error":{"type":"aigateway_error","message":"Invalid API key (request id: private-request-id)"}}`, authMessage, http.StatusUnauthorized},
+		{"ordinary forbidden", "wangsu-videos", `{"error":{"type":"aigateway_error","message":"Permission denied (request id: private-request-id)"}}`, authMessage, http.StatusForbidden},
+		{"different error type", "wangsu-videos", strings.Replace(expiredBody, "aigateway_error", "authentication_error", 1), authMessage, http.StatusForbidden},
+		{"missing error type", "wangsu-videos", strings.Replace(expiredBody, `"type":"aigateway_error",`, "", 1), authMessage, http.StatusForbidden},
+		{"different error message", "wangsu-videos", strings.Replace(expiredBody, "Your service order has expired.", "The request has expired.", 1), authMessage, http.StatusForbidden},
+		{"exact phrase required", "wangsu-videos", strings.Replace(expiredBody, "expired.", "expired", 1), authMessage, http.StatusForbidden},
+		{"unauthorized expiry body", "wangsu-videos", expiredBody, authMessage, http.StatusUnauthorized},
+		{"other provider expiry body", "newapi", expiredBody, authMessage, http.StatusForbidden},
+		{"malformed expiry body", "wangsu-videos", expiredBody[:len(expiredBody)-1], authMessage, http.StatusForbidden},
+		{"gateway failure expiry body", "wangsu-videos", expiredBody, "模型服务暂时不可用（HTTP 503）", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/videos") {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "7")
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			adapter, ok := registry.Resolve(tc.protocolID)
+			if !ok {
+				t.Fatalf("official adapter %s missing", tc.protocolID)
+			}
+			input := canvasGenerationInput{
+				Mode: "video", Prompt: "A quiet landscape",
+				Config:          providerConfig{InterfaceType: tc.protocolID, BaseURL: server.URL + "/v2/llm", APIKey: "test-key", Model: "MiniMax-Hailuo-02", VideoSeconds: "10", VQuality: "512P"},
+				ReferenceImages: []providerMedia{{ID: "first-frame", URL: "https://cdn.example/first-frame.png"}},
+				Metadata:        map[string]interface{}{"videoOperation": "image_to_video", "videoStartFrameNodeId": "first-frame"},
+			}
+			if tc.protocolID == "wangsu-openai-videos" {
+				input.Config.Model, input.Config.VideoSeconds, input.Config.VQuality = "sora-2", "4", "720p"
+			}
+			if tc.protocolID != "wangsu-videos" {
+				input.ReferenceImages, input.Metadata = nil, nil
+			}
+			_, err := runProtocolAdapterTaskWithPolicy(context.Background(), input, adapter, fastVideoPollPolicy())
+			var httpErr providerHTTPError
+			if !errors.As(err, &httpErr) || httpErr.StatusCode != tc.status || httpErr.Body != tc.body || httpErr.RetryAfter != 7*time.Second {
+				t.Fatalf("HTTP failure metadata changed: %v", err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("failed create sent %d requests", calls.Load())
+			}
+			for name, message := range map[string]string{"error": err.Error(), "provider": providerUserFacingErrorMessage(err), "task": taskFailureMessage(err)} {
+				if message != tc.want {
+					t.Errorf("%s message = %q, want %q", name, message, tc.want)
+				}
+				wantVisible := tc.want
+				if tc.status >= 500 {
+					wantVisible = taskErrorNetworkMessage
+				}
+				if visible := userFacingTaskError(message); visible != wantVisible {
+					t.Errorf("%s user-visible message = %q, want %q", name, visible, wantVisible)
+				}
+			}
+			if retry, _ := retryableVideoPollError(context.Background(), err); tc.status < 500 && retry {
+				t.Error("permanent HTTP failure became retryable")
+			}
+			if billingFailureUncertain(err) {
+				t.Error("HTTP rejection became an uncertain billing failure")
+			}
+		})
+	}
+}
+
+func TestWangsuImageExpiredServiceOrder(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	for _, tc := range []struct{ id, path string }{
+		{"wangsu-images", "/v2/llm/images/generations"},
+		{"wangsu-openai-images", "/v2/llm/openai/images/generations"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != tc.path {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["model"] != "gpt-image-2" || body["size"] != "1024x1024" || body["quality"] != "low" {
+					t.Errorf("unexpected image request: %#v", body)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"error":{"type":"aigateway_error","message":"Your service order has expired. (request id: private-request-id)","api_key":"private-key"}}`)
+			}))
+			defer server.Close()
+			ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+			_, err := runImageTask(ctx, canvasGenerationInput{
+				Mode: "image", Prompt: "A quiet landscape",
+				Config: providerConfig{InterfaceType: tc.id, BaseURL: server.URL + "/v2/llm", APIKey: "test-key", Model: "gpt-image-2", Size: "1024x1024", Quality: "low"},
+			})
+			var httpErr providerHTTPError
+			if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden || calls.Load() != 1 {
+				t.Fatalf("image rejection = %v, calls = %d", err, calls.Load())
+			}
+			const want = "模型服务订单已过期，请联系渠道管理员续费后再试"
+			if got := userFacingTaskError(taskFailureMessage(err)); got != want {
+				t.Fatalf("image failure = %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestProtocolBasePathURL(t *testing.T) {
 	for _, tc := range []struct {

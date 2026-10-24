@@ -248,6 +248,7 @@ func executeProtocolBinaryRequestWithConsumer(ctx context.Context, config provid
 	if err != nil {
 		return nil, "", err
 	}
+	ctx = context.WithValue(ctx, providerProtocolContextKey{}, strings.TrimSpace(config.InterfaceType))
 	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
 		return nil, "", err
