@@ -1,0 +1,44 @@
+---
+title: Docker 部署
+description: 生产安装默认方案与固定开发机源码发布约定
+---
+
+# Docker 部署
+
+## 生产部署
+
+未指定部署方式的服务器或生产环境，使用 `scripts/install-server-image.sh`、官方已发布 Release、`docker-compose.deploy.yml` 和宿主机 Host Updater。同一 Release 的镜像、更新器二进制和 `SHA256SUMS` 必须齐全，`CANVAS_IMAGE_TAG` 与 `REPOSITORY_REF` 固定到同一版本。
+
+`docker-compose.deploy.yml` 包含 postgres、redis、migrate、yingce-agent、backend、web 六个服务。后端使用 PostgreSQL，迁移由独立 migrate 服务执行；仅 web 对外发布端口，默认 `3000`。源码构建可叠加 `docker-compose.build.yml`，但本地构建镜像不由 Host Updater 管理；`scripts/install-server.sh` 不安装更新器。
+
+## 固定开发机发布
+
+开发机发布使用下列永久约定：
+
+| 项目 | 固定入口或目录 |
+| --- | --- |
+| 开发机 | `dev@192.168.100.11` |
+| 本机发布入口 | `scripts/publish-development.sh` |
+| 远端部署入口 | `/home/dev/deploy-flint-dev.sh` |
+| 远端源码 | `/home/dev/flint-ai-canvas` |
+| 发布状态 | `/home/dev/.flint-deploy` |
+| 备份 | `/home/dev/flint-backups` |
+
+在本机仓库根目录发布：
+
+```bash
+./scripts/publish-development.sh
+```
+
+入口将本机源码同步到固定远端目录，并调用远端部署脚本。backend、web、yingce-agent 三个应用镜像均在开发机从同步后的源码构建，运行仍沿用 `docker-compose.deploy.yml` 六服务及其迁移依赖。开发机持续复用 `/home/dev/flint-ai-canvas`，不创建 `releases/<时间戳>` 源码目录；发布状态与备份置于源码目录外，可保留多份时间戳备份。
+
+发布必须依次完成：
+
+1. 构建三个应用镜像，在隔离数据上演练迁移，确认能够进入升级流程。
+2. 停止应用写入，完成数据库、业务数据和恢复所需配置的冷备。
+3. 关闭公开入口后执行迁移和升级，通过仅本机可访问的临时入口验证服务、版本和数据状态，再恢复公开访问。
+4. 恢复公开访问前失败时自动恢复升级前的数据和镜像，并验证恢复结果；回退失败必须明确报告。公开入口开始恢复后若发生异常，保留现场并报告，不用旧备份覆盖可能已经产生的新写入。
+
+健康检查只证明入口可用；登录、SSE、任务生成和资源访问仍需单独验收。实际部署及回退是否通过，以本次运行日志和验证结果为准，本页约定不代表已完成部署验收。
+
+该开发机流程用于源码发布，不改变生产环境默认的官方 Release 与 Host Updater 流程。
