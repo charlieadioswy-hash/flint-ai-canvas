@@ -15,6 +15,7 @@ import { AssetCard } from "./asset-library-cards";
 import { Switch } from "@/components/ui/base/switch";
 import { resourceStorageTitle, resourceStorageLabel } from "@/lib/canvas/resource-storage-status";
 import { AssetBatchUploadModal } from "./asset-batch-upload-modal";
+import { AssetModelDownloadModal } from "./asset-model-download-modal";
 import { assetGridCardMinWidth, type AssetGridDensity, assetGridDensityOptions, parseAssetGridDensity } from "./asset-grid-density";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
 import { downloadBrowserMedia } from "@/services/browser-download";
-import { flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetKind, type ImageAsset, type ModelAsset } from "@/stores/use-asset-store";
 import { loadAssetLibraryPage, loadAssetsForUse, saveRemoteUserDataNow, localSavedRemotePendingMessage, deleteAssetsWithRemoteSync, deleteAssetWithRemoteSync, emptyAssetTrashWithRemoteSync } from "@/services/user-data-sync";
 import { useUserStore } from "@/stores/use-user-store";
 import { createAssetFolder, deleteAssetFolder, listAssetFolders, updateAssetFolder, type AssetFolder, moveRemoteAssetsToFolder } from "@/services/api/user-data";
@@ -92,6 +93,7 @@ export default function AssetsPage() {
     const [editingAsset, setEditingAsset] = useState<LibraryAsset | null>(null);
     const [isAssetOpen, setIsAssetOpen] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<LibraryAsset | null>(null);
+    const [modelDownload, setModelDownload] = useState<{ asset: ModelAsset; ownerId: string } | null>(null);
     const [deletingAsset, setDeletingAsset] = useState<LibraryAsset | null>(null);
     const [archivingAsset, setArchivingAsset] = useState<LibraryAsset | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -201,6 +203,11 @@ export default function AssetsPage() {
         setSelecting(false);
         selectionAnchor.current = undefined;
     }, [userId, viewMode, keyword, kindFilter, categoryFilter, folderFilter]);
+
+    useEffect(() => {
+        setModelDownload(null);
+        setPreviewAsset(null);
+    }, [userId]);
 
     const selectAsset = (id: string, selected: boolean, range = false) => {
         if (batchWorking || assetPageQuery.isFetching) return;
@@ -430,9 +437,13 @@ export default function AssetsPage() {
     };
 
     const downloadImage = async (asset: LibraryAsset) => {
-        if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio" && asset.kind !== "model") return;
+        if (asset.kind === "model") {
+            setModelDownload({ asset, ownerId: userId });
+            return;
+        }
+        if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
         const url = asset.kind === "image" ? asset.data.dataUrl : asset.data.url;
-        const extension = asset.kind === "model" ? asset.data.fileName.split(".").pop() || "glb" : asset.data.mimeType.split("/")[1] || "png";
+        const extension = asset.data.mimeType.split("/")[1] || "png";
         try {
             await downloadBrowserMedia({ storageKey: asset.data.storageKey, url, fileName: `${asset.title || "asset"}.${extension}` });
         } catch (error) {
@@ -948,6 +959,8 @@ export default function AssetsPage() {
             </Modal>
 
             <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
+
+            {modelDownload && modelDownload.ownerId === userId ? <AssetModelDownloadModal key={`${modelDownload.ownerId}:${modelDownload.asset.id}`} asset={modelDownload.asset} ownerId={modelDownload.ownerId} onClose={() => setModelDownload(null)} /> : null}
 
             <AssetBatchUploadModal open={batchUploadOpen} defaultFolderId={folderFilter !== "all" && folderFilter !== "uncategorized" ? folderFilter : ""} folders={folders} onClose={() => setBatchUploadOpen(false)} onComplete={async () => { setBatchUploadOpen(false); await invalidateAssetLibrary(); }} />
 
