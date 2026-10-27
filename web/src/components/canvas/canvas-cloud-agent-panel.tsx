@@ -1,6 +1,6 @@
 import { createClientUUID } from "@/lib/client-id";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { Button } from "antd";
+import { App, Button } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { MoveDiagonal2 } from "lucide-react";
 import { saveAs } from "file-saver";
@@ -22,6 +22,7 @@ import {
     decideAgentApproval,
     sendAgentInterjection,
     sendAgentMessage,
+    withdrawAgentInterjection,
     subscribeAgentEvents,
     undoAgentCanvasRun,
     updateAgentProfile,
@@ -36,6 +37,7 @@ import { appendAgentPromptPrefill } from "@/lib/canvas/agent-prompt-prefill";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { AgentMediaSettings } from "@/services/api/agent";
 import { addSkill, listAddedSkills, listSkillLibraryCategories, listSkills, listSkillPresets, type Skill, type SkillCategory, type SkillLibraryCategory, type SkillPreset } from "@/services/api/skills";
+import { reconcileSkillSelection } from "@/services/skill-runtime";
 import {
     clearCloudAgentPendingSubmission,
     cloudAgentConversationServerId,
@@ -127,7 +129,10 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const [profileSaving, setProfileSaving] = useState(false);
     const [profileError, setProfileError] = useState<string>();
     const profileRequestRef = useRef(0);
+    const { message: appMessage } = App.useApp();
     const [skills, setSkills] = useState<Skill[]>([]);
+    // 读到技能库后才允许剔除失效技能；读失败保留已选。
+    const [skillCatalogReady, setSkillCatalogReady] = useState(false);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
@@ -153,6 +158,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const undoRequestsRef = useRef(new Set<string>());
     const [exporting, setExporting] = useState(false);
     const [stopping, setStopping] = useState(false);
+    const [withdrawingInterjectionId, setWithdrawingInterjectionId] = useState<string | null>(null);
     const [approval, setApproval] = useState<ApprovalState | null>(null);
     const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("request_approval");
     const [contextScope, setContextScope] = useState<AgentContextKey[]>(["canvas"]);
@@ -429,15 +435,19 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     useEffect(() => {
         let active = true;
         setSkills([]);
+        setSkillCatalogReady(false);
         const refresh = () => {
             void listAddedSkills()
                 .then((result) => {
                     if (!active) return;
                     setSkills(result.skills);
+                    setSkillCatalogReady(true);
                     setMessages((current) => current.filter((message) => message.id !== "skills-load-error"));
                 })
                 .catch((cause) => {
-                    if (active) setMessages((current) => appendAgentError(current, "skills-load-error", cause, "技能库读取失败"));
+                    if (!active) return;
+                    setSkillCatalogReady(false);
+                    setMessages((current) => appendAgentError(current, "skills-load-error", cause, "技能库读取失败"));
                 });
         };
         refresh();
@@ -449,6 +459,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             window.removeEventListener("focus", refresh);
         };
     }, [open, userId]);
+
+    // 本地对话会留着已删除技能的 ID，按当前技能库剔除，避免发送时整轮被拒。
+    useEffect(() => {
+        if (!skillCatalogReady) return;
+        const reconciled = reconcileSkillSelection(selectedSkillIds, skills);
+        if (!reconciled.removedSkillIds.length) return;
+        setSelectedSkillIds(reconciled.skillIds);
+        void appMessage.warning(`已取消 ${reconciled.removedSkillIds.length} 个已失效的技能：该技能已被删除或取消安装`);
+    }, [appMessage, selectedSkillIds, skillCatalogReady, skills]);
 
     useEffect(() => {
         if (view !== "settings" && !skillsOpen) return;
@@ -689,7 +708,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                 if (active) {
                     setCloudHistoryLoading(false);
                     clearTimeout(timer);
-                    timer = setTimeout(() => { void refresh(); }, 4000);
+                    // 后台标签页不轮询；回到前台由 visibilitychange 立即补一次并恢复定时。
+                    timer = setTimeout(() => { if (document.visibilityState !== "hidden") void refresh(); }, 4000);
                 }
             }
         };
@@ -817,6 +837,30 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         }
     };
 
+    // 撤回只作用于这句尚未送达的插话：本轮继续运行，已提交的生成任务照常完成。
+    const withdrawInterjection = async (messageId: string) => {
+        const activeRun = run;
+        if (!accountIsCurrent() || !activeRun?.id || withdrawingInterjectionId) return;
+        const scope = conversationScope;
+        const original = messages.find((item) => item.id === messageId)?.text || "";
+        setWithdrawingInterjectionId(messageId);
+        try {
+            await withdrawAgentInterjection(activeRun.id, messageId);
+            if (!accountIsCurrent() || currentScope.current !== scope) return;
+            // SSE 也会推送撤回事件；这里先落本地状态，断线时界面也与服务端一致。
+            setMessages((current) => current.map((item) => (item.id === messageId ? { ...item, interjection: "withdrawn" as const } : item)));
+            setPrompt((current) => (current.trim() ? current : original));
+        } catch (cause) {
+            if (!accountIsCurrent() || currentScope.current !== scope) return;
+            if ((cause as { status?: number }).status === 409) {
+                setMessages((current) => current.map((item) => (item.id === messageId && item.interjection === "sent" ? { ...item, interjection: "delivered" as const } : item)));
+            }
+            setMessages((current) => appendAgentError(current, `interject-withdraw-${messageId}`, cause, "插话没有撤回"));
+        } finally {
+            if (accountIsCurrent() && currentScope.current === scope) setWithdrawingInterjectionId(null);
+        }
+    };
+
     const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean }) => {
         if (!accountIsCurrent() || cloudOpeningRef.current || canvasId && !cloudHistoryReady && !pendingSubmission.current?.request || modelRestoreError && !pendingSubmission.current?.request) return;
         const activity = canvasId ? canvasEditLeases.agent(canvasId) : null;
@@ -842,6 +886,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             const effectiveModel = options?.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
             if (options?.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
             const pending = pendingSubmission.current;
+            // 目录已读到就以技能库为准，防止刷新与发送之间带出失效 ID。
+            const usableSkillIds = skillCatalogReady ? reconcileSkillSelection(selectedSkillIds, installedSkills).skillIds : selectedSkillIds;
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
@@ -865,7 +911,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                     profileRevision: profileView.revision,
                     model: modelOptionName(effectiveModel) || undefined,
                     ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
-                    skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
+                    skillIds: [...new Set([...usableSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     focusNodeIds: canvasId ? selectedNodeIds.slice(0, 8) : [],
                     focusNodeOmittedCount: canvasId ? Math.max(0, selectedNodeIds.length - 8) : 0,
                     permissionMode,
@@ -905,7 +951,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                     run,
                     model: request.model || effectiveModel || undefined,
                     permissionMode,
-                    skillIds: selectedSkillIds,
+                    skillIds: usableSkillIds,
                     createdAt: existing?.createdAt || now,
                     updatedAt: now,
                 },
@@ -1395,6 +1441,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                         onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
                                         onApprove={(settings) => void submitApproval("approve", settings)}
                                         onReject={() => void submitApproval("reject")}
+                                        onWithdrawInterjection={running && !otherAgentRunning && connectionStatus === "connected" ? (messageId) => void withdrawInterjection(messageId) : undefined}
+                                        withdrawingInterjectionId={withdrawingInterjectionId}
                                     />
                                     {canvasCloudConversation && !canvasCloudConversationIsCurrent ? (
                                         <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>

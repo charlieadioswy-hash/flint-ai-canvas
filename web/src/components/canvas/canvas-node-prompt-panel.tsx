@@ -416,77 +416,62 @@ export function CanvasNodePromptPanel({
                 </>
             ) : (
                 <div className="canvas-node-composer-mode">
-                    <span className="grid size-3.5 shrink-0 place-items-center" style={{ color: monochromeAccent }}>
+                    <span className="canvas-node-composer-mode-icon" style={{ color: monochromeAccent }}>
                         <GenerationModeIcon mode={mode} />
                     </span>
-                    <span className="truncate text-[var(--fs-tiny)] font-medium">{modeDisplayName(mode)}生成</span>
+                    <span className="canvas-node-composer-mode-title truncate">{modeDisplayName(mode)}生成</span>
                     {activeReferenceCount > 0 ? <span className="canvas-node-composer-reference-heading">{referenceShelfHeading(activeReferences)}</span> : null}
                 </div>
             )}
             <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
-                {!simpleMode && (mode === "image" || mode === "video") ? (
-                    <div className="canvas-node-tool-controls canvas-node-tool-controls-inline flex items-center gap-1" data-canvas-no-zoom data-canvas-wheel-scroll onPointerDown={(e) => e.stopPropagation()}>
-                        {mode === "image" ? (
-                            <>
-                                <CanvasChooseImageStylePicker
-                                    open={expanded ? expandedStyleToolOpen : styleToolOpen}
-                                    onOpenChange={expanded ? setExpandedStyleToolOpen : setStyleToolOpen}
-                                    activeToolId={activeStyleTool?.toolId}
-                                    activeLabel={activeStyleTool?.label}
-                                    onSelect={(id, label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt, { id, label, type: "style" }, "Palette"))}
-                                    onClear={() => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt, "style"))}
-                                />
-                                <CanvasNineGridPicker
-                                    open={expanded ? expandedNineGridOpen : nineGridOpen}
-                                    onOpenChange={expanded ? setExpandedNineGridOpen : setNineGridOpen}
-                                    icon={activeNineGridIcon}
-                                    onSelect={(id, label, icon) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt, { id, label, type: "nine_grid" }, icon))}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                <CanvasChooseEffectPicker
-                                    open={expanded ? expandedEffectToolOpen : effectToolOpen}
-                                    onOpenChange={expanded ? setExpandedEffectToolOpen : setEffectToolOpen}
-                                    activeToolId={activeEffectTool?.toolId}
-                                    activeLabel={activeEffectTool?.label}
-                                    onSelect={(id, label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt, { id, label, type: "effect" }, "Sparkles"))}
-                                    onClear={() => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt, "effect"))}
-                                />
-                                <CanvasChooseMotionPicker
-                                    open={expanded ? expandedMotionToolOpen : motionToolOpen}
-                                    onOpenChange={expanded ? setExpandedMotionToolOpen : setMotionToolOpen}
-                                    activeToolIds={activeMotionTools.map((t) => t.toolId)}
-                                    activeLabel={activeMotionTool?.label}
-                                    onSelect={(id, label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt, { id, label, type: "motion" }, "Camera"))}
-                                    onClear={removeMotionToolMention}
-                                />
-                            </>
-                        )}
-                    </div>
-                ) : null}
-                {showPromptTemplates ? (
-                    <CanvasPresetPicker mode={mode} skillReferences={skillReferences} open={expanded ? expandedPresetOpen : presetOpen} onOpenChange={expanded ? setExpandedPresetOpen : setPresetOpen} onSelect={applyPreset} dense appearance="quiet" />
-                ) : null}
-                {canOptimizePrompt ? (
-                    <Tooltip title="用 AI 润色提示词">
-                        <button type="button" className="canvas-node-composer-header-action inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5" onClick={() => setPromptOptimizerOpen(true)} aria-label="润色提示词">
-                            <WandSparkles className="size-3" />
-                            <span className="text-[var(--fs-tiny)] font-medium">润色</span>
-                        </button>
-                    </Tooltip>
+            {!simpleMode && (mode === "image" || mode === "video") ? <div className="canvas-node-tool-controls canvas-node-tool-controls-inline flex items-center gap-1" data-canvas-no-zoom data-canvas-wheel-scroll onPointerDown={e => e.stopPropagation()}>
+                {mode === "image" ? <>
+                    <CanvasChooseImageStylePicker open={expanded ? expandedStyleToolOpen : styleToolOpen} onOpenChange={expanded ? setExpandedStyleToolOpen : setStyleToolOpen} activeToolId={activeStyleTool?.toolId} activeLabel={activeStyleTool?.label} onSelect={(id,label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt,{id,label,type:"style"},"Palette"))} onClear={() => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt,"style"))} />
+                    <CanvasNineGridPicker open={expanded ? expandedNineGridOpen : nineGridOpen} onOpenChange={expanded ? setExpandedNineGridOpen : setNineGridOpen} icon={activeNineGridIcon} onSelect={(id,label,icon) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt,{id,label,type:"nine_grid"},icon))} />
+                </> : <>
+                    <CanvasChooseEffectPicker open={expanded ? expandedEffectToolOpen : effectToolOpen} onOpenChange={expanded ? setExpandedEffectToolOpen : setEffectToolOpen} activeToolId={activeEffectTool?.toolId} activeLabel={activeEffectTool?.label} onSelect={(id,label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt,{id,label,type:"effect"},"Sparkles"))} onClear={() => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt,"effect"))} />
+                    <CanvasChooseMotionPicker open={expanded ? expandedMotionToolOpen : motionToolOpen} onOpenChange={expanded ? setExpandedMotionToolOpen : setMotionToolOpen} activeToolIds={activeMotionTools.map(t => t.toolId)} activeLabel={activeMotionTool?.label} onSelect={(id,label) => updatePromptFromCurrent((currentPrompt) => applyToolMention(currentPrompt,{id,label,type:"motion"},"Camera"))} onClear={removeMotionToolMention} />
+                </>}
+            </div> : null}
+            {showPromptTemplates ? <CanvasPresetPicker mode={mode} skillReferences={skillReferences} open={expanded ? expandedPresetOpen : presetOpen} onOpenChange={expanded ? setExpandedPresetOpen : setPresetOpen} onSelect={applyPreset} dense appearance="quiet" /> : null}
+            {canOptimizePrompt ? (
+                <Tooltip title="用 AI 润色提示词">
+                    <button
+                        type="button"
+                        className="canvas-node-composer-header-action is-labeled"
+                        onClick={() => setPromptOptimizerOpen(true)}
+                        aria-label="润色提示词"
+                    >
+                        <WandSparkles />
+                        <span>润色</span>
+                    </button>
+                </Tooltip>
+            ) : null}
+                {/* 工具类操作与窗口类操作（放大/关闭）分组，避免关闭按钮混在命令里。 */}
+                {!expanded && (canExpandPrompt || onClose) && ((!simpleMode && (mode === "image" || mode === "video")) || showPromptTemplates || canOptimizePrompt) ? (
+                    <span className="canvas-node-composer-header-divider" aria-hidden />
                 ) : null}
                 {!expanded && canExpandPrompt ? (
                     <Tooltip title="放大编辑">
-                        <button type="button" className="canvas-node-composer-header-action grid size-6 shrink-0 place-items-center rounded-md" onClick={() => setExpandedPromptOpen(true)} aria-label="放大编辑提示词">
-                            <Maximize2 className="size-3" />
+                        <button
+                            type="button"
+                            className="canvas-node-composer-header-action is-icon"
+                            onClick={() => setExpandedPromptOpen(true)}
+                            aria-label="放大编辑提示词"
+                        >
+                            <Maximize2 />
                         </button>
                     </Tooltip>
                 ) : null}
                 {!expanded && onClose ? (
                     <Tooltip title="关闭">
-                        <button type="button" className="canvas-node-composer-header-action grid size-6 shrink-0 place-items-center rounded-md" onClick={onClose} aria-label="关闭创作面板">
-                            <X className="size-3" />
+                        <button
+                            type="button"
+                            className="canvas-node-composer-header-action is-icon"
+                            onClick={onClose}
+                            aria-label="关闭创作面板"
+                        >
+                            <X />
                         </button>
                     </Tooltip>
                 ) : null}
@@ -541,7 +526,7 @@ export function CanvasNodePromptPanel({
             <div className={`canvas-node-composer-footer ${mode === "image" ? "flex-wrap" : ""}`}>
                 <div className={expanded ? "min-w-0 flex-1" : "canvas-node-composer-model"}>
                     <ModelPicker
-                        className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
+                        className="canvas-node-composer-model-trigger !h-8 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
                         fullWidth
                         config={config}
                         value={config.model}
@@ -604,11 +589,7 @@ export function CanvasNodePromptPanel({
                                         className="!w-14 !h-7 [&_.ant-input-number-input]:!text-[var(--fs-tiny)]"
                                     />
                                 </Tooltip>
-                            ) : (
-                                <span className="text-[10px]" style={{ color: theme.node.muted }}>
-                                    行数和列结构由模型判断
-                                </span>
-                            )}
+                            ) : <span className="text-[var(--fs-label)]" style={{ color: theme.node.muted }}>行数和列结构由模型判断</span>}
                         </>
                     ) : mode === "image" ? (
                         // 图片模式下，显示相机配置与镜头配置
@@ -678,11 +659,9 @@ export function CanvasNodePromptPanel({
                         onReferenceFilesDrop={onReplaceReferenceFiles ? (reference, files) => onReplaceReferenceFiles(node.id, reference, files) : undefined}
                         onContentSizeChange={expanded ? setExpandedPromptContentHeight : setPromptContentHeight}
                         containerClassName="min-h-0 flex-1"
-                        className={
-                            expanded
-                                ? "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[var(--fs-body-lg)] leading-6 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
-                                : "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-1.5 text-[var(--fs-body)] leading-5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
-                        }
+                        className={expanded
+                            ? "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2 text-[var(--fs-body-lg)] leading-6 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
+                            : "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2 py-2 text-[var(--fs-body)] leading-5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"}
                         style={{ color: theme.node.text, outline: "none", boxShadow: "none" }}
                         placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
                         aria-label={`${modeDisplayName(mode)}提示词`}

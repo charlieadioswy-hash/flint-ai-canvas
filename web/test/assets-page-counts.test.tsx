@@ -5,18 +5,15 @@ import * as gridDensity from "../src/pages/assets/asset-grid-density";
 import * as assetCategory from "../src/lib/asset-category";
 import type { Asset } from "../src/stores/use-asset-store";
 
-// Execute the real page and its count helpers; replace only the hooks, query,
+// Execute the real page, empty-state component and count helpers; replace only the hooks, query,
 // store and UI boundaries. VM isolation avoids changing other tests' modules.
-const build = await Bun.build({
-    entrypoints: [new URL("../src/pages/assets/index.tsx", import.meta.url).pathname],
-    target: "node",
-    format: "cjs",
-    external: ["*"],
-});
-if (!build.success) throw new Error(build.logs.map(String).join("\n"));
-const source = await build.outputs[0].text();
+const [source, stateSource] = await Promise.all(["pages/assets/index.tsx", "components/layout/workspace-state.tsx"].map(async (path) => {
+    const build = await Bun.build({ entrypoints: [new URL(`../src/${path}`, import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
+    if (!build.success) throw new Error(build.logs.map(String).join("\n"));
+    return build.outputs[0].text();
+}));
 
-type Element = { type: string; props: Record<string, any> };
+type Element = { type: string | ((props: any) => Element); props: Record<string, any> };
 type PageData = { assets: Asset[]; total: number; kindCounts: Record<string, number>; categoryCounts: Record<string, number>; folderCounts: Record<string, number> };
 
 function assets(count: number, patch: Partial<Asset> = {}): Asset[] {
@@ -83,13 +80,14 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         },
         useEffect() {},
     };
-    const jsx = (type: string, props: Record<string, any>) => ({ type, props });
+    const stateModule = { exports: {} as typeof import("../src/components/layout/workspace-state") };
+    const jsx = (type: Element["type"], props: Record<string, any>): Element => type === stateModule.exports.WorkspaceNoResultsState ? type(props) : { type, props };
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const noop = () => {};
     const store = () => ({ assets: localAssets, addAsset: noop, updateAsset: noop });
     const form = { getFieldValue: noop, setFieldsValue: noop, setFieldValue: noop };
     const modules: Record<string, any> = {
-        react: { ...hooks, createElement: (type: string, props: any, ...children: any[]) => jsx(type, { ...props, children }), Fragment: "Fragment" },
+        react: { ...hooks, createElement: (type: Element["type"], props: any, ...children: any[]) => jsx(type, { ...props, children }), Fragment: "Fragment" },
         "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
         "react/jsx-dev-runtime": { jsxDEV: jsx, Fragment: "Fragment" },
         "@tanstack/react-query": {
@@ -118,6 +116,7 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         "@/hooks/use-debounced-value": { useDebouncedValue: (value: unknown) => value },
         "@/lib/utils": { cn: (...values: unknown[]) => values.filter(Boolean).join(" ") },
         "@/lib/asset-category": assetCategory,
+        "@/components/layout/workspace-state": stateModule.exports,
         "@/stores/use-asset-store": { useAssetStore: Object.assign((selector: (value: ReturnType<typeof store>) => unknown) => selector(store()), { getState: store }) },
         "@/stores/use-user-store": { useUserStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, runtimeLimits: { recycleBinRetentionDays: 30 } }) },
         "@/services/user-data-sync": {
@@ -133,6 +132,8 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         "./asset-library-format": assetFormat,
         "./asset-grid-density": gridDensity,
     };
+    runInNewContext(stateSource, { module: stateModule, exports: stateModule.exports, require: (name: string) => modules[name] || ui });
+    modules["@/components/layout/workspace-state"] = stateModule.exports;
     const module = { exports: {} as { default: () => Element } };
     runInNewContext(source, { module, exports: module.exports, require: (name: string) => modules[name] || ui, console, AbortController, window: { localStorage: { getItem: () => null, setItem: noop } } });
     let tree: Element;
@@ -162,8 +163,14 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
             return descendants(find((element) => element.type === "PageHeader").props.actions).some((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？");
         },
         emptyState() {
-            const { title, description } = find((element) => element.type === "WorkspaceState").props;
+            const { title, description } = find((element) => element.type === stateModule.exports.WorkspaceState).props;
             return { title, description };
+        },
+        clearFilters() {
+            const { action } = find((element) => element.type === stateModule.exports.WorkspaceState).props;
+            expect(text(action)).toBe("清除筛选");
+            action.props.onClick();
+            render();
         },
         search(keyword: string) {
             find((element) => element.props.placeholder === "搜索标题、内容、标签或来源").props.onChange({ target: { value: keyword } });
@@ -225,7 +232,11 @@ test("uncached remote archived assets determine the trash badge and clear action
     expect(h.folderCount("场景")).toBe(0);
     expect(h.trashCount()).toBe(121);
     expect(h.canEmptyTrash()).toBe(true);
-    expect(h.emptyState()).toEqual({ title: "没有匹配的素材", description: "调整关键词或左侧分类后再试。" });
+    expect(h.emptyState()).toEqual({ title: "没有符合筛选条件的内容", description: "调整关键词或左侧分类，或清除筛选后查看全部。" });
+    h.clearFilters();
+    expect(h.requests.at(-1)).toMatchObject({ status: "archived", page: 1, folderId: undefined });
+    expect(h.trashCount()).toBe(121);
+    expect(h.canEmptyTrash()).toBe(true);
     await h.emptyTrash();
     expect(h.emptyTrashCalls).toBe(1);
     expect(h.requests.some((request) => request.status === "archived" && request.pageSize === 1 && request.folderId === undefined && request.query === undefined)).toBe(true);
@@ -235,7 +246,9 @@ test("a trash search with no matches explains the filtered result while retainin
     const h = harness([], pageData([], 0), 1);
     h.openTrash();
     h.search("QA-no-match-20261024");
-    expect(h.emptyState()).toEqual({ title: "没有匹配的素材", description: "调整关键词或左侧分类后再试。" });
+    expect(h.emptyState()).toEqual({ title: "没有找到与“QA-no-match-20261024”相关的内容", description: "调整关键词或左侧分类，或清除筛选后查看全部。" });
+    h.clearFilters();
+    expect(h.requests.at(-1)).toMatchObject({ status: "archived", page: 1, query: undefined });
     expect(h.trashCount()).toBe(1);
     expect(h.canEmptyTrash()).toBe(true);
 });

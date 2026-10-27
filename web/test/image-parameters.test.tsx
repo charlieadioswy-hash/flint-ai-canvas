@@ -39,6 +39,27 @@ describe("plugin image parameters across model configuration and generation", ()
         expect(html).toContain('aria-pressed="true"');
         expect(html).toContain(">8<");
         expect(html).not.toContain(">3<");
+        expect(html).not.toContain("自定义生成张数");
+        expect(imageParameterRequest(image, { ...config, count: "8" }, true)?.count).toBe(8);
+        expect(() => imageParameterRequest(image, { ...config, count: "2" }, true)).toThrow("生成数量超出模型支持范围");
+    });
+    test("count ranges keep their minimum and step instead of exposing arbitrary counts", () => {
+        const { image, config } = fixture([{ name: "count", label: "生成数量", type: "integer", min: 2, max: 8, step: 2, default: 2 }]);
+        const html = renderToStaticMarkup(<ImageParameterFields profile={image} config={{ ...config, count: "4" }} onChange={() => {}} />);
+        expect(html).toContain('role="spinbutton"');
+        expect(html).toContain('aria-valuemin="2"');
+        expect(html).toContain('aria-valuemax="8"');
+        expect(html).not.toContain("自定义生成张数");
+        expect(imageParameterRequest(image, { ...config, count: "6" }, true)?.count).toBe(6);
+        expect(() => imageParameterRequest(image, { ...config, count: "3" }, true)).toThrow("生成数量超出模型支持范围");
+    });
+    test("continuous count ranges retain quick choices and the custom stepper", () => {
+        const { image, config } = fixture([{ name: "count", label: "生成数量", type: "integer", min: 1, max: 8, step: 1, default: 1 }]);
+        const html = renderToStaticMarkup(<ImageParameterFields profile={image} config={{ ...config, count: "4" }} onChange={() => {}} />);
+        expect(html).toContain("生成数量");
+        expect(html).toContain(">3<");
+        expect(html).toContain("自定义生成张数");
+        expect(() => imageParameterRequest(image, { ...config, count: "9" }, true)).toThrow("生成数量超出模型支持范围");
     });
     test("new resolution selects the six preferred ratios without changing existing choices", () => {
         const fields: ImageParameter[] = [

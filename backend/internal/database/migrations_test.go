@@ -247,6 +247,24 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		"user_avatar_presets": 52, "user_login_logs": 53, workbenchToolsMigrationName: 54,
 		"provider_catalog_source": 55, "sql_perf_indexes": 56, "canvas_multi_session_sync": 57,
 		"agent_memory_proposals": 58, "channel_model_protocol_length": 59, "user_feedbacks": 60,
+		"drama_production": 61, "drama_shot_segments": 62, "drama_job_attempts": 63,
+		"drama_media_release": 64, "drama_shot_transition": 65, "drama_prompt_overrides": 66,
+		"drama_segment_production": 67, "drama_segment_revision": 68, "storage_products": 69,
+		"resource_offload_jobs": 70, "drama_segment_mode": 71, "referral_center": 72,
+	}
+	if lineage != "upstream" {
+		for name, version := range upstreamVersions {
+			if version >= 61 {
+				upstreamVersions[name] = version + 5
+			}
+		}
+	}
+	if lineage == "extended_merged_upstream" {
+		upstreamVersions["canvas_model3d"] = 61
+		upstreamVersions["model3d_base_url"] = 62
+		upstreamVersions["model3d_asset_timestamps"] = 63
+		upstreamVersions["channel_model_provider_defaults"] = 64
+		upstreamVersions["task_provider_progress"] = 65
 	}
 	if lineage == "native_merged_upstream" {
 		upstreamVersions["canvas_model3d"] = 58
@@ -273,7 +291,7 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 	applied := map[string]bool{}
 	for _, item := range schemaMigrations {
 		switch lineage {
-		case "upstream", "legacy_workbench", "merged_upstream", "native_merged_upstream":
+		case "upstream", "legacy_workbench", "merged_upstream", "native_merged_upstream", "extended_merged_upstream":
 			if item.version >= 44 && item.version != 46 && item.version != 47 {
 				version, ok := upstreamVersions[item.name]
 				if !ok {
@@ -319,6 +337,11 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 		workbenchToolsMigrationName: {&model.WorkbenchPreset{}, &model.WorkbenchTool{}},
 		"agent_memory_proposals":    {&model.AgentMemoryProposal{}, &model.AgentMemoryRevision{}},
 		"user_feedbacks":            {&model.UserFeedback{}},
+		"drama_production":          {&model.DramaProduction{}, &model.DramaCast{}, &model.DramaEpisode{}, &model.DramaShot{}, &model.DramaTake{}, &model.DramaJob{}},
+		"drama_prompt_overrides":    {&model.DramaSegment{}},
+		"storage_products":          {&model.UserStorageGrant{}, &model.UserStorageState{}},
+		"resource_offload_jobs":     {&model.ResourceOffloadJob{}},
+		"referral_center":           {&model.ReferralProfile{}, &model.ReferralBinding{}, &model.ReferralCommission{}},
 	} {
 		if !applied[name] {
 			for _, table := range tables {

@@ -8,13 +8,23 @@ describe("canvas shortcuts", () => {
         expect(CANVAS_SHORTCUTS.find((shortcut) => shortcut.id === "focus")?.keys).toEqual([["Shift", "Ctrl / Cmd", "F"]]);
     });
 
-    test("documents default region selection and trackpad-friendly panning", () => {
+    test("documents default region selection and wheel or trackpad panning", () => {
         expect(CANVAS_SHORTCUTS.find((shortcut) => shortcut.id === "box-select")?.keys[0]).toEqual(["空白处左键拖动"]);
         expect(CANVAS_SHORTCUTS.find((shortcut) => shortcut.id === "pan")?.keys).toEqual([
+            ["滚轮"],
+            ["Shift", "滚轮"],
             ["触控板双指"],
             ["Space", "左键拖动"],
             ["中键拖动"],
         ]);
+    });
+
+    test("documents modifier wheel zoom and image corner resizing", () => {
+        expect(CANVAS_SHORTCUTS.find((shortcut) => shortcut.id === "zoom-wheel")?.keys).toEqual([
+            ["Ctrl / Cmd", "滚轮"],
+            ["触控板捏合"],
+        ]);
+        expect(CANVAS_SHORTCUTS.find((shortcut) => shortcut.id === "resize-selected-image")?.keys).toEqual([["拖动图片角点"]]);
     });
 
     test("searches titles, descriptions, keys and keywords", () => {

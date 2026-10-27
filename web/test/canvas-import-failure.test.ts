@@ -34,7 +34,7 @@ function fixture() {
     return { source, asset, archive };
 }
 
-function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failAssetSync?: boolean } = {}) {
+function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failAssetSync?: boolean | "permanent" } = {}) {
     const { source, asset, archive } = fixture();
     withCanvasStorePersistenceSuppressed(() => useCanvasStore.setState({ projects: [structuredClone(source)] }));
     withAssetStorePersistenceSuppressed(() => useAssetStore.setState({ assets: [structuredClone(asset)] }));
@@ -65,8 +65,10 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     }) };
     const sync = {
         hasRemoteUserDataSyncSession: () => true,
+        subscribeRemoteUserDataReady: () => () => undefined,
         saveRemoteUserDataNow: async () => {
             remoteSnapshots.push(structuredClone(useCanvasStore.getState().projects));
+            if (options.failAssetSync === "permanent") throw Object.assign(new Error("Asset sync rejected"), { permanent: true });
             if (options.failAssetSync !== false) throw new Error("Network Error");
         },
         scheduleRemoteUserDataSync: () => { syncRetries += 1; },
@@ -79,7 +81,7 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     };
     // Run the real ensureCanvasNodeAsset: it creates a local asset before the remote save rejects.
     const assetModule = { exports: {} as typeof import("@/services/project-asset-sync") };
-    runInNewContext(builds[1], { module: assetModule, exports: assetModule.exports, require: baseRequire, DOMException, setTimeout, clearTimeout });
+    runInNewContext(builds[1], { module: assetModule, exports: assetModule.exports, require: baseRequire, Error, DOMException, setTimeout, clearTimeout });
     const saveBlob = async (key: string, blob: Blob) => {
         if (options.failLocalSave) throw new Error("Local media quota exceeded");
         writes.set(key, blob);
@@ -88,7 +90,7 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const pageModule = { exports: {} as { default(): any } };
     runInNewContext(builds[0], {
-        module: pageModule, exports: pageModule.exports, crypto, console: { warn() {}, error() {} },
+        module: pageModule, exports: pageModule.exports, crypto, Error, console: { warn() {}, error() {} },
         window: { requestAnimationFrame: (callback: () => void) => callback() },
         require(name: string): any {
             if (name === "react") return { lazy: () => "Lazy", Suspense: "Suspense", useState: (value: unknown) => [value, () => undefined], useRef: (current: unknown) => ({ current }), useMemo: (fn: () => unknown) => fn(), useCallback: (fn: unknown) => fn, useEffect() {} };
@@ -126,7 +128,7 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     };
 }
 
-test("real asset-sync rejection retains a complete persisted import draft after offline media fallback", async () => {
+test("retryable asset-sync failure retains a complete bound import draft after offline media fallback", async () => {
     const h = harness();
     await h.run();
     const draft = useCanvasStore.getState().projects.find((item) => item.id !== h.source.id)!;
@@ -142,13 +144,40 @@ test("real asset-sync rejection retains a complete persisted import draft after 
     expect(model.metadata?.model3d?.run).toBeUndefined();
     expect(model.metadata?.taskId).toBeUndefined();
     expect(useAssetStore.getState().assets.some((item) => item.id !== h.asset.id && item.metadata?.canvasId === draft.id)).toBe(true);
-    expect(h.remoteSnapshots).toHaveLength(1);
+    // Transient asset sync now returns its local asset with syncPending, so
+    // import can bind it before the final canvas save also reports offline.
+    expect(h.remoteSnapshots).toHaveLength(2);
     expect(h.remoteSnapshots[0].find((item) => item.id === draft.id)?.nodes).toHaveLength(2);
+    expect(h.remoteSnapshots.at(-1)?.find((item) => item.id === draft.id)?.nodes).toEqual(draft.nodes);
+    const importedAsset = useAssetStore.getState().assets.find((item) => item.metadata?.canvasId === draft.id)!;
+    expect(model.metadata?.assetId).toBe(importedAsset.id);
+    expect(model.metadata?.model3d?.result?.assetId).toBe(importedAsset.id);
     expect(h.notices.at(-1)?.kind).toBe("warning");
-    expect(h.navigations).toContain(`/canvas/${draft.id}`);
+    expect(h.notices.at(-1)?.content).toContain("云端同步未完成，将自动重试");
+    expect(h.navigations).toHaveLength(0);
     expect(h.retries()).toBeGreaterThan(0);
     expect(useCanvasStore.getState().projects.find((item) => item.id === h.source.id)).toEqual(h.source);
     expect(useAssetStore.getState().assets.find((item) => item.id === h.asset.id)).toEqual(h.asset);
+    const repaired = withCanvasStorePersistenceSuppressed(() => withAssetStorePersistenceSuppressed(() => repairMissingCanvasAssets(new Set([draft.id]), true)));
+    expect(repaired).toEqual({ createdAssets: 0, updatedProjects: 0 });
+    const recovered = useCanvasStore.getState().projects.find((item) => item.id === draft.id)!.nodes[0];
+    expect(recovered.metadata?.assetId).toBe(importedAsset.id);
+    expect(recovered.metadata?.model3d?.result?.assetId).toBe(importedAsset.id);
+    expect(useAssetStore.getState().assets).toHaveLength(2);
+});
+
+test("permanent asset-sync rejection opens a persisted complete draft whose asset binding can recover", async () => {
+    const h = harness({ failAssetSync: "permanent" });
+    await h.run();
+    const draft = useCanvasStore.getState().projects.find((item) => item.id !== h.source.id)!;
+    expect(draft.nodes).toHaveLength(2);
+    expect(draft.connections).toEqual(h.source.connections);
+    expect(h.persisted.at(-1)?.find((item) => item.id === draft.id)?.nodes).toEqual(draft.nodes);
+    expect(h.remoteSnapshots).toHaveLength(1);
+    expect(h.remoteSnapshots[0].find((item) => item.id === draft.id)?.nodes).toHaveLength(2);
+    expect(h.notices.at(-1)).toMatchObject({ kind: "warning", content: "已保留本地导入草稿，后续保存未完成：Asset sync rejected" });
+    expect(h.navigations).toContain(`/canvas/${draft.id}`);
+    expect(h.retries()).toBeGreaterThan(0);
     const repaired = withCanvasStorePersistenceSuppressed(() => withAssetStorePersistenceSuppressed(() => repairMissingCanvasAssets(new Set([draft.id]), true)));
     expect(repaired).toEqual({ createdAssets: 0, updatedProjects: 1 });
     const recovered = useCanvasStore.getState().projects.find((item) => item.id === draft.id)!.nodes[0];
@@ -156,6 +185,8 @@ test("real asset-sync rejection retains a complete persisted import draft after 
     expect(recovered.metadata?.assetId).toBe(importedAsset.id);
     expect(recovered.metadata?.model3d?.result?.assetId).toBe(importedAsset.id);
     expect(useAssetStore.getState().assets).toHaveLength(2);
+    expect(useCanvasStore.getState().projects.find((item) => item.id === h.source.id)).toEqual(h.source);
+    expect(useAssetStore.getState().assets.find((item) => item.id === h.asset.id)).toEqual(h.asset);
 });
 
 test("failed offline blob fallback creates no empty canvas and leaves the source available for retry", async () => {

@@ -89,10 +89,11 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 
 FROM ${NODE_IMAGE}
 
+# ffmpeg/ffprobe：短剧抽取剧情段视频最后一帧、时间线合成成片与视频播放转码。
 ARG ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     sed -i "s#https\?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#g" /etc/apk/repositories \
-    && apk --cache-dir /var/cache/apk --update-cache add ca-certificates tzdata wget \
+    && apk --cache-dir /var/cache/apk --update-cache add ca-certificates tzdata wget ffmpeg \
     && addgroup -S app \
     && adduser -S app -G app
 
