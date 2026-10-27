@@ -31,6 +31,7 @@ type canvasGenerationInput struct {
 	Mask             *providerMedia              `json:"mask"`
 	ControlNet       []generation.ControlNetUnit `json:"controlNet,omitempty"`
 	OutputMask       *generation.OutputMask      `json:"outputMask,omitempty"`
+	LiblibLoRA       *liblibLoRASnapshot         `json:"_liblibLoRASnapshot,omitempty"`
 	Metadata         map[string]interface{}      `json:"metadata"`
 	AgentRequests    *agentToolRequests          `json:"agentRequests"`
 	TextOptions      canvasTextOptions           `json:"textOptions"`

@@ -23,7 +23,7 @@ func liblibImageAdapter() Adapter {
 		{Name: "textToImageTemplateUuid", Type: "string", Description: "文生图模板 UUID", Mapping: "providerOptions.liblib-image.textToImageTemplateUuid"},
 		{Name: "imageToImageTemplateUuid", Type: "string", Description: "图生图模板 UUID", Mapping: "providerOptions.liblib-image.imageToImageTemplateUuid"},
 		{Name: "controlNetModel", Type: "string", Description: "默认控制模型 UUID（仅在类型、预处理器与基础算法兼容时使用）", Mapping: "providerOptions.liblib-image.controlNetModel"},
-		{Name: "checkPointId", Type: "string", Description: "基础模型 UUID（留空使用渠道上游模型）", Mapping: "providerOptions.liblib-image.checkPointId"},
+		{Name: "checkPointId", Type: "string", Description: "SD/SDXL 或 F.1 完整模板的基础模型 UUID（留空使用渠道上游模型）", Mapping: "providerOptions.liblib-image.checkPointId"},
 		{Name: "steps", Type: "integer", Description: "采样步数", Mapping: "providerOptions.liblib-image.steps"},
 		{Name: "sampler", Type: "integer", Description: "采样器枚举", Mapping: "providerOptions.liblib-image.sampler"},
 		{Name: "cfgScale", Type: "number", Description: "提示词引导系数", Mapping: "providerOptions.liblib-image.cfgScale"},
@@ -33,6 +33,7 @@ func liblibImageAdapter() Adapter {
 		{Name: "inpaintMaskMode", Type: "string", Values: []string{"alpha", "luminance"}, Description: "局部重绘蒙版：alpha 透明处重绘（默认），luminance 白色处重绘", Mapping: "providerOptions.liblib-image.inpaintMaskMode"},
 		{Name: "width", Type: "integer", Description: "输出宽度", Mapping: "providerOptions.liblib-image.width"},
 		{Name: "height", Type: "integer", Description: "输出高度", Mapping: "providerOptions.liblib-image.height"},
+		{Name: "additionalNetwork", Type: "liblib-lora[]", Description: "已登记且兼容当前底模的 LoRA，最多 5 个；权重 -4–4，默认 0.8", Mapping: "providerOptions.liblib-image.additionalNetwork"},
 	}
 	info.Execution = "declarative"
 	return builtinAdapter{info: info, create: buildLiblibCreate, parseCreate: parseLiblibCreate,
@@ -53,6 +54,9 @@ func liblibJSONSpec(path string, body any) RequestSpec {
 // Media references may still be local here; BuildCreate requires prepared URLs.
 func ValidateLiblibRequest(r GenerationRequest) error {
 	o := r.ProviderOptions[LiblibImageProtocolID]
+	if _, err := NormalizeLiblibAdditionalNetworks(o["additionalNetwork"]); err != nil {
+		return err
+	}
 	family := liblibOptionString(o, "family")
 	if family != "f1" && family != "sd" {
 		return fmt.Errorf("Liblib 需要配置 family 为 f1 或 sd")
@@ -64,11 +68,12 @@ func ValidateLiblibRequest(r GenerationRequest) error {
 	if model == "" {
 		model = strings.TrimSpace(r.Model)
 	}
-	if family == "sd" && !liblibUUID(model) {
+	checkpointOptions := liblibCheckpointOptions(o)
+	if checkpointOptions && !liblibUUID(model) {
 		return fmt.Errorf("Liblib 需要有效的基础模型 checkPointId UUID")
 	}
 	for _, name := range []string{"steps", "sampler", "cfgScale"} {
-		if family == "f1" && name != "steps" {
+		if !checkpointOptions && name != "steps" {
 			continue
 		}
 		value, ok := liblibNumber(o[name])
@@ -168,7 +173,10 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 		count = 1
 	}
 	params := map[string]any{"prompt": r.Prompt, "imgCount": count, "steps": o["steps"], "seed": -1}
-	if liblibOptionString(o, "family") == "sd" {
+	if networks, _ := NormalizeLiblibAdditionalNetworks(o["additionalNetwork"]); len(networks) > 0 {
+		params["additionalNetwork"] = networks
+	}
+	if liblibCheckpointOptions(o) {
 		params["checkPointId"] = CanonicalLiblibModelID(model)
 		params["sampler"] = o["sampler"]
 		params["cfgScale"] = o["cfgScale"]
@@ -252,6 +260,19 @@ func buildLiblibCreate(r GenerationRequest) (RequestSpec, error) {
 		params["controlNet"] = units
 	}
 	return liblibJSONSpec(path, map[string]any{"templateUuid": o["templateUuid"], "generateParams": params}), nil
+}
+
+func liblibCheckpointOptions(options map[string]any) bool {
+	if liblibOptionString(options, "family") == "sd" {
+		return true
+	}
+	// These official F.1 full templates expose checkpoint/sampler/CFG. Other
+	// F.1 specialty templates may keep a fixed base model and omit these fields.
+	switch liblibOptionString(options, "templateUuid") {
+	case "6f7c4652458d4802969f8d089cf5b91f", "63b72710c9574457ba303d9d9b8df8bd":
+		return true
+	}
+	return false
 }
 
 func parseLiblibCreate(payload map[string]any) (CreateResult, error) {

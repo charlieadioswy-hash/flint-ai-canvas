@@ -7,8 +7,11 @@ type QuoteResult = {
     error: string;
 };
 
-export function useCanvasModelQuote(request: ModelQuoteRequest | undefined, enabled: boolean) {
-    const requestKey = enabled && request ? JSON.stringify(request) : "";
+// taskCount is only supplied for identical, independently submitted tasks.
+// Callers quoting one batch request keep the default, since its quote is total.
+export function useCanvasModelQuote(request: ModelQuoteRequest | undefined, enabled: boolean, taskCount = 1) {
+    const countError = enabled && request && (!Number.isInteger(taskCount) || taskCount < 1 || taskCount > 15) ? "生成任务数量必须为 1–15 的整数" : "";
+    const requestKey = enabled && request && !countError ? JSON.stringify({ request, taskCount }) : "";
     const [activeRequestKey, setActiveRequestKey] = useState(requestKey);
     const [result, setResult] = useState<QuoteResult | null>(null);
     const [retryCount, setRetryCount] = useState(0);
@@ -21,10 +24,10 @@ export function useCanvasModelQuote(request: ModelQuoteRequest | undefined, enab
     useEffect(() => {
         if (!requestKey) return;
         const controller = new AbortController();
-        const currentRequest = JSON.parse(requestKey) as ModelQuoteRequest;
+        const { request: currentRequest, taskCount: currentTaskCount } = JSON.parse(requestKey) as { request: ModelQuoteRequest; taskCount: number };
         quoteModel(currentRequest, controller.signal)
             .then(({ quote }) => {
-                if (!controller.signal.aborted) setResult({ requestKey, quote, error: "" });
+                if (!controller.signal.aborted) setResult({ requestKey, quote: { ...quote, quantity: quote.quantity * currentTaskCount, amountMicrocredits: quote.amountMicrocredits * currentTaskCount }, error: "" });
             })
             .catch((error: unknown) => {
                 if (!controller.signal.aborted) {
@@ -37,7 +40,7 @@ export function useCanvasModelQuote(request: ModelQuoteRequest | undefined, enab
     const current = requestKey && result?.requestKey === requestKey ? result : null;
     return {
         quote: current?.quote ?? null,
-        error: current?.error || "",
+        error: countError || current?.error || "",
         pending: Boolean(requestKey && !current),
         retry: () => {
             setResult(null);

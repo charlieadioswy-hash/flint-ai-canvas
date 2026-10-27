@@ -8,6 +8,7 @@ import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/componen
 import { CanvasStyleDetailModal, CanvasStylePickerModal, resolveProjectCanvasStyle, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { createStyleProfileSnapshot, parseStyleProfile, resolveStyleExecutionPlan, serializeStyleProfile } from "@/lib/canvas/style-profile";
+import { liblibLoraContext } from "@/lib/canvas/liblib-lora";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { listProjectAssetsPage, updateProject } from "@/services/api/projects";
 import { uploadImage } from "@/services/image-storage";
@@ -53,7 +54,7 @@ export default function ProjectSettingsView({ detail, refreshProject }: ProjectD
         const imageConfig = resolveModelRequestConfig(effectiveConfig, effectiveConfig.imageModel || effectiveConfig.model);
         const videoConfig = resolveModelRequestConfig(effectiveConfig, effectiveConfig.videoModel || effectiveConfig.model);
         return {
-            image: resolveStyleExecutionPlan(styleProfile, { mode: "image", model: imageConfig.model, interfaceType: imageConfig.interfaceType || imageConfig.apiFormat }),
+            image: resolveStyleExecutionPlan(styleProfile, { mode: "image", model: imageConfig.model, interfaceType: imageConfig.interfaceType || imageConfig.apiFormat, loraProfile: liblibLoraContext(effectiveConfig, effectiveConfig.imageModel || effectiveConfig.model).profile }),
             video: resolveStyleExecutionPlan(styleProfile, { mode: "video", model: videoConfig.model, interfaceType: videoConfig.interfaceType || videoConfig.apiFormat }),
         };
     }, [effectiveConfig, styleProfile]);

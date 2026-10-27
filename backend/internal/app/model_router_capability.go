@@ -50,10 +50,12 @@ type OptionConstraint struct {
 }
 
 type ModelRequestIntent struct {
-	Capability string         `json:"capability"`
-	Operation  string         `json:"operation,omitempty"`
-	Inputs     map[string]int `json:"inputs,omitempty"`
-	Options    map[string]any `json:"options,omitempty"`
+	Capability       string                    `json:"capability"`
+	Operation        string                    `json:"operation,omitempty"`
+	Inputs           map[string]int            `json:"inputs,omitempty"`
+	Options          map[string]any            `json:"options,omitempty"`
+	ProviderOptions  map[string]map[string]any `json:"providerOptions,omitempty"`
+	styleProfileJSON string
 }
 
 // ModelRequestIntentFromTaskInput 从统一任务输入推导路由意图；它只统计实际输入和显式参数，不假设任何固定图片数或视频时长。
@@ -63,6 +65,16 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 		capability = capabilityFromTaskType(taskType)
 	}
 	intent := ModelRequestIntent{Capability: capability, Operation: strings.TrimSpace(operation), Inputs: map[string]int{}, Options: map[string]any{}}
+	if metadata, ok := input["metadata"].(map[string]any); ok {
+		intent.styleProfileJSON = metadataString(metadata, "styleProfileJson")
+		if namespaces, ok := metadata["providerOptions"].(map[string]any); ok {
+			if options, ok := namespaces["liblib-image"].(map[string]any); ok {
+				if networks, present := options["additionalNetwork"]; present {
+					intent.ProviderOptions = map[string]map[string]any{"liblib-image": {"additionalNetwork": networks}}
+				}
+			}
+		}
+	}
 	for inputType, key := range map[string]string{"image": "referenceImages", "video": "referenceVideos", "audio": "referenceAudios"} {
 		if values, ok := input[key].([]any); ok {
 			intent.Inputs[inputType] = len(values)

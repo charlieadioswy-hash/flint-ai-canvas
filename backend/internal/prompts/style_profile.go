@@ -184,8 +184,8 @@ func ValidateStyleProfileJSON(value string) (string, error) {
 			return "", errors.New("项目画风执行资产 ID 不能重复")
 		}
 		assetIDs[asset.ID] = struct{}{}
-		if asset.Weight != nil && (*asset.Weight < 0 || *asset.Weight > 2) {
-			return "", errors.New("LoRA 权重必须在 0 到 2 之间")
+		if asset.Weight != nil && (asset.Kind == "lora" && (*asset.Weight < -4 || *asset.Weight > 4) || asset.Kind != "lora" && (*asset.Weight < 0 || *asset.Weight > 2)) {
+			return "", errors.New("LoRA 权重必须在 -4 到 4 之间，参考资产权重必须在 0 到 2 之间")
 		}
 		if len(asset.BaseModels) > 20 {
 			return "", errors.New("单个画风资产最多声明 20 个兼容模型")
@@ -204,7 +204,7 @@ func ValidateStyleProfileJSON(value string) (string, error) {
 		if asset.Status == "validated" {
 			switch asset.Kind {
 			case "lora":
-				if strings.TrimSpace(asset.SourceID) == "" && strings.TrimSpace(asset.SourceURL) == "" {
+				if strings.TrimSpace(asset.SourceID) == "" && strings.TrimSpace(asset.SourceURL) == "" && !styleProfileVersionUUID(asset.Version) {
 					return "", errors.New("已验证的 LoRA 必须填写来源资产 ID 或 URL")
 				}
 			case "template", "prompt":
@@ -219,6 +219,19 @@ func ValidateStyleProfileJSON(value string) (string, error) {
 		}
 	}
 	return trimmed, nil
+}
+
+func styleProfileVersionUUID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 32 {
+		return false
+	}
+	for _, ch := range strings.ToLower(value) {
+		if !(ch >= '0' && ch <= '9' || ch >= 'a' && ch <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeUserStyleProfileJSON(value string, presetID string, revision int64) (string, StyleProfileDocument, error) {

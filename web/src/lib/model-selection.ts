@@ -22,6 +22,7 @@ export type ModelRequirements = {
     imageSize?: string;
     controlNetUnits?: number;
     options?: Record<string, unknown>;
+    providerOptions?: Record<string, Record<string, unknown>>;
 };
 
 export type DisplayModelGroup = {

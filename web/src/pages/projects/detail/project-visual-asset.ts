@@ -2,6 +2,7 @@ import { runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-gene
 import { resolveStyleExecutionPlan, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import type { ProjectAsset } from "@/services/api/projects";
 import type { GenerationTask } from "@/services/api/task-center";
+import { liblibLoraContext } from "@/lib/canvas/liblib-lora";
 import { logicalModelIDForConfig, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type VisualImageInput = {
@@ -26,7 +27,7 @@ export function projectVisualImageRequest({ projectId, asset, config, projectSty
     const description = typeof asset.visual.definition.description === "string" ? asset.visual.definition.description.trim() : "";
     const generationConfig = { ...config, model: config.imageModel || config.model, count: "1" };
     const requestConfig = resolveModelRequestConfig(generationConfig, generationConfig.model);
-    const styleExecutionPlan = projectStyle?.profile ? resolveStyleExecutionPlan(projectStyle.profile, { mode: "image", model: requestConfig.model, interfaceType: requestConfig.interfaceType || requestConfig.apiFormat }) : undefined;
+    const styleExecutionPlan = projectStyle?.profile ? resolveStyleExecutionPlan(projectStyle.profile, { mode: "image", model: requestConfig.model, interfaceType: requestConfig.interfaceType || requestConfig.apiFormat, loraProfile: liblibLoraContext(generationConfig).profile }) : undefined;
     if (styleExecutionPlan?.status === "blocked" && !logicalModelIDForConfig(generationConfig)) throw new Error(`当前图片模型无法完整执行项目画风：${styleExecutionPlan.warnings.join("；")}。请切换图片模型，或在项目设置中停用对应画风资产`);
     return {
         projectId,

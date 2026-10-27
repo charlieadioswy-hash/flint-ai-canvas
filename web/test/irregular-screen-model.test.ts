@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { screenControlParameters, screenDefaultSettings, screenInpaintError, screenModelError, screenModels, screenPickerConfig, screenProviderOptions, screenSettingsForGenerationMode, screenSettingsFromControl, screenSettingsFromControlSelection } from "../src/lib/canvas/irregular-screen-model";
+import { screenControlParameters, screenDefaultSettings, screenInpaintError, screenModelError, screenModels, screenPickerConfig, screenProviderOptions, screenSettingsForGenerationMode, screenSettingsForModel, screenSettingsFromControl, screenSettingsFromControlSelection } from "../src/lib/canvas/irregular-screen-model";
 import { applyScreenCarExample, screenCarExample } from "../src/lib/canvas/irregular-screen-example";
-import { switchControlNetType } from "../src/lib/canvas/controlnet-options";
+import { controlNetConfigurationError, switchControlNetType } from "../src/lib/canvas/controlnet-options";
+import { liblibLoraConfigurationError } from "../src/lib/canvas/liblib-lora";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { createModelChannel, defaultConfig, encodeChannelModel, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
@@ -45,11 +46,79 @@ function setup(options: { id?: string; scope?: "system" | "user"; enabled?: bool
 const cannyXL = "b6806516962f4e1599a93ac4483c3d23";
 const inpaintXL = "a311363995dd4f2fa42ee3fc9582d920";
 const randomInpaintXL = "3161fc68c59847b0ad826a9fb18c857f";
+const unionF1 = "13c1e1b96ba64f9cbb2b54f89b5fe873";
+const inpaintF1 = "31df01fc271d484ca4d496179d69a665";
 function inpaintSetup() {
     return setup({ preprocessors: ["canny", "inpaint_global_harmonious", "inpaint_only", "inpaint_only+lama"], controlModels: [cannyXL, inpaintXL, randomInpaintXL], defaults: { family: "sd", controlNetModel: cannyXL, textToImageTemplateUuid: "text-template", imageToImageTemplateUuid: "image-template" } });
 }
 
+function f1Setup() {
+    const entry = setup({ id: "f1-channel", preprocessors: ["canny", "depth_midas", "inpaint_global_harmonious"], controlModels: [unionF1, inpaintF1], defaults: { family: "f1", controlNetModel: unionF1, textToImageTemplateUuid: "f1-text-template", imageToImageTemplateUuid: "f1-image-template", sampler: 1, cfgScale: 3.5 } });
+    const controls = entry.channel.modelCosts![0].capabilityConfig!.image!.controlNet!;
+    controls.baseModel = "f1";
+    controls.modelCatalog = [];
+    return entry;
+}
+
 describe("irregular screen model settings", () => {
+    test("F.1 becomes selectable in the real screen picker only after compatible ControlNet configuration is enabled", () => {
+        const { config, channel, model } = f1Setup();
+        const controls = channel.modelCosts![0].capabilityConfig!.image!.controlNet!;
+        controls.supported = false;
+        expect(screenModels(config)).toEqual([]);
+        expect(screenPickerConfig(config).channels).toEqual([]);
+        controls.supported = true;
+        expect(screenModelError(config, model)).toBe("");
+        expect(screenModelError(config, model, true)).toBe("");
+        expect(selectableModelsByCapability(screenPickerConfig(config), "image")).toEqual([model]);
+        controls.models = [cannyXL, inpaintXL];
+        expect(screenModelError(config, model)).toContain("未配置兼容");
+        expect(screenModels(config)).toEqual([]);
+    });
+
+    test("F.1 screen defaults select official F.1 Inpaint and keep its operation templates and sampling defaults", () => {
+        const { config, model, channel } = f1Setup();
+        const defaults = screenDefaultSettings(config, model);
+        expect(defaults).toMatchObject({ controlType: "inpaint", preprocessor: "inpaint_global_harmonious", controlModel: inpaintF1, strength: 1, start: 0, end: 1, pixelPerfect: false, sampler: 1, cfgScale: 3.5 });
+        expect(screenControlParameters(defaults)).not.toHaveProperty("canny");
+        expect(controlNetConfigurationError(screenControlParameters(defaults), channel.modelCosts![0].capabilityConfig!.image!.controlNet, channel.modelCosts![0].defaultOptions, "text2img")).toBe("");
+        expect(screenProviderOptions(config, model, defaults, "text2img")["liblib-image"]).toMatchObject({ family: "f1", templateUuid: "f1-text-template", sampler: 1, cfgScale: 3.5 });
+        const imageSettings = screenDefaultSettings(config, model, "img2img");
+        expect(imageSettings).toMatchObject({ controlType: "canny", preprocessor: "canny", controlModel: unionF1 });
+        expect(screenProviderOptions(config, model, imageSettings, "img2img")["liblib-image"].templateUuid).toBe("f1-image-template");
+        // ControlNet Inpaint does not enable the distinct SD-only top-level mask API.
+        expect(screenInpaintError(config, model)).toContain("SD / SDXL");
+    });
+
+    test("F.1 falls back to its compatible Canny model when only SDXL Inpaint is allowed", () => {
+        const { config, model, channel } = f1Setup();
+        channel.modelCosts![0].capabilityConfig!.image!.controlNet!.models = [unionF1, inpaintXL];
+        expect(screenDefaultSettings(config, model)).toMatchObject({ controlType: "canny", preprocessor: "canny", controlModel: unionF1 });
+    });
+
+    test.each(["sdxl", "f1"] as const)("switching from %s resets incompatible controls and preserves LoRA choices for explicit validation", (base) => {
+        const sd = inpaintSetup();
+        const f1 = f1Setup();
+        const config = { ...sd.config, channels: [sd.channel, f1.channel] };
+        const sdLora = "11111111111111111111111111111111";
+        const f1Lora = "22222222222222222222222222222222";
+        const models = [{ id: sdLora, name: "SDXL 画风", baseModel: "sdxl" as const }, { id: f1Lora, name: "F.1 画风", baseModel: "f1" as const }];
+        sd.channel.modelCosts![0].capabilityConfig!.image!.lora = { supported: true, maxNetworks: 5, baseModel: "sdxl", models };
+        f1.channel.modelCosts![0].capabilityConfig!.image!.lora = { supported: true, maxNetworks: 5, baseModel: "f1", models };
+        const [source, target] = base === "sdxl" ? [sd, f1] : [f1, sd];
+        const selected = [{ modelId: base === "sdxl" ? sdLora : f1Lora, weight: 0 }];
+        const previous = { ...screenDefaultSettings(config, source.model, "img2img"), additionalNetwork: selected };
+        const next = screenSettingsForModel(config, target.model, previous, "text2img");
+        expect(next).toMatchObject({ controlType: "inpaint", preprocessor: "inpaint_global_harmonious", controlModel: base === "sdxl" ? inpaintF1 : inpaintXL });
+        expect(screenControlParameters(next)).not.toHaveProperty("canny");
+        expect(next.additionalNetwork).toEqual(selected);
+        expect(next.additionalNetwork).not.toBe(selected);
+        expect(liblibLoraConfigurationError(next.additionalNetwork, target.channel.modelCosts![0].capabilityConfig!.image!.lora)).toContain("仅兼容");
+        const returned = screenSettingsForModel(config, source.model, next, "text2img");
+        expect(liblibLoraConfigurationError(returned.additionalNetwork, source.channel.modelCosts![0].capabilityConfig!.image!.lora)).toBe("");
+        expect(previous.additionalNetwork).toEqual(selected);
+    });
+
     test("Liblib text-to-image prefers available Inpaint with official empty processor parameters", () => {
         const { config, model } = inpaintSetup();
         const settings = screenDefaultSettings(config, model);

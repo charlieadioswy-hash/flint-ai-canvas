@@ -12,16 +12,24 @@ import * as promptResize from "../src/components/canvas/canvas-node-prompt-resiz
 import * as controlnet from "../src/lib/canvas/controlnet";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
+import * as projectGeneration from "../src/lib/canvas/canvas-project-generation";
 import { buildVideoGenerationMetadata } from "../src/lib/canvas/canvas-project-generation";
+import * as styleExecution from "../src/lib/canvas/canvas-style-execution";
+import * as loraQuote from "../src/lib/canvas/liblib-lora-quote";
+import { executeImageGeneration } from "../src/pages/canvas/canvas-image-generation-executor";
 import { resolveVideoImageReferences } from "../src/services/api/video-reference-roles";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "../src/types/canvas";
 import type { Asset } from "../src/stores/use-asset-store";
+import type { LogicalModelQuote, ModelQuoteRequest } from "../src/services/api/logical-models";
 
 // Run the real panel, configuration, capability and quote builders. Replace
 // React/UI boundaries and the quote transport; no API or generation is invoked.
 const build = await Bun.build({ entrypoints: [new URL("../src/components/canvas/canvas-node-prompt-panel.tsx", import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
 if (!build.success) throw new Error(build.logs.map(String).join("\n"));
 const source = await build.outputs[0].text();
+const quoteBuild = await Bun.build({ entrypoints: [new URL("../src/components/canvas/use-canvas-model-quote.ts", import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
+if (!quoteBuild.success) throw new Error(quoteBuild.logs.map(String).join("\n"));
+const quoteSource = await quoteBuild.outputs[0].text();
 type Element = { type: string; props: Record<string, any> };
 
 function imageAsset(): Asset {
@@ -40,15 +48,23 @@ function videoConfig() {
     return { ...configStore.defaultConfig, channels: [channel], model: `${channel.id}::${model}`, videoModel: `${channel.id}::${model}`, videoModels: [`${channel.id}::${model}`], models: [`${channel.id}::${model}`], size: "16:9", vquality: "512P", videoSeconds: "6", taskWorkflowProvider: "model" as const };
 }
 
+function imageConfig(logical = false, count = "4") {
+    const config = videoConfig();
+    const model = "liblib-image-model";
+    const image = { ...modelCapabilities.defaultImageCapabilityConfig("liblib-image"), maxOutputs: 4 };
+    const channel = configStore.createModelChannel({ id: "image-channel", name: "Image", scope: "system", interfaceType: "liblib-image", baseUrl: "/api/system-channel", apiKey: "system", models: [model], modelCosts: [{ model, capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 250_000, ...(logical ? { logicalModelId: "logical-image" } : {}), capabilityConfig: { version: 1, image } }] });
+    return { ...config, channels: [channel], model: `${channel.id}::${model}`, imageModel: `${channel.id}::${model}`, models: [`${channel.id}::${model}`], imageModels: [`${channel.id}::${model}`], count };
+}
+
 function descendants(value: any): Element[] {
     if (Array.isArray(value)) return value.flatMap(descendants);
     if (!value || typeof value !== "object" || !value.props) return [];
     return [value, ...descendants(value.props.children)];
 }
 
-function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", connected = false) {
-    const config = videoConfig();
-    let target: CanvasNodeData = { id: "target", type: CanvasNodeType.Video, title: "Video", position: { x: 0, y: 0 }, width: 400, height: 300, metadata: { prompt, composerContent: prompt, model: config.model, vquality: "512P", seconds: "6" } };
+function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", connected = false, config = videoConfig()) {
+    const imageMode = config.channels[0].modelCosts?.[0].capability === "image";
+    let target: CanvasNodeData = { id: "target", type: imageMode ? CanvasNodeType.Image : CanvasNodeType.Video, title: "Generation", position: { x: 0, y: 0 }, width: 400, height: 300, metadata: { prompt, composerContent: prompt, model: config.model, vquality: "512P", seconds: "6", ...(imageMode ? { count: Number(config.count) } : {}) } };
     const image: CanvasNodeData = { id: "connected-image", type: CanvasNodeType.Image, title: "Robot", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { assetId: "robot-asset", content: "data:image/png;base64,AA==", storageKey: "resource:robot-image" } };
     const connections: CanvasConnection[] = connected ? [{ id: "edge", fromNodeId: image.id, toNodeId: target.id }] : [];
     const nodes = () => connected ? [image, target] : [target];
@@ -65,6 +81,7 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
     const cells: any[] = [];
     let effects: (() => void)[] = [];
     let quoteRequest: ReturnType<typeof modelPricing.modelQuoteRequest>;
+    const quoteCalls: Array<{ request: ModelQuoteRequest; signal?: AbortSignal; resolve(value: { quote: LogicalModelQuote }): void; reject(error: Error): void }> = [];
     const patches: Partial<CanvasNodeMetadata>[] = [];
     const noop = () => {};
     const changed = (before: unknown[] | undefined, next: unknown[] | undefined) => !before || !next || before.length !== next.length || before.some((value, index) => !Object.is(value, next[index]));
@@ -85,9 +102,17 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         },
         useEffect(effect: () => void, deps: unknown[]) {
             const index = cursor++;
-            if (!cells[index] || changed(cells[index], deps)) { cells[index] = deps; effects.push(effect); }
+            if (!cells[index] || changed(cells[index].deps, deps)) {
+                const cleanup = cells[index]?.cleanup;
+                cells[index] = { deps };
+                effects.push(() => { cleanup?.(); cells[index].cleanup = effect(); });
+            }
         },
     };
+    const quoteModule = { exports: {} as { useCanvasModelQuote: typeof import("../src/components/canvas/use-canvas-model-quote").useCanvasModelQuote } };
+    runInNewContext(quoteSource, { module: quoteModule, exports: quoteModule.exports, AbortController, require: (name: string) => name === "react" ? hooks : {
+        quoteModel: (request: ModelQuoteRequest, signal?: AbortSignal) => new Promise<{ quote: LogicalModelQuote }>((resolve, reject) => quoteCalls.push({ request, signal, resolve, reject })),
+    } });
     const jsx = (type: string, props: Record<string, any>) => ({ type, props });
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const themeName = Object.keys(canvasThemes)[0];
@@ -100,10 +125,14 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         "@/stores/use-user-store": { useUserStore: (selector: (state: unknown) => unknown) => selector({ features: { creditsEnabled: true } }) },
         "@/stores/use-plugin-store": { usePluginStore: (selector: (state: unknown) => unknown) => selector({ installations: [], pluginStates: {} }) },
         "@/stores/canvas/use-canvas-theme-store": { useActiveTheme: () => themeName },
+        "@/stores/canvas/use-canvas-store": { useCanvasStore: () => undefined },
         "@/lib/canvas-theme": { canvasThemes },
         "@/lib/canvas/generation-contract": generationContract,
         "@/lib/canvas/canvas-resource-references": resourceReferences,
         "@/lib/canvas/controlnet": controlnet,
+        "@/lib/canvas/canvas-project-generation": projectGeneration,
+        "@/lib/canvas/canvas-style-execution": styleExecution,
+        "@/lib/canvas/liblib-lora-quote": loraQuote,
         "@/lib/model-selection": modelSelection,
         "@/lib/model-capabilities": modelCapabilities,
         "@/lib/model-pricing": modelPricing,
@@ -113,7 +142,7 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         "./canvas-node-prompt-resize": promptResize,
         "./canvas-node-prompt-references": { ConnectedReferenceShelf: "ConnectedReferenceShelf", ReferenceToolsPopover: "ReferenceToolsPopover", referenceShelfHeading: () => "已连接素材" },
         "./use-resolved-canvas-resource-references": { useResolvedCanvasResourceReferences: (references: unknown) => references },
-        "./use-canvas-model-quote": { useCanvasModelQuote: (request: typeof quoteRequest) => { quoteRequest = request; return { quote: null, error: "", pending: false, retry: noop }; } },
+        "./use-canvas-model-quote": { useCanvasModelQuote: (request: typeof quoteRequest, enabled: boolean, taskCount?: number) => { quoteRequest = request; return quoteModule.exports.useCanvasModelQuote(request, enabled, taskCount); } },
         "@/lib/plugins/builtin/prompt-optimizer": { PROMPT_OPTIMIZER_PLUGIN_ID: "prompt-optimizer" },
     };
     const module = { exports: {} as { CanvasNodePromptPanel: (props: Record<string, any>) => Element } };
@@ -146,13 +175,19 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
     return {
         patches,
         resolutions,
+        quoteCalls,
+        config,
         get node() { return target; },
         get quote() { return quoteRequest!; },
         context() { return resolveGenerationContext(target.id, target.metadata?.composerContent || ""); },
         requirements() { return find("ModelPicker").props.requirements as modelSelection.ModelRequirements; },
+        generationConfig() { return find("ModelPicker").props.config as configStore.AiConfig; },
         compatibility() { const picker = find("ModelPicker").props; return modelSelection.modelCompatibilityError(picker.config, picker.value, picker.requirements); },
         frameOptions() { return descendants(tree).find((item) => item.type === "CanvasVideoPromptTools")?.props.frameOptions || []; },
         prompt() { return find("CanvasResourceMentionTextarea").props.value; },
+        submitButton() { return descendants(tree).find((item) => item.type === "Button" && String(item.props.className).includes("canvas-node-composer-submit"))!.props; },
+        changeCount(count: number) { find("CanvasImageCountControl").props.onChange(count); render(); },
+        async resolveQuote(index: number, quote: LogicalModelQuote) { quoteCalls[index].resolve({ quote }); await Promise.resolve(); await Promise.resolve(); render(); },
         deferPromptPersistence() { persistPromptChanges = false; },
         switchNode(next: CanvasNodeData) { target = next; render(); },
         replaceAssets(next: Asset[]) { library = next; resolveGenerationContext = (nodeId, text) => resolveContext(nodeId, text); render(); },
@@ -160,6 +195,55 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         edit(value: string) { find("CanvasResourceMentionTextarea").props.onChange(value); render(); },
     };
 }
+
+test.each([false, true])("canvas image quote totals independent tasks without double-counting logical=%s", async (logical) => {
+    const h = harness([], "画一只熊猫", false, imageConfig(logical));
+    expect(h.quote.intent.options.count).toBe(1);
+    expect(h.quote.logicalModelID).toBe(logical ? "logical-image" : undefined);
+    expect(h.submitButton().disabled).toBe(true);
+    const singleQuote: LogicalModelQuote = { logicalModelId: logical ? "logical-image" : "", billingMode: "fixed_request", quantity: 1, amountMicrocredits: 250_000, estimated: false };
+    await h.resolveQuote(0, singleQuote);
+    expect(h.submitButton()["aria-label"]).toBe("消耗 1 积分，生成");
+    expect(h.submitButton().title).toBe("本次消耗 1 积分");
+    expect(h.submitButton().disabled).toBe(false);
+
+    const submitted: string[] = [];
+    let nodes = [h.node];
+    let connections: CanvasConnection[] = [];
+    const controller = new AbortController();
+    const noop = () => {};
+    await executeImageGeneration({
+        nodeId: h.node.id, sourceNode: h.node, canvasNodes: nodes, canvasConnections: connections,
+        prompt: h.prompt(), effectivePrompt: h.prompt(), generationConfig: h.generationConfig(), generationContext: h.context(),
+        controller, projectId: "", editingTextNode: false, styleMetadata: {}, skillMetadata: {},
+        setNodes: (update) => { nodes = typeof update === "function" ? update(nodes) : update; },
+        setConnections: (update) => { connections = typeof update === "function" ? update(connections) : update; },
+        setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
+        startGenerationRequest: () => controller, finishGenerationRequest: noop, registerPendingNodeIds: noop,
+        showError: (message) => { throw new Error(message); }, bindGenerationTask: noop, applyGenerationTaskResult: async () => {},
+    }, async (options) => {
+        submitted.push(options.config.count);
+        options.onTaskCreated?.({ id: `quoted-task-${submitted.length}`, type: "canvas_image", status: "succeeded", prompt: h.prompt(), attempts: 1, createdAt: "", updatedAt: "" });
+        return { mode: "image", images: [] };
+    });
+    expect(submitted).toEqual(["1", "1", "1", "1"]);
+
+    h.changeCount(2);
+    expect(h.quote.intent.options.count).toBe(1);
+    expect(h.quoteCalls[0].signal?.aborted).toBe(true);
+    expect(h.submitButton().disabled).toBe(true);
+    expect(h.submitButton()["aria-label"]).toBe("正在确认费用");
+    await h.resolveQuote(1, singleQuote);
+    expect(h.submitButton()["aria-label"]).toBe("消耗 0.5 积分，生成");
+    expect(h.submitButton().title).toBe("本次消耗 0.5 积分");
+});
+
+test("canvas quote totals use the normalized model output limit", async () => {
+    const h = harness([], "画一只熊猫", false, imageConfig(false, "99"));
+    expect(h.generationConfig().count).toBe("4");
+    await h.resolveQuote(0, { logicalModelId: "", billingMode: "fixed_request", quantity: 1, amountMicrocredits: 250_000, estimated: false });
+    expect(h.submitButton()["aria-label"]).toBe("消耗 1 积分，生成");
+});
 
 test("an unconnected asset mention drives the real panel capability, quote and provider first-frame identity", () => {
     const h = harness([imageAsset()], "让 @[asset:robot-asset] 转身，保持 @[asset:robot-asset] 一致");

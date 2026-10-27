@@ -40,6 +40,9 @@ func (s *Service) QuoteChannelModel(req ChannelModelQuoteRequest) (*LogicalModel
 		return nil, err
 	}
 	config = input["config"].(map[string]any)
+	if err := s.validateLiblibLoRAQuote(input); err != nil {
+		return nil, err
+	}
 	estimate := estimateTaskBillingTokens(input, req.Intent.Capability)
 	intent := ModelRequestIntentFromTaskInput(input, "canvas_"+req.Intent.Capability, req.Intent.Operation)
 	order, err := s.newBillingOrderWithPriceTier("", "", "quote", req.ChannelID, req.ModelKey, req.Intent.Capability, "model_quote", requestedBillingQuantity(req.Intent.Capability, config), estimate, stringValue(config["priceTierId"]), intent)
@@ -50,6 +53,9 @@ func (s *Service) QuoteChannelModel(req ChannelModelQuoteRequest) (*LogicalModel
 }
 
 func validateQuoteIntent(intent ModelRequestIntent) error {
+	if err := validateLiblibLoRAQuoteOptions(intent); err != nil {
+		return err
+	}
 	if intent.Capability != "text" && intent.Capability != "image" && intent.Capability != "video" && intent.Capability != "audio" {
 		return BadAuthRequest("报价请求缺少有效的模型能力类型")
 	}
@@ -89,6 +95,13 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 		providerModelKey = firstNonEmpty(routed.PriceTier.ProviderModelKey, providerModelKey)
 	}
 	input["config"].(map[string]any)["providerModelKey"] = providerModelKey
+	input["config"].(map[string]any)["channelId"] = routed.ChannelModel.ChannelID
+	input["config"].(map[string]any)["channelModelKey"] = routed.ChannelModel.ModelKey
+	input["config"].(map[string]any)["interfaceType"] = string(routed.ChannelModel.Protocol)
+	applyChannelProviderDefaults(input, routed.ChannelModel)
+	if err := s.validateLiblibLoRAQuote(input); err != nil {
+		return nil, err
+	}
 	config, _ := input["config"].(map[string]any)
 	quantity := requestedBillingQuantity(capability, config)
 	if capability != "video" && capability != "audio" {
@@ -164,6 +177,17 @@ func quoteInput(intent ModelRequestIntent, modelKey string) map[string]any {
 	}
 	config["model"] = modelKey
 	input := map[string]any{"mode": intent.Capability, "config": config}
+	if len(intent.ProviderOptions) > 0 {
+		namespaces := make(map[string]any)
+		for namespace, options := range intent.ProviderOptions {
+			values := make(map[string]any, len(options))
+			for name, value := range options {
+				values[name] = value
+			}
+			namespaces[namespace] = values
+		}
+		input["metadata"] = map[string]any{"providerOptions": namespaces}
+	}
 	for kind, key := range map[string]string{"image": "referenceImages", "video": "referenceVideos", "audio": "referenceAudios"} {
 		if count := intent.Inputs[kind]; count > 0 {
 			input[key] = make([]any, count)

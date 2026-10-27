@@ -98,7 +98,7 @@ func protocolRequestFromInput(input canvasGenerationInput) protocol.GenerationRe
 		Watermark: request.Watermark, Format: input.Config.AudioFormat,
 	}
 	request.ProviderOptions = make(map[string]map[string]any)
-	if configured, ok := input.Metadata["providerOptions"].(map[string]any); ok && input.Config.ImageParameters == nil {
+	if configured, ok := input.Metadata["providerOptions"].(map[string]any); ok && (input.Config.ImageParameters == nil || input.Config.InterfaceType == protocol.LiblibImageProtocolID) {
 		for namespace, raw := range configured {
 			if options, ok := raw.(map[string]any); ok {
 				request.ProviderOptions[strings.TrimSpace(namespace)] = options

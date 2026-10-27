@@ -251,6 +251,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 		item.CapabilityConfigJSON = ""
 		item.CapabilityVersion = 0
 	}
+	if err := validateChannelLoRADefaults(*item, req.CapabilityConfig); err != nil {
+		return nil, err
+	}
 	if req.Enabled != nil {
 		item.Enabled = *req.Enabled
 	}

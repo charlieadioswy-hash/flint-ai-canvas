@@ -4,6 +4,7 @@ import { encodeChannelModel, modelOptionName, resolveModelChannel, selectableMod
 import type { ControlNetParameters } from "./generation-contract.generated";
 import type { ScreenGenerationMode } from "./irregular-screen-domain";
 import { controlNetBaseModel, controlNetBaseModelError, controlNetDefaultModel, controlNetDefaultPreprocessor, controlNetDefaultType, controlNetModels, controlNetPreprocessors, controlNetType, controlNetTypes } from "./controlnet-options";
+import { parseLiblibLoras, type LiblibLoraSelection } from "./liblib-lora";
 
 export type ScreenGenerationSettings = {
     controlType?: string;
@@ -23,6 +24,7 @@ export type ScreenGenerationSettings = {
     seed: number;
     denoisingStrength: number;
     negativePrompt: string;
+    additionalNetwork?: LiblibLoraSelection[];
 };
 
 export function screenModelDefaults(config: AiConfig, model: string) {
@@ -105,6 +107,7 @@ export function screenDefaultSettings(config: AiConfig, model: string, generatio
         seed: number("seed", -1),
         denoisingStrength: number("denoisingStrength", 0.75),
         negativePrompt: String(defaults.negativePrompt ?? "text, watermark, logo, blurry, low quality"),
+        additionalNetwork: protocol === "liblib-image" ? parseLiblibLoras(defaults.additionalNetwork) : [],
     };
 }
 
@@ -142,11 +145,23 @@ export function screenProviderOptions(config: AiConfig, model: string, settings:
     const { defaults, protocol } = screenModelDefaults(config, model);
     const options: Record<string, unknown> = { ...defaults };
     if (protocol === "liblib-image") {
-        Object.assign(options, { steps: settings.steps, sampler: settings.sampler, cfgScale: settings.cfgScale, seed: settings.seed, denoisingStrength: settings.denoisingStrength, negativePrompt: settings.negativePrompt });
+        Object.assign(options, { steps: settings.steps, sampler: settings.sampler, cfgScale: settings.cfgScale, seed: settings.seed, denoisingStrength: settings.denoisingStrength, negativePrompt: settings.negativePrompt, additionalNetwork: parseLiblibLoras(settings.additionalNetwork) });
         options.templateUuid = defaults.templateUuid || (generationMode === "img2img" ? defaults.imageToImageTemplateUuid : defaults.textToImageTemplateUuid);
         // The screen mask is opaque grayscale: white redraws, black preserves.
         if (generationMode === "img2img" && inpaint) options.inpaintMaskMode = "luminance";
         else delete options.inpaintMaskMode;
     }
     return { [protocol]: options };
+}
+
+export function screenSettingsFromProvider(settings: ScreenGenerationSettings, provider: Record<string, unknown>): ScreenGenerationSettings {
+    const next = { ...settings };
+    for (const key of ["steps", "sampler", "cfgScale", "seed", "denoisingStrength"] as const) if (typeof provider[key] === "number") next[key] = provider[key] as number;
+    if (typeof provider.negativePrompt === "string") next.negativePrompt = provider.negativePrompt;
+    if (provider.additionalNetwork !== undefined) next.additionalNetwork = parseLiblibLoras(provider.additionalNetwork);
+    return next;
+}
+
+export function screenSettingsForModel(config: AiConfig, model: string, settings: ScreenGenerationSettings, generationMode: ScreenGenerationMode): ScreenGenerationSettings {
+    return { ...screenDefaultSettings(config, model, generationMode), additionalNetwork: settings.additionalNetwork ? structuredClone(settings.additionalNetwork) : undefined };
 }

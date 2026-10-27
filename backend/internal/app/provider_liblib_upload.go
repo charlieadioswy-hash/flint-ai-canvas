@@ -44,6 +44,7 @@ func prepareLiblibProtocolRequest(ctx context.Context, input canvasGenerationInp
 	if err := protocol.ValidateLiblibRequest(request); err != nil {
 		return request, err
 	}
+	request.Prompt = liblibLoRAPrompt(input, request.Prompt)
 	cache := map[string]string{}
 	var task *model.Task
 	var stored map[string]any

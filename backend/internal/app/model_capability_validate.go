@@ -42,6 +42,9 @@ func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 }
 
 func validateImageCapabilityConfig(value *ImageCapabilityConfig) error {
+	if err := validateLoRACapability(value.LoRA); err != nil {
+		return err
+	}
 	if control := value.ControlNet; control != nil && control.Supported {
 		if control.MaxUnits < 1 || control.MaxUnits > 4 || len(control.Preprocessors) == 0 {
 			return BadAuthRequest("结构控制必须配置 1–4 组上限及支持的预处理器")
@@ -486,6 +489,15 @@ func validateVideoTask(profile *VideoCapabilityConfig, input canvasGenerationInp
 }
 
 func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInput) error {
+	networks, err := protocol.NormalizeLiblibAdditionalNetworks(liblibLoRAOptions(input)["additionalNetwork"])
+	if err != nil {
+		return BadAuthRequest(err.Error())
+	}
+	if !liblibLoRASnapshotMatches(input, networks) {
+		if _, err := validateLiblibLoRASelection(profile, input, networks); err != nil {
+			return err
+		}
+	}
 	if err := validateControlNetTask(profile, input); err != nil {
 		return err
 	}
@@ -574,6 +586,9 @@ func validCustomImageSize(value string) bool {
 }
 
 func validateImageTaskWithResolvedSize(input map[string]any, taskInput *canvasGenerationInput, profile *ImageCapabilityConfig) error {
+	if err := prepareLiblibLoRATaskInput(input, taskInput, profile); err != nil {
+		return err
+	}
 	if profile.Parameters != nil {
 		if err := applyImageParameterValues(&taskInput.Config, profile); err != nil {
 			return err

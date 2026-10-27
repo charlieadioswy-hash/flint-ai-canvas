@@ -100,6 +100,43 @@ describe("ControlNet official types and model selection", () => {
         expect(controlNetConfigurationError(depth, { ...limited, preprocessors: ["canny"] })).toContain("未启用");
     });
 
+    test("F.1 shared fields select compatible types, processors and models without reusing SDXL controls", () => {
+        const unionF1 = "13c1e1b96ba64f9cbb2b54f89b5fe873";
+        const inpaintF1 = "31df01fc271d484ca4d496179d69a665";
+        const f1: ControlNetProfile = { ...profile, baseModel: "f1", preprocessors: ["canny", "depth_midas", "inpaint_global_harmonious"], models: [unionF1, inpaintF1, cannyXL, "a311363995dd4f2fa42ee3fc9582d920"] };
+        const defaults = { family: "f1", controlNetModel: unionF1 };
+        let selected = { ...defaultControlNetBinding("unit").parameters, model: cannyXL };
+        const types = selectFields(selected, (next) => { selected = next; }, f1, defaults).get("Control Type（控制类型）")!;
+        expect(types.options?.filter((option) => !option.disabled).map((option) => option.value)).toEqual(["canny", "depth", "inpaint"]);
+        types.onChange?.("inpaint", { value: "inpaint" });
+        expect(selected).toMatchObject({ controlType: "inpaint", preprocessor: "inpaint_global_harmonious", model: inpaintF1, processorParameters: {} });
+        expect(selected).not.toHaveProperty("canny");
+        const fields = selectFields(selected, (next) => { selected = next; }, f1, defaults);
+        expect(fields.get("Preprocessor（预处理器）")?.options?.map((option) => option.value)).toEqual(["inpaint_global_harmonious"]);
+        expect(fields.get("Model（控制模型）")?.options?.map((option) => option.value)).toEqual([inpaintF1]);
+        expect(controlNetConfigurationError(selected, f1, defaults)).toBe("");
+        fields.get("Control Type（控制类型）")!.onChange?.("depth", { value: "depth" });
+        expect(selected).toMatchObject({ controlType: "depth", preprocessor: "depth_midas", model: unionF1, processorParameters: { resolution: 512 } });
+    });
+
+    test("F.1 IP-Adapter uses only SigLIP and cannot appear as a compatible CLIP or FaceID model", () => {
+        const adapter = "c6ed70879cf011ef96d600163e37ec70";
+        const f1: ControlNetProfile = { ...profile, baseModel: "f1", models: [adapter] };
+        const defaults = { family: "f1", controlNetModel: adapter };
+        const selected = switchControlNetType(defaultControlNetBinding("unit").parameters, "ip-adapter", f1, defaults);
+        expect(selected).toMatchObject({ controlType: "ip-adapter", preprocessor: "ip-adapter-siglip", model: adapter });
+        expect(controlNetConfigurationError(selected, f1, defaults)).toBe("");
+        expect(controlNetModels(f1, "ip-adapter", defaults, "ip-adapter-siglip").map((model) => model.id)).toEqual([adapter]);
+        const incompatible = controlNetPreprocessors(f1, "ip-adapter").filter((processor) => processor.id !== "ip-adapter-siglip");
+        expect(incompatible.length).toBeGreaterThan(0);
+        for (const processor of incompatible) {
+            expect(controlNetModels(f1, "ip-adapter", defaults, processor.id)).toEqual([]);
+            const stale = { ...selected, preprocessor: processor.id };
+            expect(controlNetConfigurationError(stale, f1, defaults)).toContain("没有可用");
+            expect(selectFields(stale, () => {}, f1, defaults).get("Model（控制模型）")?.options?.filter((option) => !option.disabled)).toEqual([]);
+        }
+    });
+
     test("base inference uses only explicit settings or known metadata", () => {
         const legacy = { ...profile, baseModel: undefined, models: [cannyXL] };
         expect(controlNetBaseModel(legacy)).toBe("sdxl");

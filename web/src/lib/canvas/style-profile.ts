@@ -1,3 +1,5 @@
+import { liblibLoraConfigurationError, liblibLoraModelId, type LiblibLoraProfile } from "./liblib-lora";
+
 export type StyleAssetKind = "lora" | "template" | "reference" | "prompt";
 export type StyleAssetStatus = "draft" | "validated" | "unavailable";
 
@@ -70,6 +72,7 @@ export type StyleExecutionContext = {
     mode: "image" | "video";
     model: string;
     interfaceType?: string;
+    loraProfile?: LiblibLoraProfile;
 };
 
 export type StyleExecutionAsset = {
@@ -201,14 +204,14 @@ export function styleAssetValidationMessage(asset: StyleAssetBinding) {
     if (!asset.id.trim()) return "资产 ID 不能为空";
     if (!asset.title.trim()) return "请填写资产名称";
     if (!asset.provider.trim()) return "请填写来源平台或适配器";
-    if (asset.weight !== undefined && (!Number.isFinite(asset.weight) || asset.weight < 0 || asset.weight > 2)) return "LoRA 权重必须在 0 到 2 之间";
+    if (asset.weight !== undefined && (!Number.isFinite(asset.weight) || asset.weight < -4 || asset.weight > 4)) return "LoRA 权重必须在 -4 到 4 之间";
     if ((asset.baseModels?.length || 0) > 20) return "单个资产最多声明 20 个兼容模型";
     if ((asset.triggerWords?.length || 0) > 50) return "单个资产最多声明 50 个触发词";
     if ((asset.referenceUrls?.length || 0) > 20 || (asset.referenceResourceIds?.length || 0) > 20) return "单个参考图组最多绑定 20 个 URL 和 20 个资源";
     if (asset.parameters?.steps !== undefined && (!Number.isInteger(asset.parameters.steps) || asset.parameters.steps < 1 || asset.parameters.steps > 200)) return "Steps 必须在 1 到 200 之间";
     if (asset.parameters?.cfg !== undefined && (!Number.isFinite(asset.parameters.cfg) || asset.parameters.cfg < 0 || asset.parameters.cfg > 50)) return "CFG 必须在 0 到 50 之间";
     if (asset.status !== "validated") return "";
-    if (asset.kind === "lora" && !asset.sourceId?.trim() && !asset.sourceUrl?.trim()) return "已验证的 LoRA 必须填写来源资产 ID 或 URL";
+    if (asset.kind === "lora" && !asset.sourceId?.trim() && !asset.sourceUrl?.trim() && !/^[a-f0-9]{32}$/i.test(asset.version?.trim() || "")) return "已验证的 LoRA 必须填写来源资产 ID、模型版本 UUID 或 URL";
     if ((asset.kind === "prompt" || asset.kind === "template") && !asset.promptFragment?.trim() && !asset.triggerWords?.some((word) => word.trim())) return "已验证的模板或提示词模块必须填写提示词内容";
     if (asset.kind === "reference" && !asset.referenceUrls?.some((url) => url.trim()) && !asset.referenceResourceIds?.some((id) => id.trim())) return "已验证的参考图组必须绑定参考图";
     return "";
@@ -242,6 +245,10 @@ function isStyleCoverUrl(value: string) {
     return normalized.startsWith("http://") || normalized.startsWith("https://") || normalized.startsWith("/") || normalized.startsWith("data:image/");
 }
 
+export function liblibStyleLoraModelId(asset: Pick<StyleAssetBinding, "version" | "sourceId">) {
+    return liblibLoraModelId(/^[a-f0-9]{32}$/i.test(asset.version?.trim() || "") ? asset.version! : asset.sourceId || "");
+}
+
 function resolveAssetExecution(asset: StyleAssetBinding, context: StyleExecutionContext): StyleExecutionAsset {
     if (asset.status !== "validated") return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "skip", reason: asset.status === "unavailable" ? "资产当前不可用" : "资产尚未验证" };
     if (asset.baseModels?.length && !asset.baseModels.some((model) => model.trim().toLowerCase() === context.model.trim().toLowerCase())) {
@@ -250,7 +257,14 @@ function resolveAssetExecution(asset: StyleAssetBinding, context: StyleExecution
     if (asset.kind === "prompt") return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "prompt", reason: "追加到项目画风提示词" };
     if (asset.kind === "template" && (asset.promptFragment?.trim() || asset.triggerWords?.length)) return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "prompt", reason: "当前以模板触发词执行" };
     if (asset.kind === "reference") return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "block", reason: "项目参考图自动注入适配器尚未启用" };
-    if (asset.kind === "lora") return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "block", reason: `当前 ${context.interfaceType || "图片"} 协议未启用 LoRA 适配器` };
+    if (asset.kind === "lora") {
+        if (context.mode === "image" && context.interfaceType === "liblib-image" && ["liblib", "liblib-image"].includes(asset.provider.trim().toLowerCase())) {
+            const modelId = liblibStyleLoraModelId(asset);
+            const reason = liblibLoraConfigurationError([{ modelId, weight: asset.weight }], context.loraProfile);
+            return { assetId: asset.id, title: asset.title, kind: asset.kind, action: reason ? "block" : "native", reason: reason || "使用已登记 Liblib LoRA；生成时自动应用模型与可信触发词" };
+        }
+        return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "block", reason: `当前 ${context.interfaceType || "图片"} 协议未启用 LoRA 适配器` };
+    }
     return { assetId: asset.id, title: asset.title, kind: asset.kind, action: "block", reason: "当前协议不支持该执行资产" };
 }
 
@@ -267,7 +281,7 @@ function isStyleAssetBinding(value: unknown): value is StyleAssetBinding {
     )
         return false;
     if (asset.enabled !== undefined && typeof asset.enabled !== "boolean") return false;
-    if (asset.weight !== undefined && (!Number.isFinite(asset.weight) || asset.weight < 0 || asset.weight > 2)) return false;
+    if (asset.weight !== undefined && (!Number.isFinite(asset.weight) || asset.weight < -4 || asset.weight > 4)) return false;
     if (![asset.sourceId, asset.sourceUrl, asset.model, asset.version, asset.promptFragment].every(isOptionalString)) return false;
     if (![asset.baseModels, asset.triggerWords, asset.referenceUrls, asset.referenceResourceIds].every((values) => values === undefined || (Array.isArray(values) && values.every((item) => typeof item === "string")))) return false;
     if (

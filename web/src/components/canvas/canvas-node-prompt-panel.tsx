@@ -20,6 +20,7 @@ import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasImageCountControl } from "./canvas-image-count-control";
 import { CanvasControlNetPopover } from "./canvas-controlnet-popover";
+import { CanvasLoraPopover } from "./canvas-lora-popover";
 import { isStructureControlNode, nodeControlNet, structureControlBindingNodeIds } from "@/lib/canvas/controlnet";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { CanvasAudioSettingsPopover } from "./canvas-audio-settings-popover";
@@ -50,6 +51,10 @@ import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
 import { useCanvasModelQuote } from "./use-canvas-model-quote";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
+import { liblibLoraQuoteOptions } from "@/lib/canvas/liblib-lora-quote";
+import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { ConnectedReferenceShelf, ReferenceToolsPopover, referenceShelfHeading } from "./canvas-node-prompt-references";
 import { PromptModalResizeHandle, PromptResizeHandle, clampExpandedModalSize, clampPromptHeight, estimatePromptContentHeight, promptEditorBounds } from "./canvas-node-prompt-resize";
 import { audioConfigPatch, buildNodeConfig, canvasModelConfigPatch, defaultMode, modeDisplayName, promptPlaceholder, videoConfigPatch } from "./canvas-node-prompt-config";
@@ -118,6 +123,7 @@ export function CanvasNodePromptPanel({
     onListGenerate,
 }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
+    const styleNode = useCanvasStore((state) => state.projects.find((project) => project.id === projectId)?.nodes.find((item) => item.metadata?.workflowKind === "styleboard"));
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
@@ -223,7 +229,7 @@ export function CanvasNodePromptPanel({
         if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
-    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const generationCount = getGenerationCount(config.count);
     const priceChannel = resolveModelChannel(config, config.model);
     const configuredCredits = requestCreditCost({
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
@@ -235,8 +241,20 @@ export function CanvasNodePromptPanel({
         config,
         requirements: resolvedRequirements,
     });
-    const quoteRequest = modelQuoteRequest(config, config.model, mode, resolvedRequirements);
-    const { quote: routeQuote, error: quoteError, pending: quotePending, retry: retryQuote } = useCanvasModelQuote(quoteRequest, creditsEnabled);
+    let quoteRequirements = resolvedRequirements;
+    let loraQuoteError = "";
+    if (mode === "image") {
+        try {
+            const style = resolveCanvasStyleExecution(styleNode ? [styleNode] : [], node, prompt, config, "image")?.profile;
+            quoteRequirements = { ...resolvedRequirements, providerOptions: liblibLoraQuoteOptions(config, node.metadata?.providerOptions, style) };
+        } catch (error) { loraQuoteError = error instanceof Error ? error.message : "LoRA 配置无效"; }
+    }
+    // The canvas image executor submits one count=1 task per output, including
+    // logical models. Quote that task once, then total the actual task count.
+    const quoteConfig = mode === "image" ? { ...config, count: "1" } : config;
+    const quoteRequest = loraQuoteError ? undefined : modelQuoteRequest(quoteConfig, config.model, mode, mode === "image" ? { ...quoteRequirements, options: { ...quoteRequirements.options, count: 1 } } : quoteRequirements);
+    const { quote: routeQuote, error: remoteQuoteError, pending: quotePending, retry: retryQuote } = useCanvasModelQuote(quoteRequest, creditsEnabled, mode === "image" ? generationCount : 1);
+    const quoteError = loraQuoteError || remoteQuoteError;
     const credits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : configuredCredits;
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = useMemo(
@@ -605,6 +623,7 @@ export function CanvasNodePromptPanel({
                                     onOpenChange={expanded ? undefined : onImageSettingsOpenChange}
                                 />
                             ) : null}
+                            <CanvasLoraPopover node={node} config={config} disabled={isRunning} onChange={(patch) => onConfigChange(node.id, patch)} onOpenChange={expanded ? undefined : onImageSettingsOpenChange} />
                             <CanvasCameraControlPopover cameraControl={node.metadata?.cameraControl} onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })} theme={theme} compact={!expanded} />
                             <CanvasImageSettingsPopover
                                 config={config}

@@ -2575,6 +2575,9 @@ export const LIBLIB_CONTROLNET_MODELS: readonly LiblibControlNetModelDefinition[
         "controlTypes": [
             "ip-adapter"
         ],
+        "preprocessors": [
+            "ip-adapter-siglip"
+        ],
         "source": "https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#share-VZ1odH3pbowJypxPP3Mc8cY2nic"
     },
     {

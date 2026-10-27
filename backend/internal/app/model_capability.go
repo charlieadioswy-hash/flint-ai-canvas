@@ -41,6 +41,7 @@ type TextReferenceConfig struct {
 
 type ImageCapabilityConfig struct {
 	ControlNet *generation.ControlNetCapability  `json:"controlNet,omitempty"`
+	LoRA       *generation.LoRACapability        `json:"lora,omitempty"`
 	Parameters []protocolcontract.ImageParameter `json:"parameters"`
 	References ImageReferenceConfig              `json:"references"`
 	Size       ImageSizeConfig                   `json:"size"`
@@ -260,6 +261,9 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 		// 旧配置缺换算表时按声明的档位与比例补齐后再校验，保存即把旧线路归一化成当前形态。
 		if input.Image.Parameters == nil {
 			fillMissingImageSizePresets(input.Image, protocol)
+		}
+		if input.Image.LoRA != nil && input.Image.LoRA.Supported && protocol != protocolcontract.LiblibImageProtocolID {
+			return nil, BadAuthRequest("当前协议尚未接入 LoRA")
 		}
 		value := &ModelCapabilityConfig{Version: 1, Image: applyModelSpecificImageCapability(input.Image, protocol, modelName, "")}
 		if err := validateImageCapabilityConfig(value.Image); err != nil {

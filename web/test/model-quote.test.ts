@@ -7,6 +7,22 @@ const intent: ModelRequestIntent = { capability: "video", operation: "text_to_vi
 const quote: LogicalModelQuote = { logicalModelId: "", billingMode: "token", quantity: 1, amountMicrocredits: 500_000, estimated: true };
 
 describe("model quote API targets", () => {
+    test("Liblib quotes send zero weights and an explicit empty list unchanged", async () => {
+        const original = apiClient.request;
+        const calls: unknown[] = [];
+        apiClient.request = (async (config: unknown) => {
+            calls.push(config);
+            return { data: { code: 0, data: { quote }, msg: "ok" }, status: 200, headers: {} };
+        }) as typeof apiClient.request;
+        try {
+            for (const additionalNetwork of [[{ modelId: "11111111111111111111111111111111", weight: 0 }], []]) {
+                const imageIntent: ModelRequestIntent = { capability: "image", operation: "text_to_image", providerOptions: { "liblib-image": { additionalNetwork } } };
+                await quoteModel({ channelId: "liblib", modelKey: "checkpoint", intent: imageIntent });
+                expect(calls.at(-1)).toMatchObject({ url: "/model-catalog/quote", data: { channelId: "liblib", modelKey: "checkpoint", intent: imageIntent } });
+            }
+        } finally { apiClient.request = original; }
+    });
+
     test("direct system videos send the actual options and cancellation signal to the catalog quote", async () => {
         const original = apiClient.request;
         const calls: unknown[] = [];

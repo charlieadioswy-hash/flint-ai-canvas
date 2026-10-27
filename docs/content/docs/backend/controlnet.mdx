@@ -1,6 +1,6 @@
 ---
 title: 画布结构控制与 Liblib
-description: ControlNet 图片节点、透明屏幕蒙版、局部重绘、平台适配和任务恢复合同
+description: ControlNet 图片节点、Liblib LoRA、透明屏幕蒙版、局部重绘和任务恢复合同
 ---
 
 # 画布结构控制与 Liblib
@@ -111,6 +111,39 @@ Control Type 选择 Inpaint 时，快捷入口另将派生灰度蒙版绑定为�
 `family=sd` 且同时提供普通内容原图和独立重绘蒙版时，协议使用 `mode: 4`，发送 `maskImage` 及 `inpaintParam`（`maskBlur: 4`、`maskPadding: 32`、`maskMode: 0`、`inpaintArea: 0`、`inpaintingFill: 1`）。普通图生图仍为 `mode: 0`；输出宽高通过 `resizedWidth` / `resizedHeight` 传递，`controlNet[]` 独立保留。
 
 通用重绘的默认 `inpaintMaskMode=alpha` 使用「透明处重绘」语义，后端以 `255 - alpha` 转成供应商所需的灰度 PNG。异形屏上传约定为「不透明处是屏幕」，语义相反，因此快捷入口先派生白色屏内、黑色屏外的蒙版，并显式设置 `inpaintMaskMode=luminance`，由后端按亮度归一化为不透明灰度 PNG：白色重绘、黑色保留。远程蒙版同样读取真实像素后转换，没有可重绘区域时拒绝提交；不能把原始屏幕 PNG 直接当作通用 alpha 重绘蒙版。
+
+### LoRA 风格模型
+
+普通画布图片节点提供独立的「LoRA」设置，异形屏入口在高级设置中使用同一套选择与权重控件。选择范围来自当前渠道模型的已登记目录；可叠加风格、逐项移除或一键清空。LoRA 不依赖 ControlNet，二者可在模型明确支持时同时使用。切换模型保留已经选择的 LoRA；新模型不支持、目录中找不到该版本或基础算法不匹配时，显示原因并阻止提交，由用户更换或移除，不自动丢弃配置。
+
+能力声明为 `capabilityConfig.image.lora`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `supported` | 当前渠道模型是否支持 LoRA |
+| `maxNetworks` | 同时使用的数量上限，1–5 |
+| `baseModel` | 当前底模的基础算法，`sd15`、`sdxl` 或 `f1` |
+| `models[]` | 可信目录；每项包含 `id`（版本 UUID）、`name`、`baseModel`，可附 `triggerWords`、`sourceUrl`、`defaultWeight` |
+
+任务仅在 `metadata.providerOptions["liblib-image"].additionalNetwork` 提交选择列表，每项为 `{ modelId, weight }`。版本 UUID 去除首尾空白并转为小写，重复项、未知字段与未登记版本拒绝提交。权重范围为 **-4 到 4**，未指定时为 `0.8`，显式 `0` 保持为零；界面添加模型时可采用目录的 `defaultWeight`。最多五项，具体渠道可设置更低上限。`additionalNetwork: []` 明确清空渠道默认 LoRA，省略该字段才沿用默认值。
+
+服务端根据实际选定渠道的可信目录校验基础算法。SD 1.5、SDXL 与 F.1 严格匹配，不能因为版本 UUID 合法或模型名称相近就混用。目录可包含其他基础算法的记录，但只有与当前底模匹配的项可用；客户端提交的目录、触发词或内部快照不能替代此校验。
+
+项目画风中启用且已验证的 Liblib LoRA 自动合入同一列表：有效版本 UUID 优先从 `version` 读取，其次使用 `sourceId`，仍检查资产的兼容模型声明与可信目录。手工选择或已生效渠道默认值优先，同一 UUID 不重复添加；新增画风 LoRA 未指定权重时使用目录的 `defaultWeight`，目录也未指定才使用 `0.8`。显式清空渠道默认值后，仍会合入项目画风中启用的 LoRA。合并后的总数量受同一上限约束，画风的严格执行策略保留。页面展示自动触发词，服务端在最终上游请求中幂等追加可信触发词，不改写用户保存的画面描述，也不采用资产自报的触发词。任务入队冻结有效模型、权重和可信触发词，原任务恢复使用冻结配置。
+
+Liblib 项目画风在入队选路与 LoRA 合并前，按当前用户的项目归属解析服务端最新版本；客户端保留的旧画风不能让提示词和 LoRA 使用不同版本。显式选择节点风格工具时仍由节点风格覆盖项目画风，不自动合入项目提示词或项目 LoRA。任务同时冻结生效画风（包括没有项目画风的状态）与有效 LoRA 配置，排队期间修改项目不会改变原任务的提示词或自动 LoRA。快照保留于排队、运行和普通失败任务；同一系统线路重试沿用快照，重新选路时按原任务画风重新校验新线路，新建任务才读取最新项目画风。成功后按既有策略清理内部执行输入，公开元数据仍保留实际 LoRA 版本与权重。其他供应商沿用既有画风更新规则。
+
+报价与生成使用同一组选择，普通画布报价也合入项目画风 LoRA；不兼容时不能用一份忽略 LoRA 的报价继续生成。普通画布将多张图片拆成独立任务，因此以 `count=1` 请求单任务报价，再按实际任务数汇总展示费用；修改张数立即使旧报价失效。单任务入口维持其原有报价，不重复乘算数量。报价接口仅接收版本与权重，详细限制见 [HTTP API 合同](/docs/backend/http-api#模型规格报价)。
+
+本轮开发配置范围为 **6 个底模**：既有 DreamTech XL、另外 4 个 SDXL 底模和 1 个 F.1 底模；另登记 **15 个 LoRA**，其中 8 个基于 SDXL、7 个基于 F.1。底模和 LoRA 的名称、版本及基础算法已通过模型元数据 API 核验；这只证明目录身份和算法信息，不代表所有底模、LoRA、ControlNet、重绘及题材组合已经完成实图验证。
+
+F.1-dev-fp8 同时支持普通画布和异形屏入口。开发配置开放 Canny、SoftEdge、Scribble、Lineart、Depth、Normal、OpenPose、Tile、IP-Adapter、Inpaint、puLID 共 **11 类 Control Type、13 个控制模型和 40 个预处理器**，按 F.1 基础算法和白名单筛选。文生图默认使用 `inpaint_global_harmonious` + `F.1-dev-Controlnet-Inpainting-Beta`，切换类型重新匹配 F.1 控制模型与参数。IP-Adapter 使用 `ip-adapter-siglip`，不接受 SD 1.5 / SDXL 的 CLIP 或 FaceID 预处理器。Redux 尚缺少已核实的预处理映射，主体参考需要独立模板流程，本配置不开放这两项。
+
+F.1 LoRA 包含海报运营启动页、Pure Flux 情绪插画、Filmfotos 日系胶片写真、极氪白白酱人像 V6MAX、UNIT 曼德拉效应、嘉嘉国潮插画及风月无边插画。目录只登记本次版本 API 返回公开且允许商用的 F.1 版本；岩彩材质绘画的商用标志未开放，未纳入。F.1 完整文生图与图生图模板均支持 `controlNet` 和 `additionalNetwork`；ControlNet Inpaint 的独立区域蒙版不等于顶层图生图局部重绘，后者仍仅对已启用该能力的 SD / SDXL 模型开放。
+
+配置脚本为 `scripts/sql/configure-liblib-lora.sql`，执行前备份；使用 `-v dry_run=true` 做事务演练，不传该变量才提交。脚本保留已有 Dream Tech XL 的生成设置，新底模开放常用 1K 尺寸；F.1 仅自动升级本脚本旧版留下的关闭配置，已启用的管理员白名单保留，其他自定义关闭配置会中止而非覆盖。脚本可重复执行，不覆盖已有价格冲突，也不修改凭据或其他渠道。执行后递增 Redis 的 `canvas:logical-model-route-catalog:version`，刷新页面重新读取目录。
+
+这批模型的 **1 积分/张仅为开发环境配置**，不是全站默认价格或供应商成本。实际费用以所在部署的模型配置与提交前报价为准。已验收组合及剩余边界见[待测试清单](/docs/progress/pending-test)。
 
 ### 手工配置 SD 示例模型
 

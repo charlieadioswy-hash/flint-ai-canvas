@@ -84,6 +84,14 @@ func normalizeChannelProviderDefaults(registry *protocol.Registry, protocolID st
 			if valid && parameter.Type == "integer" {
 				valid = math.Trunc(number) == number
 			}
+		case "liblib-lora[]":
+			if protocolID == protocol.LiblibImageProtocolID && name == "additionalNetwork" {
+				networks, err := protocol.NormalizeLiblibAdditionalNetworks(value)
+				if err != nil {
+					return nil, BadAuthRequest(err.Error())
+				}
+				value, valid = networks, true
+			}
 		}
 		if !valid {
 			return nil, BadAuthRequest("默认参数类型或取值无效：" + name)

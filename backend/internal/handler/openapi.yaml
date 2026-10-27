@@ -3038,6 +3038,34 @@ components:
             size: "16:9"
             videoSeconds: 5
             videoGenerateAudio: true
+        providerOptions:
+          type: object
+          description: 仅图片报价支持 Liblib LoRA 选择；不接受 family、Checkpoint、模板或模型目录覆盖。使用所选渠道已登记的兼容目录校验，LoRA 不增加平台单次报价。
+          additionalProperties: false
+          properties:
+            liblib-image:
+              type: object
+              additionalProperties: false
+              properties:
+                additionalNetwork:
+                  type: array
+                  maxItems: 5
+                  description: 已登记的模型版本 UUID 列表，UUID 不能重复；空数组清除渠道默认选择。省略时采用渠道默认选择。
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [modelId]
+                    properties:
+                      modelId:
+                        type: string
+                        pattern: '^[a-fA-F0-9]{32}$'
+                        description: Liblib 模型版本 UUID，服务端规范化为小写
+                      weight:
+                        type: number
+                        minimum: -4
+                        maximum: 4
+                        default: 0.8
+                        description: LoRA 权重，允许 0 和负值
     LogicalModelQuote:
       type: object
       required: [logicalModelId, billingMode, quantity, amountMicrocredits, estimated]

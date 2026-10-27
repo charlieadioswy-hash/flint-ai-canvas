@@ -6,6 +6,7 @@ import { getImageBlob } from "@/services/image-storage";
 import { importResourceFromUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import type { ControlNetInput, OutputMaskInput } from "@/lib/canvas/controlnet";
 import { controlNetConfigurationError, controlNetType } from "@/lib/canvas/controlnet-options";
+import { LIBLIB_LORA_PROTOCOL, liblibLoraConfigurationError, liblibLoraContext, parseLiblibLoras } from "@/lib/canvas/liblib-lora";
 import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
@@ -256,6 +257,14 @@ async function prepareGenerationReferences({
     outputMask,
     metadata,
 }: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask" | "controlNet" | "outputMask" | "metadata">): Promise<PreparedGenerationReferences> {
+    if (mode === "image") {
+        const { profile, protocol, defaults } = liblibLoraContext(config);
+        const namespaces = metadata?.providerOptions as Record<string, Record<string, unknown>> | undefined;
+        const saved = namespaces?.[LIBLIB_LORA_PROTOCOL]?.additionalNetwork;
+        const selected = saved !== undefined ? saved : protocol === LIBLIB_LORA_PROTOCOL ? defaults.additionalNetwork : undefined;
+        const error = liblibLoraConfigurationError(selected, profile, protocol);
+        if (error) throw new Error(error);
+    }
     if ((controlNet?.length || outputMask) && mode !== "image") throw new Error("结构控制与输出蒙版仅用于图片生成");
     if (controlNet?.length) {
         const error = modelCompatibilityError(config, config.model, { capability: "image", controlNetUnits: controlNet.length });
@@ -361,11 +370,11 @@ function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>
     const channel = resolveModelChannel(config, config.model);
     const model = modelOptionName(config.model);
     const modelCost = channel.modelCosts?.find((item) => item.model === model);
-    if (modelCost?.capability === "image" && modelCost.capabilityConfig?.image?.parameters) {
+    const protocol = modelCost?.protocol || channel.interfaceType;
+    if (modelCost?.capability === "image" && modelCost.capabilityConfig?.image?.parameters && protocol !== LIBLIB_LORA_PROTOCOL) {
         const { providerOptions: _providerOptions, ...rest } = metadata || {};
         return rest;
     }
-    const protocol = modelCost?.protocol || channel.interfaceType;
     if (!protocol) return metadata;
     const existing = metadata?.providerOptions && typeof metadata.providerOptions === "object" && !Array.isArray(metadata.providerOptions)
         ? metadata.providerOptions as Record<string, unknown>
@@ -375,7 +384,9 @@ function generationMetadata(config: AiConfig, metadata?: Record<string, unknown>
         : {};
     const defaults = modelCost?.defaultOptions && typeof modelCost.defaultOptions === "object" ? modelCost.defaultOptions : {};
     if (!Object.keys(defaults).length && !Object.keys(namespace).length) return metadata;
-    return { ...metadata, providerOptions: { ...existing, [protocol]: { ...defaults, ...namespace } } };
+    const options = { ...defaults, ...namespace };
+    if (protocol === LIBLIB_LORA_PROTOCOL && options.additionalNetwork !== undefined) options.additionalNetwork = parseLiblibLoras(options.additionalNetwork);
+    return { ...metadata, providerOptions: { ...existing, [protocol]: options } };
 }
 
 async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAudio) {

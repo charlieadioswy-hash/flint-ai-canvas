@@ -40,28 +40,28 @@ function deferred() {
 
 async function fixture() {
     const original = apiClient.request;
-    const calls: Array<{ signal: AbortSignal; result: ReturnType<typeof deferred> }> = [];
-    apiClient.request = ((config: { signal: AbortSignal }) => {
+    const calls: Array<{ signal: AbortSignal; data: unknown; result: ReturnType<typeof deferred> }> = [];
+    apiClient.request = ((config: { signal: AbortSignal; data: unknown }) => {
         const result = deferred();
-        calls.push({ signal: config.signal, result });
+        calls.push({ signal: config.signal, data: config.data, result });
         return result.promise;
     }) as typeof apiClient.request;
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     let current!: ReturnType<typeof useCanvasModelQuote>;
-    function Harness({ value, enabled }: { value?: ModelQuoteRequest; enabled: boolean }) {
-        current = useCanvasModelQuote(value, enabled);
+    function Harness({ value, enabled, taskCount }: { value?: ModelQuoteRequest; enabled: boolean; taskCount: number }) {
+        current = useCanvasModelQuote(value, enabled, taskCount);
         return null;
     }
     return {
         calls,
         current: () => current,
-        async render(value: ModelQuoteRequest | undefined = request, enabled = true) {
-            await act(async () => root.render(<Harness value={value} enabled={enabled} />));
+        async render(value: ModelQuoteRequest | undefined = request, enabled = true, taskCount = 1) {
+            await act(async () => root.render(<Harness value={value} enabled={enabled} taskCount={taskCount} />));
         },
-        async resolve(index: number) {
-            await act(async () => calls[index]!.result.resolve({ data: { code: 0, data: { quote }, msg: "ok" }, status: 200, headers: {} }));
+        async resolve(index: number, response = quote) {
+            await act(async () => calls[index]!.result.resolve({ data: { code: 0, data: { quote: response }, msg: "ok" }, status: 200, headers: {} }));
         },
         async reject(index: number, message = "当前规格未配置有效价格") {
             await act(async () => calls[index]!.result.reject(new Error(message)));
@@ -133,6 +133,63 @@ test("disabled credits do not require quotes; re-enabling cannot reuse a previou
         await f.render(undefined, false);
         expect(f.current().pending).toBe(false);
         expect(f.current().error).toBe("");
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("independent image task counts total a single-image API quote and invalidate pending results", async () => {
+    const f = await fixture();
+    const imageRequest: ModelQuoteRequest = { channelId: "liblib", modelKey: "image", intent: { capability: "image", operation: "text_to_image", inputs: {}, options: { count: 1 }, providerOptions: { "liblib-image": { additionalNetwork: [] } } } };
+    try {
+        await f.render(imageRequest, true, 4);
+        expect(f.calls[0].data).toMatchObject({ intent: { options: { count: 1 }, providerOptions: { "liblib-image": { additionalNetwork: [] } } } });
+        await f.resolve(0);
+        expect(f.current().quote).toMatchObject({ amountMicrocredits: 4_000_000, quantity: 4 });
+        await f.render(imageRequest, true, 2);
+        expect(f.current().quote).toBeNull();
+        expect(f.current().pending).toBe(true);
+        expect(f.calls[0].signal.aborted).toBe(true);
+        await f.render(imageRequest, true, 3);
+        expect(f.calls[1].signal.aborted).toBe(true);
+        await f.resolve(1, { ...quote, amountMicrocredits: 99_000_000 });
+        expect(f.current().quote).toBeNull();
+        await f.reject(2);
+        expect(f.current().error).toBe("当前规格未配置有效价格");
+        await act(async () => f.current().retry());
+        await f.resolve(3, { ...quote, amountMicrocredits: 500_000 });
+        expect(f.current().quote).toMatchObject({ amountMicrocredits: 1_500_000, quantity: 3 });
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("a logical batch quote remains its returned total without an independent task count", async () => {
+    const f = await fixture();
+    const batch: ModelQuoteRequest = { logicalModelID: "logical-image", intent: { capability: "image", operation: "text_to_image", inputs: {}, options: { count: 4 } } };
+    const total = { ...quote, logicalModelId: "logical-image", quantity: 4, amountMicrocredits: 8_000_000 };
+    try {
+        await f.render(batch);
+        expect(f.calls[0].data).toMatchObject({ options: { count: 4 } });
+        await f.resolve(0, total);
+        expect(f.current().quote).toEqual(total);
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("invalid independent task counts clear old prices and cannot request or display a quote", async () => {
+    const f = await fixture();
+    try {
+        await f.render();
+        await f.resolve(0);
+        for (const count of [0, -1, 1.5, 16, NaN, Infinity]) {
+            await f.render(request, true, count);
+            expect(f.current().quote).toBeNull();
+            expect(f.current().pending).toBe(false);
+            expect(f.current().error).toContain("1–15 的整数");
+        }
+        expect(f.calls).toHaveLength(1);
     } finally {
         await f.dispose();
     }

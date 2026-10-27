@@ -72,6 +72,12 @@ export type ImageResponseFormat = "auto" | "b64_json" | "url";
 export const DEFAULT_VIDEO_PROMPT_MAX_CHARS = 8000;
 
 export type ImageCapabilityConfig = {
+    lora?: {
+        supported: boolean;
+        maxNetworks: number;
+        baseModel: "sd15" | "sdxl" | "f1";
+        models: { id: string; name: string; baseModel: "sd15" | "sdxl" | "f1"; triggerWords?: string[]; sourceUrl?: string; defaultWeight?: number }[];
+    };
     controlNet?: {
         supported: boolean;
         maxUnits: number;
@@ -198,6 +204,7 @@ export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): M
         image: config.image
             ? {
                   ...config.image,
+                  ...(config.image.lora ? { lora: { ...config.image.lora, models: (config.image.lora.models || []).map((model) => ({ ...model, id: model.id.trim().toLowerCase(), name: model.name.trim(), triggerWords: model.triggerWords ? normalizeCapabilityStrings(model.triggerWords) : undefined })) } } : {}),
                   ...(config.image.controlNet
                       ? {
                             controlNet: {

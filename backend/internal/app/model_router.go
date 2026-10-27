@@ -237,6 +237,9 @@ func (s *Service) eligibleLogicalRoutes(routes []cachedLogicalRoute, intent Mode
 		if requirePriceTier && channelModelPriceTierForIntent(route.ChannelModel, intent, route.CapabilitySpec) == nil {
 			continue
 		}
+		if err := s.validateLoRAIntentForRoute(route.ChannelModel, intent); err != nil {
+			continue
+		}
 		if route.Route.Priority > maxPriority {
 			eligible = eligible[:0]
 			maxPriority = route.Route.Priority

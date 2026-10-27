@@ -170,6 +170,7 @@ type TextReferenceConfig struct {
 
 type ImageCapabilityConfig struct {
 	ControlNet            *ControlNetCapability `json:"controlNet,omitempty"`
+	LoRA                  *LoRACapability       `json:"lora,omitempty"`
 	References            ImageReferenceConfig  `json:"references"`
 	Size                  ImageSizeConfig       `json:"size"`
 	Quality               ImageQualityConfig    `json:"quality"`

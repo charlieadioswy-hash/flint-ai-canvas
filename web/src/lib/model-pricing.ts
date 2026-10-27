@@ -95,7 +95,7 @@ export function modelQuoteRequest(config: AiConfig, value: string, capability?: 
     const channel = resolveModelChannel(config, value);
     if (channel.scope !== "system") return undefined;
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(value));
-    if (!cost || (!cost.logicalModelId && capability !== "video")) return undefined;
+    if (!cost || (!cost.logicalModelId && capability !== "video" && !(capability === "image" && (cost.protocol || channel.interfaceType) === "liblib-image"))) return undefined;
     const input = requirements?.input;
     const intent: ModelRequestIntent = {
         capability,
@@ -112,6 +112,7 @@ export function modelQuoteRequest(config: AiConfig, value: string, capability?: 
             ...(requirements?.videoSeconds ? { videoSeconds: Number(requirements.videoSeconds) } : {}),
             ...(requirements?.imageSize ? { size: requirements.imageSize } : {}),
         },
+        ...(capability === "image" && requirements?.providerOptions?.["liblib-image"]?.additionalNetwork !== undefined ? { providerOptions: { "liblib-image": { additionalNetwork: structuredClone(requirements.providerOptions["liblib-image"].additionalNetwork) } } } : {}),
     };
     return cost.logicalModelId ? { logicalModelID: cost.logicalModelId, intent } : { channelId: channel.id, modelKey: modelOptionName(value), intent };
 }

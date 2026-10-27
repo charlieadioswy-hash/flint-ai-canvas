@@ -51,6 +51,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		delete(metadata, liblibPreparedMetadataKey)
 	}
 	delete(normalizedInput, channelProviderDefaultsSnapshotKey)
+	delete(normalizedInput, liblibLoRASnapshotKey)
 	if err := s.prepareControlNetTaskInput(userID, normalizedInput); err != nil {
 		return nil, err
 	}
@@ -86,6 +87,11 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		}
 	}
 
+	// Resolve the owned project's style before routing and LoRA admission, so
+	// both compile the same server-side revision instead of a stale canvas copy.
+	if err := s.prepareTaskProjectStyleProfile(userID, req.ProjectID, prompt, normalizedInput); err != nil {
+		return nil, err
+	}
 	var routed *RoutedModel
 	logicalModelID := strings.TrimSpace(req.LogicalModelID)
 	workflowProviderTask := taskInputUsesWorkflowProvider(normalizedInput)

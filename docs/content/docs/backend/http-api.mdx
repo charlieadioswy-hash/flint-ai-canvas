@@ -27,7 +27,9 @@ Liblib 在发送生成请求前准备或上传输入失败时，任务诊断返�
 
 模型能力 `image.controlNet` 声明 `supported`、`maxUnits`、`preprocessors` 和可选 `models`。Liblib 专有参数保存在 `metadata.providerOptions["liblib-image"]`；AK/SK 由受管渠道保存，浏览器不拼装供应商签名。字段范围和平台扩展规则见[结构控制与 Liblib](/docs/backend/controlnet)。
 
-管理端渠道模型新增 `providerDefaults` 对象，保存协议声明的标量默认参数；写入按协议参数名称、类型、枚举和 Liblib 数值/UUID 范围校验，不接受凭据字段。创作模型目录通过 `defaultOptions` 发布有效默认值。Liblib 支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`；实际有普通内容参考图时选择图生图模板，显式 `templateUuid` 优先，控制图不改变生成方式。服务端按实际选定渠道模型合并管理员默认值与用户显式 `metadata.providerOptions`，在入队/扣费前写入任务快照；后台修改不改变已排队任务，切线重新应用新渠道默认值并保留原用户显式值。辅助选择字段不直接进入上游请求。
+管理端渠道模型新增 `providerDefaults` 对象，保存协议声明的标量默认参数及 Liblib `additionalNetwork` LoRA 列表；写入按协议参数名称、类型、枚举和 Liblib 数值/UUID 范围校验，不接受凭据字段。创作模型目录通过 `defaultOptions` 发布有效默认值。Liblib 支持 `textToImageTemplateUuid`、`imageToImageTemplateUuid`、`controlNetModel`；实际有普通内容参考图时选择图生图模板，显式 `templateUuid` 优先，控制图不改变生成方式。服务端按实际选定渠道模型合并管理员默认值与用户显式 `metadata.providerOptions`，在入队/扣费前写入任务快照；后台修改不改变已排队任务，切线重新应用新渠道默认值并保留原用户显式值。辅助选择字段不直接进入上游请求。
+
+LoRA 任务字段为 `metadata.providerOptions["liblib-image"].additionalNetwork: [{ modelId, weight }]`，权重为 -4–4，未指定为 0.8，显式 0 保留，最多五项且不得重复。`[]` 清空渠道默认选择。模型能力 `image.lora` 提供可信目录与基础算法，入队按实际选定渠道严格校验；项目画风 LoRA 自动合入并以已有选择权重为先，触发词只从可信目录冻结并在最终请求中幂等追加。用户保存的 Prompt 不变，详见[LoRA 风格模型](/docs/backend/controlnet#lora-风格模型)。
 
 ## 画布实时会话
 
@@ -341,7 +343,13 @@ CANVAS_BACKEND_DATA_DIR=/明确的数据目录 ./migrate-schema repair-canvas-re
 
 `intent` 包含 `capability`（`text/image/video/audio`）、`operation`、`inputs`（素材类型到数量的映射）和 `options`（请求规格）。素材数量必须为 0–128 的整数，再按模型能力限制校验。视频规格包括 `vquality`、`size`、`videoSeconds`、布尔值 `videoGenerateAudio`，显式 `false` 必须保留。
 
+图片报价可额外提交 `intent.providerOptions`，目前只允许 `providerOptions["liblib-image"].additionalNetwork`，列表结构与任务相同：`[{ modelId, weight }]`。只接受版本 UUID 和 -4–4 的权重，未指定权重为 0.8，零权重不能按缺省处理，最多五项。显式 `[]` 清空渠道默认 LoRA；省略字段沿用默认配置。报价拒绝其他命名空间，以及 `family`、`checkPointId`、模板、目录或触发词等字段，不允许借报价覆盖管理员配置。
+
+异形屏和普通画布将当前 LoRA 选择带入报价；普通画布先合并项目画风自动 LoRA，已有手选或渠道默认权重优先，同一版本不重复。后端按实际渠道可信目录、基础算法及组合上限独立校验，逻辑模型线路筛选也保留 LoRA 约束；不兼容或未登记的选择不能获得忽略 LoRA 的有效报价。LoRA 选择本身不新增费用项，返回金额仍由选定模型价格档决定；本轮开发配置的 1 积分/张不构成其他部署的定价默认。
+
 报价包含 `logicalModelId`（系统渠道直连为空）、`billingMode`、`quantity`、`amountMicrocredits`、`estimated`。视频 Token 报价另有 `videoTokenEstimate`：`formulaTokens`、`reservedTokens`、`outputWidth`、`outputHeight`、`framesPerSecond`、`outputSeconds`、`referenceSeconds`、`referenceDurationEstimated`、`dimensionsEstimated`、`reservationMarginPercent`。
+
+报价对应本次提交的单个请求。普通画布的多张图片会拆为多个 `count=1` 的独立任务，因此按单张规格报价，再将金额按实际任务数汇总显示；逻辑模型同样遵循该执行策略。一次请求返回多张图片的调用方使用服务端返回的该请求总价，不再额外乘以张数。
 
 Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考素材数量不包含时长信息，带参考视频时统一按 15 秒估算并返回 `referenceDurationEstimated: true`。所有视频协议均支持 Token 定价；10% 预留是平台策略，不是费用上限。成功后优先有效上游用量，无有效用量时按提交的公式快照结算，余量不计入公式费用。账单新增 `videoFormulaTokens` 及 `usageSource`（`provider` / `video_formula`），公式结算的 `usageAvailable` 为 `false`，`outputTokens` 表示公式数量。算法、配置与异常用量处理见[视频 Token 计费](/docs/backend/video-token-billing)。
 

@@ -6,11 +6,14 @@ import { useEffectiveConfig, modelOptionName } from "@/stores/use-config-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
-import { requestCreditCost } from "@/lib/model-pricing";
+import { modelQuoteRequest, requestCreditCost } from "@/lib/model-pricing";
+import { useCanvasModelQuote } from "@/components/canvas/use-canvas-model-quote";
+import { liblibLoraQuoteOptions } from "@/lib/canvas/liblib-lora-quote";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
 import { isIrregularScreenScene, irregularScreenGenerationMode, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize, type ScreenGenerationMode } from "@/lib/canvas/irregular-screen-domain";
-import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl, screenSettingsFromControlSelection, screenSettingsForGenerationMode } from "@/lib/canvas/irregular-screen-model";
+import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl, screenSettingsFromControlSelection, screenSettingsForGenerationMode, screenSettingsFromProvider, screenSettingsForModel } from "@/lib/canvas/irregular-screen-model";
+import { liblibLoraConfigurationError } from "@/lib/canvas/liblib-lora";
 import { applyScreenCarExample, screenCarExample } from "@/lib/canvas/irregular-screen-example";
 import { validateControlNetBindings } from "@/lib/canvas/controlnet";
 import { controlNetConfigurationError, switchControlNetPreprocessor, switchControlNetType } from "@/lib/canvas/controlnet-options";
@@ -35,6 +38,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const [searchParams] = useSearchParams();
     const sceneLibrary = useScreenCreationScenes();
     const userId = useUserStore((state) => state.user?.id);
+    const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const baseConfig = useEffectiveConfig();
     const config = useMemo(() => screenPickerConfig(baseConfig), [baseConfig]);
     const availableModels = config.models;
@@ -128,9 +132,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             const restoredMode = irregularScreenGenerationMode(spec);
             const defaults = screenDefaultSettings(baseConfig, selected, restoredMode.generationMode);
             const provider = node.metadata?.providerOptions?.[screenModelDefaults(baseConfig, selected).protocol] || {};
-            let next = { ...defaults };
-            for (const key of ["steps", "sampler", "cfgScale", "seed", "denoisingStrength"] as const) if (typeof provider[key] === "number") next[key] = provider[key] as number;
-            if (typeof provider.negativePrompt === "string") next.negativePrompt = provider.negativePrompt;
+            let next = screenSettingsFromProvider(defaults, { ...provider, ...(node.metadata?.providerOptions?.["liblib-image"]?.additionalNetwork !== undefined ? { additionalNetwork: node.metadata.providerOptions["liblib-image"].additionalNetwork } : {}) });
             if (params) next = screenSettingsFromControl(next, params);
             setModelValue(selected);
             setAdvancedValue(next);
@@ -265,7 +267,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const setModel = (value: string) => {
         setModelValue(value);
         setImageResolution(modelCapabilityConfigFor(baseConfig, value).image?.resolution.default || "auto");
-        setAdvancedValue(screenDefaultSettings(baseConfig, value, generationMode));
+        setAdvancedValue((current) => screenSettingsForModel(baseConfig, value, current, generationMode));
         setError("");
         if (mask)
             try {
@@ -312,6 +314,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const hasReference = generationMode === "img2img";
     const maskRepaint = hasReference && inpaint;
     let disabledReason = screenModelError(baseConfig, model, hasReference);
+    if (!disabledReason) disabledReason = liblibLoraConfigurationError(advanced.additionalNetwork, profile?.lora, screenModelDefaults(baseConfig, model).protocol);
     if (!disabledReason && hasReference && !reference) disabledReason = "图生图需要上传内容原图";
     if (!disabledReason && maskRepaint) disabledReason = inpaintUnavailableReason;
     if (!disabledReason && maskRepaint && reference && mask && (reference.width !== mask.width || reference.height !== mask.height)) disabledReason = "内容原图与屏幕蒙版的像素宽高必须相同，请使用同一尺寸的图片";
@@ -371,6 +374,8 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const generate = async () => {
         const session = lifetime.current;
         if (!session?.isActive() || lock.current || busy || uploading || loading) return;
+        if (!needsRecovery && quotePending) return;
+        if (!needsRecovery && quoteError) { retryQuote(); return; }
         const token = Symbol("generate");
         lock.current = token;
         setBusy(true);
@@ -433,14 +438,21 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         }
     };
     const { channel } = screenModelDefaults(baseConfig, model);
-    const credit = requestCreditCost({
+    const quoteConfig = { ...baseConfig, model, size, quality, imageResolution, count: "1" };
+    const quoteRequirements = { capability: "image" as const, controlNetUnits: 1, imageSize: size, input: { imageCount: hasReference ? 1 : 0, characterCount: 0, videoCount: 0, audioCount: 0, textCount: 0 } };
+    let quoteProviderOptions: ReturnType<typeof liblibLoraQuoteOptions>;
+    try { quoteProviderOptions = liblibLoraQuoteOptions(quoteConfig, { "liblib-image": { additionalNetwork: advanced.additionalNetwork } }); }
+    catch (failure) { disabledReason ||= errorText(failure); }
+    const quoteRequest = model && size && !disabledReason ? modelQuoteRequest(quoteConfig, model, "image", { ...quoteRequirements, providerOptions: quoteProviderOptions }) : undefined;
+    const { quote, error: quoteError, pending: quotePending, retry: retryQuote } = useCanvasModelQuote(quoteRequest, creditsEnabled && !needsRecovery && !loading);
+    const credit = quote ? quote.amountMicrocredits / 1_000_000 : requestCreditCost({
         channelMode: baseConfig.channelMode,
         modelCosts: channel.modelCosts,
         model: modelOptionName(model),
         count: 1,
         capability: "image",
-        config: { ...baseConfig, model, size, quality, imageResolution },
-        requirements: { capability: "image", controlNetUnits: 1, imageSize: size, input: { imageCount: hasReference ? 1 : 0, characterCount: 0, videoCount: 0, audioCount: 0, textCount: 0 } },
+        config: quoteConfig,
+        requirements: quoteRequirements,
     });
 
     return {
@@ -513,11 +525,12 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         error,
         statusText,
         storageNotice,
-        canGenerate: (needsRecovery || !disabledReason) && !busy && !uploading && !loading && !loadFailed,
-        disabledReason: needsRecovery ? undefined : disabledReason,
+        canGenerate: (needsRecovery || (!disabledReason && !quotePending)) && !busy && !uploading && !loading && !loadFailed,
+        disabledReason: needsRecovery ? undefined : disabledReason || quoteError,
         generate,
-        generateLabel: needsRecovery ? "继续读取结果" : "生成画面",
-        quoteLabel: needsRecovery ? "继续读取原任务，不会重新提交" : credit === null ? "费用以后台模型配置为准" : `本次消耗 ${credit.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`,
+        generateLabel: needsRecovery ? "继续读取结果" : quoteError ? "重试费用确认" : "生成画面",
+        quotePending,
+        quoteLabel: needsRecovery ? "继续读取原任务，不会重新提交" : quoteError ? `费用确认失败：${quoteError}` : credit === null ? "费用以后台模型配置为准" : `本次消耗 ${credit.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 积分`,
         canvasId: canvasId || draftId.current,
         sceneName: project?.title,
         recentScenes: sceneLibrary.scenes.map((item) => ({ id: item.id, name: item.title, updatedAt: item.updatedAt })),

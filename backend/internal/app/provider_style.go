@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+
+	"yingce/backend/internal/protocol"
 )
 
 type styleExecutionPlanDocument struct {
@@ -24,8 +26,72 @@ type styleExecutionPlanDocument struct {
 	Prompt          string `json:"prompt"`
 }
 
+func (s *Service) prepareTaskProjectStyleProfile(userID, taskProjectID, fallbackPrompt string, input map[string]any) error {
+	if stringValue(input["mode"]) != "image" {
+		return nil
+	}
+	prompt, _ := input["prompt"].(string)
+	if strings.TrimSpace(prompt) == "" {
+		prompt = fallbackPrompt
+	}
+	var stored, presetID string
+	// CreateTask already validated these tokens with ResolveToolMentionTokens.
+	// An explicit style tool in the effective prompt overrides project styling.
+	if !strings.Contains(prompt, "@[tool:style:") {
+		var belongsToProject bool
+		var err error
+		stored, presetID, belongsToProject, err = s.taskProjectStyleProfile(userID, taskProjectID)
+		if err != nil {
+			return fmt.Errorf("读取项目画风失败：%w", err)
+		}
+		if !belongsToProject {
+			return nil
+		}
+	}
+	metadata, _ := input["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	if strings.TrimSpace(stored) == "" && strings.TrimSpace(presetID) != "" {
+		// Legacy projects only store a preset ID. Accept a compiled client copy
+		// solely for that same preset, as the execution path already requires.
+		stored = metadataString(metadata, "styleProfileJson")
+		if stored != "" {
+			var profile styleProfileDocument
+			if json.Unmarshal([]byte(stored), &profile) != nil || strings.TrimSpace(profile.PresetID) != strings.TrimSpace(presetID) {
+				return errors.New("项目画风已发生变化，请返回项目列表后重新打开当前项目再生成")
+			}
+		}
+	}
+	if strings.TrimSpace(stored) == "" {
+		// Clearing the project style must also remove its old compiled prompt;
+		// it must not leave an automatic LoRA from the stale canvas metadata.
+		plan, _ := decodeStyleExecutionPlan(metadata["styleExecutionPlan"])
+		prompt = reconcileGenerationStylePrompt(prompt, plan.Prompt, "")
+		if prompt == "" {
+			return errors.New("prompt is required")
+		}
+		input["prompt"] = prompt
+		delete(metadata, "styleProfileJson")
+		delete(metadata, "styleExecutionPlan")
+	} else {
+		validated, err := validateStyleProfileJSON(stored)
+		if err != nil {
+			return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
+		}
+		metadata["styleProfileJson"] = validated
+	}
+	input["metadata"] = metadata
+	return nil
+}
+
 func (s *Service) applyGenerationStyleProfile(userID string, taskProjectID string, input *canvasGenerationInput) error {
 	styleProfileJSON := metadataString(input.Metadata, "styleProfileJson")
+	networks, _ := protocol.NormalizeLiblibAdditionalNetworks(liblibLoRAOptions(*input)["additionalNetwork"])
+	frozen := liblibLoRASnapshotMatches(*input, networks) && input.LiblibLoRA.StyleProfileJSON != nil
+	if frozen {
+		styleProfileJSON = *input.LiblibLoRA.StyleProfileJSON
+	}
 	if strings.TrimSpace(styleProfileJSON) == "" {
 		return nil
 	}
@@ -36,26 +102,28 @@ func (s *Service) applyGenerationStyleProfile(userID string, taskProjectID strin
 	if err := json.Unmarshal([]byte(styleProfileJSON), &profile); err != nil {
 		return fmt.Errorf("项目画风执行配置解析失败：%w", err)
 	}
-	storedProfileJSON, storedPresetID, belongsToProject, err := s.taskProjectStyleProfile(userID, taskProjectID)
-	if err != nil {
-		return fmt.Errorf("读取项目画风失败：%w", err)
-	}
-	if belongsToProject {
-		if strings.TrimSpace(storedProfileJSON) == "" {
-			// 旧项目只有 preset ID，允许画布把该预设编译为结构化快照；仍需锁定同一预设，不能借降级路径换画风。
-			if strings.TrimSpace(storedPresetID) == "" || strings.TrimSpace(profile.PresetID) != strings.TrimSpace(storedPresetID) {
-				return errors.New("项目画风已发生变化，请返回项目列表后重新打开当前项目再生成")
-			}
-		} else {
-			matches, compareErr := equivalentStyleProfileJSON(styleProfileJSON, storedProfileJSON)
-			if compareErr != nil {
-				return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
-			}
-			if !matches {
-				// 项目画风可能在另一个页面更新；保存路径以服务端快照为准，生成时自动采用最新版本。
-				validatedStoredProfileJSON, validateErr := validateStyleProfileJSON(storedProfileJSON)
-				if validateErr != nil || json.Unmarshal([]byte(validatedStoredProfileJSON), &profile) != nil {
+	if !frozen {
+		storedProfileJSON, storedPresetID, belongsToProject, err := s.taskProjectStyleProfile(userID, taskProjectID)
+		if err != nil {
+			return fmt.Errorf("读取项目画风失败：%w", err)
+		}
+		if belongsToProject {
+			if strings.TrimSpace(storedProfileJSON) == "" {
+				// 旧项目只有 preset ID，允许画布把该预设编译为结构化快照；仍需锁定同一预设，不能借降级路径换画风。
+				if strings.TrimSpace(storedPresetID) == "" || strings.TrimSpace(profile.PresetID) != strings.TrimSpace(storedPresetID) {
+					return errors.New("项目画风已发生变化，请返回项目列表后重新打开当前项目再生成")
+				}
+			} else {
+				matches, compareErr := equivalentStyleProfileJSON(styleProfileJSON, storedProfileJSON)
+				if compareErr != nil {
 					return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
+				}
+				if !matches {
+					// 项目画风可能在另一个页面更新；保存路径以服务端快照为准，生成时自动采用最新版本。
+					validatedStoredProfileJSON, validateErr := validateStyleProfileJSON(storedProfileJSON)
+					if validateErr != nil || json.Unmarshal([]byte(validatedStoredProfileJSON), &profile) != nil {
+						return errors.New("项目画风配置暂时无法读取，请在项目设置中重新保存画风后重试")
+					}
 				}
 			}
 		}
@@ -63,7 +131,13 @@ func (s *Service) applyGenerationStyleProfile(userID string, taskProjectID strin
 	// 执行计划是前端为即时预览生成的派生数据。平台模型入队后可能改选真实供应线路，
 	// 因此后端必须以最终模型重新编译，不能要求用户手动“刷新配置”来同步内部路由。
 	plan, _ := decodeStyleExecutionPlan(input.Metadata["styleExecutionPlan"])
-	stylePrompt, expectedStatus, warnings := resolveGenerationStyleExecution(profile, input.Config.Model, firstNonEmpty(input.Config.InterfaceType, input.Config.APIFormat))
+	selectedLoRA := make(map[string]bool)
+	if liblibLoRASnapshotMatches(*input, networks) {
+		for _, network := range networks {
+			selectedLoRA[network.ModelID] = true
+		}
+	}
+	stylePrompt, expectedStatus, warnings := resolveGenerationStyleExecutionWithLoRA(profile, input.Config.Model, firstNonEmpty(input.Config.InterfaceType, input.Config.APIFormat), selectedLoRA)
 	input.Prompt = reconcileGenerationStylePrompt(input.Prompt, plan.Prompt, stylePrompt)
 	if expectedStatus == "blocked" {
 		return fmt.Errorf("当前图片模型无法完整执行项目画风：%s。请切换图片模型，或在项目设置中停用对应画风资产", strings.Join(warnings, "；"))
@@ -150,6 +224,10 @@ func decodeStyleExecutionPlan(value interface{}) (styleExecutionPlanDocument, er
 }
 
 func resolveGenerationStyleExecution(profile styleProfileDocument, generationModel string, interfaceType string) (string, string, []string) {
+	return resolveGenerationStyleExecutionWithLoRA(profile, generationModel, interfaceType, nil)
+}
+
+func resolveGenerationStyleExecutionWithLoRA(profile styleProfileDocument, generationModel string, interfaceType string, selectedLoRA map[string]bool) (string, string, []string) {
 	fragments := []string{strings.TrimSpace(profile.Prompt)}
 	if negative := strings.TrimSpace(profile.NegativePrompt); negative != "" {
 		fragments = append(fragments, "【全局负面 Prompt】\n"+negative)
@@ -178,6 +256,9 @@ func resolveGenerationStyleExecution(profile styleProfileDocument, generationMod
 		case "reference":
 			warnings = append(warnings, asset.Title+"：项目参考图自动注入适配器尚未启用")
 		case "lora":
+			if interfaceType == protocol.LiblibImageProtocolID && liblibStyleAssetProvider(asset.Provider) && selectedLoRA[liblibStyleAssetModelID(asset)] {
+				continue
+			}
 			warnings = append(warnings, asset.Title+"：当前 "+firstNonEmpty(interfaceType, "图片")+" 协议未启用 LoRA 适配器")
 		}
 	}

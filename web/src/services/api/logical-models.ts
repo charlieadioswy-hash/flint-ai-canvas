@@ -25,6 +25,7 @@ export type ModelRequestIntent = {
     operation?: string;
     inputs?: Record<string, number>;
     options?: Record<string, unknown>;
+    providerOptions?: Record<string, Record<string, unknown>>;
 };
 
 export type PublicLogicalModel = {

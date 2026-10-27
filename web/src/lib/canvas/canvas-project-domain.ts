@@ -276,7 +276,10 @@ function resetGenerationParamsOnModelSwitch(node: CanvasNodeData, patch: Partial
     }
     const controls = node.metadata?.generationSpec?.options.controlNet || node.metadata?.controlNet;
     if (controls) reset.controlNet = controls.map((unit) => ({ ...unit, parameters: { ...unit.parameters, model: "" } }));
-    reset.providerOptions = undefined;
+    const loras = node.metadata?.providerOptions?.["liblib-image"]?.additionalNetwork;
+    // Keep explicit LoRA choices visible after a model switch so incompatibility
+    // can be resolved by the user instead of silently changing their generation.
+    reset.providerOptions = loras === undefined ? undefined : { "liblib-image": { additionalNetwork: structuredClone(loras) } };
     return { ...reset, ...patch };
 }
 

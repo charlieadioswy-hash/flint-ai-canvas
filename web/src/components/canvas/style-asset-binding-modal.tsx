@@ -251,7 +251,7 @@ function LoraFields({ asset, onChange }: AssetFieldProps) {
     return (
         <section className="grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
             <Field label="LoRA 权重">
-                <InputNumber className="w-full" min={0} max={2} step={0.05} value={asset.weight} onChange={(weight) => onChange({ weight: weight ?? undefined })} />
+                <InputNumber className="w-full" min={-4} max={4} step={0.05} value={asset.weight} onChange={(weight) => onChange({ weight: weight ?? undefined })} />
             </Field>
             <Field label="触发词">
                 <Select<string[]> mode="tags" value={asset.triggerWords || []} tokenSeparators={[","]} placeholder="输入后回车" onChange={(triggerWords) => onChange({ triggerWords })} />

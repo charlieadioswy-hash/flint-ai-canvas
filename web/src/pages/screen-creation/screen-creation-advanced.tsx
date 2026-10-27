@@ -5,11 +5,12 @@ import type { ReactNode } from "react";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { Checkbox } from "@/components/ui/base/checkbox";
 import { ControlNetParameterFields } from "@/components/controlnet-parameter-fields";
+import { LiblibLoraFields } from "@/components/liblib-lora-fields";
 import { screenControlParameters, screenModelDefaults, screenSettingsFromControlSelection } from "@/lib/canvas/irregular-screen-model";
 import type { ScreenAdvancedSettings, ScreenCreationWorkspaceProps } from "./screen-creation-types";
 
 type Props = Pick<ScreenCreationWorkspaceProps, "advanced" | "setAdvanced" | "profile" | "config" | "model" | "generationMode" | "inpaint" | "setInpaint" | "inpaintUnavailableReason"> & { disabled: boolean };
-type NumericSetting = Exclude<keyof ScreenAdvancedSettings, "controlModel" | "negativePrompt" | "controlType" | "preprocessor" | "processorParameters" | "pixelPerfect">;
+type NumericSetting = Exclude<keyof ScreenAdvancedSettings, "controlModel" | "negativePrompt" | "controlType" | "preprocessor" | "processorParameters" | "pixelPerfect" | "additionalNetwork">;
 
 const settingHelp: Record<NumericSetting, string> = {
     strength: "控制强度（ControlNet strength）：越高越贴合蒙版轮廓，越低越允许画面自由变化。",
@@ -45,7 +46,7 @@ function SettingField({ label, children, hint, help }: { label: string; children
 }
 
 export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config, model, generationMode, inpaint, setInpaint, inpaintUnavailableReason, disabled }: Props) {
-    const defaults = screenModelDefaults(config, model).defaults;
+    const { defaults, protocol } = screenModelDefaults(config, model);
     const numberField = (key: NumericSetting, label: string, min: number, max?: number, step = 1, hint?: string) => (
         <SettingField label={label} hint={hint} help={settingHelp[key]}>
             <InputNumber
@@ -113,6 +114,7 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config,
                         />
                     </SettingField>
                 </section>
+                {protocol === "liblib-image" || advanced.additionalNetwork?.length ? <section className="screen-creation-settings-section"><LiblibLoraFields value={advanced.additionalNetwork} profile={profile?.lora} protocol={protocol} disabled={disabled} onChange={(additionalNetwork) => setAdvanced({ additionalNetwork })} /></section> : null}
             </div>
         </details>
     );
