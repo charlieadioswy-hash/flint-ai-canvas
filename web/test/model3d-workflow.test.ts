@@ -83,6 +83,7 @@ function harness(cache = new Map<string, string>()) {
     let output!: ReturnType<typeof import("@/pages/model3d/use-model3d-workflow").useModel3DWorkflow>;
     const userState = { user: { id: "user" } as { id: string } | null };
     const creates: Model3DCreateRequest[] = [];
+    const requestIds: string[] = [];
     const lists: Array<{ scope?: string; cursor?: string; activeOnly?: boolean; limit?: number }> = [];
     const signals: AbortSignal[] = [];
     const behavior = {
@@ -149,6 +150,7 @@ function harness(cache = new Map<string, string>()) {
             },
             getModel3DTaskByRequest(id: string, signal: AbortSignal) {
                 requests++;
+                requestIds.push(id);
                 signals.push(signal);
                 return behavior.request(id);
             },
@@ -224,6 +226,7 @@ function harness(cache = new Map<string, string>()) {
         behavior,
         cache,
         creates,
+        requestIds,
         lists,
         signals,
         userState,
@@ -333,6 +336,94 @@ test("partial candidate rejection preserves accepted versions and unique request
     h.unmount();
 });
 
+test("editing a successful historical version creates a fresh batch while retaining old outputs across refresh and reload", async () => {
+    const original = task("original", {
+        groupId: "original-group",
+        candidateIndex: 1,
+        candidateCount: 1,
+        result: { assetId: "asset-original", resourceId: "resource-original", storageKey: "resource:resource-original", url: "/api/resources/resource-original/file", fileName: "original.glb", mimeType: "model/gltf-binary", bytes: 1024, format: "glb" },
+    });
+    const originalSnapshot = structuredClone(original);
+    const serverTasks = [original];
+    const list = async (input: { activeOnly?: boolean }) => ({ tasks: input.activeOnly ? [] : structuredClone(serverTasks) });
+    const h = harness();
+    h.behavior.list = list;
+    h.behavior.create = async (input) => {
+        const generated = response(input, {
+            result: {
+                ...original.result!,
+                assetId: `asset-${input.requestId}`,
+                resourceId: `resource-${input.requestId}`,
+                storageKey: `resource:resource-${input.requestId}`,
+                url: `/api/resources/resource-${input.requestId}/file`,
+                fileName: `version-${input.candidateIndex}.glb`,
+            },
+            createdAt: "2026-10-23T02:00:00Z",
+            updatedAt: "2026-10-23T02:01:00Z",
+        });
+        serverTasks.push(generated);
+        return structuredClone(generated);
+    };
+    await h.flush();
+    h.value.selectTask(original.id);
+    h.value.reuseTask(original.id);
+    await h.flush();
+    expect(h.value.draft.prompt).toBe(original.prompt!);
+    expect(h.value.draft.parameters).toEqual(original.parameters!);
+    expect(h.value.draft.parameters).not.toBe(h.value.tasks[0].parameters!);
+    expect(h.creates).toHaveLength(0);
+
+    h.value.setDraft((current) => ({ ...current, prompt: "red vintage toy truck", parameters: { ...current.parameters, faceLimit: 80000, geometryQuality: "detailed", textureQuality: "extreme", modelSeed: 42 } }));
+    h.value.setCount(2);
+    await h.flush();
+    const edited = structuredClone(h.value.draft);
+    expect(h.value.tasks.find((item) => item.id === original.id)).toMatchObject(originalSnapshot);
+    expect(h.creates).toHaveLength(0);
+
+    await h.value.generate();
+    await h.flush();
+    expect(h.creates).toHaveLength(2);
+    expect(new Set([original.requestId, ...h.creates.map((input) => input.requestId)]).size).toBe(3);
+    expect(new Set(h.creates.map((input) => input.groupId)).size).toBe(1);
+    expect(h.creates[0].groupId).toBeTruthy();
+    expect(h.creates[0].groupId).not.toBe(original.groupId);
+    for (const [index, input] of h.creates.entries()) {
+        expect(input).toMatchObject({ prompt: edited.prompt, parameters: edited.parameters, candidateIndex: index + 1, candidateCount: 2, scope: "standalone" });
+        expect(input.sourceFingerprint).not.toBe(original.sourceFingerprint);
+    }
+    expect(h.value.tasks).toHaveLength(3);
+    expect(h.value.selectedTaskId).toBe(`task-${h.creates[0].requestId}`);
+    expect(h.value.draft).toEqual(edited);
+    expect(h.value.tasks.find((item) => item.id === original.id)).toMatchObject(originalSnapshot);
+    expect(original).toEqual(originalSnapshot);
+    expect(new Set(h.value.tasks.map((item) => item.result?.assetId)).size).toBe(3);
+    expect(new Set(h.value.tasks.map((item) => item.result?.resourceId)).size).toBe(3);
+
+    h.value.selectTask(original.id);
+    await h.flush();
+    await h.value.refresh();
+    await h.flush();
+    expect(h.value.selectedTaskId).toBe(original.id);
+    expect(h.value.draft).toEqual(edited);
+    expect(h.value.tasks).toHaveLength(3);
+    expect(h.value.tasks.find((item) => item.id === original.id)?.result).toEqual(originalSnapshot.result);
+    expect(h.creates).toHaveLength(2);
+    h.unmount();
+
+    const restored = harness(h.cache);
+    restored.behavior.list = list;
+    await restored.flush();
+    expect(restored.value.selectedTaskId).toBe(original.id);
+    expect(restored.value.draft).toEqual(edited);
+    expect(restored.value.count).toBe(2);
+    expect(restored.value.tasks).toHaveLength(3);
+    for (const saved of serverTasks) expect(restored.value.tasks.find((item) => item.id === saved.id)).toMatchObject(saved);
+    expect(restored.creates).toHaveLength(0);
+    expect(restored.requests).toBe(0);
+    expect(restored.gets).toBe(0);
+    restored.unmount();
+});
+
 test("unknown POST is verified by request ID and restored after reload without a second POST", async () => {
     const h = harness();
     await h.flush();
@@ -344,6 +435,14 @@ test("unknown POST is verified by request ID and restored after reload without a
     expect(h.creates).toHaveLength(1);
     expect(h.requests).toBeGreaterThan(0);
     expect(h.value.tasks[0].localStatus).toBe("submission_unknown");
+    const initialRequests = h.requests;
+    await h.advance();
+    await h.value.refresh();
+    await h.flush();
+    expect(h.requests).toBeGreaterThan(initialRequests);
+    expect(new Set(h.requestIds)).toEqual(new Set([h.creates[0].requestId]));
+    expect(h.creates).toHaveLength(1);
+    expect(h.value.tasks[0].localStatus).toBe("submission_unknown");
     const accepted = response(h.creates[0]);
     h.unmount();
     const restored = harness(h.cache);
@@ -353,6 +452,7 @@ test("unknown POST is verified by request ID and restored after reload without a
     expect(restored.value.tasks[0].id).toBe(accepted.id);
     expect(restored.value.tasks[0].status).toBe("succeeded");
     expect(restored.value.tasks[0].localStatus).toBeUndefined();
+    expect(restored.requestIds).toEqual([h.creates[0].requestId]);
     restored.unmount();
 });
 

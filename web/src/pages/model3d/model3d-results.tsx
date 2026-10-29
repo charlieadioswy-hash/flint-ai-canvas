@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button, Select } from "antd";
-import { Box, Check, Download, FileBox, LoaderCircle, RefreshCw, Upload, X } from "lucide-react";
+import { Box, Check, Download, FileBox, LoaderCircle, PencilLine, RefreshCw, Upload, X } from "lucide-react";
 import type { Model3DWorkflowTask } from "./use-model3d-workflow";
 import { generationTaskProgress } from "@/lib/generation-task-display";
 import { MODEL3D_MODE_LABELS } from "@/lib/canvas/model3d";
@@ -44,6 +44,7 @@ export function Model3DResults({
     loading,
     refreshing,
     hasMore,
+    editingDisabled,
     onSelect,
     onRefresh,
     onRecover,
@@ -55,6 +56,7 @@ export function Model3DResults({
     loading: boolean;
     refreshing: boolean;
     hasMore: boolean;
+    editingDisabled: boolean;
     onSelect: (id: string) => void;
     onRefresh: () => void;
     onRecover: (id: string) => void;
@@ -108,12 +110,19 @@ export function Model3DResults({
             <section className="model3d-preview-panel" aria-label="3D 产物预览">
                 <header className="model3d-panel-heading">
                     <div>
-                        <h2>{local ? "本地模型预览" : "产物预览"}</h2>
+                        <h2>{local ? "本地模型预览" : "版本预览"}</h2>
                         <p className="model3d-hint">{source ? `${source.format.toUpperCase()} · 拖动旋转，滚轮缩放` : "选择一个候选版本，查看生成进度与模型"}</p>
                     </div>
-                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => input.current?.click()}>
-                        导入模型预览
-                    </Button>
+                    <div className="model3d-choices">
+                        {!local && selectedTask ? (
+                            <Button size="small" disabled={editingDisabled} icon={<PencilLine className="size-3.5" />} title="载入此版本的输入，修改后确认生成新版本" onClick={() => onReuse(selectedTask)}>
+                                修改后生成新版本
+                            </Button>
+                        ) : null}
+                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => input.current?.click()}>
+                            导入模型预览
+                        </Button>
+                    </div>
                 </header>
                 <input
                     ref={input}
@@ -217,11 +226,11 @@ export function Model3DResults({
                     </p>
                 ) : null}
             </section>
-            <section className="model3d-history" aria-label="3D 任务与候选版本">
+            <section className="model3d-history" aria-label="3D 历史版本">
                 <header className="model3d-panel-heading">
                     <div>
-                        <h2>任务与候选版本</h2>
-                        <p className="model3d-hint">自动同步进度，离开页面后任务继续运行</p>
+                        <h2>历史版本</h2>
+                        <p className="model3d-hint">自动同步进度；切换版本只查看结果，需要调整时点击「修改后生成新版本」。</p>
                     </div>
                     <Button size="small" title="同步任务列表、进度和结果，不重新生成" icon={<RefreshCw className="size-3.5" />} loading={refreshing} onClick={onRefresh}>
                         刷新任务
@@ -253,13 +262,24 @@ export function Model3DResults({
                                         <strong>{task.prompt?.trim() || `${MODEL3D_MODE_LABELS[task.mode]}生成模型`}</strong>
                                         <small>
                                             {task.parameters?.model || "3D"} · {task.parameters?.faceLimit ? `${task.parameters.faceLimit.toLocaleString()} 面` : "自动面数"}
-                                            {task.groupId ? ` · 候选 ${task.candidateIndex}/${task.candidateCount}` : ""} · {new Date(task.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                            {task.groupId ? ` · 本批候选 ${task.candidateIndex}/${task.candidateCount}` : ""} ·{" "}
+                                            {new Date(task.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                                         </small>
                                         <Model3DTaskProgress task={task} />
                                     </span>
                                 </button>
-                                <Button type="text" size="small" onClick={() => onReuse(task)}>
-                                    复用参数
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    disabled={editingDisabled}
+                                    icon={<PencilLine className="size-3.5" />}
+                                    title="载入此版本的输入，修改后确认生成新版本"
+                                    onClick={() => {
+                                        setLocal(null);
+                                        onReuse(task);
+                                    }}
+                                >
+                                    修改后生成新版本
                                 </Button>
                             </article>
                         ))}

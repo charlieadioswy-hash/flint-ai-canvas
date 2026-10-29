@@ -44,6 +44,15 @@
     gap: 20px;
     padding: 22px;
 }
+.model3d-editing-note {
+    display: grid;
+    gap: 6px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-card);
+    font-size: var(--fs-caption);
+    overflow-wrap: anywhere;
+}
 .model3d-section-heading h2,
 .model3d-panel-heading h2 {
     margin: 0;

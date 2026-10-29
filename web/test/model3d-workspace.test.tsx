@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Model3DCapabilities, Model3DTaskView } from "../src/services/api/model3d";
+import type { Model3DDraft } from "../src/lib/canvas/model3d";
 
 const dom = new Window({ url: "http://localhost/model3d" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -33,6 +34,7 @@ const { App, ConfigProvider, theme } = await import("antd");
 const { Model3DWorkspace } = await import("../src/pages/model3d/model3d-workspace");
 const { Model3DTaskProgress } = await import("../src/pages/model3d/model3d-results");
 const { createDefaultModel3DState } = await import("../src/lib/canvas/model3d");
+const { model3DTaskDraft } = await import("../src/pages/model3d/model3d-workflow-state");
 
 afterAll(() => {
     dom.happyDOM.abort();
@@ -68,13 +70,13 @@ function task(overrides: Partial<Model3DTaskView> = {}): Model3DTaskView {
     };
 }
 
-async function fixture(dark = false) {
+async function fixture(dark = false, existingTask = task(), busy = false) {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const calls = { generate: [] as unknown[][], select: [] as string[], refresh: 0 };
+    const calls = { generate: [] as unknown[][], select: [] as string[], reuse: [] as string[], refresh: 0 };
     function TestWorkspace() {
-        const [draft, setDraft] = useState(() => ({ ...createDefaultModel3DState("h3.1").draft, prompt: "卡通机器人", parameters: { model: "h3.1", texture: true, pbr: true, faceLimit: 100000 } }));
+        const [draft, setDraft] = useState<Model3DDraft>(() => ({ ...createDefaultModel3DState("h3.1").draft, prompt: "卡通机器人", parameters: { model: "h3.1", texture: true, pbr: true, faceLimit: 100000 } }));
         const [count, setCount] = useState(2);
         return (
             <ConfigProvider theme={{ algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
@@ -89,11 +91,11 @@ async function fixture(dark = false) {
                             setDraft={setDraft}
                             count={count}
                             setCount={setCount}
-                            tasks={[task()]}
-                            selectedTaskId="task"
+                            tasks={[existingTask]}
+                            selectedTaskId={existingTask.id}
                             selectTask={(id) => calls.select.push(id)}
                             submitting={false}
-                            uploading={false}
+                            uploading={busy}
                             hasMore={false}
                             loadingMore={false}
                             generate={async (...args) => {
@@ -106,7 +108,10 @@ async function fixture(dark = false) {
                             recover={async () => {}}
                             loadMore={async () => {}}
                             uploadImage={async () => ({ resourceId: "image" })}
-                            reuseTask={() => {}}
+                            reuseTask={(id) => {
+                                calls.reuse.push(id);
+                                setDraft(model3DTaskDraft(existingTask));
+                            }}
                         />
                     </MemoryRouter>
                 </App>
@@ -137,11 +142,11 @@ for (const dark of [false, true]) {
             expect(f.host.textContent).toContain("3D 创作");
             expect(f.host.querySelector('a[href="/assets"]')).not.toBeNull();
             expect(f.calls.generate).toHaveLength(0);
-            await f.click("确认并生成 2 个版本");
+            await f.click("确认并生成 2 个新版本");
             expect(document.querySelector('[role="dialog"]')?.textContent).toContain("100,000");
             expect(document.querySelector('[role="dialog"]')?.textContent).toContain("2 个独立任务");
             expect(f.calls.generate).toHaveLength(0);
-            await f.click("开始生成 2 个版本");
+            await f.click("开始生成 2 个新版本");
             expect(f.calls.generate).toHaveLength(1);
             expect(f.calls.generate[0]?.[0]).toMatchObject({ prompt: "卡通机器人", parameters: { faceLimit: 100000, texture: true, pbr: true } });
             expect(f.calls.generate[0]?.[1]).toBe(2);
@@ -167,8 +172,52 @@ test("selecting a task and refreshing status never generate another task", async
 test("cancelling generation confirmation leaves tasks untouched", async () => {
     const f = await fixture();
     try {
-        await f.click("确认并生成 2 个版本");
+        await f.click("确认并生成 2 个新版本");
         await f.click("返回修改");
+        expect(f.calls.generate).toHaveLength(0);
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("editing a completed version loads its prompt and parameters, then confirms a new version with 8K texture", async () => {
+    const original = task({ status: "succeeded", scope: "standalone", prompt: "原版银色机器人", parameters: { model: "h3.1", texture: true, pbr: true, faceLimit: 200000, textureQuality: "extreme" } });
+    const before = structuredClone(original);
+    const f = await fixture(false, original);
+    try {
+        await f.click("修改后生成新版本");
+        expect(f.calls.reuse).toEqual([original.id]);
+        expect(f.calls.select).toEqual([original.id]);
+        expect(f.host.querySelector<HTMLTextAreaElement>('[aria-label="模型描述"]')?.value).toBe(original.prompt);
+        expect(f.host.querySelector('[role="status"]')?.textContent).toContain("原版本及其模型文件会保留");
+        expect(f.calls.generate).toHaveLength(0);
+        await f.click("帮我想想");
+        await f.click("科幻跑车");
+        await f.click("使用这段描述");
+        await f.click("确认并生成 2 个新版本");
+        const dialog = document.querySelector('[role="dialog"]');
+        expect(dialog?.textContent).toContain("200,000");
+        expect(dialog?.textContent).toContain("8K 贴图");
+        expect(dialog?.textContent).toContain("服务商实际计费");
+        expect(f.calls.generate).toHaveLength(0);
+        await f.click("开始生成 2 个新版本");
+        expect(f.calls.generate).toHaveLength(1);
+        expect(f.calls.generate[0]?.[0]).toMatchObject({ parameters: original.parameters });
+        expect((f.calls.generate[0]?.[0] as Model3DDraft).prompt).toContain("一辆完整的未来科幻跑车");
+        expect(original).toEqual(before);
+    } finally {
+        await f.dispose();
+    }
+});
+
+test("uploading prevents loading another version over pending input", async () => {
+    const f = await fixture(false, task(), true);
+    try {
+        const buttons = [...f.host.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.includes("修改后生成新版本"));
+        expect(buttons.length).toBe(2);
+        expect(buttons.every((button) => button.disabled)).toBe(true);
+        await f.click("修改后生成新版本");
+        expect(f.calls.reuse).toHaveLength(0);
         expect(f.calls.generate).toHaveLength(0);
     } finally {
         await f.dispose();

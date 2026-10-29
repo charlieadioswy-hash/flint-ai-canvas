@@ -98,6 +98,25 @@ export function Model3DInputs({ draft, capabilities, count, disabled, onChange, 
                     </button>
                 </div>
             </Field>
+            <Field label="贴图质量">
+                <Select
+                    aria-label="贴图质量"
+                    className="w-full"
+                    value={parameters.textureQuality || "standard"}
+                    disabled={disabled || !parameters.texture || !version?.supportsAdvanced}
+                    options={[{ value: "standard", label: "标准" }, { value: "detailed", label: "高清" }, { value: "extreme", label: "8K" }, ...(parameters.textureQuality === "fast" ? [{ value: "fast", label: "快速（已有设置）", disabled: true }] : [])]}
+                    onChange={(value) => setParameter("textureQuality", value)}
+                />
+                <p className="model3d-hint">
+                    {!parameters.texture
+                        ? "白模不生成贴图；切换为带纹理模型后可选择。"
+                        : !version?.supportsAdvanced
+                          ? "当前模型不支持调整贴图质量。"
+                          : parameters.textureQuality === "extreme"
+                            ? "8K 贴图可能增加生成耗时、文件大小和预览显存占用。费用以当前服务配置为准，请在生成前确认。"
+                            : "需要更多材质细节时可选择高清或 8K 贴图。"}
+                </p>
+            </Field>
             <div className="model3d-field-row">
                 <Field label="目标面数">
                     <InputNumber
@@ -205,16 +224,77 @@ function Model3DImageInput({
 }) {
     const input = useRef<HTMLInputElement>(null);
     const request = useRef(0);
+    const uploading = useRef(false);
+    const dragDepth = useRef(0);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
+    const [dragging, setDragging] = useState(false);
     useEffect(
         () => () => {
             ++request.current;
         },
         [],
     );
+    useEffect(() => {
+        if (disabled || busy) {
+            dragDepth.current = 0;
+            setDragging(false);
+        }
+    }, [disabled, busy]);
+    const uploadFiles = async (files: File[]) => {
+        if (disabled || uploading.current || files.length === 0) return;
+        if (files.length > 1) {
+            setError("每个位置一次只能上传一张图片，请分别上传。");
+            return;
+        }
+        const revision = ++request.current;
+        uploading.current = true;
+        setBusy(true);
+        setError("");
+        try {
+            const image = await onUpload(files[0]);
+            if (request.current === revision) onChange(image);
+        } catch (cause) {
+            if (request.current === revision) setError(cause instanceof Error ? cause.message : "图片上传失败，请重试。");
+        } finally {
+            if (request.current === revision) {
+                uploading.current = false;
+                setBusy(false);
+            }
+        }
+    };
+    const dragActive = dragging && !disabled && !busy;
     return (
-        <div className="model3d-upload">
+        <div
+            className="model3d-upload"
+            onDragEnter={(event) => {
+                if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (disabled || uploading.current) return;
+                ++dragDepth.current;
+                setDragging(true);
+            }}
+            onDragOver={(event) => {
+                if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = disabled || uploading.current ? "none" : "copy";
+            }}
+            onDragLeave={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                dragDepth.current = Math.max(0, dragDepth.current - 1);
+                if (dragDepth.current === 0) setDragging(false);
+            }}
+            onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                dragDepth.current = 0;
+                setDragging(false);
+                void uploadFiles(Array.from(event.dataTransfer.files));
+            }}
+        >
             <span className="model3d-field-label">{label}</span>
             <input
                 ref={input}
@@ -225,27 +305,22 @@ function Model3DImageInput({
                 aria-label={`上传${label}`}
                 disabled={disabled || busy}
                 onChange={(event) => {
-                    const file = event.target.files?.[0];
+                    const files = Array.from(event.target.files || []);
                     event.target.value = "";
-                    if (!file) return;
-                    const revision = ++request.current;
-                    setBusy(true);
-                    setError("");
-                    void onUpload(file)
-                        .then((image) => {
-                            if (request.current === revision) onChange(image);
-                        })
-                        .catch((cause) => {
-                            if (request.current === revision) setError(cause instanceof Error ? cause.message : "图片上传失败");
-                        })
-                        .finally(() => {
-                            if (request.current === revision) setBusy(false);
-                        });
+                    void uploadFiles(files);
                 }}
             />
-            <button type="button" className="model3d-upload-target" disabled={disabled || busy} onClick={() => input.current?.click()} aria-label={`选择${label}`}>
+            <button
+                type="button"
+                className="model3d-upload-target"
+                style={dragActive ? { borderColor: "var(--control-focus-ring)", background: "var(--surface-card)", color: "var(--foreground)" } : undefined}
+                disabled={disabled || busy}
+                aria-busy={busy}
+                onClick={() => input.current?.click()}
+                aria-label={`选择${label}`}
+            >
                 {value ? <CachedResourceImage storageKey={value.storageKey} src={value.url} alt={label} className="model3d-reference-image" /> : <ImagePlus className="size-6" />}
-                <span>{busy ? "正在上传…" : value?.title || "点击上传图片"}</span>
+                <span>{busy ? "正在上传…" : dragActive ? "松开以上传图片" : value?.title || "点击或拖入图片"}</span>
             </button>
             {value ? (
                 <Button
