@@ -72,12 +72,13 @@ export function Checkbox({ size = "md", indeterminate = false, children, bare = 
         </>
     );
 
+    // Keep the sr-only input inside this control so focusing it cannot scroll an outer overflow-hidden shell.
     if (bare) {
-        return <span className={cn("group/checkbox inline-flex items-center", disabled && "cursor-not-allowed", className)}>{inner}</span>;
+        return <span className={cn("group/checkbox relative inline-flex items-center", disabled && "cursor-not-allowed", className)}>{inner}</span>;
     }
 
     return (
-        <label data-slot="checkbox" className={cn("group/checkbox inline-flex cursor-pointer select-none items-center gap-2 align-middle", disabled && "cursor-not-allowed", className)}>
+        <label data-slot="checkbox" className={cn("group/checkbox relative inline-flex cursor-pointer select-none items-center gap-2 align-middle", disabled && "cursor-not-allowed", className)}>
             {inner}
             {children !== undefined && <span className={cn("text-sm leading-none text-foreground", disabled && "opacity-60")}>{children}</span>}
         </label>
