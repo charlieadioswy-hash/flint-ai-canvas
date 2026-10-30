@@ -95,6 +95,7 @@ export function Model3DWorkspace(workflow: Model3DWorkspaceProps) {
                             processingOperations={capabilities?.available ? capabilities.processingOperations : []}
                             onProcess={(processing) => void workflow.processModel(processing)}
                             onSource={(id) => void workflow.selectTask(id)}
+                            onFindSegmentation={workflow.findSegmentation}
                         />
                     </div>
                 </div>

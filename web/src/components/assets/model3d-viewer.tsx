@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Axis3D, Bone, Grid2X2, LoaderCircle, Pause, Play, RotateCcw } from "lucide-react";
-import type { Bone as ThreeBone, GridHelper, Object3D, SkeletonHelper } from "three";
+import { Axis3D, Bone, Boxes, Grid2X2, LoaderCircle, Pause, Play, RotateCcw } from "lucide-react";
+import type { Bone as ThreeBone, Box3, GridHelper, Object3D, SkeletonHelper } from "three";
 
 import { IconButton, ToolButton } from "@/components/ui/base/buttons";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -10,15 +10,17 @@ import { loadModel3D } from "@/lib/canvas/model3d-preview";
 import type { Model3DPreviewFormat } from "@/lib/model3d-formats";
 import { createModel3DGround, MODEL3D_AXES, projectModel3DAxes } from "./model3d-viewer-helpers";
 import { createModel3DPlayback, model3DPartObjects } from "./model3d-playback";
+import { createModel3DPartsLayout, frameModel3DParts } from "./model3d-parts-layout";
 
 type Props = { storageKey?: string; url: string; format: Model3DPreviewFormat; theme?: CanvasTheme; expanded?: boolean; partNames?: string[] };
 
 /** Mounted only after entering preview; controls render on demand and own their GPU resources. */
 export function Model3DViewer({ storageKey, url, format, theme, expanded = false, partNames }: Props) {
     const hostRef = useRef<HTMLDivElement>(null);
+    const partsToolsRef = useRef<HTMLDivElement>(null);
     const axesRef = useRef<SVGSVGElement>(null);
     const gridVisibleRef = useRef(true);
-    const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void; setGridVisible: (visible: boolean) => void; setSkeletonVisible: (visible: boolean) => void; setPartVisible: (id: string, visible: boolean) => void; updateAppearance: () => void } | null>(null);
+    const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void; setGridVisible: (visible: boolean) => void; setSkeletonVisible: (visible: boolean) => void; setPartVisible: (id: string, visible: boolean) => void; setPartsSeparated: (value: boolean) => void; updateAppearance: () => void } | null>(null);
     const playback = useRef<ReturnType<typeof createModel3DPlayback> | null>(null);
     const partsKey = JSON.stringify(partNames || []);
     const identity = `${getActiveUserScope()}:${storageKey || url}:${format}`;
@@ -34,6 +36,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
     const [showSkeleton, setShowSkeleton] = useState(false);
     const [hasSkeleton, setHasSkeleton] = useState(false);
     const [parts, setParts] = useState<Array<{ id: string; name: string; visible: boolean }>>([]);
+    const [separated, setSeparated] = useState(false);
     const [clips, setClips] = useState<Array<{ name: string; duration: number }>>([]);
     const [animation, setAnimation] = useState({ index: 0, playing: false, time: 0, duration: 0 });
     const [speed, setSpeed] = useState(1);
@@ -56,6 +59,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
         setLoadedIdentity("");
         setClips([]);
         setParts([]);
+        setSeparated(false);
         setHasSkeleton(false);
         setShowSkeleton(false);
         setAnimation({ index: 0, playing: false, time: 0, duration: 0 });
@@ -79,6 +83,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             fill.position.set(-3, 1, -2);
             scene.add(fill);
             const controls = new OrbitControls(camera, renderer.domElement);
+            const assembledView = { position: camera.position.clone(), target: controls.target.clone() };
+            let partsSeparated = false;
+            let layoutParts: ((value: boolean) => void) | undefined;
+            let frameParts: (() => void) | undefined;
             controls.enableDamping = false;
             controls.enablePan = false;
             controls.enableZoom = expanded;
@@ -122,6 +130,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 camera.aspect = width / height;
                 camera.updateProjectionMatrix();
                 renderer.setSize(width, height);
+                if (partsSeparated) frameParts?.();
                 render();
             };
             const observer = new ResizeObserver(resize);
@@ -146,6 +155,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                     camera.position.set(2.7, 1.6, 3.2);
                     controls.target.set(0, 0, 0);
                     controls.update();
+                    if (partsSeparated) { frameParts?.(); return; }
                     render();
                 },
                 rotate: (x, y) => {
@@ -162,6 +172,16 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 },
                 setSkeletonVisible: (visible) => { if (skeleton) skeleton.visible = visible; render(); },
                 setPartVisible: (id, visible) => { const part = partObjects.find((value) => value.id === id); if (part) part.object.visible = visible; render(); },
+                setPartsSeparated: (value) => {
+                    if (value && !partsSeparated) {
+                        assembledView.position.copy(camera.position);
+                        assembledView.target.copy(controls.target);
+                    }
+                    partsSeparated = value;
+                    playback.current?.pause();
+                    layoutParts?.(value);
+                    frameParts?.();
+                },
                 updateAppearance,
             };
             cleanup = () => {
@@ -220,6 +240,31 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 setHasSkeleton(true);
             }
             partObjects = model3DPartObjects(model, JSON.parse(partsKey) as string[]);
+            layoutParts = createModel3DPartsLayout(partObjects);
+            frameParts = () => {
+                const bounds = new THREE.Box3().setFromObject(group);
+                if (partsSeparated) {
+                    const meshBounds: Box3[] = [];
+                    group.traverse((object) => { if (object instanceof THREE.Mesh) meshBounds.push(new THREE.Box3().setFromObject(object)); });
+                    const { center, distance } = frameModel3DParts(camera, meshBounds.length ? meshBounds : [bounds], Math.max(host.clientWidth, 1), Math.max(host.clientHeight, 1), partsToolsRef.current?.offsetHeight || 0);
+                    controls.maxDistance = Math.max(15, distance * 3);
+                    controls.target.copy(center);
+                } else {
+                    camera.clearViewOffset();
+                    camera.position.copy(assembledView.position);
+                    controls.target.copy(assembledView.target);
+                    controls.maxDistance = 15;
+                    camera.far = 100;
+                }
+                camera.updateProjectionMatrix();
+                controls.update();
+                if (ground) { scene.remove(ground); disposePrevisObject3D(ground); }
+                ground = createModel3DGround(bounds, new THREE.Color());
+                ground.visible = gridVisibleRef.current;
+                scene.add(ground);
+                updateAppearance();
+                render();
+            };
             setParts(partObjects.map(({ id, name, object }) => ({ id, name, visible: object.visible })));
             playback.current = createModel3DPlayback(model, render, (state) => { if (active) setAnimation(state); });
             setClips(playback.current.clips);
@@ -304,7 +349,8 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             ) : null}
             {!error && loadedIdentity === identity ? (
                 <>
-                    <div role="group" aria-label="3D 辅助显示" data-canvas-no-zoom className="absolute left-2 top-2 flex gap-1 rounded-[var(--r-md)] border p-1" style={{ background: panel, borderColor: stroke }}>
+                    <div ref={partsToolsRef} className="absolute left-2 top-2 flex max-w-[calc(100%-6rem)] flex-col items-start gap-2" data-canvas-no-zoom>
+                    <div role="group" aria-label="3D 辅助显示" className="flex flex-wrap gap-1 rounded-[var(--r-md)] border p-1" style={{ background: panel, borderColor: stroke }}>
                         <ToolButton
                             size="sm"
                             icon={<Grid2X2 />}
@@ -322,13 +368,15 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                         />
                         <ToolButton size="sm" icon={<Axis3D />} label="坐标" active={showAxes} aria-pressed={showAxes} aria-label="显示 XYZ 方向指示" onClick={() => setShowAxes((value) => !value)} />
                         {hasSkeleton ? <ToolButton size="sm" icon={<Bone />} label="骨骼" active={showSkeleton} aria-pressed={showSkeleton} onClick={() => { setShowSkeleton(!showSkeleton); controller.current?.setSkeletonVisible(!showSkeleton); }} /> : null}
+                        {parts.length > 1 && clips.length === 0 ? <ToolButton size="sm" icon={<Boxes />} label={separated ? "还原组装" : "分离展示"} active={separated} aria-pressed={separated} title="保持原有结构与朝向，拉开部件间隙；仅影响预览" onClick={() => { const value = !separated; setSeparated(value); controller.current?.setPartsSeparated(value); }} /> : null}
                     </div>
-                    {parts.length > 0 ? <details className="absolute left-2 top-14 max-w-[60%] rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }}>
+                    {parts.length > 0 ? <details className="max-w-full rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} onToggle={() => { if (separated) controller.current?.setPartsSeparated(true); }}>
                         <summary className="cursor-pointer">部件显隐 · {parts.length}</summary>
                         <div className="mt-2 grid max-h-40 gap-2 overflow-auto" data-canvas-wheel-scroll>
                             {parts.map((part) => <label key={part.id} className="flex items-center gap-2"><input type="checkbox" checked={part.visible} onChange={(event) => { const visible = event.target.checked; controller.current?.setPartVisible(part.id, visible); setParts((current) => current.map((item) => item.id === part.id ? { ...item, visible } : item)); }} /><span className="truncate" title={part.name}>{part.name}</span></label>)}
                         </div>
                     </details> : null}
+                    </div>
                     {clips.length > 0 ? <div className="absolute bottom-10 left-2 right-2 flex flex-wrap items-center gap-2 rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} data-canvas-no-zoom>
                         <IconButton icon={animation.playing ? Pause : Play} aria-label={animation.playing ? "暂停动画" : "播放动画"} title={animation.playing ? "暂停动画" : "播放动画"} onClick={() => { if (animation.playing) playback.current?.pause(); else playback.current?.play(); }} />
                         <select aria-label="预览动作" className="min-w-0 max-w-[40%] bg-transparent" value={animation.index} onChange={(event) => playback.current?.select(Number(event.target.value))}>{clips.map((clip, i) => <option key={i} value={i}>{clip.name}</option>)}</select>

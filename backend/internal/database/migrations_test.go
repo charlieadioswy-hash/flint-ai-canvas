@@ -331,6 +331,7 @@ func schemaBranchFixture(t *testing.T, lineage string, lastVersion int64) *gorm.
 	for name, tables := range map[string][]any{
 		"image_content_moderation":  {&model.ImageModerationProvider{}, &model.ImageModerationConfig{}, &model.ImageModerationPolicy{}, &model.ImageModerationCheck{}, &model.ImageModerationItem{}, &model.ImageModerationDailyUsage{}},
 		"canvas_model3d":            {&model.Model3DProvider{}, &model.Model3DConfig{}, &model.Model3DPolicy{}, &model.Model3DSubmission{}, &model.Model3DDailyUsage{}},
+		"model3d_requests":          {&model.Model3DRequest{}},
 		"canvas_mutation_receipts":  {&model.CanvasMutationReceipt{}},
 		"personal_profile_security": {&model.UserAvatar{}},
 		"user_login_logs":           {&model.LoginLog{}},

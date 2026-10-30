@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState, type SetStateAction } from "r
 import { model3DFaceRange, type Model3DDraft, type Model3DImageBinding } from "@/lib/canvas/model3d";
 import { createClientId } from "@/lib/client-id";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
-import { createModel3DTask, getModel3DCapabilities, getModel3DTask, getModel3DTaskByRequest, listModel3DTasks, recoverModel3DTask, type Model3DCapabilities, type Model3DTaskView, type Model3DCreateRequest, type Model3DProcessing, type Model3DProcessingRequest } from "@/services/api/model3d";
+import { createModel3DTask, getModel3DCapabilities, getModel3DTask, getModel3DTaskByRequest, getModel3DSegmentation, listModel3DTasks, recoverModel3DTask, type Model3DCapabilities, type Model3DTaskView, type Model3DCreateRequest, type Model3DProcessing, type Model3DProcessingRequest } from "@/services/api/model3d";
 import { ApiError } from "@/services/api/request";
 import { resourceFileUrl, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { useUserStore } from "@/stores/use-user-store";
-import { defaultModel3DDraft, isActiveModel3DTask, mergeModel3DTasks, model3DPendingTask, model3DTaskDraft, standaloneModel3DRequest, validateModel3DImage, type Model3DWorkflowTask } from "./model3d-workflow-state";
+import { defaultModel3DDraft, isActiveModel3DTask, isReusedModel3DSegmentation, mergeModel3DTasks, model3DPendingTask, model3DTaskDraft, standaloneModel3DRequest, validateModel3DImage, type Model3DWorkflowTask } from "./model3d-workflow-state";
 import { model3DProcessingOptions } from "./model3d-processing-state";
 
 export type { Model3DWorkflowTask } from "./model3d-workflow-state";
@@ -144,11 +144,13 @@ export function useModel3DWorkflow() {
     const accept = useCallback(
         (operation: Operation, task: Model3DTaskView, expected?: Model3DWorkflowTask) => {
             if (!current(operation)) return false;
-            if (task.scope !== "standalone" || task.clientContext.canvasId || task.clientContext.nodeId || (expected?.requestId && task.requestId !== expected.requestId) || (expected && task.sourceFingerprint !== expected.sourceFingerprint))
+            const reused = isReusedModel3DSegmentation(task, expected);
+            if (task.scope !== "standalone" || task.clientContext.canvasId || task.clientContext.nodeId || (!reused && ((expected?.requestId && task.requestId !== expected.requestId) || (expected && task.sourceFingerprint !== expected.sourceFingerprint))))
                 throw new Error("任务响应与此独立请求不匹配。");
             update(operation.owner, (previous) => {
                 const replaced = previous.tasks.find((item) => item.id === task.id || Boolean(task.requestId && item.requestId === task.requestId));
-                return { ...previous, error: "", tasks: mergeModel3DTasks(previous.tasks, [task]), selectedTaskId: !previous.selectedTaskId || previous.selectedTaskId === replaced?.id ? task.id : previous.selectedTaskId };
+                const tasks = reused ? previous.tasks.filter((item) => item.id !== expected!.id) : previous.tasks;
+                return { ...previous, error: "", tasks: mergeModel3DTasks(tasks, [task]), selectedTaskId: !previous.selectedTaskId || previous.selectedTaskId === replaced?.id || (reused && previous.selectedTaskId === expected!.id) ? task.id : previous.selectedTaskId };
             });
             return true;
         },
@@ -163,7 +165,9 @@ export function useModel3DWorkflow() {
             let task = initial;
             try {
                 for (;;) {
-                    const next = await readWithRetry(operation, () => (task.localStatus ? getModel3DTaskByRequest(task.requestId!, operation.controller.signal) : getModel3DTask(task.id, operation.controller.signal)));
+                    const next = await readWithRetry(operation, () => task.localStatus
+                        ? getModel3DTaskByRequest(task.requestId!, operation.controller.signal)
+                        : getModel3DTask(task.id, operation.controller.signal));
                     if (next) {
                         accept(operation, next, task);
                         task = { ...next, snapshot: task.snapshot };
@@ -335,6 +339,23 @@ export function useModel3DWorkflow() {
         [setDraft],
     );
 
+    const findSegmentation = useCallback(async (sourceTaskId: string) => {
+        cancelTaskSelection();
+        const key = "selection";
+        const operation = begin(key);
+        if (!operation) throw aborted();
+        try {
+            const task = await getModel3DSegmentation(sourceTaskId, operation.controller.signal);
+            if (!current(operation)) throw aborted();
+            if (!task) return false;
+            if (task.processing?.operation !== "segment" || task.processing.sourceTaskId !== sourceTaskId) throw new Error("拆分结果与当前模型不匹配。");
+            if (!accept(operation, task)) throw aborted();
+            update(operation.owner, (previous) => ({ ...previous, selectedTaskId: task.id }));
+            if (isActiveModel3DTask(task)) void monitor(task);
+            return true;
+        } finally { finish(key, operation); }
+    }, [accept, begin, cancelTaskSelection, current, finish, monitor, update]);
+
     const submitPrepared = useCallback(async (operation: Operation, request: Model3DCreateRequest | Model3DProcessingRequest, placeholder: Model3DWorkflowTask, select: boolean) => {
         if (!current(operation)) return "";
         // Persist the identity before POST. Recovery only queries this request and never resubmits it.
@@ -364,6 +385,7 @@ export function useModel3DWorkflow() {
         if (!operation) return;
         update(operation.owner, (previous) => ({ ...previous, submitting: true, error: "" }));
         try {
+            if (processing.operation === "segment" && await findSegmentation(processing.sourceTaskId)) return;
             const capabilities = await getModel3DCapabilities(operation.controller.signal);
             if (!current(operation)) return;
             update(operation.owner, (previous) => ({ ...previous, capabilities }));
@@ -379,7 +401,7 @@ export function useModel3DWorkflow() {
             if (current(operation)) update(operation.owner, (previous) => ({ ...previous, submitting: false }));
             finish("submit", operation);
         }
-    }, [begin, current, finish, submitPrepared, update]);
+    }, [begin, current, findSegmentation, finish, submitPrepared, update]);
 
     const generate = useCallback(
         async (draft = stateRef.current.draft, count = stateRef.current.count) => {
@@ -498,6 +520,7 @@ export function useModel3DWorkflow() {
         tasks: state.tasks,
         selectedTaskId: state.selectedTaskId,
         selectTask,
+        findSegmentation,
         submitting: state.submitting,
         uploading: state.uploading,
         hasMore: Boolean(state.nextCursor),

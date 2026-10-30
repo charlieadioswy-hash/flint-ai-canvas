@@ -190,31 +190,85 @@ func (r *Repository) Model3DSubmissions(userID string, taskIDs []string) ([]mode
 	return values, err
 }
 
-func (r *Repository) Model3DSubmissionForRequest(userID, requestID string) (*model.Model3DSubmission, error) {
-	var value model.Model3DSubmission
+func (r *Repository) Model3DRequestForUser(userID, requestID string) (*model.Model3DRequest, error) {
+	var value model.Model3DRequest
 	err := r.db.First(&value, "user_id = ? AND request_id = ?", userID, requestID).Error
 	return &value, err
 }
 
-// Policy locking serializes admission with activation and resource deletion.
-func (r *Repository) AdmitModel3D(task *model.Task, submission *model.Model3DSubmission, revision int64, inputs map[string]string, create func(*Repository) error) (*model.Task, error) {
+func (r *Repository) model3DTaskForRequest(userID, requestID, hash string) (*model.Task, error) {
+	existing, err := r.Model3DRequestForUser(userID, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if existing.RequestHash != hash {
+		return nil, ErrModel3DConflict
+	}
+	return r.TaskForUser(userID, existing.TaskID)
+}
+
+// Bind the selected task before returning it, even if it finishes during the lookup.
+func (r *Repository) BindModel3DRequest(request *model.Model3DRequest) (*model.Task, error) {
+	var task *model.Task
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockModel3DPolicy(tx); err != nil {
+			return err
+		}
+		var err error
+		repo := New(tx)
+		task, err = repo.model3DTaskForRequest(request.UserID, request.RequestID, request.RequestHash)
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		task, err = repo.TaskForUser(request.UserID, request.TaskID)
+		if err != nil {
+			return err
+		}
+		if task.Type != model.TaskTypeCanvasModel3D {
+			return ErrModel3DConflict
+		}
+		return tx.Create(request).Error
+	})
+	return task, err
+}
+
+func (r *Repository) Model3DSegmentation(userID, sourceID string) (*model.Task, error) {
+	source := "json_extract(input_json, '$.processing.sourceTaskId')"
+	if r.db.Dialector.Name() == "postgres" {
+		source = "input_json::jsonb->'processing'->>'sourceTaskId'"
+	}
+	var task model.Task
+	err := r.db.Where("user_id = ? AND type = ? AND workbench_kind = ? AND project_id = ? AND operation = ?", userID, model.TaskTypeCanvasModel3D, model.WorkbenchKindModel3D, "", "model3d_segment").
+		Where(source+" = ?", sourceID).
+		Where("status IN ? OR (status = ? AND id IN (SELECT task_id FROM model3d_submissions WHERE state IN ?))", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSucceeded}, model.TaskStatusFailed, []string{"inflight", "unknown", "accepted", "storing"}).
+		Order("CASE WHEN status = 'succeeded' THEN 0 ELSE 1 END, created_at DESC, id DESC").First(&task).Error
+	return &task, err
+}
+
+// Policy locking serializes admission with activation, resource deletion and segmentation reuse.
+func (r *Repository) AdmitModel3D(task *model.Task, submission *model.Model3DSubmission, revision int64, inputs map[string]string, segmentationSourceID string, create func(*Repository) error) (*model.Task, error) {
 	var admitted *model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		policy, err := lockModel3DPolicy(tx)
 		if err != nil {
 			return err
 		}
-		var existing model.Model3DSubmission
-		err = tx.First(&existing, "user_id = ? AND request_id = ?", submission.UserID, submission.RequestID).Error
-		if err == nil {
-			if existing.RequestHash != submission.RequestHash {
-				return ErrModel3DConflict
-			}
-			admitted, err = New(tx).TaskForUser(task.UserID, existing.TaskID)
-			return err
-		}
+		admitted, err = New(tx).model3DTaskForRequest(submission.UserID, submission.RequestID, submission.RequestHash)
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		request := model.Model3DRequest{UserID: submission.UserID, RequestID: submission.RequestID, RequestHash: submission.RequestHash, TaskID: task.ID}
+		// Serialize different request IDs for the same source before creating another paid task.
+		if segmentationSourceID != "" {
+			existingTask, lookupErr := New(tx).Model3DSegmentation(task.UserID, segmentationSourceID)
+			if lookupErr == nil {
+				admitted = existingTask
+				request.TaskID = existingTask.ID
+				return tx.Create(&request).Error
+			}
+			if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+				return lookupErr
+			}
 		}
 		if policy.Revision != revision || policy.ActiveConfigID != submission.ConfigID {
 			return ErrModel3DConflict
@@ -232,6 +286,9 @@ func (r *Repository) AdmitModel3D(task *model.Task, submission *model.Model3DSub
 			return err
 		}
 		if err := tx.Create(submission).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&request).Error; err != nil {
 			return err
 		}
 		admitted = task

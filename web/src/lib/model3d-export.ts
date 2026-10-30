@@ -1,4 +1,4 @@
-import type { Object3D } from "three";
+import type { MeshLambertMaterial, MeshStandardMaterial, Object3D } from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { OBJExporter } from "three/examples/jsm/exporters/OBJExporter.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
@@ -24,7 +24,17 @@ export async function exportModel3DObject(model: Object3D, target: Model3DExport
         const data = new STLExporter().parse(model, { binary: true });
         blob = new Blob([new Uint8Array(data.buffer, data.byteOffset, data.byteLength)], { type: "model/stl" });
     } else {
-        const data = await new GLTFExporter().parseAsync(model, { binary: target === "glb", animations: model.animations });
+        const exporter = new GLTFExporter();
+        exporter.register((writer) => ({
+            async writeMaterialAsync(material, definition) {
+                // FBX uses Phong/Lambert materials; Three only exports emissive intensity for PBR materials.
+                const source = material as MeshLambertMaterial & Partial<MeshStandardMaterial>;
+                if (source.isMeshStandardMaterial || !source.emissive || source.emissiveIntensity === undefined || source.emissiveIntensity === 1) return;
+                definition.extensions = { ...(definition.extensions as Record<string, unknown> | undefined), KHR_materials_emissive_strength: { emissiveStrength: source.emissiveIntensity } };
+                writer.extensionsUsed.KHR_materials_emissive_strength = true;
+            },
+        }));
+        const data = await exporter.parseAsync(model, { binary: target === "glb", animations: model.animations });
         blob = target === "glb" ? new Blob([data as ArrayBuffer], { type: "model/gltf-binary" }) : new Blob([JSON.stringify(data)], { type: "model/gltf+json" });
     }
     return { blob, fileName: model3DFileName(fileName, target), mimeType: blob.type };

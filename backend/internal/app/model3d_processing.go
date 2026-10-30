@@ -2,8 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"yingce/backend/internal/assets"
 	"yingce/backend/internal/model"
@@ -106,9 +109,41 @@ func (s *Service) prepareModel3DProcessing(userID string, p model3d.Processing, 
 	return prepared, map[string]string{resource.ID: version}, nil
 }
 
-func (s *Service) createModel3DProcessingTask(userID string, req Model3DCreateRequest, record *model.Model3DConfig, config model3d.Config, revision int64, hash string) (*Model3DTaskView, error) {
+func validateModel3DProcessingRequest(req Model3DCreateRequest) error {
 	if req.Scope != "standalone" || req.Mode != "" || req.Prompt != "" || req.ImageResourceID != "" || req.Views != nil || req.Parameters != (model3d.Parameters{}) || req.GroupID != "" || req.CandidateIndex != 0 || req.CandidateCount != 0 {
-		return nil, BadAuthRequest("模型处理须为独立任务，不能混用生成输入或候选参数")
+		return BadAuthRequest("模型处理须为独立任务，不能混用生成输入或候选参数")
+	}
+	if err := model3d.ValidateProcessing(*req.Processing); err != nil {
+		return BadAuthRequest(err.Error())
+	}
+	return nil
+}
+
+// Existing results remain available even when the provider is disabled or its account changes.
+func (s *Service) Model3DSegmentation(userID, sourceID string) (*Model3DTaskView, error) {
+	if userID == "" {
+		return nil, Unauthorized("请先登录")
+	}
+	_, input, _, err := s.ownedModel3DProcessingSource(userID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if input.Processing != nil {
+		return nil, BadAuthRequest("请从原始生成模型查看拆分结果")
+	}
+	task, err := s.repo.Model3DSegmentation(userID, sourceID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, model3DError(err)
+	}
+	return s.Model3DTask(userID, task.ID)
+}
+
+func (s *Service) createModel3DProcessingTask(userID string, req Model3DCreateRequest, record *model.Model3DConfig, config model3d.Config, revision int64, hash string) (*Model3DTaskView, error) {
+	if err := validateModel3DProcessingRequest(req); err != nil {
+		return nil, err
 	}
 	input, versions, err := s.prepareModel3DProcessing(userID, *req.Processing, record, config)
 	if err != nil {
@@ -131,8 +166,12 @@ func (s *Service) createModel3DProcessingTask(userID string, req Model3DCreateRe
 	label := model3d.ProcessingLabel(req.Processing.Operation)
 	task := &model.Task{ID: newID(), UserID: userID, WorkbenchKind: model.WorkbenchKindModel3D, Type: model.TaskTypeCanvasModel3D, Status: model.TaskStatusQueued, Stage: "等待队列调度", Prompt: label + " · " + strings.TrimSpace(input.Prompt), Operation: "model3d_" + req.Processing.Operation, Provider: model3d.ProviderTripo, Model: req.Processing.Model, InputJSON: string(encoded)}
 	submission := &model.Model3DSubmission{TaskID: task.ID, UserID: userID, RequestID: req.RequestID, RequestHash: hash, ConfigID: record.ID, State: "prepared"}
+	segmentationSourceID := ""
+	if req.Processing.Operation == "segment" {
+		segmentationSourceID = req.Processing.SourceTaskID
+	}
 	s.storageMu.Lock()
-	admitted, err := s.repo.AdmitModel3D(task, submission, revision, versions, func(repo *repository.Repository) error {
+	admitted, err := s.repo.AdmitModel3D(task, submission, revision, versions, segmentationSourceID, func(repo *repository.Repository) error {
 		return createTaskWithStorageQuotaRepository(repo, task, nil, policy)
 	})
 	s.storageMu.Unlock()

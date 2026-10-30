@@ -56,6 +56,7 @@ export function Model3DResults({
     processingOperations = [],
     onProcess,
     onSource,
+    onFindSegmentation,
 }: {
     tasks: Model3DWorkflowTask[];
     selectedTask?: Model3DWorkflowTask;
@@ -71,6 +72,7 @@ export function Model3DResults({
     processingOperations?: Model3DProcessingOperation[];
     onProcess?: (processing: Model3DProcessing) => void;
     onSource?: (id: string) => void;
+    onFindSegmentation?: (id: string) => Promise<boolean>;
 }) {
     const [local, setLocal] = useState<PreviewSource | null>(null);
     const [targetFormat, setTargetFormat] = useState<Model3DExportFormat | "original">("original");
@@ -235,7 +237,7 @@ export function Model3DResults({
                         {error}
                     </p>
                 ) : null}
-                {!local && selectedTask && onProcess ? <Model3DProcessingPanel key={`${selectedTask.id}:${selectedTask.status}:${processingOperations.join(",")}`} task={selectedTask} enabled={processingOperations} disabled={editingDisabled} onProcess={onProcess} onSource={onSource || onSelect} /> : null}
+                {!local && selectedTask && onProcess ? <Model3DProcessingPanel key={`${selectedTask.id}:${selectedTask.status}:${processingOperations.join(",")}`} task={selectedTask} enabled={processingOperations} disabled={editingDisabled} onProcess={onProcess} onSource={onSource || onSelect} onFindSegmentation={onFindSegmentation} /> : null}
             </section>
             <section className="model3d-history" aria-label="3D 历史版本">
                 <header className="model3d-panel-heading">

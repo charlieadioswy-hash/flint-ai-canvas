@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 77
+const CurrentSchemaVersion int64 = 78
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -274,6 +274,16 @@ var schemaMigrations = []migration{
 	}},
 	{version: 76, name: "drama_segment_mode", checksum: "sha256:drama-segment-mode-v71-20261026", apply: migrateDramaSegmentMode},
 	{version: 77, name: "referral_center", checksum: "sha256:referral-center-v72-20261027", apply: migrateReferralCenter},
+	{version: 78, name: "model3d_requests", checksum: "sha256:model3d-requests-v78-20261030", apply: migrateModel3DRequests},
+}
+
+func migrateModel3DRequests(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.Model3DRequest{}); err != nil {
+		return err
+	}
+	return tx.Exec(`INSERT INTO model3d_requests (user_id, request_id, task_id, request_hash, created_at)
+		SELECT user_id, request_id, task_id, request_hash, created_at FROM model3d_submissions WHERE 1 = 1
+		ON CONFLICT (user_id, request_id) DO NOTHING`).Error
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。

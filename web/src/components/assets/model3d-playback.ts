@@ -50,10 +50,14 @@ export function createModel3DPlayback(model: Object3D, render: () => void, onSta
 
 export function model3DPartObjects(model: Object3D, names: string[]) {
     const wanted = new Set(names);
+    const selected = new Set<Object3D>();
     const result: Array<{ id: string; name: string; object: Object3D }> = [];
     model.traverse((object) => {
         const name = typeof object.userData.name === "string" ? object.userData.name : object.name;
-        if (wanted.has(name)) result.push({ id: object.uuid, name, object });
+        if (!wanted.has(name)) return;
+        for (let parent = object.parent; parent; parent = parent.parent) if (selected.has(parent)) return;
+        selected.add(object);
+        result.push({ id: object.uuid, name, object });
     });
     return result;
 }

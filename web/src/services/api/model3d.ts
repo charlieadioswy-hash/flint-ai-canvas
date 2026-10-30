@@ -167,6 +167,10 @@ export function getModel3DTask(id: string, signal?: AbortSignal) {
     return http.get<Model3DTaskView>(`/model3d/tasks/${encodeURIComponent(id)}`, { signal });
 }
 
+export function getModel3DSegmentation(sourceTaskId: string, signal?: AbortSignal) {
+    return http.get<Model3DTaskView | null>(`/model3d/tasks/${encodeURIComponent(sourceTaskId)}/segmentation`, { signal });
+}
+
 export function getModel3DTaskByRequest(requestId: string, signal?: AbortSignal) {
     return http.get<Model3DTaskView | null>(`/model3d/requests/${encodeURIComponent(requestId)}`, { signal });
 }

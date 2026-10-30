@@ -62,8 +62,18 @@ type Model3DDailyUsage struct {
 	UpdatedAt time.Time
 }
 
+// Each accepted client request keeps its own hash while sharing the original task.
+type Model3DRequest struct {
+	UserID      string `gorm:"primaryKey;size:36"`
+	RequestID   string `gorm:"primaryKey;size:96"`
+	TaskID      string `gorm:"size:36;not null;index"`
+	RequestHash string `gorm:"size:64;not null"`
+	CreatedAt   time.Time
+}
+
 func (Model3DProvider) TableName() string   { return "model3d_providers" }
 func (Model3DConfig) TableName() string     { return "model3d_configs" }
 func (Model3DPolicy) TableName() string     { return "model3d_policies" }
 func (Model3DSubmission) TableName() string { return "model3d_submissions" }
+func (Model3DRequest) TableName() string    { return "model3d_requests" }
 func (Model3DDailyUsage) TableName() string { return "model3d_daily_usages" }

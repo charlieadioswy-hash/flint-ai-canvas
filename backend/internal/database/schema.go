@@ -93,6 +93,7 @@ func Models() []any {
 		&model.Model3DConfig{},
 		&model.Model3DPolicy{},
 		&model.Model3DSubmission{},
+		&model.Model3DRequest{},
 		&model.Model3DDailyUsage{},
 		&model.ImageModerationProvider{},
 		&model.ImageModerationConfig{},

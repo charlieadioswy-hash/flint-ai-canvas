@@ -412,14 +412,14 @@ func (s *Service) Model3DTaskByRequest(userID, requestID string) (*Model3DTaskVi
 	if requestID == "" || len(requestID) > 96 || strings.ContainsAny(requestID, "\r\n") {
 		return nil, BadAuthRequest("请求标识无效")
 	}
-	submission, err := s.repo.Model3DSubmissionForRequest(userID, requestID)
+	request, err := s.repo.Model3DRequestForUser(userID, requestID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return s.Model3DTask(userID, submission.TaskID)
+	return s.Model3DTask(userID, request.TaskID)
 }
 
 func (s *Service) readModel3DImage(userID, id, view string) (*model.Resource, model3d.Image, string, error) {
@@ -524,7 +524,7 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 		return nil, err
 	}
 	hash := model3DRequestHash(req)
-	if existing, err := s.repo.Model3DSubmissionForRequest(userID, req.RequestID); err == nil {
+	if existing, err := s.repo.Model3DRequestForUser(userID, req.RequestID); err == nil {
 		if existing.RequestHash != hash {
 			return nil, NewAppError(409, "相同 requestId 不能用于不同生成请求")
 		}
@@ -538,6 +538,22 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 		}
 		if err := s.ensureTaskProjectActive(userID, req.CanvasID); err != nil {
 			return nil, err
+		}
+	}
+	if req.Processing != nil && req.Processing.Operation == "segment" {
+		if err := validateModel3DProcessingRequest(req); err != nil {
+			return nil, err
+		}
+		existing, err := s.Model3DSegmentation(userID, req.Processing.SourceTaskID)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			task, err := s.repo.BindModel3DRequest(&model.Model3DRequest{UserID: userID, RequestID: req.RequestID, RequestHash: hash, TaskID: existing.ID})
+			if err != nil {
+				return nil, model3DError(err)
+			}
+			return s.Model3DTask(userID, task.ID)
 		}
 	}
 	record, revision, err := s.repo.ActiveModel3DConfig()
@@ -620,7 +636,7 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	}
 	submission := &model.Model3DSubmission{TaskID: task.ID, UserID: userID, RequestID: req.RequestID, RequestHash: hash, ConfigID: record.ID, State: "prepared"}
 	s.storageMu.Lock()
-	admitted, err := s.repo.AdmitModel3D(task, submission, revision, versions, func(repo *repository.Repository) error {
+	admitted, err := s.repo.AdmitModel3D(task, submission, revision, versions, "", func(repo *repository.Repository) error {
 		return createTaskWithStorageQuotaRepository(repo, task, nil, policy)
 	})
 	s.storageMu.Unlock()

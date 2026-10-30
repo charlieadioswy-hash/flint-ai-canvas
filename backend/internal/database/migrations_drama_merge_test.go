@@ -44,7 +44,7 @@ func TestDramaMergePreservesReleasedMigrationHistories(t *testing.T) {
 					t.Fatalf("upgrade attempt %d: %v", attempt, err)
 				}
 				status, err := ReadSchemaStatus(db)
-				if err != nil || !status.Ready || status.Current != 77 || status.Expected != 77 {
+				if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || status.Expected != CurrentSchemaVersion {
 					t.Fatalf("schema status: %+v, %v", status, err)
 				}
 				for _, record := range before {
@@ -76,6 +76,7 @@ func TestDramaMergePreservesReleasedMigrationHistories(t *testing.T) {
 				want["channel_model_provider_defaults"] = 64
 				want["task_provider_progress"] = 65
 			}
+			want["model3d_requests"] = 78
 			for name, version := range want {
 				var record schemaMigration
 				if err := db.First(&record, "name = ?", name).Error; err != nil || record.Version != version {

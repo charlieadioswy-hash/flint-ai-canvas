@@ -26,6 +26,10 @@ export function isActiveModel3DTask(task: Model3DWorkflowTask) {
     return task.status === "queued" || task.status === "running" || task.submissionOutcome === "unknown" || Boolean(task.localStatus);
 }
 
+export function isReusedModel3DSegmentation(task: Model3DTaskView, pending?: Model3DWorkflowTask) {
+    return Boolean(pending?.localStatus && pending.processing?.operation === "segment" && task.processing?.operation === "segment" && task.processing.sourceTaskId === pending.processing.sourceTaskId);
+}
+
 export function mergeModel3DTasks(previous: Model3DWorkflowTask[], incoming: Model3DWorkflowTask[]) {
     const result = [...previous];
     for (const task of incoming) {

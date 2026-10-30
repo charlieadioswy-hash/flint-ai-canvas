@@ -54,7 +54,7 @@ function deferred<T>() {
 
 const modules: Record<string, string> = {
     react: "export const { useState, useRef, useEffect, useCallback } = globalThis.env.hooks;",
-    "@/services/api/model3d": "export const { createModel3DTask, getModel3DCapabilities, getModel3DTask, getModel3DTaskByRequest, listModel3DTasks, recoverModel3DTask } = globalThis.env.api;",
+    "@/services/api/model3d": "export const { createModel3DTask, getModel3DCapabilities, getModel3DTask, getModel3DTaskByRequest, getModel3DSegmentation, listModel3DTasks, recoverModel3DTask } = globalThis.env.api;",
     "@/services/api/request": "export const ApiError = globalThis.env.ApiError;",
     "@/services/api/resources": "export const { resourceFileUrl, resourceStorageKey, uploadResourceFile } = globalThis.env.resources;",
     "@/lib/localforage-storage": "export const localForageStorageForScope = globalThis.env.storage;",
@@ -93,6 +93,7 @@ function harness(cache = new Map<string, string>()) {
         list: async (_input: { activeOnly?: boolean; cursor?: string }): Promise<Model3DTaskList> => ({ tasks: [] }),
         get: async (id: string): Promise<Model3DTaskView> => task(id),
         request: async (_id: string): Promise<Model3DTaskView | null> => null,
+        segmentation: async (_id: string): Promise<Model3DTaskView | null> => null,
         recover: async (id: string): Promise<Model3DTaskView> => task(id),
         capabilities: async (): Promise<Model3DCapabilities> => capabilities,
     };
@@ -136,6 +137,10 @@ function harness(cache = new Map<string, string>()) {
             },
         },
         api: {
+            getModel3DSegmentation(id: string, signal: AbortSignal) {
+                signals.push(signal);
+                return behavior.segmentation(id);
+            },
             createModel3DTask(input: Model3DCreateRequest, signal: AbortSignal) {
                 creates.push(input);
                 signals.push(signal);
@@ -301,6 +306,100 @@ test("processing survives an uncertain POST and a reload without posting again",
     expect(restored.requestIds).toContain(id);
     expect(restored.creates).toHaveLength(0);
     restored.unmount();
+});
+
+test("existing segmentation outside the loaded history is opened without a paid POST", async () => {
+    const h = harness();
+    const existing = task("older-segment", { processing: { operation: "segment", sourceTaskId: "source" } });
+    h.behavior.segmentation = async (id) => { expect(id).toBe("source"); return existing; };
+    try {
+        await h.flush();
+        await h.value.processModel({ operation: "segment", sourceTaskId: "source", model: "v1.0-20250506" });
+        await h.flush();
+        expect(h.creates).toHaveLength(0);
+        expect(h.value.selectedTaskId).toBe(existing.id);
+        expect(h.value.tasks.find((item) => item.id === existing.id)).toEqual(existing);
+    } finally { h.unmount(); }
+});
+
+test("late segmentation lookup cannot override a newer task selection or account", async () => {
+    for (const switchAccount of [false, true]) {
+        const h = harness();
+        const pending = deferred<Model3DTaskView | null>();
+        h.behavior.list = async ({ activeOnly }) => ({ tasks: activeOnly ? [] : [task("source"), task("other")] });
+        h.behavior.segmentation = () => pending.promise;
+        try {
+            await h.flush();
+            const opening = h.value.findSegmentation("source").catch((cause) => cause);
+            const signal = h.signals.at(-1)!;
+            if (switchAccount) {
+                h.behavior.list = async () => ({ tasks: [] });
+                h.userState.user = { id: "another-user" };
+                h.render();
+            } else await h.value.selectTask("other");
+            await h.flush();
+            expect(signal.aborted).toBe(true);
+            pending.resolve(task("segment", { processing: { operation: "segment", sourceTaskId: "source" } }));
+            expect((await opening).name).toBe("AbortError");
+            await h.flush();
+            expect(h.value.selectedTaskId).toBe(switchAccount ? "" : "other");
+            expect(h.value.tasks.some((item) => item.id === "segment")).toBe(false);
+            expect(h.creates).toHaveLength(0);
+        } finally { h.unmount(); }
+    }
+});
+
+test("a concurrent segmentation reuse response replaces the pending request and survives a lost response", async () => {
+    for (const lost of [false, true]) {
+        const h = harness();
+        const original = task("source", { result: { resourceId: "r" } as Model3DTaskView["result"] });
+        const existing = task("earlier-request", { id: "existing-segment", sourceFingerprint: "earlier", processing: { operation: "segment", sourceTaskId: original.id } });
+        h.behavior.list = async ({ activeOnly }) => ({ tasks: activeOnly ? [] : [original] });
+        h.behavior.create = async () => {
+            h.behavior.request = async () => existing;
+            if (lost) throw new Error("response lost");
+            return existing;
+        };
+        try {
+            await h.flush();
+            await h.value.processModel(defaultModel3DProcessing(original, "segment"));
+            await h.flush();
+            expect(h.creates).toHaveLength(1);
+            expect(h.value.selectedTaskId).toBe(existing.id);
+            expect(h.value.tasks.filter((item) => item.processing?.operation === "segment")).toEqual([existing]);
+            expect(h.value.tasks.some((item) => item.localStatus)).toBe(false);
+        } finally { h.unmount(); }
+    }
+});
+
+test("lost segmentation reuse response recovers failed and cancelled tasks by the new request identity", async () => {
+    for (const status of ["failed", "cancelled"] as const) {
+        const h = harness();
+        const original = task("source", { result: { resourceId: "r" } as Model3DTaskView["result"] });
+        const terminal = task("existing-segment", { status, stage: status, sourceFingerprint: "original-body", processing: { operation: "segment", sourceTaskId: original.id } });
+        h.behavior.list = async ({ activeOnly }) => ({ tasks: activeOnly ? [] : [original] });
+        h.behavior.create = async (input) => {
+            h.behavior.request = async (id) => { expect(id).toBe(input.requestId); return terminal; };
+            throw new Error("response lost");
+        };
+        // Source lookup excludes definitive terminal tasks; recovery must use the accepted request.
+        h.behavior.segmentation = async () => null;
+        try {
+            await h.flush();
+            await h.value.processModel(defaultModel3DProcessing(original, "segment"));
+            await h.flush();
+            expect(h.creates).toHaveLength(1);
+            expect(h.value.selectedTaskId).toBe(terminal.id);
+            expect(h.value.tasks.filter((item) => item.processing?.operation === "segment")).toEqual([terminal]);
+            expect(h.value.tasks.some((item) => item.localStatus)).toBe(false);
+            expect([...h.timers.values()].some((timer) => timer.delay === 2500)).toBe(false);
+            await h.value.refresh();
+            await h.flush();
+            expect(h.value.tasks.find((item) => item.id === terminal.id)?.status).toBe(status);
+            expect(h.value.tasks.some((item) => item.localStatus)).toBe(false);
+            expect(h.creates).toHaveLength(1);
+        } finally { h.unmount(); }
+    }
 });
 
 test("multiview admission requires distinct uploaded resources and validates capability MIME, bytes and dimensions", () => {

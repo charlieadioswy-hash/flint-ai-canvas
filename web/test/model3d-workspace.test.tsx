@@ -71,11 +71,11 @@ function task(overrides: Partial<Model3DTaskView> = {}): Model3DTaskView {
     };
 }
 
-async function fixture(dark = false, existingTask = task(), busy = false) {
+async function fixture(dark = false, existingTask = task(), busy = false, findSegmentation: (id: string) => Promise<boolean> = async () => false) {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const calls = { generate: [] as unknown[][], process: [] as unknown[], select: [] as string[], reuse: [] as string[], refreshTask: [] as string[], refresh: 0 };
+    const calls = { generate: [] as unknown[][], process: [] as unknown[], segmentation: [] as string[], select: [] as string[], reuse: [] as string[], refreshTask: [] as string[], refresh: 0 };
     function TestWorkspace() {
         const [draft, setDraft] = useState<Model3DDraft>(() => ({ ...createDefaultModel3DState("h3.1").draft, prompt: "卡通机器人", parameters: { model: "h3.1", texture: true, pbr: true, faceLimit: 100000 } }));
         const [count, setCount] = useState(2);
@@ -103,6 +103,7 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
                                 calls.generate.push(args);
                             }}
                             processModel={async (processing) => { calls.process.push(processing); }}
+                            findSegmentation={async (id) => { calls.segmentation.push(id); return findSegmentation(id); }}
                             refresh={async () => {
                                 ++calls.refresh;
                             }}
@@ -135,6 +136,35 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
             host.remove();
         },
     };
+}
+
+for (const outcome of ["found", "missing", "error"] as const) {
+    test(`segmentation ${outcome}: existing results bypass paid confirmation, new tasks require it`, async () => {
+        const original = task({ scope: "standalone", status: "succeeded", result: { assetId: "asset", resourceId: "model", storageKey: "resource:model", url: "/api/resources/model/file", fileName: "model.glb", mimeType: "model/gltf-binary", bytes: 100, format: "glb" } });
+        const f = await fixture(false, original, false, async () => {
+            if (outcome === "error") throw new Error("拆分结果暂时无法读取");
+            return outcome === "found";
+        });
+        try {
+            await f.click("部件拆分");
+            expect(f.calls.segmentation).toEqual([original.id]);
+            expect(f.calls.process).toHaveLength(0);
+            expect(document.querySelector('[role="dialog"]')).toBeNull();
+            await f.click("查看或拆分部件");
+            expect(f.calls.segmentation).toEqual([original.id, original.id]);
+            expect(f.calls.process).toHaveLength(0);
+            if (outcome === "missing") {
+                expect(document.querySelector('[role="dialog"]')?.textContent).toContain("确认部件拆分");
+                await f.click("开始处理");
+                expect(f.calls.process).toHaveLength(1);
+                expect(f.calls.process[0]).toMatchObject({ operation: "segment", sourceTaskId: original.id });
+            } else {
+                expect(document.querySelector('[role="dialog"]')).toBeNull();
+                if (outcome === "error") expect(f.host.textContent).toContain("暂时无法读取");
+            }
+            expect(f.calls.generate).toHaveLength(0);
+        } finally { await f.dispose(); }
+    });
 }
 
 test("rig check results expose rigging only after confirmation and never start generation", async () => {

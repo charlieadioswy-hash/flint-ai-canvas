@@ -206,6 +206,19 @@ func RegisterModel3DRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+	r.GET("/model3d/tasks/:id/segmentation", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.Model3DSegmentation(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	r.POST("/model3d/tasks/:id/recover", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

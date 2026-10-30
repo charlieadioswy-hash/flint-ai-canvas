@@ -64,7 +64,7 @@ paths:
     post:
       tags: [tasks]
       summary: 创建 3D 生成或模型处理任务
-      description: requestId 在当前用户内幂等；scope 或候选身份不同也返回冲突。scope 默认为 canvas，须提供画布和节点；standalone 禁止传入画布或节点，独立保存任务和资产。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。
+      description: requestId 在当前用户内幂等；scope 或候选身份不同也返回冲突。scope 默认为 canvas，须提供画布和节点；standalone 禁止传入画布或节点，独立保存任务和资产。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。同源 segment 优先复用已成功、执行中、提交未知或可恢复保存失败的任务，返回该任务原 requestId 和 sourceFingerprint，不新增任务或再次调用供应商。
       requestBody:
         required: true
         content:
@@ -92,11 +92,23 @@ paths:
         "200": {description: 标准信封 data 为 Model3DTaskView}
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
+  /model3d/tasks/{id}/segmentation:
+    get:
+      tags: [tasks]
+      summary: 按原始模型读取本人可复用的拆分任务
+      description: id 必须为本人已成功的独立原始生成任务。优先返回成功拆分，其次返回执行中、提交未知或可恢复保存失败的拆分；没有可复用任务返回 data=null。只读，不调用供应商，停用服务商后仍可读取历史结果。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 标准信封 data 为 Model3DTaskView 或 null}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /model3d/requests/{requestId}:
     get:
       tags: [tasks]
       summary: 创建响应丢失后按本人请求编号只读恢复
-      description: 未找到返回 data=null，此接口不会创建任务或调用生成接口。
+      description: 首次创建及复用时的请求号均关联原任务；可读取其后续失败或取消状态。响应保留原任务的 requestId 与 sourceFingerprint。未找到返回 data=null，此接口不会创建任务或调用生成接口。
       parameters:
         - {in: path, name: requestId, required: true, schema: {type: string}}
       responses:

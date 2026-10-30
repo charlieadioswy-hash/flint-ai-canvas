@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { AnimationClip, AnimationMixer, Bone, Box3, BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3, VectorKeyframeTrack } from "three";
+import { AnimationClip, AnimationMixer, Bone, Box3, BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshLambertMaterial, MeshPhongMaterial, MeshStandardMaterial, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3, VectorKeyframeTrack } from "three";
 
 import { MODEL3D_MAX_BYTES, parseModel3D, readModel3DSource } from "@/lib/canvas/model3d-preview";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
@@ -162,6 +162,33 @@ test("GLB and GLTF round trips retain a working skin and bone animation", async 
         expect(tip.position.toArray()).toEqual([0, 1, 0]);
     } finally {
         disposePrevisObject3D(model);
+    }
+});
+
+test("FBX-style Phong and Lambert emissions preserve zero, fractional and bright intensity without mutating materials", async () => {
+    for (const Material of [MeshPhongMaterial, MeshLambertMaterial]) {
+        for (const intensity of [0, 0.25, 3]) {
+            const model = triangle();
+            const mesh = model.children[0] as Mesh;
+            (mesh.material as MeshStandardMaterial).dispose();
+            const original = new Material({ color: 0x808080, emissive: 0xffffff, emissiveIntensity: intensity });
+            mesh.material = original;
+            try {
+                for (const format of ["glb", "gltf"] as const) {
+                    const exported = await exportModel3DObject(model, format);
+                    const loaded = await parseModel3D(await exported.blob.arrayBuffer(), format);
+                    try {
+                        let material: MeshStandardMaterial | undefined;
+                        loaded.traverse((object) => { if (object instanceof Mesh) material = object.material as MeshStandardMaterial; });
+                        expect(material!.emissive.r * material!.emissiveIntensity).toBeCloseTo(intensity);
+                        expect(material!.color.getHex()).toBe(original.color.getHex());
+                        expect(mesh.material).toBe(original);
+                        expect(original.emissiveIntensity).toBe(intensity);
+                        expect(original.emissive.toArray()).toEqual([1, 1, 1]);
+                    } finally { disposePrevisObject3D(loaded); }
+                }
+            } finally { disposePrevisObject3D(model); }
+        }
     }
 });
 

@@ -447,6 +447,7 @@ func migrations() []tableMigration {
 		migrateTable[model.Model3DConfig]("model3d_configs"),
 		migrateTable[model.Model3DPolicy]("model3d_policies"),
 		migrateTable[model.Model3DSubmission]("model3d_submissions"),
+		migrateTable[model.Model3DRequest]("model3d_requests"),
 		migrateTable[model.Model3DDailyUsage]("model3d_daily_usages"),
 		migrateTable[model.ImageModerationProvider]("image_moderation_providers"),
 		migrateTable[model.ImageModerationConfig]("image_moderation_configs"),

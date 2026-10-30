@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"yingce/backend/internal/model"
@@ -14,6 +16,168 @@ import (
 func processingTestRequest(p model3d.Processing) Model3DCreateRequest {
 	revision := int64(1)
 	return Model3DCreateRequest{RequestID: "process-" + p.Operation, SourceFingerprint: "fingerprint", Scope: "standalone", Processing: &p, ExpectedPolicyRevision: &revision}
+}
+
+func TestModel3DSegmentationReuse(t *testing.T) {
+	s, db, mock, admin := setupModel3DTest(t)
+	enableModel3DTest(t, s, admin)
+	original := createModel3DTest(t, s, model3DStandaloneRequest())
+	processModel3DTest(t, s)
+	if view, err := s.Model3DSegmentation("3d-user", original.ID); err != nil || view != nil {
+		t.Fatalf("unexpected initial segmentation: %+v / %v", view, err)
+	}
+	request := processingTestRequest(model3d.Processing{Operation: "segment", SourceTaskID: original.ID, Model: "v1.0-20250506"})
+	const count = 6
+	var wait sync.WaitGroup
+	views := make([]*Model3DTaskView, count)
+	errors := make([]error, count)
+	start := make(chan struct{})
+	for index := range views {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			req := request
+			req.RequestID = fmt.Sprintf("segment-click-%d", index)
+			req.SourceFingerprint = req.RequestID
+			views[index], errors[index] = s.CreateModel3DTask("3d-user", req)
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	for index, err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent click %d: %v", index, err)
+		}
+		if views[index].ID != views[0].ID {
+			t.Fatal("concurrent clicks created duplicate segmentation tasks")
+		}
+		if recovered, err := s.Model3DTaskByRequest("3d-user", fmt.Sprintf("segment-click-%d", index)); err != nil || recovered == nil || recovered.ID != views[0].ID {
+			t.Fatalf("concurrent reuse identity was not persisted: %+v / %v", recovered, err)
+		}
+	}
+	segment := views[0]
+	if mock.submits != 1 {
+		t.Fatal("admission submitted a new upstream request")
+	}
+	processModel3DTest(t, s)
+	if mock.submits != 2 {
+		t.Fatalf("segmentation submitted %d times", mock.submits-1)
+	}
+	request.RequestID = "revisit-segmentation"
+	request.SourceFingerprint = "another-click"
+	request.Processing = &model3d.Processing{Operation: "segment", SourceTaskID: original.ID, Model: "v2.0-20260430", Granularity: "detailed"}
+	if replay := createModel3DTest(t, s, request); replay.ID != segment.ID || replay.Status != model.TaskStatusSucceeded {
+		t.Fatal("a completed result was regenerated")
+	}
+	for _, user := range []string{"", "3d-other"} {
+		if _, err := s.Model3DSegmentation(user, original.ID); err == nil {
+			t.Fatal("segmentation leaked across users")
+		}
+	}
+	if _, err := s.DisableModel3D(admin, 1); err != nil {
+		t.Fatal(err)
+	}
+	if replay := createModel3DTest(t, s, request); replay.ID != segment.ID {
+		t.Fatal("provider disable hid a saved result")
+	}
+	var submissions int64
+	db.Model(&model.Model3DSubmission{}).Count(&submissions)
+	if submissions != 2 {
+		t.Fatalf("reuse added submissions: %d", submissions)
+	}
+}
+
+func TestModel3DSegmentationReusedRequestRecoversTerminalState(t *testing.T) {
+	for _, path := range []string{"fast", "admission"} {
+		for _, status := range []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled} {
+			t.Run(path+"/"+string(status), func(t *testing.T) {
+				s, db, mock, admin := setupModel3DTest(t)
+				enableModel3DTest(t, s, admin)
+				original := createModel3DTest(t, s, model3DStandaloneRequest())
+				processModel3DTest(t, s)
+				request := processingTestRequest(model3d.Processing{Operation: "segment", SourceTaskID: original.ID, Model: "v1.0-20250506"})
+				segment := createModel3DTest(t, s, request)
+				request.RequestID = "lost-reuse-response"
+				request.SourceFingerprint = "new-client-request"
+				var reused *Model3DTaskView
+				var err error
+				if path == "fast" {
+					reused, err = s.CreateModel3DTask("3d-user", request)
+				} else {
+					// Enter admission directly to deterministically cover its concurrent reuse branch.
+					record, revision, configErr := s.repo.ActiveModel3DConfig()
+					if configErr != nil {
+						t.Fatal(configErr)
+					}
+					config, configErr := s.model3DDomainConfig(record)
+					if configErr != nil {
+						t.Fatal(configErr)
+					}
+					reused, err = s.createModel3DProcessingTask("3d-user", request, record, config, revision, model3DRequestHash(request))
+				}
+				if err != nil || reused == nil || reused.ID != segment.ID {
+					t.Fatalf("reuse: %+v / %v", reused, err)
+				}
+				// The response is lost, and the old task terminates before recovery can query it.
+				if err := db.Model(&model.Task{}).Where("id = ?", segment.ID).Update("status", status).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Model(&model.Model3DSubmission{}).Where("task_id = ?", segment.ID).Update("state", "failed").Error; err != nil {
+					t.Fatal(err)
+				}
+				if current, err := s.Model3DSegmentation("3d-user", original.ID); err != nil || current != nil {
+					t.Fatalf("terminal task should not block a new explicit attempt: %+v / %v", current, err)
+				}
+				if _, err := s.DisableModel3D(admin, 1); err != nil {
+					t.Fatal(err)
+				}
+				recovered, err := s.Model3DTaskByRequest("3d-user", request.RequestID)
+				if err != nil || recovered == nil || recovered.ID != segment.ID || recovered.Status != status || recovered.RequestID != segment.RequestID {
+					t.Fatalf("lost response did not recover the original terminal identity: %+v / %v", recovered, err)
+				}
+				if replay := createModel3DTest(t, s, request); replay.ID != segment.ID || replay.Status != status {
+					t.Fatalf("replayed reuse created a new task: %+v", replay)
+				}
+				request.SourceFingerprint = "different-body"
+				if _, err := s.CreateModel3DTask("3d-user", request); err == nil {
+					t.Fatal("reuse request hash conflict was accepted")
+				}
+				if other, err := s.Model3DTaskByRequest("3d-other", request.RequestID); err != nil || other != nil {
+					t.Fatalf("request mapping leaked across users: %+v / %v", other, err)
+				}
+				var submissions int64
+				if err := db.Model(&model.Model3DSubmission{}).Count(&submissions).Error; err != nil {
+					t.Fatal(err)
+				}
+				if submissions != 2 || mock.submits != 1 {
+					t.Fatalf("reuse created extra paid work: submissions=%d upstream=%d", submissions, mock.submits)
+				}
+			})
+		}
+	}
+}
+
+func TestModel3DSegmentationFailedSubmissionAndStorageRecovery(t *testing.T) {
+	s, db, _, admin := setupModel3DTest(t)
+	enableModel3DTest(t, s, admin)
+	original := createModel3DTest(t, s, model3DStandaloneRequest())
+	processModel3DTest(t, s)
+	request := processingTestRequest(model3d.Processing{Operation: "segment", SourceTaskID: original.ID, Model: "v1.0-20250506"})
+	segment := createModel3DTest(t, s, request)
+	db.Model(&model.Task{}).Where("id = ?", segment.ID).Updates(map[string]any{"status": model.TaskStatusFailed, "provider_request_id": "existing-upstream"})
+	for _, state := range []string{"accepted", "storing", "unknown"} {
+		db.Model(&model.Model3DSubmission{}).Where("task_id = ?", segment.ID).Update("state", state)
+		request.RequestID = "storage-failure-" + state
+		if replay := createModel3DTest(t, s, request); replay.ID != segment.ID {
+			t.Fatal("recoverable/unknown task was billed again")
+		}
+	}
+	db.Model(&model.Model3DSubmission{}).Where("task_id = ?", segment.ID).Update("state", "failed")
+	request.RequestID = "retry-definite-failure"
+	if replay := createModel3DTest(t, s, request); replay.ID == segment.ID {
+		t.Fatal("definitively failed segmentation could not be retried")
+	}
 }
 
 func TestModel3DProcessingLifecycle(t *testing.T) {

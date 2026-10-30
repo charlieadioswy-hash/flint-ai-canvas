@@ -1,24 +1,44 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button, Checkbox, Select } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import type { Model3DProcessing, Model3DProcessingOperation, Model3DTaskView } from "@/services/api/model3d";
 import { defaultModel3DProcessing, model3DAnimationOptions, model3DProcessingOptions, MODEL3D_PROCESSING_LABELS, MODEL3D_RIG_LABELS } from "./model3d-processing-state";
 
-export function Model3DProcessingPanel({ task, enabled, disabled, onProcess, onSource }: {
+export function Model3DProcessingPanel({ task, enabled, disabled, onProcess, onSource, onFindSegmentation }: {
     task: Model3DTaskView;
     enabled: Model3DProcessingOperation[];
     disabled: boolean;
     onProcess: (processing: Model3DProcessing) => void;
     onSource: (id: string) => void;
+    onFindSegmentation?: (id: string) => Promise<boolean>;
 }) {
-    const options = model3DProcessingOptions(task).filter((operation) => enabled.includes(operation));
+    const options = model3DProcessingOptions(task).filter((operation) => operation === "segment" || enabled.includes(operation));
     const [draft, setDraft] = useState<Model3DProcessing | null>(() => options[0] ? defaultModel3DProcessing(task, options[0]) : null);
     const [confirmation, setConfirmation] = useState<Model3DProcessing | null>(null);
     const [specificParts, setSpecificParts] = useState(false);
+    const [checking, setChecking] = useState(false);
+    const [lookupError, setLookupError] = useState("");
+    const lookup = useRef(false);
     const parts = task.result?.parts || [];
     const operation = draft?.operation;
     const invalid = !draft || !options.includes(draft.operation) || (operation === "complete" && specificParts && !draft.partNames?.length) || (operation === "animate" && !model3DAnimationOptions(draft.rigType || "").some((item) => item.value === draft.animation));
     const change = (values: Partial<Model3DProcessing>) => setDraft((previous) => previous ? { ...previous, ...values } : previous);
+    const prepareSegment = async (confirm: boolean) => {
+        if (disabled || lookup.current) return;
+        lookup.current = true;
+        setChecking(true);
+        setLookupError("");
+        try {
+            if (await onFindSegmentation?.(task.id)) return;
+            if (!enabled.includes("segment")) throw new Error("此模型尚未拆分，请先启用 3D 拆分服务。");
+            const next = draft?.operation === "segment" ? draft : defaultModel3DProcessing(task, "segment");
+            setDraft(next);
+            setSpecificParts(false);
+            if (confirm) setConfirmation(structuredClone(next));
+        } catch (cause) {
+            if (!(cause instanceof DOMException && cause.name === "AbortError")) setLookupError(cause instanceof Error ? cause.message : "无法查询拆分结果，请重试。");
+        } finally { lookup.current = false; setChecking(false); }
+    };
     return (
         <section className="model3d-processing" aria-label="模型后续处理">
             <div className="model3d-panel-heading">
@@ -28,9 +48,10 @@ export function Model3DProcessingPanel({ task, enabled, disabled, onProcess, onS
             {draft && options.length > 0 ? (
                 <div className="model3d-processing-fields">
                     <div className="model3d-choices" role="group" aria-label="处理方式">
-                        {options.map((value) => <Button key={value} aria-pressed={value === operation} disabled={disabled} onClick={() => { setDraft(defaultModel3DProcessing(task, value)); setSpecificParts(false); }}>{MODEL3D_PROCESSING_LABELS[value]}</Button>)}
+                        {options.map((value) => <Button key={value} aria-pressed={value === operation} disabled={disabled || checking} onClick={() => { if (value === "segment") { void prepareSegment(false); return; } setLookupError(""); setDraft(defaultModel3DProcessing(task, value)); setSpecificParts(false); }}>{MODEL3D_PROCESSING_LABELS[value]}</Button>)}
                     </div>
                     {operation === "segment" ? <>
+                        <p className="model3d-hint">已有拆分结果会直接打开，正在拆分时继续查看进度。没有可复用任务时才发起拆分并使用服务商额度。</p>
                         <label className="model3d-field"><span>拆分模型</span><Select aria-label="拆分模型" value={draft.model} disabled={disabled} options={[{ value: "v2.0-20260430", label: "v2 · 语义拆分（Beta）" }, { value: "v1.0-20250506", label: "v1 · 几何拆分" }]} onChange={(model) => setDraft({ operation: "segment", sourceTaskId: task.id, model, ...(model === "v2.0-20260430" ? { granularity: "balanced", splitByConnectivity: true } : {}) })} /></label>
                         {draft.model === "v2.0-20260430" ? <>
                             <label className="model3d-field"><span>拆分粒度</span><Select aria-label="拆分粒度" value={draft.granularity} disabled={disabled} options={[{ value: "simple", label: "简单" }, { value: "balanced", label: "均衡" }, { value: "detailed", label: "精细" }]} onChange={(granularity) => change({ granularity })} /></label>
@@ -55,7 +76,8 @@ export function Model3DProcessingPanel({ task, enabled, disabled, onProcess, onS
                         <p className="model3d-hint">每个动作生成一个新版本，模型几何与动画一起保存。</p>
                     </> : null}
                     {operation === "rig" || operation === "animate" ? <label className="model3d-field"><span>产物格式</span><Select aria-label="处理产物格式" value={draft.outFormat} disabled={disabled} options={[{ value: "glb", label: "GLB · 网页预览" }, { value: "fbx", label: "FBX · 建模与游戏引擎" }]} onChange={(outFormat) => change({ outFormat })} /></label> : null}
-                    <Button type="primary" disabled={disabled || invalid} onClick={() => setConfirmation(structuredClone(draft))}>确认{MODEL3D_PROCESSING_LABELS[draft.operation]}</Button>
+                    {lookupError ? <p role="alert" className="model3d-error">{lookupError}</p> : null}
+                    <Button type="primary" loading={checking} disabled={disabled || invalid || checking} onClick={() => { if (draft.operation === "segment") void prepareSegment(true); else setConfirmation(structuredClone(draft)); }}>{draft.operation === "segment" ? "查看或拆分部件" : `确认${MODEL3D_PROCESSING_LABELS[draft.operation]}`}</Button>
                 </div>
             ) : <p className="model3d-processing-fields model3d-hint">{task.status !== "succeeded" ? "任务完成后可选择后续操作。" : task.processing?.operation === "rig_check" && !task.rigCheck?.riggable ? "此模型未通过绑骨检查。请调整原始模型的形态或姿态，再生成新版本。" : task.processing?.operation === "rig" ? "此骨架类型暂无已公开的预设动作，可下载模型到建模工具中制作动画。" : task.processing ? "可预览、下载此结果，或返回来源任务尝试其他参数。" : "当前服务暂未开放模型处理。"}</p>}
             <AppModal open={Boolean(confirmation)} title={confirmation ? `确认${MODEL3D_PROCESSING_LABELS[confirmation.operation]}` : "确认处理"} okText="开始处理" cancelText="返回修改" okButtonProps={{ disabled: disabled || invalid }} onCancel={() => setConfirmation(null)} onOk={() => { if (!confirmation || disabled || invalid) return; onProcess(confirmation); setConfirmation(null); }}>

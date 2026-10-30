@@ -21,7 +21,7 @@ func TestModel3DRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	RegisterModel3DRoutes(router.Group("/api"), &service.Service{})
-	for _, path := range []string{"/api/model3d/capabilities", "/api/model3d/tasks", "/api/model3d/tasks/task", "/api/model3d/requests/request", "/api/admin/model3d"} {
+	for _, path := range []string{"/api/model3d/capabilities", "/api/model3d/tasks", "/api/model3d/tasks/task", "/api/model3d/tasks/task/segmentation", "/api/model3d/requests/request", "/api/admin/model3d"} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
 		if response.Code != 401 {
