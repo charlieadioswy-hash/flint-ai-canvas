@@ -17,6 +17,7 @@ import (
 )
 
 type model3DMock struct {
+	requests        []model3d.Request
 	submits         int
 	uploads         []string
 	polls           []string
@@ -34,8 +35,9 @@ func (m *model3DMock) Upload(_ context.Context, _ model3d.Config, image model3d.
 	m.uploads = append(m.uploads, image.View)
 	return "token-" + image.View, m.uploadErr
 }
-func (m *model3DMock) Submit(_ context.Context, c model3d.Config, _ model3d.Request, _ map[string]string) (string, error) {
+func (m *model3DMock) Submit(_ context.Context, c model3d.Config, request model3d.Request, _ map[string]string) (string, error) {
 	m.submits++
+	m.requests = append(m.requests, request)
 	m.configs = append(m.configs, c)
 	return "upstream-original", m.submitErr
 }

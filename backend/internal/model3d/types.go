@@ -205,10 +205,12 @@ type Image struct {
 	Data        []byte
 }
 type Request struct {
-	Mode       string
-	Prompt     string
-	Parameters Parameters
-	Images     []Image
+	Mode                 string
+	Prompt               string
+	Parameters           Parameters
+	Images               []Image
+	Processing           *Processing
+	SourceProviderTaskID string
 }
 type Artifact struct {
 	URL    string `json:"url"`
@@ -220,6 +222,7 @@ type State struct {
 	ReportedProgress *int
 	Artifact         Artifact
 	ErrorCode        string
+	RigCheck         *RigCheck
 }
 
 // Provider has no hidden retries: Submit may create a billable task exactly once.

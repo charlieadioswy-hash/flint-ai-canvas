@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Axis3D, Grid2X2, LoaderCircle, RotateCcw } from "lucide-react";
-import type { GridHelper, Object3D } from "three";
+import { Axis3D, Bone, Grid2X2, LoaderCircle, Pause, Play, RotateCcw } from "lucide-react";
+import type { Bone as ThreeBone, GridHelper, Object3D, SkeletonHelper } from "three";
 
 import { IconButton, ToolButton } from "@/components/ui/base/buttons";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -9,15 +9,18 @@ import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
 import { loadModel3D } from "@/lib/canvas/model3d-preview";
 import type { Model3DPreviewFormat } from "@/lib/model3d-formats";
 import { createModel3DGround, MODEL3D_AXES, projectModel3DAxes } from "./model3d-viewer-helpers";
+import { createModel3DPlayback, model3DPartObjects } from "./model3d-playback";
 
-type Props = { storageKey?: string; url: string; format: Model3DPreviewFormat; theme?: CanvasTheme; expanded?: boolean };
+type Props = { storageKey?: string; url: string; format: Model3DPreviewFormat; theme?: CanvasTheme; expanded?: boolean; partNames?: string[] };
 
 /** Mounted only after entering preview; controls render on demand and own their GPU resources. */
-export function Model3DViewer({ storageKey, url, format, theme, expanded = false }: Props) {
+export function Model3DViewer({ storageKey, url, format, theme, expanded = false, partNames }: Props) {
     const hostRef = useRef<HTMLDivElement>(null);
     const axesRef = useRef<SVGSVGElement>(null);
     const gridVisibleRef = useRef(true);
-    const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void; setGridVisible: (visible: boolean) => void; updateAppearance: () => void } | null>(null);
+    const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void; setGridVisible: (visible: boolean) => void; setSkeletonVisible: (visible: boolean) => void; setPartVisible: (id: string, visible: boolean) => void; updateAppearance: () => void } | null>(null);
+    const playback = useRef<ReturnType<typeof createModel3DPlayback> | null>(null);
+    const partsKey = JSON.stringify(partNames || []);
     const identity = `${getActiveUserScope()}:${storageKey || url}:${format}`;
     const panel = theme?.node.panel || "var(--background)";
     const text = theme?.node.text || "var(--foreground)";
@@ -28,6 +31,12 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
     const [failure, setFailure] = useState<{ identity: string; message: string } | null>(null);
     const [showGrid, setShowGrid] = useState(true);
     const [showAxes, setShowAxes] = useState(true);
+    const [showSkeleton, setShowSkeleton] = useState(false);
+    const [hasSkeleton, setHasSkeleton] = useState(false);
+    const [parts, setParts] = useState<Array<{ id: string; name: string; visible: boolean }>>([]);
+    const [clips, setClips] = useState<Array<{ name: string; duration: number }>>([]);
+    const [animation, setAnimation] = useState({ index: 0, playing: false, time: 0, duration: 0 });
+    const [speed, setSpeed] = useState(1);
 
     useEffect(() => {
         controller.current?.updateAppearance();
@@ -41,8 +50,16 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
         let cleanup: (() => void) | undefined;
         let ownedModel: Object3D | undefined;
         let ground: GridHelper | undefined;
+        let skeleton: SkeletonHelper | undefined;
+        let partObjects: ReturnType<typeof model3DPartObjects> = [];
         setFailure(null);
         setLoadedIdentity("");
+        setClips([]);
+        setParts([]);
+        setHasSkeleton(false);
+        setShowSkeleton(false);
+        setAnimation({ index: 0, playing: false, time: 0, duration: 0 });
+        setSpeed(1);
         const load = async () => {
             const [THREE, { OrbitControls }] = await Promise.all([import("three"), import("three-stdlib")]);
             if (!active) return;
@@ -113,8 +130,14 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             appearanceObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
             appearanceObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
             controls.addEventListener("change", render);
+            let inView = true;
+            const syncVisibility = () => playback.current?.setVisible(!document.hidden && inView);
+            const visibilityObserver = new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; syncVisibility(); });
+            visibilityObserver.observe(host);
+            document.addEventListener("visibilitychange", syncVisibility);
             const lost = (event: Event) => {
                 event.preventDefault();
+                playback.current?.pause();
                 if (active) setFailure({ identity, message: "3D 预览已暂停，请重新加载预览。" });
             };
             renderer.domElement.addEventListener("webglcontextlost", lost);
@@ -137,15 +160,23 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                     if (ground) ground.visible = visible;
                     render();
                 },
+                setSkeletonVisible: (visible) => { if (skeleton) skeleton.visible = visible; render(); },
+                setPartVisible: (id, visible) => { const part = partObjects.find((value) => value.id === id); if (part) part.object.visible = visible; render(); },
                 updateAppearance,
             };
             cleanup = () => {
+                visibilityObserver.disconnect();
+                document.removeEventListener("visibilitychange", syncVisibility);
+                playback.current?.dispose();
+                playback.current = null;
                 observer.disconnect();
                 appearanceObserver.disconnect();
                 controls.removeEventListener("change", render);
                 controls.dispose();
                 renderer.domElement.removeEventListener("webglcontextlost", lost);
                 controller.current = null;
+                disposePrevisObject3D(skeleton);
+                skeleton = undefined;
                 disposePrevisObject3D(ownedModel);
                 ownedModel = undefined;
                 disposePrevisObject3D(ground);
@@ -170,14 +201,30 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             if (!Number.isFinite(maximum) || maximum <= 0) throw new Error("模型没有可预览的几何体");
             const center = bounds.getCenter(new THREE.Vector3());
             const group = new THREE.Group();
-            group.add(model);
-            model.position.sub(center);
+            const pivot = new THREE.Group();
+            pivot.position.copy(center).negate();
+            pivot.add(model);
+            group.add(pivot);
             group.scale.setScalar(2.5 / maximum);
             scene.add(group);
             group.updateMatrixWorld(true);
             ground = createModel3DGround(new THREE.Box3().setFromObject(group), new THREE.Color());
             ground.visible = gridVisibleRef.current;
             scene.add(ground);
+            let boneCount = 0;
+            model.traverse((object) => { if ((object as ThreeBone).isBone) boneCount++; });
+            if (boneCount > 0) {
+                skeleton = new THREE.SkeletonHelper(model);
+                skeleton.visible = false;
+                scene.add(skeleton);
+                setHasSkeleton(true);
+            }
+            partObjects = model3DPartObjects(model, JSON.parse(partsKey) as string[]);
+            setParts(partObjects.map(({ id, name, object }) => ({ id, name, visible: object.visible })));
+            playback.current = createModel3DPlayback(model, render, (state) => { if (active) setAnimation(state); });
+            setClips(playback.current.clips);
+            if (playback.current.clips.length) playback.current.select(0);
+            syncVisibility();
             updateAppearance();
             render();
             setLoadedIdentity(identity);
@@ -194,7 +241,7 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             abort.abort();
             cleanup?.();
         };
-    }, [identity, storageKey, url, format, expanded, retry]);
+    }, [identity, storageKey, url, format, expanded, retry, partsKey]);
 
     const error = failure?.identity === identity ? failure.message : "";
     return (
@@ -274,7 +321,21 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                             }}
                         />
                         <ToolButton size="sm" icon={<Axis3D />} label="坐标" active={showAxes} aria-pressed={showAxes} aria-label="显示 XYZ 方向指示" onClick={() => setShowAxes((value) => !value)} />
+                        {hasSkeleton ? <ToolButton size="sm" icon={<Bone />} label="骨骼" active={showSkeleton} aria-pressed={showSkeleton} onClick={() => { setShowSkeleton(!showSkeleton); controller.current?.setSkeletonVisible(!showSkeleton); }} /> : null}
                     </div>
+                    {parts.length > 0 ? <details className="absolute left-2 top-14 max-w-[60%] rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }}>
+                        <summary className="cursor-pointer">部件显隐 · {parts.length}</summary>
+                        <div className="mt-2 grid max-h-40 gap-2 overflow-auto" data-canvas-wheel-scroll>
+                            {parts.map((part) => <label key={part.id} className="flex items-center gap-2"><input type="checkbox" checked={part.visible} onChange={(event) => { const visible = event.target.checked; controller.current?.setPartVisible(part.id, visible); setParts((current) => current.map((item) => item.id === part.id ? { ...item, visible } : item)); }} /><span className="truncate" title={part.name}>{part.name}</span></label>)}
+                        </div>
+                    </details> : null}
+                    {clips.length > 0 ? <div className="absolute bottom-10 left-2 right-2 flex flex-wrap items-center gap-2 rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} data-canvas-no-zoom>
+                        <IconButton icon={animation.playing ? Pause : Play} aria-label={animation.playing ? "暂停动画" : "播放动画"} title={animation.playing ? "暂停动画" : "播放动画"} onClick={() => { if (animation.playing) playback.current?.pause(); else playback.current?.play(); }} />
+                        <select aria-label="预览动作" className="min-w-0 max-w-[40%] bg-transparent" value={animation.index} onChange={(event) => playback.current?.select(Number(event.target.value))}>{clips.map((clip, i) => <option key={i} value={i}>{clip.name}</option>)}</select>
+                        <input aria-label="动画进度" className="min-w-16 flex-1" type="range" min={0} max={animation.duration || 1} step={0.01} value={animation.time} onChange={(event) => playback.current?.seek(Number(event.target.value))} />
+                        <span>{animation.time.toFixed(1)} / {animation.duration.toFixed(1)}s</span>
+                        <select aria-label="播放速度" className="bg-transparent" value={speed} onChange={(event) => { const value = Number(event.target.value); setSpeed(value); playback.current?.setSpeed(value); }}>{[0.5, 1, 1.5, 2].map((value) => <option key={value} value={value}>{value}×</option>)}</select>
+                    </div> : null}
                     <IconButton
                         icon={RotateCcw}
                         variant="outline"

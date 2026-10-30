@@ -55,3 +55,38 @@ func FileType(format string) (string, string) {
 	}
 	return "model.glb", "model/gltf-binary"
 }
+
+// Part names come from the saved GLB, not arbitrary names entered by the client.
+func PartNames(data []byte) []string {
+	if ValidateFile(data, "glb") != nil {
+		return nil
+	}
+	length := int(binary.LittleEndian.Uint32(data[12:16]))
+	var document struct {
+		Nodes []struct {
+			Name string `json:"name"`
+			Mesh *int   `json:"mesh"`
+		} `json:"nodes"`
+	}
+	if json.Unmarshal(bytes.TrimRight(data[20:20+length], " \x00"), &document) != nil {
+		return nil
+	}
+	named, meshes := []string{}, []string{}
+	seen := map[string]bool{}
+	for _, node := range document.Nodes {
+		if strings.TrimSpace(node.Name) == "" || len(node.Name) > 256 || strings.ContainsAny(node.Name, "\r\n\x00") || seen[node.Name] {
+			continue
+		}
+		seen[node.Name] = true
+		if strings.HasPrefix(node.Name, "tripo_part_") {
+			named = append(named, node.Name)
+		}
+		if node.Mesh != nil {
+			meshes = append(meshes, node.Name)
+		}
+	}
+	if len(named) > 0 {
+		return named
+	}
+	return meshes
+}

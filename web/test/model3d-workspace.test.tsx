@@ -52,6 +52,7 @@ const capabilities: Model3DCapabilities = {
     defaultModel: "h3.1",
     modelVersions: [{ id: "h3.1", label: "H3.1", supportsAdvanced: true, maxFacesStandard: 500000, maxFacesDetailed: 2000000 }],
     modes: ["text", "image", "multiview"],
+    processingOperations: ["segment", "complete", "rig_check", "rig", "animate"],
     inputLimits: { maxBytes: 10 * 1024 * 1024, mimeTypes: ["image/png", "image/jpeg"], minViews: 2, maxViews: 4, requiredView: "front" },
 };
 function task(overrides: Partial<Model3DTaskView> = {}): Model3DTaskView {
@@ -74,7 +75,7 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const calls = { generate: [] as unknown[][], select: [] as string[], reuse: [] as string[], refresh: 0 };
+    const calls = { generate: [] as unknown[][], process: [] as unknown[], select: [] as string[], reuse: [] as string[], refreshTask: [] as string[], refresh: 0 };
     function TestWorkspace() {
         const [draft, setDraft] = useState<Model3DDraft>(() => ({ ...createDefaultModel3DState("h3.1").draft, prompt: "卡通机器人", parameters: { model: "h3.1", texture: true, pbr: true, faceLimit: 100000 } }));
         const [count, setCount] = useState(2);
@@ -93,7 +94,7 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
                             setCount={setCount}
                             tasks={[existingTask]}
                             selectedTaskId={existingTask.id}
-                            selectTask={(id) => calls.select.push(id)}
+                            selectTask={async (id) => { calls.select.push(id); }}
                             submitting={false}
                             uploading={busy}
                             hasMore={false}
@@ -101,10 +102,11 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
                             generate={async (...args) => {
                                 calls.generate.push(args);
                             }}
+                            processModel={async (processing) => { calls.process.push(processing); }}
                             refresh={async () => {
                                 ++calls.refresh;
                             }}
-                            refreshTask={async () => {}}
+                            refreshTask={async (id) => { calls.refreshTask.push(id); }}
                             recover={async () => {}}
                             loadMore={async () => {}}
                             uploadImage={async () => ({ resourceId: "image" })}
@@ -134,6 +136,36 @@ async function fixture(dark = false, existingTask = task(), busy = false) {
         },
     };
 }
+
+test("rig check results expose rigging only after confirmation and never start generation", async () => {
+    const check = task({ scope: "standalone", status: "succeeded", processing: { operation: "rig_check", sourceTaskId: "original" }, rigCheck: { riggable: true, rigType: "biped" } });
+    const f = await fixture(false, check);
+    try {
+        expect(f.host.textContent).toContain("模型可以自动绑骨");
+        expect(f.host.textContent).not.toContain("已保存到资产库");
+        expect(f.host.querySelector('[aria-label="绑骨模型"]')).not.toBeNull();
+        await f.click("确认自动绑骨");
+        expect(f.calls.process).toHaveLength(0);
+        await f.click("返回修改");
+        expect(f.calls.process).toHaveLength(0);
+        await f.click("确认自动绑骨");
+        await f.click("开始处理");
+        expect(f.calls.process).toEqual([{ operation: "rig", sourceTaskId: "task", model: "v3.0-20260909", rigType: "biped", spec: "tripo", outFormat: "glb" }]);
+        expect(f.calls.generate).toHaveLength(0);
+    } finally { await f.dispose(); }
+});
+
+test("viewing a source delegates to task selection without a separate refresh or generation", async () => {
+    const child = task({ scope: "standalone", status: "succeeded", processing: { operation: "rig_check", sourceTaskId: "unloaded-parent" }, rigCheck: { riggable: true, rigType: "biped" } });
+    const f = await fixture(false, child);
+    try {
+        await f.click("查看来源任务");
+        expect(f.calls.select).toEqual(["unloaded-parent"]);
+        expect(f.calls.refreshTask).toHaveLength(0);
+        expect(f.calls.process).toHaveLength(0);
+        expect(f.calls.generate).toHaveLength(0);
+    } finally { await f.dispose(); }
+});
 
 for (const dark of [false, true]) {
     test(`standalone workspace waits for explicit confirmation before generating (${dark ? "dark" : "light"})`, async () => {

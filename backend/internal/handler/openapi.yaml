@@ -36,7 +36,7 @@ paths:
     get:
       tags: [models]
       summary: 读取生效的 3D 模型生成能力
-      description: 返回 available、providerName、policyRevision、activeConfigVersion、defaultModel、modelVersions、modes 和 inputLimits，不返回凭据。无生效配置时 available=false。
+      description: 返回 available、providerName、policyRevision、activeConfigVersion、defaultModel、modelVersions、modes、inputLimits 和 processingOperations，不返回凭据。processingOperations 包含 segment、complete、rig_check、rig、animate；无生效配置时 available=false。
       responses:
         "200": {$ref: "#/components/responses/Envelope"}
         "401": {$ref: "#/components/responses/Error"}
@@ -63,13 +63,16 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
     post:
       tags: [tasks]
-      summary: 创建文本、单图或多视图 3D 任务
+      summary: 创建 3D 生成或模型处理任务
       description: requestId 在当前用户内幂等；scope 或候选身份不同也返回冲突。scope 默认为 canvas，须提供画布和节点；standalone 禁止传入画布或节点，独立保存任务和资产。冻结生效配置与输入资源版本。上游创建只发送一次，不自动重发结果不确定的请求。
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: "#/components/schemas/Model3DCreateRequest"}
+            schema:
+              oneOf:
+                - {$ref: "#/components/schemas/Model3DCreateRequest"}
+                - {$ref: "#/components/schemas/Model3DProcessingRequest"}
       responses:
         "200": {description: 标准信封 data 为 Model3DTaskView}
         "400": {$ref: "#/components/responses/Error"}
@@ -2945,6 +2948,35 @@ components:
             right: {type: string}
         parameters: {$ref: "#/components/schemas/Model3DParameters"}
         expectedPolicyRevision: {type: integer, format: int64, minimum: 0}
+    Model3DProcessingRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, sourceFingerprint, scope, expectedPolicyRevision, processing]
+      description: 仅独立工作台。使用本人已完成任务的本地 ID，服务端解析上游来源，不接受任意 task_id、URL 或文件 token。与生成输入互斥。
+      properties:
+        requestId: {type: string, maxLength: 96}
+        sourceFingerprint: {type: string, maxLength: 128}
+        scope: {type: string, enum: [standalone]}
+        expectedPolicyRevision: {type: integer, format: int64, minimum: 0}
+        processing: {$ref: "#/components/schemas/Model3DProcessing"}
+    Model3DProcessing:
+      type: object
+      additionalProperties: false
+      required: [operation, sourceTaskId]
+      description: 操作参数互斥。segment 和 rig_check 使用原始生成任务；complete 使用拆分任务；rig 使用通过检查的 rig_check 任务；animate 使用匹配骨架类型的 rig 任务。每次动画只选择一个动作并单独保存产物。
+      properties:
+        operation: {type: string, enum: [segment, complete, rig_check, rig, animate]}
+        sourceTaskId: {type: string, maxLength: 96}
+        model: {type: string, description: "segment 为 v1.0-20250506 / v2.0-20260430；rig 为 v2.5-20260210 / v3.0-20260909"}
+        granularity: {type: string, enum: [simple, balanced, detailed], description: 仅拆分 v2}
+        splitByConnectivity: {type: boolean, description: 仅拆分 v2}
+        completionMode: {type: string, enum: [ai_completion, quick_cap], description: complete 必填}
+        partNames: {type: array, maxItems: 256, uniqueItems: true, items: {type: string, maxLength: 256}, description: 仅 complete；来自拆分结果 parts，省略表示全部部件}
+        rigType: {type: string, enum: [biped, quadruped, hexapod, octopod, avian, serpentine, aquatic, others], description: rig 与 animate 必填，并与来源检查或绑骨类型一致}
+        spec: {type: string, enum: [tripo, mixamo, actorcore, unity, unreal, vrm], description: 仅人形 rig；后四项要求 v3.0}
+        outFormat: {type: string, enum: [glb, fbx], description: rig 与 animate 必填}
+        animation: {type: string, description: animate 必填，须为来源骨架匹配的预设动作}
+        animateInPlace: {type: boolean, description: 仅 animate；原地运动}
     Model3DTaskView:
       type: object
       required: [id, requestId, scope, prompt, parameters, status, stage, mode, sourceFingerprint, clientContext, submissionOutcome, canRetryStorage, createdAt, updatedAt]
@@ -2959,6 +2991,14 @@ components:
         parameters: {$ref: "#/components/schemas/Model3DParameters"}
         imageResourceId: {type: string}
         views: {$ref: "#/components/schemas/Model3DCreateRequest/properties/views"}
+        processing: {$ref: "#/components/schemas/Model3DProcessing"}
+        rigCheck:
+          type: object
+          description: 绑骨检查完成后返回，不产生 result 模型资产
+          required: [riggable, rigType]
+          properties:
+            riggable: {type: boolean}
+            rigType: {type: string}
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
         stage: {type: string}
         progress: {type: integer, minimum: 0, maximum: 100}
@@ -2988,6 +3028,7 @@ components:
             mimeType: {type: string}
             bytes: {type: integer, format: int64}
             format: {type: string, enum: [glb, fbx]}
+            parts: {type: array, items: {type: string}, description: 拆分或补全结果的 GLB 部件节点名称}
         error:
           type: object
           properties:

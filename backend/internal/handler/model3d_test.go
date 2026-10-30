@@ -151,6 +151,58 @@ func TestModel3DTaskListHTTPScopesAndQueryValidation(t *testing.T) {
 	}
 }
 
+func TestModel3DProcessingRequestBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/model3d/tasks", func(c *gin.Context) {
+		req, err := bindModel3DCreateRequest(c)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, req)
+	})
+	for _, tc := range []struct {
+		name, extra string
+		wantStatus  int
+	}{
+		{"without generation parameters", "", http.StatusOK},
+		{"reject texture false", `,"parameters":{"texture":false}`, http.StatusBadRequest},
+		{"reject pbr false", `,"parameters":{"pbr":false}`, http.StatusBadRequest},
+		{"reject invalid processing boolean", "", http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"requestId":"processing-request","scope":"standalone","sourceFingerprint":"snapshot","expectedPolicyRevision":3,"processing":{"operation":"animate","sourceTaskId":"source","rigType":"biped","animation":"preset:walk","animateInPlace":false,"outFormat":"glb"}` + tc.extra + `}`
+			if tc.name == "reject invalid processing boolean" {
+				body = strings.Replace(body, `"animateInPlace":false`, `"animateInPlace":"false"`, 1)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/model3d/tasks", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
+			}
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			var envelope struct {
+				Data service.Model3DCreateRequest `json:"data"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			req := envelope.Data
+			if req.RequestID != "processing-request" || req.Scope != "standalone" || req.SourceFingerprint != "snapshot" || req.ExpectedPolicyRevision == nil || *req.ExpectedPolicyRevision != 3 || req.Parameters != (service.Model3DParameters{}) {
+				t.Fatalf("processing identity or parameters changed: %+v", req)
+			}
+			if req.Processing == nil || req.Processing.SourceTaskID != "source" || req.Processing.Animation != "preset:walk" || req.Processing.RigType != "biped" || req.Processing.OutFormat != "glb" || req.Processing.AnimateInPlace == nil || *req.Processing.AnimateInPlace {
+				t.Fatalf("processing fields were lost: %+v", req.Processing)
+			}
+		})
+	}
+}
+
 func TestModel3DCreateRequestRequiresExplicitBooleans(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

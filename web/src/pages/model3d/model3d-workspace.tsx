@@ -80,18 +80,21 @@ export function Model3DWorkspace(workflow: Model3DWorkspaceProps) {
                             refreshing={workflow.refreshing}
                             hasMore={workflow.hasMore}
                             editingDisabled={disabled}
-                            onSelect={workflow.selectTask}
+                            onSelect={(id) => void workflow.selectTask(id)}
                             onRefresh={() => void workflow.refresh()}
                             onRecover={(id) => void workflow.recover(id)}
                             onReuse={(task) => {
                                 if (disabled) return;
-                                workflow.selectTask(task.id);
+                                void workflow.selectTask(task.id);
                                 workflow.reuseTask(task.id);
                                 setEditingVersion(new Date(task.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
                                 composer.current?.scrollIntoView?.({ block: "start" });
                                 composer.current?.focus({ preventScroll: true });
                             }}
                             onLoadMore={() => void workflow.loadMore()}
+                            processingOperations={capabilities?.available ? capabilities.processingOperations : []}
+                            onProcess={(processing) => void workflow.processModel(processing)}
+                            onSource={(id) => void workflow.selectTask(id)}
                         />
                     </div>
                 </div>

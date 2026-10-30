@@ -35,6 +35,7 @@ export type Model3DModelVersion = {
 };
 
 export type Model3DCapabilities = {
+    processingOperations?: Model3DProcessingOperation[];
     available: boolean;
     providerName: string;
     policyRevision: number;
@@ -63,6 +64,7 @@ export type Model3DCreateRequest = {
 };
 
 export type Model3DResult = {
+    parts?: string[];
     assetId: string;
     resourceId: string;
     storageKey: string;
@@ -74,6 +76,8 @@ export type Model3DResult = {
 };
 
 export type Model3DTaskView = {
+    rigCheck?: { riggable: boolean; rigType: string };
+    processing?: Model3DProcessing;
     id: string;
     status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
     stage: string;
@@ -132,7 +136,30 @@ export function getModel3DCapabilities(signal?: AbortSignal) {
     return http.get<Model3DCapabilities>("/model3d/capabilities", { signal });
 }
 
-export function createModel3DTask(input: Model3DCreateRequest, signal?: AbortSignal) {
+export type Model3DProcessingOperation = "segment" | "complete" | "rig_check" | "rig" | "animate";
+export type Model3DProcessing = {
+    operation: Model3DProcessingOperation;
+    sourceTaskId: string;
+    model?: string;
+    granularity?: "simple" | "balanced" | "detailed";
+    splitByConnectivity?: boolean;
+    completionMode?: "ai_completion" | "quick_cap";
+    partNames?: string[];
+    rigType?: string;
+    spec?: string;
+    outFormat?: "glb" | "fbx";
+    animation?: string;
+    animateInPlace?: boolean;
+};
+export type Model3DProcessingRequest = {
+    requestId: string;
+    sourceFingerprint: string;
+    scope: "standalone";
+    expectedPolicyRevision: number;
+    processing: Model3DProcessing;
+};
+
+export function createModel3DTask(input: Model3DCreateRequest | Model3DProcessingRequest, signal?: AbortSignal) {
     return http.post<Model3DTaskView>("/model3d/tasks", input, { signal });
 }
 

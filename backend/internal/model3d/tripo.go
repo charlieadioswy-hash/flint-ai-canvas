@@ -177,6 +177,13 @@ func generationPayload(request Request, tokens map[string]string) (string, map[s
 
 func (p *tripoProvider) Submit(ctx context.Context, config Config, request Request, tokens map[string]string) (string, error) {
 	path, payload := generationPayload(request, tokens)
+	if request.Processing != nil {
+		var err error
+		path, payload, err = processingPayload(*request.Processing, request.SourceProviderTaskID)
+		if err != nil {
+			return "", &Error{Code: "provider_request_invalid", Message: err.Error(), Definite: true}
+		}
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", &Error{Code: "provider_request_invalid", Message: "3D 平台请求无效", Definite: true}
@@ -200,6 +207,8 @@ func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad
 		ErrorCode json.RawMessage `json:"error_code"`
 		Output    struct {
 			ModelURL string `json:"model_url"`
+			Riggable *bool  `json:"riggable"`
+			RigType  string `json:"rig_type"`
 		} `json:"output"`
 	}
 	if err := p.request(ctx, config, http.MethodGet, "/tasks/"+url.PathEscape(id), "", nil, &result); err != nil {
@@ -219,7 +228,16 @@ func (p *tripoProvider) Poll(ctx context.Context, config Config, id string, quad
 			state.ErrorCode = strconv.Itoa(numeric)
 		}
 	}
-	if state.Status == "success" && state.Artifact.URL == "" {
+	if result.Output.Riggable != nil {
+		if *result.Output.Riggable && !Contains(RigTypes(), result.Output.RigType) {
+			return state, &Error{Code: "provider_response_invalid", Message: "3D 平台返回的骨架类型无效"}
+		}
+		if !Contains(RigTypes(), result.Output.RigType) {
+			result.Output.RigType = ""
+		}
+		state.RigCheck = &RigCheck{Riggable: *result.Output.Riggable, RigType: result.Output.RigType}
+	}
+	if state.Status == "success" && state.Artifact.URL == "" && state.RigCheck == nil {
 		return state, &Error{Code: "provider_output_missing", Message: "3D 平台未返回模型文件"}
 	}
 	if !Contains([]string{"queued", "running", "success", "failed", "cancelled", "banned", "expired"}, state.Status) {

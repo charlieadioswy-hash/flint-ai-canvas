@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { Box3, BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
+import { AnimationClip, AnimationMixer, Bone, Box3, BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3, VectorKeyframeTrack } from "three";
 
 import { MODEL3D_MAX_BYTES, parseModel3D, readModel3DSource } from "@/lib/canvas/model3d-preview";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
@@ -111,6 +111,55 @@ test("GLB and self-contained GLTF preserve geometry and standard material parame
             expect(material?.metalness).toBeCloseTo(0.7);
             disposePrevisObject3D(loaded);
         }
+    } finally {
+        disposePrevisObject3D(model);
+    }
+});
+
+test("GLB and GLTF round trips retain a working skin and bone animation", async () => {
+    const model = new Group();
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+    geometry.setAttribute("skinIndex", new Uint16BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0], 4));
+    geometry.setAttribute("skinWeight", new Float32BufferAttribute([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], 4));
+    geometry.computeVertexNormals();
+    const mesh = new SkinnedMesh(geometry, new MeshStandardMaterial());
+    mesh.name = "body";
+    const root = new Bone();
+    root.name = "root";
+    const tip = new Bone();
+    tip.name = "tip";
+    tip.position.y = 1;
+    root.add(tip);
+    mesh.add(root);
+    model.add(mesh);
+    model.updateMatrixWorld(true);
+    mesh.bind(new Skeleton([root, tip]));
+    model.animations = [new AnimationClip("wave", 1, [new VectorKeyframeTrack("tip.position", [0, 1], [0, 1, 0, 1, 1, 0])])];
+    try {
+        for (const format of ["glb", "gltf"] as const) {
+            const exported = await exportModel3DObject(model, format);
+            const loaded = await parseModel3D(await exported.blob.arrayBuffer(), format);
+            const mixer = new AnimationMixer(loaded);
+            try {
+                const restoredMesh = loaded.getObjectByName("body") as SkinnedMesh;
+                expect(restoredMesh.isSkinnedMesh).toBe(true);
+                expect(restoredMesh.skeleton.bones.map((bone) => bone.name)).toEqual(["root", "tip"]);
+                expect(loaded.animations.map((clip) => clip.name)).toEqual(["wave"]);
+                mixer.clipAction(loaded.animations[0]).play();
+                mixer.update(0.5);
+                loaded.updateMatrixWorld(true);
+                const vertex = restoredMesh.getVertexPosition(2, new Vector3());
+                expect(vertex.x).toBeCloseTo(0.5);
+                expect(vertex.y).toBeCloseTo(1);
+                expect(vertex.z).toBeCloseTo(0);
+            } finally {
+                mixer.stopAllAction();
+                mixer.uncacheRoot(loaded);
+                disposePrevisObject3D(loaded);
+            }
+        }
+        expect(tip.position.toArray()).toEqual([0, 1, 0]);
     } finally {
         disposePrevisObject3D(model);
     }

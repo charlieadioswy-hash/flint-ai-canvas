@@ -51,6 +51,9 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 	provider := s.model3DProvider()
 	if task.ProviderRequestID != "" && submission.State == "storing" && task.ResultJSON != "" {
 		var saved Model3DResult
+		if json.Unmarshal([]byte(task.ResultJSON), &saved) == nil && saved.RigCheck != nil && input.Processing != nil && input.Processing.Operation == "rig_check" {
+			return s.completeModel3DRigCheck(task, saved)
+		}
 		if json.Unmarshal([]byte(task.ResultJSON), &saved) == nil && saved.ResourceID != "" {
 			resource, resourceErr := s.repo.ResourceForUser(task.UserID, saved.ResourceID)
 			if resourceErr == nil && resource.Status == model.ResourceStatusReady && resource.Kind == "model" {
@@ -66,6 +69,13 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 			return fail("model_submission_invalid", "3D 提交状态无效", "rejected")
 		}
 		request := model3d.Request{Mode: input.Mode, Prompt: input.Prompt, Parameters: input.Parameters}
+		if input.Processing != nil {
+			verified, _, sourceErr := s.prepareModel3DProcessing(task.UserID, *input.Processing, stored, config)
+			if sourceErr != nil || input.Source == nil || verified.Source == nil || *verified.Source != *input.Source {
+				return fail("model_source_changed", "来源模型或绑骨检查已变化，请重新发起处理", "rejected")
+			}
+			request.Processing, request.SourceProviderTaskID = input.Processing, input.Source.ProviderTaskID
+		}
 		for _, ref := range input.ReferenceImages {
 			resource, image, hash, readErr := s.readModel3DImage(task.UserID, ref.ResourceID, ref.View)
 			if readErr != nil || model.ImageModerationResourceVersion(resource) != ref.ResourceVersion || hash != ref.ContentHash {
@@ -126,7 +136,11 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		task.PollStage = "model3d_generating"
 	}
 	call, cancel := model3DCallContext(ctx, config)
-	state, pollErr := provider.Poll(call, config, task.ProviderRequestID, input.Parameters.Quad != nil && *input.Parameters.Quad)
+	fbx := input.Parameters.Quad != nil && *input.Parameters.Quad
+	if input.Processing != nil {
+		fbx = input.Processing.OutFormat == "fbx"
+	}
+	state, pollErr := provider.Poll(call, config, task.ProviderRequestID, fbx)
 	cancel()
 	if pollErr != nil {
 		if time.Since(task.CreatedAt) < 2*time.Hour {
@@ -143,10 +157,13 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		if progress >= 100 {
 			progress = 0
 		}
-		if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, "3D 模型生成中", progress); err != nil {
+		stage := "3D 模型生成中"
+		if input.Processing != nil {
+			stage = model3d.ProcessingLabel(input.Processing.Operation) + "中"
+		}
+		if err := s.repo.UpdateTaskProgressForLease(task.ID, task.LeaseOwner, stage, progress); err != nil {
 			return err
 		}
-		stage := "3D 模型生成中"
 		if state.Status == "queued" {
 			stage = "3D 平台排队中"
 		}
@@ -161,6 +178,26 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 			message += "，错误码：" + state.ErrorCode
 		}
 		return fail("model_upstream_"+state.Status, message, "finished")
+	}
+	if input.Processing != nil && input.Processing.Operation == "rig_check" {
+		if state.RigCheck == nil {
+			return fail("model_output_invalid", "绑骨检查缺少结果，可继续查询原任务", "accepted")
+		}
+		if err := s.repo.SaveModel3DDelivery(task.ID, task.LeaseOwner, ""); err != nil {
+			return err
+		}
+		result := Model3DResult{RigCheck: state.RigCheck}
+		checkpoint, _ := json.Marshal(result)
+		if err := s.saveModel3DResourceCheckpoint(task, checkpoint); err != nil {
+			return fail("model_storage_failed", "绑骨检查结果保存失败，可恢复原任务", "storing")
+		}
+		if err := s.completeModel3DRigCheck(task, result); err != nil {
+			return fail("model_storage_failed", "绑骨检查结果保存失败，可恢复原任务", "storing")
+		}
+		return nil
+	}
+	if state.Artifact.URL == "" {
+		return fail("model_output_invalid", "3D 平台未返回模型文件，可继续查询原任务", "accepted")
 	}
 	plain, _ := json.Marshal(state.Artifact)
 	encrypted, err := s.encryptSettingSecret(string(plain))
@@ -185,6 +222,9 @@ func (w *taskWorkerCoordinator) processModel3DTask(task *model.Task, ctx context
 		return fail("model_storage_failed", "模型文件保存失败，可恢复原任务", "storing")
 	}
 	result := Model3DResult{AssetID: "model3d_" + task.ID, ResourceID: resource.ID, StorageKey: "resource:" + resource.ID, URL: resourceFileURL(resource.ID), FileName: fileName, MimeType: resource.MimeType, Bytes: resource.Size, Format: state.Artifact.Format}
+	if input.Processing != nil && (input.Processing.Operation == "segment" || input.Processing.Operation == "complete") {
+		result.Parts = model3d.PartNames(data)
+	}
 	checkpoint, _ := json.Marshal(result)
 	if err := s.saveModel3DResourceCheckpoint(task, checkpoint); err != nil {
 		return fail("model_storage_failed", "模型保存检查点失败，可恢复原任务", "storing")
@@ -223,17 +263,25 @@ func (s *Service) completeModel3DTask(task *model.Task, input model3DInput, resu
 	}
 	now := time.Now()
 	metadata := map[string]any{"source": "model3d", "taskId": task.ID, "scope": "standalone"}
+	title := "3D 生成模型"
+	if input.Processing != nil {
+		title = "3D " + model3d.ProcessingLabel(input.Processing.Operation)
+		metadata["processing"], metadata["parentTaskId"] = input.Processing, input.Processing.SourceTaskID
+		if input.Source != nil {
+			metadata["sourceModel"] = map[string]string{"taskId": input.Source.TaskID, "resourceId": input.Source.ResourceID}
+		}
+	}
 	if task.WorkbenchKind != model.WorkbenchKindModel3D {
 		metadata["scope"], metadata["canvasId"], metadata["nodeId"] = "canvas", input.ClientContext.CanvasID, input.ClientContext.NodeID
 	}
 	if input.ClientContext.GroupID != "" {
 		metadata["groupId"], metadata["candidateIndex"], metadata["candidateCount"] = input.ClientContext.GroupID, input.ClientContext.CandidateIndex, input.ClientContext.CandidateCount
 	}
-	payload, err := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": "3D 生成模型", "coverUrl": "", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": metadata})
+	payload, err := json.Marshal(map[string]any{"id": result.AssetID, "kind": "model", "category": "material", "status": "confirmed", "title": title, "coverUrl": "", "tags": []string{"3D", "Tripo3D"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": map[string]any{"url": result.URL, "storageKey": result.StorageKey, "bytes": result.Bytes, "mimeType": result.MimeType, "fileName": result.FileName}, "metadata": metadata})
 	if err != nil {
 		return err
 	}
-	asset := model.Asset{ID: result.AssetID, UserID: task.UserID, Kind: "model", Category: "material", Status: "confirmed", Title: "3D 生成模型", PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
+	asset := model.Asset{ID: result.AssetID, UserID: task.UserID, Kind: "model", Category: "material", Status: "confirmed", Title: title, PayloadJSON: string(payload), CreatedAt: now, UpdatedAt: now}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err

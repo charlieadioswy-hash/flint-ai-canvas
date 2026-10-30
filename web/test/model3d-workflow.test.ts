@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { defaultModel3DDraft, mergeModel3DTasks, model3DTaskDraft, standaloneModel3DRequest, validateModel3DImage } from "@/pages/model3d/model3d-workflow-state";
 import type { Model3DCapabilities, Model3DCreateRequest, Model3DTaskList, Model3DTaskView } from "@/services/api/model3d";
+import { defaultModel3DProcessing } from "@/pages/model3d/model3d-processing-state";
 import { ApiError, apiClient } from "@/services/api/request";
 import { listModel3DTasks } from "@/services/api/model3d";
 
@@ -13,6 +14,7 @@ const capabilities: Model3DCapabilities = {
     defaultModel: "h3.1",
     modelVersions: [{ id: "h3.1", label: "H3.1", supportsAdvanced: true, maxFacesStandard: 100000, maxFacesDetailed: 500000 }],
     modes: ["text", "image", "multiview"],
+    processingOperations: ["segment", "complete", "rig_check", "rig", "animate"],
     inputLimits: { maxBytes: 10000000, mimeTypes: ["image/png", "image/jpeg"], minViews: 2, maxViews: 4, requiredView: "front" },
 };
 function draft(prompt = "toy truck") {
@@ -275,6 +277,32 @@ test("standalone requests preserve the real draft and carry no canvas or node bi
     expect(defaultModel3DDraft({ ...capabilities, modelVersions: [{ ...capabilities.modelVersions[0], maxFacesStandard: 80000 }] }).parameters.faceLimit).toBe(80000);
 });
 
+test("processing survives an uncertain POST and a reload without posting again", async () => {
+    const original = task("source", { result: { resourceId: "model-resource", assetId: "model-asset", storageKey: "resource:model-resource", url: "/model", fileName: "model.glb", mimeType: "model/gltf-binary", bytes: 100, format: "glb" } });
+    const h = harness();
+    h.behavior.list = async ({ activeOnly }) => ({ tasks: activeOnly ? [] : [original] });
+    h.behavior.get = async () => original;
+    await h.flush();
+    await h.value.refresh();
+    await h.flush();
+    h.behavior.create = async () => { throw new Error("response lost"); };
+    await h.value.processModel(defaultModel3DProcessing(original, "segment"));
+    await h.flush();
+    expect(h.creates).toHaveLength(1);
+    expect(h.creates[0]).not.toHaveProperty("mode");
+    expect(h.creates[0]).not.toHaveProperty("parameters");
+    expect(h.value.tasks.some((task) => task.processing?.operation === "segment" && task.localStatus === "submission_unknown")).toBe(true);
+    const id = h.creates[0].requestId;
+    const cache = h.cache;
+    h.unmount();
+    const restored = harness(cache);
+    await restored.flush();
+    await restored.advance();
+    expect(restored.requestIds).toContain(id);
+    expect(restored.creates).toHaveLength(0);
+    restored.unmount();
+});
+
 test("multiview admission requires distinct uploaded resources and validates capability MIME, bytes and dimensions", () => {
     const input = { ...draft(), mode: "multiview" as const, views: { front: { resourceId: "front" }, left: { resourceId: "left" } } };
     expect(standaloneModel3DRequest(input, capabilities, { requestId: "a", groupId: "g", candidateIndex: 1, candidateCount: 1 }).request.views).toEqual({ front: "front", left: "left" });
@@ -298,6 +326,124 @@ test("history reuse reconstructs input without mutating task data and foreign ca
     expect(mergeModel3DTasks([original], [task("a", { status: "running", updatedAt: "2026-10-22T01:00:00Z" })])[0].status).toBe("succeeded");
     expect(mergeModel3DTasks([original], [task("a", { status: "running", updatedAt: original.updatedAt })])[0].status).toBe("succeeded");
     expect(mergeModel3DTasks([task("active", { status: "running", updatedAt: "2026-10-22T02:01:00.100Z" })], [task("active", { status: "queued", updatedAt: "2026-10-22T02:01:00Z" })])[0].status).toBe("running");
+});
+
+test("selecting an unloaded source fetches and selects it on the first click without changing the draft", async () => {
+    const parent = task("parent");
+    const child = task("child", { processing: { operation: "segment", sourceTaskId: parent.id } });
+    const h = harness();
+    h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [child], nextCursor: input.activeOnly ? undefined : "older-page" });
+    h.behavior.get = async (id) => { expect(id).toBe(parent.id); return parent; };
+    try {
+        await h.flush();
+        h.value.setDraft(draft("keep editing this model"));
+        await h.flush();
+        expect(h.value.selectedTaskId).toBe(child.id);
+        await h.value.selectTask(parent.id);
+        await h.flush();
+        expect(h.value.selectedTaskId).toBe(parent.id);
+        expect(h.value.tasks.find((item) => item.id === parent.id)).toEqual(parent);
+        expect(h.value.draft.prompt).toBe("keep editing this model");
+        expect(h.value.hasMore).toBe(true);
+        expect(h.gets).toBe(1);
+        expect(h.creates).toHaveLength(0);
+        expect(h.recovers).toBe(0);
+        expect(JSON.parse([...h.cache.values()][0]).selectedTaskId).toBe(parent.id);
+    } finally { h.unmount(); }
+});
+
+for (const latestId of ["child", "other", "another-parent"]) {
+    test(`a late source response cannot override a newer selection of ${latestId}`, async () => {
+        const h = harness();
+        const pending = deferred<Model3DTaskView>();
+        const latest = deferred<Model3DTaskView>();
+        h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child"), task("other")] });
+        h.behavior.get = (id) => id === "parent" ? pending.promise : latest.promise;
+        try {
+            await h.flush();
+            await h.value.selectTask("child");
+            const opening = h.value.selectTask("parent");
+            await h.flush();
+            expect(h.gets).toBe(1);
+            const oldSignal = h.signals.at(-1)!;
+            const selecting = h.value.selectTask(latestId);
+            latest.resolve(task(latestId));
+            await selecting;
+            await h.flush();
+            expect(oldSignal.aborted).toBe(true);
+            pending.resolve(task("parent"));
+            await opening;
+            await h.flush();
+            expect(h.value.selectedTaskId).toBe(latestId);
+            expect(h.value.tasks.some((item) => item.id === "parent")).toBe(false);
+            expect(h.value.error).toBe("");
+            expect(h.creates).toHaveLength(0);
+        } finally { h.unmount(); }
+    });
+}
+
+test("a failed source read preserves the selected version and can be retried", async () => {
+    const h = harness();
+    h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child")] });
+    h.behavior.get = async () => { throw new ApiError("来源任务不可用", { status: 404, reason: "not_found" }); };
+    try {
+        await h.flush();
+        await h.value.selectTask("parent");
+        await h.flush();
+        expect(h.value.selectedTaskId).toBe("child");
+        expect(h.value.tasks).toHaveLength(1);
+        expect(h.value.error).toContain("来源任务");
+        h.behavior.get = async (id) => task(id);
+        await h.value.selectTask("parent");
+        await h.flush();
+        expect(h.value.selectedTaskId).toBe("parent");
+        expect(h.value.error).toBe("");
+        expect(h.creates).toHaveLength(0);
+    } finally { h.unmount(); }
+});
+
+test("generating a new version cancels pending source navigation", async () => {
+    const h = harness();
+    const pending = deferred<Model3DTaskView>();
+    h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child")] });
+    h.behavior.get = () => pending.promise;
+    try {
+        await h.flush();
+        const opening = h.value.selectTask("parent");
+        const oldSignal = h.signals.at(-1)!;
+        await h.value.generate(draft());
+        await h.flush();
+        expect(oldSignal.aborted).toBe(true);
+        expect(h.creates).toHaveLength(1);
+        pending.resolve(task("parent"));
+        await opening;
+        await h.flush();
+        expect(h.value.selectedTaskId).toBe(`task-${h.creates[0].requestId}`);
+        expect(h.value.tasks.some((item) => item.id === "parent")).toBe(false);
+    } finally { h.unmount(); }
+});
+
+test("switching accounts cancels source navigation and ignores the old response", async () => {
+    const h = harness();
+    const pending = deferred<Model3DTaskView>();
+    h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child")] });
+    h.behavior.get = () => pending.promise;
+    try {
+        await h.flush();
+        const opening = h.value.selectTask("parent");
+        const oldSignal = h.signals.at(-1)!;
+        h.behavior.list = async () => ({ tasks: [] });
+        h.userState.user = { id: "another-user" };
+        h.render();
+        await h.flush();
+        expect(oldSignal.aborted).toBe(true);
+        pending.resolve(task("parent"));
+        await opening;
+        await h.flush();
+        expect(h.value.tasks).toEqual([]);
+        expect(h.value.selectedTaskId).toBe("");
+        expect(h.creates).toHaveLength(0);
+    } finally { h.unmount(); }
 });
 
 test("list API forwards standalone filters, compacts empty cursors and preserves AbortSignal", async () => {

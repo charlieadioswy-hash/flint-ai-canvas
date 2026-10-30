@@ -2,7 +2,7 @@
 
 > 范围：文本、单图、多视图生成 3D 模型及原生模型文件下载；首期供应商为 Tripo。
 > 性质：官方协议研究、配置建议与验收依据，不表示真实 API 已验收。
-> 边界：不包含模型导入、分割、重新贴图、重拓扑、绑骨或动画工作流。
+> 首期边界：生成与下载。部件拆分／补全、绑骨与动画的后续合同见第 9 节；外部模型导入、重新贴图与重拓扑仍不在本轮实现内。
 
 ## 1. 接入结论
 
@@ -156,3 +156,21 @@ H 系列当前文档价为每积分 0.01 美元。文本纯几何 10 / 标准贴
 | `web/public/welcome/charge/einar.webp` / `character-final.webp` | 有 Blender 开放电影来源与署名记录；近景、服装、光照和构图不一致 | 可检查图片读取；不能代替一致物体的多视图验收 |
 
 素材来源记录见 `web/public/welcome/credits.html` 与 `docs/design/story-creation-homepage.md`。已检查仓库跟踪文件及非忽略资源，未找到 FBX fixture 或已标注正、左、后、右的一致多视图素材。真实多视图验收需要另备有使用权的同一物体视图；建议自制简单非对称几何体并固定相机、材质和光照，避免把两张相似图片误当多视图。离线模拟仅能证明协议和存储流程，不能证明供应商生成质量。
+
+## 9. 部件处理与动画合同（2026-10-29 复核）
+
+已读取官方 V3 文档正文。本轮仅公开文档核查和离线测试，没有使用真实凭据提交付费处理任务。
+
+| 接口 | 已核实输入 | 返回与实施选择 |
+| --- | --- | --- |
+| [拆分](https://developers.tripo3d.ai/en/docs/mesh-segment) `POST /mesh/segment` | `input` 支持生成 task_id、file_token、URL；`model` 为 v1.0-20250506 / v2.0-20260430；v2 可选 `segmentation_granularity`、`split_by_connectivity`、`ref_image` | 单个 `output.model_url` GLB 包含部件；平台首批仅引用已有生成任务，提供粒度／连通区域，不接语义参考图 |
+| [补全](https://developers.tripo3d.ai/en/docs/mesh-complete) `POST /mesh/complete` | `input` 必须是 segment 任务；`model=v1.0-20250506`；`completion_mode=ai_completion/quick_cap`；`part_names` 来自拆分结果节点，省略则全部 | 补齐分离部件的缺失几何或封口，并非提示词修改任意模型；保存新的完整 GLB |
+| [检查](https://developers.tripo3d.ai/en/docs/animations-rig-check) `POST /animations/rig-check` | `input` 支持生成 task_id、token、URL | 仍是异步任务；成功 `output.riggable` 和 `rig_type`，没有模型 URL；不能套用“成功必须带模型”的规则 |
+| [绑骨](https://developers.tripo3d.ai/en/docs/animations-rig) `POST /animations/rig` | `input` 为模型来源；先执行检查；v3.0-20260909 推荐人形，v2.5-20260210 支持动物；`rig_type`、人形 `spec`、`out_format=glb/fbx` | `output.model_url`；`spec` 的 actorcore/unity/unreal/vrm 与 `others` 要求 v3.0。平台根据检查任务找到原模型，不把检查 task_id 传给 rig |
+| [动作](https://developers.tripo3d.ai/en/docs/animations-retarget) `POST /animations/retarget` | `input` 必须已绑骨 task_id；`animation` 或最多 5 项 `animations` 互斥；`export_with_geometry` 默认 true；`animate_in_place` 可选 | 平台每次一个动作、新版本；明确包含几何；不发送已废弃且无效的 `bake_animation`；GLB/FBX 原格式保存 |
+
+所有创建均返回 `data.task_id`，由现有 `GET /tasks/{id}` 轮询。文档示例的 task_id 前缀与费用不是客户端验证或售价依据；平台使用服务端取得的不透明 ID。实际文件仍执行自包含校验和 128 MiB 本站上限。
+
+新绑骨 v2.5/v3.0 使用 `preset:idle/walk/run/dive/climb/jump/slash/shoot/hurt/fall/turn`，四／六／八足为 `preset:<rig_type>:walk`，蛇形／水生为 `preset:<rig_type>:march`。v1 的 `preset:biped:*` 属于旧动作体系，本轮不与 v2.5/v3.0 混用。官方未列出鸟类和 others 的预设，界面不编造可用动作。
+
+官方任务查询示例仍有类型／费用复用情况，实际消费字段以各接口说明为准。真实 GLB 部件节点布局、骨骼蒙皮质量、FBX 动作与材质、国内端点服务可用性及实际费用需要发布后的真实验收。账号来源不一致时先拒绝，而不是向新账号提交旧账号的上游 ID。

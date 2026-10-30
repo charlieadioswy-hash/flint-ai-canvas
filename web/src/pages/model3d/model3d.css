@@ -39,6 +39,18 @@
     border-radius: var(--r-2xl);
     background: var(--surface);
 }
+.model3d-processing {
+    min-width: 0;
+    border-top: 1px solid var(--border);
+}
+.model3d-processing-fields {
+    display: grid;
+    gap: 12px;
+    padding: 0 22px 22px;
+    font-size: var(--fs-caption);
+}
+.model3d-processing-fields .ant-select { width: 100%; min-width: 0; }
+.model3d-processing-fields p { margin: 0; }
 .model3d-inputs {
     display: grid;
     gap: 20px;

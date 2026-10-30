@@ -72,14 +72,15 @@ type Model3DInputLimits struct {
 	RequiredView string   `json:"requiredView"`
 }
 type Model3DCapabilities struct {
-	Available           bool                   `json:"available"`
-	ProviderName        string                 `json:"providerName"`
-	PolicyRevision      int64                  `json:"policyRevision"`
-	ActiveConfigVersion int                    `json:"activeConfigVersion"`
-	DefaultModel        string                 `json:"defaultModel"`
-	ModelVersions       []model3d.ModelVersion `json:"modelVersions"`
-	Modes               []string               `json:"modes"`
-	InputLimits         Model3DInputLimits     `json:"inputLimits"`
+	ProcessingOperations []string               `json:"processingOperations"`
+	Available            bool                   `json:"available"`
+	ProviderName         string                 `json:"providerName"`
+	PolicyRevision       int64                  `json:"policyRevision"`
+	ActiveConfigVersion  int                    `json:"activeConfigVersion"`
+	DefaultModel         string                 `json:"defaultModel"`
+	ModelVersions        []model3d.ModelVersion `json:"modelVersions"`
+	Modes                []string               `json:"modes"`
+	InputLimits          Model3DInputLimits     `json:"inputLimits"`
 }
 type Model3DViews struct {
 	Front string `json:"front"`
@@ -88,20 +89,21 @@ type Model3DViews struct {
 	Right string `json:"right,omitempty"`
 }
 type Model3DCreateRequest struct {
-	RequestID              string             `json:"requestId"`
-	SourceFingerprint      string             `json:"sourceFingerprint"`
-	CanvasID               string             `json:"canvasId"`
-	NodeID                 string             `json:"nodeId"`
-	Mode                   string             `json:"mode"`
-	Prompt                 string             `json:"prompt,omitempty"`
-	ImageResourceID        string             `json:"imageResourceId,omitempty"`
-	Views                  *Model3DViews      `json:"views,omitempty"`
-	Parameters             model3d.Parameters `json:"parameters"`
-	ExpectedPolicyRevision *int64             `json:"expectedPolicyRevision"`
-	Scope                  string             `json:"scope,omitempty"`
-	GroupID                string             `json:"groupId,omitempty"`
-	CandidateIndex         int                `json:"candidateIndex,omitempty"`
-	CandidateCount         int                `json:"candidateCount,omitempty"`
+	Processing             *model3d.Processing `json:"processing,omitempty"`
+	RequestID              string              `json:"requestId"`
+	SourceFingerprint      string              `json:"sourceFingerprint"`
+	CanvasID               string              `json:"canvasId"`
+	NodeID                 string              `json:"nodeId"`
+	Mode                   string              `json:"mode"`
+	Prompt                 string              `json:"prompt,omitempty"`
+	ImageResourceID        string              `json:"imageResourceId,omitempty"`
+	Views                  *Model3DViews       `json:"views,omitempty"`
+	Parameters             model3d.Parameters  `json:"parameters"`
+	ExpectedPolicyRevision *int64              `json:"expectedPolicyRevision"`
+	Scope                  string              `json:"scope,omitempty"`
+	GroupID                string              `json:"groupId,omitempty"`
+	CandidateIndex         int                 `json:"candidateIndex,omitempty"`
+	CandidateCount         int                 `json:"candidateCount,omitempty"`
 }
 type model3DReference struct {
 	ResourceID      string `json:"resourceId"`
@@ -118,23 +120,27 @@ type model3DClientContext struct {
 	CandidateCount int    `json:"candidateCount,omitempty"`
 }
 type model3DInput struct {
-	ConfigID          string               `json:"configId"`
-	Mode              string               `json:"mode"`
-	Prompt            string               `json:"prompt,omitempty"`
-	Parameters        model3d.Parameters   `json:"parameters"`
-	ReferenceImages   []model3DReference   `json:"referenceImages"`
-	SourceFingerprint string               `json:"sourceFingerprint"`
-	ClientContext     model3DClientContext `json:"metadata"`
+	Processing        *model3d.Processing      `json:"processing,omitempty"`
+	Source            *model3DProcessingSource `json:"source,omitempty"`
+	ConfigID          string                   `json:"configId"`
+	Mode              string                   `json:"mode"`
+	Prompt            string                   `json:"prompt,omitempty"`
+	Parameters        model3d.Parameters       `json:"parameters"`
+	ReferenceImages   []model3DReference       `json:"referenceImages"`
+	SourceFingerprint string                   `json:"sourceFingerprint"`
+	ClientContext     model3DClientContext     `json:"metadata"`
 }
 type Model3DResult struct {
-	AssetID    string `json:"assetId"`
-	ResourceID string `json:"resourceId"`
-	StorageKey string `json:"storageKey"`
-	URL        string `json:"url"`
-	FileName   string `json:"fileName"`
-	MimeType   string `json:"mimeType"`
-	Bytes      int64  `json:"bytes"`
-	Format     string `json:"format"`
+	Parts      []string          `json:"parts,omitempty"`
+	RigCheck   *model3d.RigCheck `json:"rigCheck,omitempty"`
+	AssetID    string            `json:"assetId"`
+	ResourceID string            `json:"resourceId"`
+	StorageKey string            `json:"storageKey"`
+	URL        string            `json:"url"`
+	FileName   string            `json:"fileName"`
+	MimeType   string            `json:"mimeType"`
+	Bytes      int64             `json:"bytes"`
+	Format     string            `json:"format"`
 }
 type Model3DTaskError struct {
 	Code       string `json:"code"`
@@ -143,6 +149,8 @@ type Model3DTaskError struct {
 	RetryClass string `json:"retryClass"`
 }
 type Model3DTaskView struct {
+	RigCheck          *model3d.RigCheck    `json:"rigCheck,omitempty"`
+	Processing        *model3d.Processing  `json:"processing,omitempty"`
 	ID                string               `json:"id"`
 	RequestID         string               `json:"requestId"`
 	Scope             string               `json:"scope"`
@@ -384,6 +392,7 @@ func (s *Service) Model3DCapabilities(userID string) (*Model3DCapabilities, erro
 		return nil, err
 	}
 	view.Available = true
+	view.ProcessingOperations = []string{"segment", "complete", "rig_check", "rig", "animate"}
 	view.ProviderName = provider.Name
 	view.ActiveConfigVersion = record.Version
 	view.DefaultModel = config.DefaultModel
@@ -545,6 +554,9 @@ func (s *Service) CreateModel3DTask(userID string, req Model3DCreateRequest) (*M
 	if err := model3d.ValidateConfig(config); err != nil {
 		return nil, NewAppError(503, "3D 配置无效")
 	}
+	if req.Processing != nil {
+		return s.createModel3DProcessingTask(userID, req, record, config, revision, hash)
+	}
 	if err := model3d.ValidateParameters(req.Mode, req.Prompt, req.Parameters, config); err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
@@ -648,6 +660,7 @@ func model3DTaskView(task *model.Task, submission *model.Model3DSubmission) (*Mo
 	}
 	input.ClientContext.Scope = scope
 	view := &Model3DTaskView{ID: task.ID, RequestID: submission.RequestID, Scope: scope, GroupID: input.ClientContext.GroupID, CandidateIndex: input.ClientContext.CandidateIndex, CandidateCount: input.ClientContext.CandidateCount, Prompt: input.Prompt, Parameters: input.Parameters, Status: task.Status, Stage: task.Stage, Progress: task.Progress, ProviderProgress: publicProviderProgress(*task), Mode: input.Mode, SourceFingerprint: input.SourceFingerprint, ClientContext: input.ClientContext, SubmissionOutcome: "not_submitted", CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
+	view.Processing = input.Processing
 	for _, ref := range input.ReferenceImages {
 		if ref.View == "single" {
 			view.ImageResourceID = ref.ResourceID
@@ -675,8 +688,11 @@ func model3DTaskView(task *model.Task, submission *model.Model3DSubmission) (*Mo
 	view.CanRetryStorage = task.Status == model.TaskStatusFailed && task.ProviderRequestID != "" && (submission.State == "accepted" || submission.State == "storing")
 	if task.Status == model.TaskStatusSucceeded {
 		var result Model3DResult
-		if json.Unmarshal([]byte(task.ResultJSON), &result) == nil && result.ResourceID != "" {
-			view.Result = &result
+		if json.Unmarshal([]byte(task.ResultJSON), &result) == nil {
+			view.RigCheck = result.RigCheck
+			if result.ResourceID != "" {
+				view.Result = &result
+			}
 		}
 	}
 	if task.Status == model.TaskStatusFailed {

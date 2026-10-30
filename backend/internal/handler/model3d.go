@@ -23,6 +23,14 @@ func bindModel3DCreateRequest(c *gin.Context) (service.Model3DCreateRequest, err
 	if c.ShouldBindJSON(&req) != nil {
 		return service.Model3DCreateRequest{}, service.BadAuthRequest("3D 生成请求格式无效")
 	}
+	if req.Processing != nil {
+		result := req.Model3DCreateRequest
+		result.Parameters = req.Parameters.Model3DParameters
+		if req.Parameters.Texture != nil || req.Parameters.PBR != nil {
+			return service.Model3DCreateRequest{}, service.BadAuthRequest("模型处理不接受生成参数")
+		}
+		return result, nil
+	}
 	if req.Parameters.Texture == nil || req.Parameters.PBR == nil {
 		return service.Model3DCreateRequest{}, service.BadAuthRequest("须明确提供 texture 和 pbr 布尔参数")
 	}

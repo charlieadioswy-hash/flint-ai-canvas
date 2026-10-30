@@ -6,6 +6,9 @@ import { generationTaskProgress } from "@/lib/generation-task-display";
 import { MODEL3D_MODE_LABELS } from "@/lib/canvas/model3d";
 import { downloadBrowserMedia } from "@/services/browser-download";
 import { model3DFormat, type Model3DExportFormat, type Model3DPreviewFormat } from "@/lib/model3d-formats";
+import type { Model3DProcessing, Model3DProcessingOperation } from "@/services/api/model3d";
+import { Model3DProcessingPanel } from "./model3d-processing-panel";
+import { MODEL3D_PROCESSING_LABELS, MODEL3D_RIG_LABELS } from "./model3d-processing-state";
 
 const Viewer = lazy(() => import("@/components/assets/model3d-viewer").then((module) => ({ default: module.Model3DViewer })));
 
@@ -50,6 +53,9 @@ export function Model3DResults({
     onRecover,
     onReuse,
     onLoadMore,
+    processingOperations = [],
+    onProcess,
+    onSource,
 }: {
     tasks: Model3DWorkflowTask[];
     selectedTask?: Model3DWorkflowTask;
@@ -62,6 +68,9 @@ export function Model3DResults({
     onRecover: (id: string) => void;
     onReuse: (task: Model3DWorkflowTask) => void;
     onLoadMore: () => void;
+    processingOperations?: Model3DProcessingOperation[];
+    onProcess?: (processing: Model3DProcessing) => void;
+    onSource?: (id: string) => void;
 }) {
     const [local, setLocal] = useState<PreviewSource | null>(null);
     const [targetFormat, setTargetFormat] = useState<Model3DExportFormat | "original">("original");
@@ -70,7 +79,7 @@ export function Model3DResults({
     const input = useRef<HTMLInputElement>(null);
     const operation = useRef<AbortController | null>(null);
     const result = selectedTask?.status === "succeeded" ? selectedTask.result : undefined;
-    const source: PreviewSource | undefined = local || (result ? { storageKey: result.storageKey, url: result.url, format: result.format, fileName: result.fileName } : undefined);
+    const source: PreviewSource | undefined = local || (result?.resourceId ? { storageKey: result.storageKey, url: result.url, format: result.format, fileName: result.fileName } : undefined);
     const identity = `${source?.storageKey || source?.url || ""}:${source?.format || ""}`;
     useEffect(
         () => () => {
@@ -114,7 +123,7 @@ export function Model3DResults({
                         <p className="model3d-hint">{source ? `${source.format.toUpperCase()} · 拖动旋转，滚轮缩放` : "选择一个候选版本，查看生成进度与模型"}</p>
                     </div>
                     <div className="model3d-choices">
-                        {!local && selectedTask ? (
+                        {!local && selectedTask && !selectedTask.processing ? (
                             <Button size="small" disabled={editingDisabled} icon={<PencilLine className="size-3.5" />} title="载入此版本的输入，修改后确认生成新版本" onClick={() => onReuse(selectedTask)}>
                                 修改后生成新版本
                             </Button>
@@ -157,14 +166,15 @@ export function Model3DResults({
                                 </div>
                             }
                         >
-                            <Viewer key={identity} storageKey={source.storageKey} url={source.url} format={source.format} expanded />
+                            <Viewer key={identity} storageKey={source.storageKey} url={source.url} format={source.format} partNames={!local ? result?.parts : undefined} expanded />
                         </Suspense>
                     ) : (
                         <div className="model3d-preview-empty">
                             <Box className="model3d-preview-icon" strokeWidth={1} />
                             {selectedTask ? (
                                 <>
-                                    <h3>{selectedTask.status === "failed" ? "这个版本未完成" : selectedTask.status === "cancelled" ? "这个任务已取消" : "模型正在准备中"}</h3>
+                                    <h3>{selectedTask.rigCheck ? (selectedTask.rigCheck.riggable ? "模型可以自动绑骨" : "模型暂不适合自动绑骨") : selectedTask.status === "failed" ? "这个版本未完成" : selectedTask.status === "cancelled" ? "这个任务已取消" : "模型正在准备中"}</h3>
+                                    {selectedTask.rigCheck?.riggable ? <p>检测骨架：{MODEL3D_RIG_LABELS[selectedTask.rigCheck.rigType] || selectedTask.rigCheck.rigType}，可在下方继续绑骨。</p> : null}
                                     <Model3DTaskProgress task={selectedTask} />
                                     {selectedTask.localError || selectedTask.error?.message ? (
                                         <p role="alert" className="model3d-error">
@@ -202,8 +212,8 @@ export function Model3DResults({
                                     { value: "original", label: `原文件（${source.format.toUpperCase()}）` },
                                     { value: "glb", label: "GLB（含材质）" },
                                     { value: "gltf", label: "GLTF（自包含）" },
-                                    { value: "obj", label: "OBJ（几何，无贴图）" },
-                                    { value: "stl", label: "STL（几何，无贴图）" },
+                                    { value: "obj", label: "OBJ（静态几何，无贴图）" },
+                                    { value: "stl", label: "STL（静态几何，无贴图）" },
                                 ]}
                             />
                             <Button icon={<Download className="size-4" />} loading={exporting} onClick={() => void download()}>
@@ -213,7 +223,7 @@ export function Model3DResults({
                     ) : (
                         <p className="model3d-hint">支持 GLB / GLTF / FBX / OBJ / STL 预览</p>
                     )}
-                    {!local && selectedTask?.status === "succeeded" ? (
+                    {!local && selectedTask?.status === "succeeded" && result?.resourceId ? (
                         <span className="model3d-saved">
                             <Check className="size-3.5" />
                             已保存到资产库
@@ -225,6 +235,7 @@ export function Model3DResults({
                         {error}
                     </p>
                 ) : null}
+                {!local && selectedTask && onProcess ? <Model3DProcessingPanel key={`${selectedTask.id}:${selectedTask.status}:${processingOperations.join(",")}`} task={selectedTask} enabled={processingOperations} disabled={editingDisabled} onProcess={onProcess} onSource={onSource || onSelect} /> : null}
             </section>
             <section className="model3d-history" aria-label="3D 历史版本">
                 <header className="model3d-panel-heading">
@@ -259,16 +270,16 @@ export function Model3DResults({
                                         <FileBox className="size-5" />
                                     </span>
                                     <span className="model3d-task-copy">
-                                        <strong>{task.prompt?.trim() || `${MODEL3D_MODE_LABELS[task.mode]}生成模型`}</strong>
+                                        <strong>{task.processing ? `${MODEL3D_PROCESSING_LABELS[task.processing.operation]} · ` : ""}{task.prompt?.trim() || `${MODEL3D_MODE_LABELS[task.mode]}生成模型`}</strong>
                                         <small>
-                                            {task.parameters?.model || "3D"} · {task.parameters?.faceLimit ? `${task.parameters.faceLimit.toLocaleString()} 面` : "自动面数"}
+                                            {task.processing ? (task.processing.model || MODEL3D_PROCESSING_LABELS[task.processing.operation]) : `${task.parameters?.model || "3D"} · ${task.parameters?.faceLimit ? `${task.parameters.faceLimit.toLocaleString()} 面` : "自动面数"}`}
                                             {task.groupId ? ` · 本批候选 ${task.candidateIndex}/${task.candidateCount}` : ""} ·{" "}
                                             {new Date(task.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                                         </small>
                                         <Model3DTaskProgress task={task} />
                                     </span>
                                 </button>
-                                <Button
+                                {!task.processing ? <Button
                                     type="text"
                                     size="small"
                                     disabled={editingDisabled}
@@ -280,7 +291,7 @@ export function Model3DResults({
                                     }}
                                 >
                                     修改后生成新版本
-                                </Button>
+                                </Button> : null}
                             </article>
                         ))}
                     </div>
