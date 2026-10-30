@@ -11,7 +11,7 @@ Snapshots contain counts, digests, column metadata, and the complete migration
 ledger. Business values and credentials never leave PostgreSQL. A referenced
 snapshot retains a full digest and a digest projected onto each old table's old
 columns, so added columns do not hide changes to existing data. New tables must
-be empty. Data migrations fail conservatively and require explicit assessment.
+be empty except for explicitly verified migration backfills.
 Run the deployed migrate-schema verify separately to validate schema identities.
 """
 
@@ -143,6 +143,16 @@ WHERE table_schema = 'public' AND table_name IN (
 );
 SELECT jsonb_build_object('kind','ledger','row',to_jsonb(t)::text)::text
 FROM public.schema_migrations AS t ORDER BY version;
+SELECT $backfill$
+  SELECT jsonb_build_object('kind','backfill','table','model3d_requests',
+    'count',count(*),
+    'hash',md5(coalesce(string_agg(md5(jsonb_build_object(
+      'user_id',user_id,'request_id',request_id,'task_id',task_id,
+      'request_hash',request_hash,'created_at',created_at
+    )::text), '' ORDER BY user_id, request_id), ''))
+  )::text FROM public.model3d_submissions;
+$backfill$ WHERE to_regclass('public.model3d_submissions') IS NOT NULL
+\gexec
 WITH relations AS (
   SELECT c.oid, n.nspname, c.relname,
     coalesce((SELECT array_agg(a.attname::text ORDER BY a.attnum)
@@ -206,7 +216,7 @@ def collect_snapshot(args):
         raise VerificationError("PostgreSQL snapshot exceeded 1800 seconds") from error
     if result.returncode:
         raise VerificationError("PostgreSQL snapshot failed (exit %d); raw stderr withheld" % result.returncode)
-    tables, ledger, metadata = {}, [], None
+    tables, ledger, metadata, backfills = {}, [], None, {}
     for line in result.stdout.splitlines():
         if not line.strip():
             continue
@@ -217,6 +227,12 @@ def collect_snapshot(args):
             metadata = item["columns"]
         elif item.get("kind") == "ledger":
             ledger.append(item["row"])
+        elif item.get("kind") == "backfill":
+            name = item.pop("table")
+            item.pop("kind")
+            if name in backfills:
+                raise VerificationError("Duplicate backfill in snapshot")
+            backfills[name] = item
         elif item.get("kind") == "table":
             name = item.pop("table")
             item.pop("kind")
@@ -230,7 +246,7 @@ def collect_snapshot(args):
     value = {
         "format": FORMAT, "algorithm": ALGORITHM,
         "capturedAtUTC": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "tables": tables, "columns": metadata,
+        "tables": tables, "columns": metadata, "backfills": backfills,
         "referenceSnapshotSHA256": fingerprint(reference) if reference is not None else None,
         # Keep the complete PostgreSQL JSONB text for each ledger row, not just
         # names/checksums. AppliedAt and any future ledger columns must survive.
@@ -288,7 +304,22 @@ def compare_values(before, after):
             changed_tables.append(name)
     if changed_tables:
         problems.append("Old table count, data digest, or primary key changed: %s" % changed_tables)
+    verified_backfills = []
     for name in added_tables:
+        if name == "model3d_requests":
+            expected = before.get("backfills", {}).get(name, {})
+            added = new_tables[name]
+            migration = new_ledger.get(78, ({}, ""))[0]
+            if (78 in added_versions and migration.get("name") == "model3d_requests"
+                    and migration.get("checksum") == "sha256:model3d-requests-v78-20261030"
+                    and expected.get("count") == old_tables.get("model3d_submissions", {}).get("count") == added["count"]
+                    and expected.get("hash") == added["hash"]
+                    and added["primaryKey"] == ["user_id", "request_id"]
+                    and set(added["hashColumns"]) == {"user_id", "request_id", "task_id", "request_hash", "created_at"}):
+                verified_backfills.append(name)
+            else:
+                problems.append("3D request backfill differs from original submission identities")
+            continue
         if new_tables[name]["count"] != 0:
             problems.append("New business table must be empty: " + name)
 
@@ -307,6 +338,7 @@ def compare_values(before, after):
         "oldBusinessRowCount": sum(t["count"] for t in old_tables.values()),
         "oldLedgerRecordsUnchanged": not changed_ledger,
         "newLedgerVersions": added_versions, "changedOldTables": changed_tables,
+        "verifiedBackfills": verified_backfills,
         "ddlChanges": {
             "newTables": added_tables, "removedTables": removed_tables,
             "newColumns": [{"table": key[0], "column": key[1]} for key in sorted(new_columns.keys() - old_columns.keys())],
