@@ -174,3 +174,90 @@ H 系列当前文档价为每积分 0.01 美元。文本纯几何 10 / 标准贴
 新绑骨 v2.5/v3.0 使用 `preset:idle/walk/run/dive/climb/jump/slash/shoot/hurt/fall/turn`，四／六／八足为 `preset:<rig_type>:walk`，蛇形／水生为 `preset:<rig_type>:march`。v1 的 `preset:biped:*` 属于旧动作体系，本轮不与 v2.5/v3.0 混用。官方未列出鸟类和 others 的预设，界面不编造可用动作。
 
 官方任务查询示例仍有类型／费用复用情况，实际消费字段以各接口说明为准。真实 GLB 部件节点布局、骨骼蒙皮质量、FBX 动作与材质、国内端点服务可用性及实际费用需要发布后的真实验收。账号来源不一致时先拒绝，而不是向新账号提交旧账号的上游 ID。
+
+## 10. FBX / ABC 导出可行性（2026-11-02 调研）
+
+结论：现有 GLB / GLTF 可以作为 FBX 与 Alembic（`.abc`）的转换来源。FBX 适合模型、骨架与动作交换；ABC 适合静态模型或烘焙后的动画几何缓存。两者不能承诺相同的数据保留范围。OBJ / STL 也可转出静态模型，但无法补回源文件已经丢失的贴图、骨架或动作。
+
+本节仅核查当前代码、部署依赖和官方公开资料，没有实现导出功能、安装转换器或提交付费任务；当前环境未发现可用的 Blender，尚未完成真实文件转换及目标软件导入验证。
+
+### 当前实现边界
+
+| 能力 | 当前事实 | 代码依据 |
+| --- | --- | --- |
+| 输入与预览 | GLB / GLTF / FBX / OBJ / STL；自包含文件，单文件不超过 128 MiB | `web/src/lib/model3d-formats.ts`、`web/src/lib/canvas/model3d-preview.ts` |
+| 转换导出 | 浏览器使用 Three.js 导出 GLB / GLTF / OBJ / STL；导出类型明确排除 FBX，没有 ABC | `web/src/lib/model3d-export.ts:1`、`web/src/lib/model3d-formats.ts:2` |
+| 已有 FBX | 四边面生成可返回 FBX，绑骨与动作允许直接选择 FBX；保存并下载供应商原文件 | `backend/internal/app/model3d_worker.go:139`、`backend/internal/model3d/processing.go:118` |
+| 导出入口 | 独立 3D 页与资产下载弹窗复用上述浏览器转换 | `web/src/pages/model3d/model3d-results.tsx:98`、`web/src/pages/assets/asset-model-download-modal.tsx` |
+| 后端输出 | 当前校验和文件名映射仅处理 GLB / FBX；没有通用 convert 操作或 ABC 合同 | `backend/internal/model3d/files.go:11`、`backend/internal/model3d/processing.go:70` |
+| 执行环境 | 后端镜像未安装 Blender / Assimp / Alembic，部署没有独立转换服务 | `backend/Dockerfile:90`、`docker-compose.deploy.yml` |
+
+因此，“能读取 FBX”“能下载原生 FBX”和“能把任意现有模型导出为 FBX”是三个不同能力；本次需要补的是第三项及 ABC 导出。
+
+下载下拉框没有固定的“FBX”转换选项。“原文件（格式）”中的格式取决于当前文件：普通生成默认显示“原文件（GLB）”；选中实际 FBX 产物时才显示“原文件（FBX）”。四边面生成，或绑骨／动作阶段选择 FBX 输出，可以产生后一种文件；已有 GLB 不会因此自动获得 FBX 下载。
+
+### 转换后的数据保留范围
+
+| 选中版本的实际源文件 | 转 FBX | 转 ABC |
+| --- | --- | --- |
+| 静态 GLB / 自包含 GLTF | 几何、UV、层级可转换；材质和纹理需映射并验收 | 静态几何、变换、UV、法线可转换；不产生新动画 |
+| 有骨架与动作的 GLB / GLTF | 可转换骨架、蒙皮与动作；多动作、插值、朝向及缩放需逐项验收 | 求值并采样为逐帧网格／变换，保留运动效果；不保留可编辑的原骨架与控制器 |
+| 已有 FBX | 优先直接下载原文件 | 经解析后导出静态或动画缓存；须验证源 FBX 版本兼容性 |
+| 当前浏览器导出的 OBJ | 静态几何与已有 UV／法线；当前导出不附 MTL／贴图 | 静态几何；没有可烘焙的骨骼动画 |
+| STL | 静态三角网格；没有材质、UV、骨架和动作 | 静态三角网格 |
+
+表中是格式和工具链支持下的可行性判断，不是本项目已经验证的保真承诺。转换必须读取选中版本的原始文件，不能先导成 OBJ / STL 再转，以免主动丢失信息；也不能用预览中居中、缩放、拆件后的场景替代原模型。
+
+Blender 的 Alembic 导出包含几何采样、UV、法线和面材质分组名称；完整着色器与贴图不随该几何缓存自动迁移。需要外观时另附纹理和材质对应说明。多动作模型应明确动作、帧率、起止时间，一条动作输出一个 ABC，避免把多个动作混在同一时间范围。依据：[Alembic 手册](https://docs.blender.org/manual/en/4.5/files/import_export/alembic.html)。
+
+FBX 的节点材质与 glTF PBR 也不完全等价；透明、金属／粗糙度、扩展材质及形态键不能笼统承诺无损，应以选定转换器版本和目标软件验收结果为准。Blender 4.5 的 FBX 导出源码已包含形态键和相对形态键动画处理，不沿用旧手册中“一律不能导出形态键”的描述。依据：[glTF 导入导出](https://docs.blender.org/manual/en/4.5/addons/import_export/scene_gltf2.html)、[Blender 4.5 FBX 导出源码](https://raw.githubusercontent.com/blender/blender/blender-v4.5-release/scripts/addons_core/io_scene_fbx/export_fbx_bin.py)。
+
+### 可选路线
+
+| 路线 | FBX | ABC | 成本与适用边界 |
+| --- | --- | --- | --- |
+| 现有浏览器转换 | 没有对应 exporter | 没有对应 exporter | 不能只补下拉选项；引入其他库需要单独验证格式覆盖与动画保留 |
+| 浏览器第三方 FBX 库 | 有候选库 | 不覆盖 | 可保持本地文件在浏览器内转换；骨架、动作和复杂变换需要专项验证 |
+| Tripo V3 格式转换 | 官方明确支持 | 官方目标格式未列出 | 可复用供应商异步任务机制；每次转换计费，任意本地文件需要额外上传 |
+| 后端 Blender 无界面转换 | 可作为转换工具 | 可作为缓存导出工具 | 可统一覆盖两种格式和本地模型；按任务启动并退出，仍有安装体积、启动及转换资源开销，性能待测 |
+
+`@comfyorg/fbx-exporter-three` 的作者声明支持蒙皮、变换／形态键动画和内嵌 PNG；其 Three.js 版本要求与项目当前版本范围相容。但 `bakeSpaceTransform=true` 仅烘焙顶点和法线，复杂骨架／动画场景需要关闭并验证变换。它是 FBX 的可选路线，尚未在项目中接入，也不解决 ABC。依据：[候选库 README](https://github.com/Comfy-Org/fbx-exporter-three/blob/main/README.md)。
+
+Tripo 的 `POST /models/convert` 接受 GLB / GLTF / FBX / OBJ / STL，输入上限 150 MB；支持 FBX 目标和 `with_animation`。`task_id` 输入只明确列出原始生成任务，已有拆分／动作版本应使用该版本实际文件的上传 token，不能回退到原始生成任务而丢掉后处理。本站现有 128 MiB 上限仍适用。依据：[转换合同](https://developers.tripo3d.ai/en/docs/models-convert)。
+
+官方转换基础 5 积分、高级 10 积分；贴图尺寸／格式等非默认参数可能进入高级档。新绑骨或动作可直接选择 FBX 输出，避免另做一次格式转换。依据：[定价](https://developers.tripo3d.ai/zh/pricing)、[绑骨](https://developers.tripo3d.ai/en/docs/animations-rig)、[动作](https://developers.tripo3d.ai/en/docs/animations-retarget)。
+
+Blender 支持后台运行 Python 脚本，因此可以采用“原文件 → 导入 → 选定动作／采样范围 → 导出”的无界面任务；这是工具支持下的方案建议，仓库尚无对应转换脚本。依据：[命令行参数](https://docs.blender.org/manual/en/4.5/advanced/command_line/arguments.html)。
+
+### 可复用的开源实现
+
+Blender 本身已有开源导入／导出实现，无需自行编写 FBX 或 ABC 文件编码器：GLB / GLTF 导入调用 `bpy.ops.import_scene.gltf`，FBX 导出调用 `bpy.ops.export_scene.fbx`，ABC 导出调用 `bpy.ops.wm.alembic_export`。可直接使用发行包里的实现，由少量 Python 编排代码选择源文件、动作、采样参数和输出文件。依据：[导入接口](https://docs.blender.org/api/4.5/bpy.ops.import_scene.html)、[FBX 源码](https://raw.githubusercontent.com/blender/blender/blender-v4.5-release/scripts/addons_core/io_scene_fbx/export_fbx_bin.py)、[Alembic 网格导出源码](https://raw.githubusercontent.com/blender/blender/blender-v4.5-release/source/blender/io/alembic/exporter/abc_writer_mesh.cc)。
+
+现成批量转换项目可参考 [Transmogrifier](https://github.com/SawyerRensel/Transmogrifier)。其 README 列出 GLB / GLTF、FBX、ABC 等输入输出格式；已核查 `Functions.py` 的格式映射确实调用 glTF、FBX 和 Alembic 对应的 Blender operator，并非仅有格式名称。当前 manifest 为 2.0.0，声明 Blender 最低 3.6、许可证 `GPL-3.0-or-later`。它是批量转换插件，不是本站可直接接入的任务服务；可参考其格式分派、参数预设、纹理与日志流程，实际转换仍依赖 Blender。依据：[格式分派源码](https://github.com/SawyerRensel/Transmogrifier/blob/main/Functions.py)、[项目 manifest](https://github.com/SawyerRensel/Transmogrifier/blob/main/blender_manifest.toml)。
+
+对本站只有 FBX / ABC 两个目标的范围，建议直接封装 Blender 官方 operator，避免引入整套批处理插件及其 UI；这是集成方案选择，不代表插件已完成项目兼容验收。
+
+### 建议实施边界
+
+如果目标是同时支持 FBX、ABC，并覆盖已有生成结果和本地导入模型，可复用现有 Go 任务调度，**按需启动 Blender 命令行子进程，转换完成即退出**。无需常驻 Blender 进程或额外建立转换服务；空闲时没有 Blender 进程内存占用，但仍需安装转换器并承担启动开销。保留原始 GLB / GLTF 作为完整度较高的转换来源；已有 FBX 直接下载。Tripo 转换适合作为只覆盖上游模型、优先交付 FBX 的较小范围方案，不能完成 ABC 需求。
+
+用户只需要格式转换并关注部署重量时，优先保留已有 FBX 原文件下载；GLB 转 FBX 可先验证上述浏览器候选库，ABC 再按需调用 Blender。若进一步要求完全不安装 Blender，可评估模型解析器加 Alembic 写入库，但需自行处理场景、动画求值和蒙皮采样，不等同于直接替换一个文件导出接口。Assimp 官方格式表将 FBX 导出标为实验性，未列 Alembic，不能作为同时覆盖两种目标的直接替代。依据：[Assimp 格式表](https://github.com/assimp/assimp/blob/master/doc/Fileformats.md)、[Alembic 几何库](https://docs.alembic.io/reference/abcg.html)。
+
+需要新增的工作包括：
+
+1. 独立导出任务与产物关联，保留源资源和版本；记录目标格式、转换器版本、动作与采样参数。复用现有任务状态、归属校验、资源存储和失败恢复，不覆盖原模型，也不把本地预览文件未经用户操作自动上传。
+2. 固定 Blender 版本，通过可执行文件或任务镜像交付转换依赖，默认不新增常驻服务。已有任务执行器按需调用，初期限制转换并发为 1；每任务隔离临时目录，并设置超时和内存限制。导入仅使用已授权的自包含资源，不解析任意外部依赖。
+3. ABC 的格式识别、真实文件校验、资源类别与下载合同；当前 `FileType` 不能直接传入 `abc`，否则会落到 GLB 默认值。导出动画缓存可能超过 128 MiB，应按实测单独制定输出额度，不能直接放宽全部模型限制。
+4. 两个下载入口增加 FBX 与“ABC（动画几何缓存）”；ABC 先作为导出产物即可，不要求同步实现浏览器 ABC 预览。材质附件涉及多文件时显式打包，不能伪装成单个含完整材质的 ABC。
+
+### 开发前最小样本验证
+
+| 样本 | 需要证明的结果 |
+| --- | --- |
+| 有贴图的静态 GLB | FBX 外观、ABC UV／法线与材质分组；对象尺寸、朝向和层级正确 |
+| 有骨骼动作的 GLB | FBX 蒙皮与动作可播放；ABC 在起点、中间、终点的顶点位置与源动作一致 |
+| 多动作、形态键与压缩模型 | 明确动作选择、采样范围、形态键保留或烘焙行为，以及压缩扩展能否导入；不支持时显式报错 |
+| OBJ / STL 与已有 FBX | 静态模型可转换且不编造材质／动作；FBX 源版本可导入 |
+| 较大动画文件与任务中断 | 测出峰值内存、耗时和体积；中断、重试不覆盖源文件，不交付残缺产物 |
+
+验收应在实际目标 DCC 中重新打开 FBX / ABC；仅检查扩展名、文件头或在同一转换器中回读，不能代替目标软件兼容性验证。以上样本均待实际执行。
