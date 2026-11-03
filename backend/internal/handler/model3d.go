@@ -42,6 +42,7 @@ func bindModel3DCreateRequest(c *gin.Context) (service.Model3DCreateRequest, err
 }
 
 func RegisterModel3DRoutes(r *gin.RouterGroup, svc *service.Service) {
+	registerModel3DExportRoutes(r, svc)
 	r.GET("/admin/model3d", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

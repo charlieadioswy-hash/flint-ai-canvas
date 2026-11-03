@@ -107,6 +107,27 @@ func TestTaskMediaPreviewSeparatesVideoPoster(t *testing.T) {
 	}
 }
 
+func TestTaskSummaryModel3DDoesNotExposeImagePreview(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		taskType   string
+		resultJSON string
+	}{
+		{"generation", model.TaskTypeCanvasModel3D, `{"model":{"url":"/api/resources/model-1/file","format":"glb"}}`},
+		{"fbx export", model.TaskTypeModel3DExport, `{"resourceId":"export-1","url":"/api/resources/export-1/file","format":"fbx","fileName":"model.fbx"}`},
+		{"abc export", model.TaskTypeModel3DExport, `{"resourceId":"export-2","url":"/api/resources/export-2/file","format":"abc","fileName":"model.abc"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary := taskSummaryForOutput(model.Task{
+				Type: test.taskType, Status: model.TaskStatusSucceeded, ResultJSON: test.resultJSON,
+			})
+			if summary.PreviewURL != "" || summary.PreviewKind != "" || summary.PreviewPosterURL != "" {
+				t.Fatalf("model file was exposed as a media preview: %+v", summary)
+			}
+		})
+	}
+}
+
 func TestTaskClientContextRequiresCreatePageMetadata(t *testing.T) {
 	valid := taskClientContext(`{"metadata":{"source":"create-page","conversationId":"conversation-1","messageId":"message-1","batchIndex":2,"batchCount":4}}`)
 	if valid == nil || valid.ConversationID != "conversation-1" || valid.BatchIndex != 2 {

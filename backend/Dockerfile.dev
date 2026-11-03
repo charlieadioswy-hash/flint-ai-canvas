@@ -7,7 +7,10 @@ ENV GOPROXY=$GOPROXY
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     sed -i "s#https\?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#g" /etc/apk/repositories \
-    && apk --cache-dir /var/cache/apk --update-cache add build-base git
+    && apk --cache-dir /var/cache/apk --update-cache add build-base git blender-headless py3-numpy \
+    && ln -s /usr/bin/blender-headless /usr/local/bin/blender \
+    && blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+      --python-expr "import bpy, addon_utils; addon_utils.enable('io_scene_fbx'); addon_utils.enable('io_scene_gltf2'); assert bpy.app.build_options.alembic; bpy.ops.export_scene.fbx.get_rna_type(); bpy.ops.import_scene.gltf.get_rna_type(); bpy.ops.wm.alembic_export.get_rna_type()"
 RUN --mount=type=cache,id=canvas-go-modules,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build \
     go install github.com/air-verse/air@v1.63.0

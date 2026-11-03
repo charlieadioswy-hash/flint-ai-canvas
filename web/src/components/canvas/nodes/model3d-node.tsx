@@ -4,12 +4,13 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { useCanvasModel3DContext } from "../canvas-model3d-context";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { isModel3DPending, MODEL3D_MODE_LABELS, model3DDownloadName, model3DSourceFingerprint, readModel3DState } from "@/lib/canvas/model3d";
-import { downloadBrowserMedia } from "@/services/browser-download";
+import { useUserStore } from "@/stores/use-user-store";
 import { formatBytes } from "@/lib/image-utils";
 import { generationTaskProgress } from "@/lib/generation-task-display";
 import type { CanvasNodeData } from "@/types/canvas";
 
 const Viewer = lazy(() => import("@/components/assets/model3d-viewer").then((module) => ({ default: module.Model3DViewer })));
+const DownloadModal = lazy(() => import("@/components/assets/model3d-download-modal").then((module) => ({ default: module.Model3DDownloadModal })));
 
 export function Model3DNodeContent({ node, theme, readOnly = false }: { node: CanvasNodeData; theme: CanvasTheme; readOnly?: boolean }) {
     const context = useCanvasModel3DContext();
@@ -21,13 +22,14 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
     const hasModel = Boolean(format && (url || storageKey));
     const [active, setActive] = useState(false);
     const [expanded, setExpanded] = useState(false);
-    const [downloadError, setDownloadError] = useState("");
+    const [downloadOpen, setDownloadOpen] = useState(false);
+    const ownerId = useUserStore((store) => store.user?.id || "");
     const identity = `${storageKey || url}:${format}`;
     useEffect(() => {
         setActive(false);
         setExpanded(false);
-        setDownloadError("");
-    }, [identity]);
+        setDownloadOpen(false);
+    }, [identity, ownerId]);
     const editable = Boolean(context && !readOnly);
     const pending = isModel3DPending(run);
     const saving = run?.status === "running" && run.stage === "保存 3D 模型文件";
@@ -53,15 +55,6 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
                       : hasModel
                         ? "生成完成"
                         : "待生成";
-    const download = async () => {
-        if (!format || !editable) return;
-        setDownloadError("");
-        try {
-            await downloadBrowserMedia({ storageKey, url, fileName: model3DDownloadName({ format, fileName: state.result?.fileName || node.title }) });
-        } catch {
-            setDownloadError("下载暂时不可用，请稍后重试。");
-        }
-    };
     const openParameters = () => {
         setActive(false);
         setExpanded(false);
@@ -154,17 +147,17 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
                             </button>
                         ) : null}
                         {editable && hasModel ? (
-                            <button type="button" className="flex items-center gap-1.5" onClick={() => void download()}>
+                            <button type="button" className="flex items-center gap-1.5" onClick={() => setDownloadOpen(true)}>
                                 <Download className="size-3.5" />
-                                下载 {format?.toUpperCase()}
+                                导出模型
                             </button>
                         ) : null}
                     </div>
                 </div>
                 {changed ? <p style={{ color: theme.node.muted }}>输入或参数已修改，预览为上次生成结果。</p> : null}
-                {editable && (run?.error || downloadError) ? (
+                {editable && run?.error ? (
                     <p role="alert" className="leading-relaxed" style={{ color: "var(--status-warning)" }}>
-                        {downloadError || run?.error}
+                        {run.error}
                     </p>
                 ) : null}
                 {editable && run?.canRetryStorage ? (
@@ -176,6 +169,17 @@ export function Model3DNodeContent({ node, theme, readOnly = false }: { node: Ca
             <AppModal flush open={expanded} onCancel={() => setExpanded(false)} footer={null} width="min(1100px, 94vw)" title={`${node.title} · 3D 预览`} destroyOnHidden>
                 <div className="h-[min(72vh,760px)] min-h-72">{expanded ? preview(true) : null}</div>
             </AppModal>
+            {downloadOpen && editable && format ? (
+                <Suspense fallback={null}>
+                    <DownloadModal
+                        source={{ storageKey, url, format, fileName: model3DDownloadName({ format, fileName: state.result?.fileName || node.title }) }}
+                        sourceId={node.id}
+                        title={node.title}
+                        ownerId={ownerId}
+                        onClose={() => setDownloadOpen(false)}
+                    />
+                </Suspense>
+            ) : null}
         </div>
     );
 }

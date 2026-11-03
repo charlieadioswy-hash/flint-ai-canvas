@@ -1,5 +1,7 @@
 export type Model3DPreviewFormat = "glb" | "gltf" | "fbx" | "obj" | "stl";
-export type Model3DExportFormat = Exclude<Model3DPreviewFormat, "fbx">;
+export type Model3DBrowserExportFormat = Exclude<Model3DPreviewFormat, "fbx">;
+export type Model3DServerExportFormat = "fbx" | "abc";
+export type Model3DExportFormat = Model3DBrowserExportFormat | Model3DServerExportFormat;
 
 export type Model3DFormatSource = { format?: string; fileName?: string; mimeType?: string; url?: string };
 
@@ -28,11 +30,11 @@ export function model3DFormat(source: Model3DFormatSource): Model3DPreviewFormat
     return (urlExtension as Model3DPreviewFormat | undefined) || null;
 }
 
-export function model3DFileName(fileName: string | undefined, format: Model3DPreviewFormat) {
+export function model3DFileName(fileName: string | undefined, format: Model3DPreviewFormat | "abc") {
     const base =
         (fileName || "model")
             .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
-            .replace(/\.(glb|gltf|fbx|obj|stl)$/i, "")
+            .replace(/\.(glb|gltf|fbx|obj|stl|abc)$/i, "")
             .trim() || "model";
     return `${base}.${format}`;
 }

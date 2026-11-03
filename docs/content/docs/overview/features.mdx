@@ -588,7 +588,7 @@ SEO 标题、描述、可选关键词会投影到浏览器 metadata、Open Graph
 使用及实现合同见 [图片合规检测](/docs/backend/image-moderation)。后台格式校验不调用云平台，也不证明远程账号权限已经开通。
 ## 画布 3D 模型生成
 
-新增「3D 模型」节点，支持文本、单图和明确视角的多视图输入，参数按 Tripo H 系列能力配置。后台独立管理服务商、模型/模式开放范围和唯一生效版本；连接配置支持填写完整 HTTPS API 地址，并快捷选择 Tripo 国内 `https://openapi.tripo3d.com/v3` 或国外 `https://openapi.tripo3d.ai/v3`，新建默认国外，修改地址后保存新版本并单独设为生效。节点接收异步任务进度，结果保存为平台模型素材后提供预览和原生文件下载。
+新增「3D 模型」节点，支持文本、单图和明确视角的多视图输入，参数按 Tripo H 系列能力配置。后台独立管理服务商、模型/模式开放范围和唯一生效版本；连接配置支持填写完整 HTTPS API 地址，并快捷选择 Tripo 国内 `https://openapi.tripo3d.com/v3` 或国外 `https://openapi.tripo3d.ai/v3`，新建默认国外，修改地址后保存新版本并单独设为生效。节点接收异步任务进度，结果保存为平台模型素材后提供预览。下载复用资产库格式弹窗，默认原文件，可另选 GLB、GLTF、OBJ、STL、FBX 或 ABC；后两种格式使用后端异步转换。
 
 代码与离线链路已实现，完成情况以[待测试](/docs/progress/pending-test)的命令和真实场景记录为准。设计与行业依据见 `docs/design/model3d-generation.mdx`、`docs/design/model3d-api-research.mdx`。部件处理与动画现已接入独立工作台；画布后处理入口、付费格式转换与其他服务商属于后续扩展。
 
@@ -602,7 +602,7 @@ SEO 标题、描述、可选关键词会投影到浏览器 metadata、Open Graph
 
 页面恢复原任务并自动同步真实进度，没有百分比时显示阶段，文件保存结束后才显示完成。提交结果不确定时只核实原请求，恢复保存也不重新生成。「帮我想想」提供可直接采用的模型描述示例，也可显式选择文本模型完善想法。
 
-共享查看器支持 GLB、GLTF、FBX、OBJ、STL 自包含模型。保留原文件下载，额外支持在浏览器中转换为 GLB、GLTF、OBJ 和 STL；OBJ/STL 仅包含几何，不能代替有贴图的原文件。格式转换不调用供应商付费接口。使用合同见 [3D 任务工作台](/docs/backend/model3d-workflow)。
+共享查看器支持 GLB、GLTF、FBX、OBJ、STL 自包含模型。保留原文件下载，额外支持在浏览器中转换为 GLB、GLTF、OBJ 和 STL；FBX、ABC（Alembic）由后端按需启动 Blender 异步导出，支持取消，不调用供应商付费接口。FBX 尽量保留骨骼和动画，复杂多对象的全部动作转换可能被拒绝，需先在建模软件中整理；ABC 导出单个选定动作的几何缓存，包含 UV、法线与面集，不保留可编辑骨骼或完整材质。OBJ/STL 仅包含几何。所有转换保留原文件，不承诺跨格式完全无损；原生 FBX 仍直接下载。使用合同见 [3D 任务工作台](/docs/backend/model3d-workflow)。
 
 ## 平台技能策展
 

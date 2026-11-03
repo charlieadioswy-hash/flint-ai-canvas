@@ -103,6 +103,7 @@ type Service struct {
 	approvedMediaClosed            bool
 	imageModerationProviderFactory func(string) (moderation.Provider, error)
 	model3DProviderFactory         func() model3d.Provider
+	model3DConverter               model3d.Converter
 	providerCatalogOnce            sync.Once
 	providerCatalog                *providercatalog.Source
 	creditPolicyMu                 sync.RWMutex

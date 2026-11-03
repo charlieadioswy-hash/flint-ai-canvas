@@ -89,11 +89,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 
 FROM ${NODE_IMAGE}
 
-# ffmpeg/ffprobe：短剧抽取剧情段视频最后一帧、时间线合成成片与视频播放转码。
+# ffmpeg/ffprobe 负责视频处理；Blender 按需执行 FBX/Alembic 模型导出。
 ARG ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     sed -i "s#https\?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#g" /etc/apk/repositories \
-    && apk --cache-dir /var/cache/apk --update-cache add ca-certificates tzdata wget ffmpeg \
+    && apk --cache-dir /var/cache/apk --update-cache add ca-certificates tzdata wget ffmpeg blender-headless py3-numpy \
+    && ln -s /usr/bin/blender-headless /usr/local/bin/blender \
+    && blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
+      --python-expr "import bpy, addon_utils; addon_utils.enable('io_scene_fbx'); addon_utils.enable('io_scene_gltf2'); assert bpy.app.build_options.alembic; bpy.ops.export_scene.fbx.get_rna_type(); bpy.ops.import_scene.gltf.get_rna_type(); bpy.ops.wm.alembic_export.get_rna_type()" \
     && addgroup -S app \
     && adduser -S app -G app
 

@@ -523,6 +523,10 @@ Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 
 
 独立后处理使用现有任务输入和结果合同。`input_json.processing` 保存 `segment/complete/rig_check/rig/animate` 操作、父任务 `sourceTaskId` 和参数；`input_json.source` 保存实际模型来源的任务、`resourceId`、资源版本和后端解析的上游任务 ID。该资源字段参与通用引用扫描与删除保护。`tasks.operation` 为对应 `model3d_*`，独立范围保持不变。检查任务的 `result_json.rigCheck` 保存结论而不登记素材；模型结果保留原有资源合同，拆分／补全增加 `parts` 节点名。新资产 metadata 带 `parentTaskId`、`processing` 和 `sourceModel`，可追溯来源且不修改旧资产。
 
+本地 FBX／ABC 导出复用 `tasks` 的 `model3d_export` 类型、`model3d_requests` 和现有 Resource 存储，不新增数据库表或迁移。请求号在请求表中加 `export:` 前缀，避免与供应商任务冲突；输入快照保存本人源资源及版本、格式、目标格式和动作／帧率参数，完成结果关联新的下载资源。任务引用保护源文件不被提前清理。按请求号取消可先写入已取消任务及关联，迟到的上传或受理不能再启动转换。导出不写入 `model3d_submissions` 或 `model3d_daily_usages`，不占用供应商积分或生成次数。集群转换并发沿用协调租约，取消与终态保存沿用任务合同；原模型资源及素材不被替换。
+
+导出每次执行使用独立的 Resource 上传身份和物理对象，写入就绪后在校验当前任务租约的事务中发布稳定恢复标识；就绪结果可被重领任务复用。若稳定标识下遗留 `pending`／`failed` 资源，只解除旧上传标识，不覆盖旧对象；未完成资源继续使用既有超时回收，避免与旧执行仍在进行的存储写入冲突。
+
 | 表 | 用途 | 关键约束 |
 | --- | --- | --- |
 | `model3d_providers` | 服务商实例、启用/归档状态和最新配置指针 | 当前类型为 `tripo3d`；归档不删除历史版本 |

@@ -3,6 +3,7 @@ package model
 import "time"
 
 const TaskTypeCanvasModel3D = "canvas_model3d"
+const TaskTypeModel3DExport = "model3d_export"
 const WorkbenchKindModel3D = "model3d"
 
 type Model3DProvider struct {

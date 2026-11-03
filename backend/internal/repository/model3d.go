@@ -479,7 +479,7 @@ func (r *Repository) RequireNoModel3DReferences(ids []string) error {
 		set[id] = struct{}{}
 	}
 	var tasks []model.Task
-	if err := r.db.Where("type = ? AND status IN ?", model.TaskTypeCanvasModel3D, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Find(&tasks).Error; err != nil {
+	if err := r.db.Where("type IN ? AND status IN ?", []string{model.TaskTypeCanvasModel3D, model.TaskTypeModel3DExport}, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Find(&tasks).Error; err != nil {
 		return err
 	}
 	for _, task := range tasks {

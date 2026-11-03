@@ -11,6 +11,8 @@ description: 生产安装默认方案与固定开发机源码发布约定
 
 `docker-compose.deploy.yml` 包含 postgres、redis、migrate、yingce-agent、backend、web 六个服务。后端使用 PostgreSQL，迁移由独立 migrate 服务执行；仅 web 对外发布端口，默认 `3000`。源码构建可叠加 `docker-compose.build.yml`，但本地构建镜像不由 Host Updater 管理；`scripts/install-server.sh` 不安装更新器。
 
+后端镜像内置无 GUI 的 Blender，用于按需执行 FBX／ABC 模型导出，不增加独立服务。构建时检查 FBX、glTF 和 Alembic 操作符；升级到包含该依赖的新镜像后，登录查询 `/api/model3d/exports/capabilities` 确认运行时能力，并用真实模型完成导出验收。`CANVAS_BLENDER_BIN` 默认留空，使用镜像内的 `blender`；覆盖时填写容器内可执行文件路径。导出每次最长 10 分钟，集群租约控制转换并发为 1，原始模型保留。镜像健康检查不替代转换与资源下载验证。
+
 ## 固定开发机发布
 
 开发机发布使用下列永久约定：

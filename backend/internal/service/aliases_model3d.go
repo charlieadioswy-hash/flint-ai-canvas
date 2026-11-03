@@ -13,3 +13,7 @@ type Model3DTaskView = app.Model3DTaskView
 type Model3DTaskListOptions = app.Model3DTaskListOptions
 type Model3DTaskPage = app.Model3DTaskPage
 type Model3DResult = app.Model3DResult
+type Model3DExportRequest = app.Model3DExportRequest
+type Model3DExportCapabilities = app.Model3DExportCapabilities
+type Model3DExportView = app.Model3DExportView
+type Model3DExportResult = app.Model3DExportResult

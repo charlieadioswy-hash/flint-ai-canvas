@@ -286,6 +286,8 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 - `model3d-processing-panel.tsx` 与 `model3d-processing-state.ts`：独立页后续处理参数、来源步骤及骨架动作选项；`components/assets/model3d-playback.ts` 管理可见时的动画播放和部件显隐。
 - `web/src/components/canvas/nodes/model3d-node.tsx` 与 `pages/canvas/use-canvas-model3d.ts`：三种输入模式、参数、任务恢复与结果应用；`services/api/model3d.ts` 定义专用合同。
 - `web/src/lib/model3d-formats.ts`、`model3d-export.ts` 与 `lib/canvas/model3d-preview.ts`：五种预览格式、自包含资源校验和本地导出；共享 Viewer 与素材缩略图复用同一加载链路。
+- `web/src/services/model3d-download.ts`、`services/api/model3d-exports.ts` 与 `components/assets/model3d-export-settings.tsx`：原文件／浏览器转换／服务端 FBX、ABC 导出的统一下载选择，包含动作、帧率、进度和取消；`lib/model3d-conversion-source.ts` 为压缩 GLB／GLTF 准备未压缩派生输入。
+- `handler/model3d_export.go` → `app/model3d_export.go`、`model3d_export_worker.go` → `internal/model3d/blender.go` 与 `blender_convert.py`：本人源资源、配额、任务投影、按需子进程与新下载资源。`repository/model3d_export.go` 复用任务及请求表，在同一锁内受理、幂等复用和取消，迟到请求不能越过取消记录。
 - `web/src/pages/admin/settings/model3d-settings-page.tsx`：服务商、开放能力、配置版本和生效策略管理。
 - `handler/model3d.go` → `service` 别名 → `app/model3d.go`：鉴权、输入资源归属、策略版本、幂等和任务投影。
 - `app/model3d_worker.go` 复用既有 Task 队列与租约；`internal/model3d` 隔离 Tripo v3 参数、上传、提交和查询协议；`repository/model3d.go` 维护不可变配置与提交记录。

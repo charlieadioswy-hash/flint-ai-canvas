@@ -715,6 +715,11 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 | GET | `/model3d/tasks/:id/segmentation` | 按本人独立原始模型读取可复用拆分，优先成功结果；未找到返回 `null`，不调用供应商 |
 | GET | `/model3d/requests/:requestId` | 按本人首次或复用请求编号只读恢复原任务，包括失败／取消终态；未找到返回 `null`，不会触发生成 |
 | POST | `/model3d/tasks/:id/recover` | 恢复已有上游任务的结果回存，不能重发付费生成 |
+| GET | `/model3d/exports/capabilities` | 返回本地 Blender 导出的 `{ available, formats }`，与 Tripo 生效策略独立 |
+| POST | `/model3d/exports` | 由本人资源或 multipart 本地文件创建 FBX／ABC 异步导出，按 `requestId` 幂等，不调用供应商 |
+| GET | `/model3d/exports/:id` | 读取本人导出任务的状态与结果资源 |
+| DELETE | `/model3d/exports/:id` | 取消本人排队或执行中的导出 |
+| DELETE | `/model3d/exports/by-request/:requestId` | 按本人请求号取消导出，覆盖提交响应丢失场景 |
 | GET | `/admin/model3d` | 服务商配置、支持能力、当前生效版本与策略修订 |
 | POST / PUT | `/admin/model3d/providers` / `/admin/model3d/providers/:id` | 新建服务商或保存不可变的新配置版本 |
 | POST | `/admin/model3d/providers/:id/activate` | 以 `{ configId, expectedRevision }` 切换生效版本 |
@@ -732,6 +737,10 @@ Tripo 适配器要求成功响应含显式整数 `code=0` 和非空 `data`，分
 `submissionOutcome=unknown` 表示上游创建是否收到尚不能确定，不能自动再发生成请求。已绑定上游 ID 时只查询原任务；浏览器创建响应丢失时按 requestId 查询。相同 requestId 但请求内容不同返回冲突。普通任务的通用重试不能用于重新提交 3D 生成。
 
 独立部件拆分按本人 `processing.sourceTaskId` 复用成功、执行中、提交未知或可恢复保存失败的任务；不同 requestId 并发请求也只创建一项。复用响应保留原任务的 requestId 与 sourceFingerprint，新请求号及其请求摘要持久关联到该任务。拆分 POST 响应丢失后，按本次请求号可查询到原任务的任意状态，包括之后的失败或取消；不会因来源查询排除终态而永久等待。同一请求号变更正文仍返回 409；确定失败的拆分允许显式使用新请求号重试，其他处理操作维持独立新版本。历史复用不要求服务商仍启用，首次拆分仍完整校验生效配置、账号与来源资源。详见 [3D 任务工作台](/docs/backend/model3d-workflow)。
+
+本地导出接受 `requestId`、`resourceId` 或 multipart `file`、`sourceFormat`、`fileName`、`format: fbx|abc`，以及可选 `animation`、`fps`（默认 30，范围 1–120 的整数）。`requestId` 为 1–80 个字母、数字、横线或下划线；输入资源和文件二选一，输入／输出均限制 128 MiB，所有权、资源就绪状态、配额与自包含依赖由后端校验。显式导出时上传的本地文件作为普通本人模型资源保存并计入配额，不因取消自动删除。多动作 ABC 必须选择一个动作；结果是几何缓存，不包含可编辑骨骼和完整着色器。原生 FBX 同格式下载不要求 Blender，实际跨格式转换由 `model3d_export` 任务按需执行，超时为 10 分钟，集群转换并发为 1。
+
+导出返回 `{ id, status, stage, progress, error?, result? }`，`status` 为 `queued/running/succeeded/failed/cancelled`；成功 `result` 包含 `resourceId/storageKey/url/format/fileName/mimeType/bytes`，通过既有资源接口下载。相同请求号更换输入返回 409。按请求号取消可在 POST 受理之前持久记录取消，迟到提交返回取消终态；取消不会覆盖或删除原模型。未安装 Blender 的转换请求返回 503，已完成任务仍可查询。不能把预览场景中的归一化或分离展示状态当作源文件。
 
 服务商保存体为 `name/type/baseUrl/enabled/defaultModel/allowedModels/allowedModes/timeoutSeconds/maxTasksPerDay/apiKey?`；`baseUrl` 必填，配置视图使用相同字段回显。后台新建表单预填国外地址 `https://openapi.tripo3d.ai/v3`，国内可填 `https://openapi.tripo3d.com/v3`。支持合法 HTTPS 主机，路径必须为 `/v3`，不得含账号、查询参数或片段；保存仅清理首尾空白及末尾斜杠，保留主机大小写与显式端口。地址进入不可变版本，上传、创建和轮询均使用任务配置快照。每次请求发送前校验 DNS 和出站安全策略，包括代理分支；画布能力与创建请求不暴露或接受地址。
 

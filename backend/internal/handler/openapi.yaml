@@ -126,6 +126,73 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
+  /model3d/exports/capabilities:
+    get:
+      tags: [models]
+      summary: 读取本地 FBX 和 Alembic 导出能力
+      description: 与供应商配置独立。available 表示服务器可调用 Blender；formats 列出 fbx、abc。原生 FBX 同格式下载不要求 Blender。
+      responses:
+        "200":
+          description: 标准业务信封 data 为本地导出能力
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Envelope"}
+                  - {type: object, properties: {data: {$ref: "#/components/schemas/Model3DExportCapabilities"}}}
+        "401": {$ref: "#/components/responses/Error"}
+  /model3d/exports:
+    post:
+      tags: [tasks, models]
+      summary: 创建本人模型的 FBX 或 Alembic 异步导出
+      description: JSON 引用本人已就绪资源，或 multipart 上传一个本地模型文件，二选一。requestId 在当前用户内幂等，更换输入返回冲突。输入输出各不超过 128 MiB，仅接受自包含模型。上传文件作为普通本人资源保存并计入配额；完成后登记新下载资源，不覆盖源文件，不调用供应商或扣取供应商转换积分。按需启动 Blender，每次最长 10 分钟，集群转换并发为 1。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Model3DExportRequest"}
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/Model3DExportUploadRequest"}
+      responses:
+        "200": {$ref: "#/components/responses/Model3DExport"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
+  /model3d/exports/{id}:
+    get:
+      tags: [tasks, models]
+      summary: 读取本人模型导出状态与下载结果
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Model3DExport"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [tasks, models]
+      summary: 取消本人排队或执行中的模型导出
+      description: 终态任务保持原结果。取消停止转换并阻止迟到结果登记，不覆盖或删除原模型。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Model3DExport"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /model3d/exports/by-request/{requestId}:
+    delete:
+      tags: [tasks, models]
+      summary: 按本人请求号取消模型导出
+      description: 覆盖 POST 或上传响应丢失场景。受理前取消会持久保存取消记录，迟到提交返回取消终态，不再启动 Blender。
+      parameters:
+        - {in: path, name: requestId, required: true, schema: {type: string, minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9_-]+$'}}
+      responses:
+        "200": {$ref: "#/components/responses/Model3DExport"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
   /admin/model3d:
     get:
       tags: [admin]
@@ -2868,6 +2935,57 @@ components:
               items:
                 type: object
                 additionalProperties: true
+    Model3DExportCapabilities:
+      type: object
+      required: [available, formats]
+      properties:
+        available: {type: boolean}
+        formats: {type: array, items: {type: string, enum: [fbx, abc]}}
+    Model3DExportOptions:
+      type: object
+      required: [requestId, sourceFormat, format]
+      properties:
+        requestId: {type: string, minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9_-]+$'}
+        sourceFormat: {type: string, enum: [glb, gltf, fbx, obj, stl]}
+        fileName: {type: string, description: 下载文件名；服务端清理目录与非法字符，并设置目标格式扩展名}
+        format: {type: string, enum: [fbx, abc]}
+        animation: {type: string, description: ABC 要烘焙的单个动作名称，多动作模型必须明确选择一个；静态模型不提供}
+        fps: {type: integer, minimum: 1, maximum: 120, default: 30, description: ABC 几何缓存采样帧率}
+    Model3DExportRequest:
+      allOf:
+        - {$ref: "#/components/schemas/Model3DExportOptions"}
+        - type: object
+          required: [resourceId]
+          properties:
+            resourceId: {type: string, description: 当前用户已就绪模型资源 ID，不能引用其他用户资源}
+    Model3DExportUploadRequest:
+      allOf:
+        - {$ref: "#/components/schemas/Model3DExportOptions"}
+        - type: object
+          required: [file]
+          properties:
+            file: {type: string, format: binary, description: 单个不超过 128 MiB 的自包含模型，不能同时提供 resourceId}
+    Model3DExportResult:
+      type: object
+      required: [resourceId, storageKey, url, format, fileName, mimeType, bytes]
+      properties:
+        resourceId: {type: string}
+        storageKey: {type: string}
+        url: {type: string, description: 平台资源下载地址}
+        format: {type: string, enum: [fbx, abc]}
+        fileName: {type: string}
+        mimeType: {type: string}
+        bytes: {type: integer, format: int64, minimum: 1, maximum: 134217728}
+    Model3DExportView:
+      type: object
+      required: [id, status, stage, progress]
+      properties:
+        id: {type: string}
+        status: {type: string, enum: [queued, running, succeeded, failed, cancelled]}
+        stage: {type: string}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        error: {type: string, description: 失败或取消时的安全错误说明}
+        result: {$ref: "#/components/schemas/Model3DExportResult"}
     Model3DProviderRequest:
       type: object
       required: [name, type, baseUrl, enabled, defaultModel, allowedModels, allowedModes, timeoutSeconds, maxTasksPerDay]
@@ -3646,6 +3764,14 @@ components:
                 - model_catalog_mismatch
                 - invalid_model_selection
   responses:
+    Model3DExport:
+      description: 本人模型导出任务；成功时 result 为平台下载资源，ABC 不保留可编辑骨骼和完整着色器
+      content:
+        application/json:
+          schema:
+            allOf:
+              - {$ref: "#/components/schemas/Envelope"}
+              - {type: object, properties: {data: {$ref: "#/components/schemas/Model3DExportView"}}}
     ModelQuote:
       description: 当前参数对应的费用报价，位于信封 data.quote
       content:

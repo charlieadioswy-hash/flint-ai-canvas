@@ -4624,3 +4624,18 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 已验证：`go test ./... -count=1 -timeout=20m`、`go vet ./...`、`go build ./...`、前端 2716 项测试、`bun run lint`、`bun run build` 通过；数据库与API迁移测试包含SQLite。四篇修改后的MDX逐篇编译及OpenAPI引用解析通过。
 - 环境阻塞：文档站 `bun run types:check` 在 MDX 扫描前失败，当前忽略的 `docs/node_modules/fdir/dist/index.mjs` 调用了 `Dirent.isPrevisy()`（Node Dirent 无此方法）；为避免改依赖，本轮未继续修补 node_modules。
 - [ ] 真实模型/收费生成与多次运行pass^k、provider缓存命中率、PostgreSQL 58迁移、浏览器记忆提案与历史撤销尚未人工验收。
+
+## FBX 与 Alembic 模型导出
+
+- 已实现：原文件、GLB／GLTF／OBJ／STL 下载继续使用既有路径；新增后端按需 Blender 异步 FBX／ABC 导出，保留源模型，不请求 Tripo 转换或新增供应商扣费。原生 FBX 同格式下载不启动 Blender。素材卡片、素材档案及画布 3D 节点共用格式弹窗，画布默认原文件；独立 3D 页保留格式菜单。FBX／ABC 选项仍显示，下载时检查后端可用性。
+- 已实现：资源与本地文件入口共用导出任务，校验当前用户归属、自包含输入、输入／输出 128 MiB 上限及存储配额；关闭弹窗、切换模型／账号或离开页面取消转换。ABC 只烘焙一个选定动作，保留 UV、法线及面集，不保留可编辑骨骼或完整着色器，不承诺跨格式完全无损。
+- 部署变更：生产及开发后端镜像安装 `blender-headless` 与 NumPy，构建时检查 FBX、glTF、Alembic 操作符；`CANVAS_BLENDER_BIN` 可覆盖可执行文件路径，五套 Compose 后端均透传。转换最长 10 分钟，集群租约限制并发为 1，没有常驻 Blender 进程。
+- [x] 后端全量 `go test -json -timeout=20m ./...` 通过，`internal/app` 实际运行约 151 秒；29 项条件测试按各自环境或显式开关跳过，包括 PostgreSQL、Redis、测试进程 PATH 中的 Node、付费及浏览器验收，真实 Blender 专项另行通过。最新导出专项覆盖取消后副本清理、已保存输出恢复、配额与租约。
+- [x] 画布入口和 Draco 提示收尾后，前端构建（含类型检查）、lint、20 项专项及直接执行的资产／画布 UI worker 15 项均通过，覆盖 GLB／FBX 画布菜单、原生 FBX 不调用转换器及压缩源文件准备；未做服务端或真实浏览器联调。后端导出取消、排队与租约相关的 race 专项通过。
+- [x] 使用真实 Blender 4.5.3 完成 GLB → FBX／ABC 并重新导入，以及 FBX → 60 FPS ABC；样本覆盖 UV、骨骼、内嵌 PNG、多动作与无名动作。复杂多对象的 FBX 全部动作转换采用保守拒绝并提示先在建模软件中处理，不据此承诺任意模型的所有动作均可转换。上述回读使用同一 Blender，不替代目标 DCC 软件兼容性验收。
+- [x] 审查问题修复：导出资源保存中断后，重领任务使用独立输出并在有效租约下发布恢复标识；覆盖 `pending`／`failed` 遗留记录、旧执行无法覆盖新结果、取消清理与配额，导出及任务预览专项的 race 检查通过。通用任务列表不再把 FBX／ABC 当作图片预览。
+- [x] ABC 动作选择保留零时长单关键帧姿态；真实组件的 16 项交互测试、前端完整构建及 lint 通过。FBX 导入按 stack ID 关联实际动作，真实 Blender 4.5.3 回读验证长同前缀名称、中文骨架／动作名和长名称单动作的位移、时长与 UV；Blender 专项全部通过。4.4.3 与 4.5.3 的相关导入接口已做源码核对，未替代 Linux 镜像运行验收。
+- [x] Alpine 3.22 的 amd64／arm64 `blender-headless` 包元数据均包含 Alembic 依赖，FBX／glTF 操作符由镜像构建断言守护；五套 Compose YAML 及 Blender 环境变量透传检查通过，OpenAPI YAML 与所有本地引用解析通过。
+- [x] 在仓库外临时安装 `@mdx-js/mdx` 3.1.1，本轮 9 篇变更 MDX 均编译通过，未修改仓库依赖或锁文件。仓库当前缺少 `docs/package.json`，未运行完整文档站构建；单篇语法编译不代表站点链接与页面构建已验收。
+- [ ] Linux amd64／arm64 镜像实际构建及运行验收：能力接口、带贴图模型 FBX 回读、ABC 动作／UV／法线／面集、原生 FBX 不转换、取消与临时文件清理、超限及配额错误。当前工作机未安装 Docker，本轮不能用包元数据和 Dockerfile 检查替代镜像运行验收。
+- [ ] 真实浏览器验收独立 3D 页、素材卡片、素材档案和画布 3D 节点的格式选择、导出进度、取消、网络中断／响应丢失、来源切换及账号切换；下载后在目标 DCC 软件核查材质与动作，不调用付费生成。

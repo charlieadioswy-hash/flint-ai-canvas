@@ -45,6 +45,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.Type == model.TaskTypeCanvasModel3D {
 		return nil, BadAuthRequest("3D 任务只能恢复原上游任务；重新生成须使用新的请求标识")
 	}
+	if task.Type == model.TaskTypeModel3DExport {
+		return nil, BadAuthRequest("请重新发起模型导出")
+	}
 	if task.CreationSubmissionID != nil {
 		return nil, creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
 	}
@@ -130,6 +133,14 @@ func (w *taskLifecycleCoordinator) cancelTaskWithIntent(_ context.Context, userI
 		return nil, fmt.Errorf("任务当前状态为 %s，无法取消", task.Status)
 	}
 
+	if task.Type == model.TaskTypeModel3DExport {
+		latest, err := s.repo.CancelModel3DExport(userID, id)
+		if err != nil {
+			return nil, err
+		}
+		s.cancelActiveTask(id)
+		return taskForOutput(*latest), nil
+	}
 	if task.Type == model.TaskTypeCanvasModel3D {
 		if err := s.repo.CancelModel3DTask(userID, id); err != nil {
 			return nil, model3DError(err)

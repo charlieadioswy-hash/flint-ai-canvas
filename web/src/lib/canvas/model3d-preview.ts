@@ -117,6 +117,7 @@ export async function parseModel3D(data: ArrayBuffer, format: Model3DPreviewForm
         return model;
     } catch (error) {
         disposePrevisObject3D(model);
+        if (error instanceof Error && error.message.includes("No DRACOLoader instance provided")) throw new Error("暂不支持 Draco 压缩模型，请先导出未压缩的 GLB 后重试。");
         throw error;
     } finally {
         safe.dispose();

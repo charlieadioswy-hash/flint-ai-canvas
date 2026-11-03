@@ -5,12 +5,12 @@ import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 
 import { loadModel3D, type Model3DSource } from "@/lib/canvas/model3d-preview";
 import { disposePrevisObject3D } from "@/lib/canvas/previs/previs-resources";
-import { model3DFileName, type Model3DExportFormat } from "@/lib/model3d-formats";
+import { model3DFileName, type Model3DBrowserExportFormat } from "@/lib/model3d-formats";
 
 export type Model3DExport = { blob: Blob; fileName: string; mimeType: string };
 
 /** OBJ/STL contain geometry; use the original file or GLB/GLTF to retain materials. */
-export async function exportModel3DObject(model: Object3D, target: Model3DExportFormat, fileName?: string): Promise<Model3DExport> {
+export async function exportModel3DObject(model: Object3D, target: Model3DBrowserExportFormat, fileName?: string): Promise<Model3DExport> {
     model.updateMatrixWorld(true);
     let hasGeometry = false;
     model.traverse((object) => {
@@ -40,7 +40,7 @@ export async function exportModel3DObject(model: Object3D, target: Model3DExport
     return { blob, fileName: model3DFileName(fileName, target), mimeType: blob.type };
 }
 
-export async function exportModel3D(source: Model3DSource, target: Model3DExportFormat, signal?: AbortSignal): Promise<Model3DExport> {
+export async function exportModel3D(source: Model3DSource, target: Model3DBrowserExportFormat, signal?: AbortSignal): Promise<Model3DExport> {
     const model = await loadModel3D(source, signal);
     try {
         signal?.throwIfAborted();
