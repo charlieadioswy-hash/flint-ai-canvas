@@ -126,9 +126,11 @@ type CreateTaskRequest struct {
 	creationPrepare *creationTaskPreparation
 	admission       *taskAdmission
 	workbenchKind   string
+	submission      *taskSubmission
 	// callerHoldsStorageMu 只给已经持有 Service.storageMu 的内部调用设置。
 	// 文件容量检查不能再锁一次，否则审批改参数会自锁。
 	callerHoldsStorageMu bool
+	ClientOperationID    string         `json:"clientOperationId,omitempty"`
 	ProjectID            string         `json:"projectId"`
 	Type                 string         `json:"type"`
 	Operation            string         `json:"operation"`
@@ -202,6 +204,7 @@ func (s *Service) StartWorker() {
 	s.startResourceOffloadWorker()
 	s.startSkillSyncWorker(ctx)
 	s.startEcommerceSkillSyncWorker(ctx)
+	s.startEcommerceAgentRecoveryWorker(ctx)
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()
 	s.startDramaScheduler()

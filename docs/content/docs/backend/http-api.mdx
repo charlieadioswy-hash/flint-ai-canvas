@@ -66,12 +66,18 @@ LoRA 任务字段为 `metadata.providerOptions["liblib-image"].additionalNetwork
 一次生成多张图片或多条视频时，页面把请求拆成多个任务（视频每条一个任务，图片按模型单次张数拆分），逐个调用 `POST /api/workbench/tasks`，每个请求带上同一个批次：
 
 ```json
-{ "batch": { "id": "3f6c…", "index": 0, "count": 3 } }
+{ "batch": { "id": "batch_3f6c", "index": 0, "count": 3 }, "clientOperationId": "batch_3f6c:0" }
 ```
 
 `id` 为 8–64 位字母、数字、`-` 或 `_`，`count` 为 1–20，`index` 从 0 开始且小于 `count`；字段非法时 `POST /api/workbench/tasks` 返回 400。批次只写入任务输入的 `metadata.workbench.batch`，用于列表分组，不参与调度、准入和计费，每个任务仍各自校验、预占积分与结算。浏览器自定义渠道走 `POST /api/tasks` 时把同样的对象放在 `input.metadata.workbench.batch`；该入口不校验批次，非法批次在列表中按单任务展示。
 
 `GET /api/workbench/tasks` 与 `GET /api/tasks` 的列表项对 `metadata.source=workbench` 且批次合法的任务返回 `clientContext.batchId`、`batchIndex`、`batchCount`（`batchIndex` 为 0 时省略）；任务详情的 `inputJson.workbench.batch` 保留同一批次。旧任务没有批次，页面按单任务展示。
+
+两个创建入口均接受可选顶层 `clientOperationId`，由 1–128 位字母、数字、下划线、冒号、点或连字符组成。工作台按 `批次ID:下标` 固定此值，并保留首次提交的请求正文。相同用户、标识和正文在任务记录保留期间返回原任务；同一标识改变正文返回 409。幂等身份与请求摘要随任务持久保存，任务与积分预占仍在同一事务内创建，响应丢失或并发重发不会增加任务或预占。该字段与展示用的 `batch` 分开；不传时每次请求仍创建新任务。轮询发现回执后，页面将对应批次位置标记为已提交；超时但尚未找到回执时显示待确认，继续提交沿用原标识。
+
+## 电商项目保存边界
+
+`PUT /api/ecommerce/projects/:id` 的 JSON 请求体上限为 128 MiB，超限返回 413。该边界为最多 500 条当前及历史策划、单张 32 KB 提示词与 128 KiB 来源快照预留容量；业务层仍校验当前图片数、快照、任务归属与项目版本。未指定 Content-Length 的请求同样受读取上限约束。
 
 ## 图片响应格式
 

@@ -211,6 +211,7 @@ func TestEcommerceWorkbenchAnalysisModelsAreFixedByAdministrator(t *testing.T) {
 
 func TestEcommerceWorkbenchLiveDirectionsUseProductImagesAndCache(t *testing.T) {
 	svc, db := mockEcommerceAgentService(t)
+	const productPixels = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N3sAAAAASUVORK5CYII="
 	t.Setenv("AI_MODE", "live")
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	if err := db.AutoMigrate(&model.EcommerceCreativeRecommendation{}, &model.EcommerceKnowledgeSource{}, &model.EcommerceKnowledgeEntry{}); err != nil {
@@ -224,7 +225,7 @@ func TestEcommerceWorkbenchLiveDirectionsUseProductImagesAndCache(t *testing.T) 
 			t.Error(err)
 		}
 		raw, _ := json.Marshal(body)
-		if !strings.Contains(string(raw), "data:image/png;base64,") || !strings.Contains(string(raw), "visualRisks") || !strings.Contains(string(raw), "完整用户需求") || !strings.Contains(string(raw), "四套") {
+		if !strings.Contains(string(raw), "data:image/png;base64,"+productPixels) || !strings.Contains(string(raw), "visualRisks") || !strings.Contains(string(raw), "完整用户需求") || !strings.Contains(string(raw), "四套") {
 			t.Error("combined product analysis and direction request lost image or requirements")
 		}
 		p, _ := ecommerceagent.PlatformFor("淘宝")
@@ -240,13 +241,13 @@ func TestEcommerceWorkbenchLiveDirectionsUseProductImagesAndCache(t *testing.T) 
 	if err := db.Create(&channel).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.repo.SaveChannelModel(&model.ChannelModel{ID: "bridge-model", ChannelID: channel.ID, ModelKey: "fixture", Capability: "text", Protocol: model.ChannelInterfaceChatCompletion, Enabled: true, PriceConfigured: true}); err != nil {
+	if err := svc.repo.SaveChannelModel(&model.ChannelModel{ID: "bridge-model", ChannelID: channel.ID, ModelKey: "fixture", Capability: "text", Protocol: model.ChannelInterfaceChatCompletion, CapabilityConfigJSON: ecommerceTestVisionProfile(t), BillingMode: "fixed_request", UnitPriceMicrocredits: 100, Enabled: true, PriceConfigured: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ecommerceAgentSettingKey, ValueJSON: `{"channelModelId":"bridge-model","channelId":"bridge-channel","modelKey":"fixture"}`}); err != nil {
 		t.Fatal(err)
 	}
-	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N3sAAAAASUVORK5CYII=")
+	png, _ := base64.StdEncoding.DecodeString(productPixels)
 	if err := os.MkdirAll(filepath.Join(svc.dataDir, "resources"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +264,7 @@ func TestEcommerceWorkbenchLiveDirectionsUseProductImagesAndCache(t *testing.T) 
 		t.Fatal(err)
 	}
 	request := EcommerceCreativeDirectionsRequest{ProjectID: project.ID, ProductName: "耳机", Platform: "taobao", Language: "zh-CN", ImageType: "detail", Count: 10}
+	startEcommerceTextTestWorker(t, svc, db)
 	for i := 0; i < 2; i++ {
 		response, err := svc.RecommendEcommerceCreativeDirectionsContext(context.Background(), "owner", request)
 		if err != nil || len(response.Directions) != 4 {
@@ -278,6 +280,10 @@ func TestEcommerceWorkbenchLiveDirectionsUseProductImagesAndCache(t *testing.T) 
 	}
 	if calls != 1 {
 		t.Fatalf("cached repeat paid twice: %d calls", calls)
+	}
+	wallet, _ := svc.repo.CreditAccount("owner")
+	if wallet.AvailableMicrocredits != 999900 || wallet.ReservedMicrocredits != 0 {
+		t.Fatalf("creative direction was not billed exactly once: %+v", wallet)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

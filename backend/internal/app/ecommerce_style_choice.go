@@ -228,7 +228,7 @@ func (s *Service) ecommerceCustomStyle(ctx context.Context, userID string, brief
 		defer cancel()
 		started := time.Now()
 		var rec ecommerceagent.Recommendation
-		err = s.ecommerceChatJSON(callCtx, cfg, "custom-style", ecommerceagent.CustomStyleSystem, ecommerceagent.CustomStyleRequest(brief, name, description, hint), nil, &rec)
+		err = s.ecommerceChatJSON(callCtx, userID, cfg, "custom-style", ecommerceagent.CustomStyleSystem, ecommerceagent.CustomStyleRequest(brief, name, description, hint), nil, &rec)
 		if err == nil {
 			ecommerceagent.RepairStyleRecommendation(&rec)
 			if ecommerceagent.CompleteStyleRecommendation(rec) {

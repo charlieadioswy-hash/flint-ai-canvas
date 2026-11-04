@@ -74,13 +74,16 @@ func (r *Repository) CreateEcommerceAgentRun(run *model.EcommerceAgentRun, proje
 	})
 }
 
-func (r *Repository) SaveEcommerceAgentPage(userID string, page *model.EcommerceAgentPage) error {
+func (r *Repository) SaveEcommerceAgentPage(userID string, page *model.EcommerceAgentPage, leaseOwner ...string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var run model.EcommerceAgentRun
-		if err := tx.Where("user_id = ? AND id = ?", userID, page.RunID).First(&run).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND id = ?", userID, page.RunID).First(&run).Error; err != nil {
 			return err
 		}
 		if run.Status != "running" {
+			return ErrTaskStateConflict
+		}
+		if len(leaseOwner) > 0 && !ecommerceAgentLeaseValid(&run, leaseOwner[0], time.Now()) {
 			return ErrTaskStateConflict
 		}
 		return tx.Clauses(clause.OnConflict{
@@ -99,8 +102,12 @@ func (r *Repository) EcommerceAgentPages(userID, runID string) ([]model.Ecommerc
 	return pages, err
 }
 
-func (r *Repository) SaveEcommerceAgentResult(userID, runID, briefJSON, copyJSON, canvasJSON string) error {
-	res := r.db.Model(&model.EcommerceAgentRun{}).Where("user_id = ? AND id = ? AND status = ?", userID, runID, "running").Updates(map[string]any{
+func (r *Repository) SaveEcommerceAgentResult(userID, runID, briefJSON, copyJSON, canvasJSON string, leaseOwner ...string) error {
+	query := r.db.Model(&model.EcommerceAgentRun{}).Where("user_id = ? AND id = ? AND status = ?", userID, runID, "running")
+	if len(leaseOwner) > 0 {
+		query = query.Where("lease_owner = ? AND lease_expires_at > ?", leaseOwner[0], time.Now())
+	}
+	res := query.Updates(map[string]any{
 		"brief_json": briefJSON, "copy_json": copyJSON, "canvas_json": canvasJSON, "updated_at": time.Now(),
 	})
 	if res.Error != nil {
@@ -114,14 +121,17 @@ func (r *Repository) SaveEcommerceAgentResult(userID, runID, briefJSON, copyJSON
 
 // FinishEcommerceAgentRun closes the existing credit reservation exactly once.
 // Only persisted successful pages count toward the charge.
-func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode string) (*model.EcommerceAgentRun, error) {
+func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode string, leaseOwner ...string) (*model.EcommerceAgentRun, error) {
 	var finished model.EcommerceAgentRun
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND id = ?", userID, runID).First(&finished).Error; err != nil {
 			return err
 		}
-		if finished.Status == "completed" || finished.Status == "failed" || finished.Status == "cancelled" {
+		if finished.Status != "running" {
 			return nil
+		}
+		if len(leaseOwner) > 0 && !ecommerceAgentLeaseValid(&finished, leaseOwner[0], time.Now()) {
+			return ErrTaskStateConflict
 		}
 		var successes int64
 		if err := tx.Model(&model.EcommerceAgentPage{}).Where("run_id = ? AND status = ?", runID, "completed").Count(&successes).Error; err != nil {
@@ -130,7 +140,18 @@ func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode st
 		if successes > int64(finished.PageCount) {
 			return errors.New("ecommerce page count exceeds reservation")
 		}
-		if finished.BillingOrderID != "" {
+		var uncertain int64
+		if err := tx.Model(&model.EcommerceAgentPage{}).Where("run_id = ? AND status IN ?", runID, []string{"submitted", "uncertain"}).Count(&uncertain).Error; err != nil {
+			return err
+		}
+		if uncertain > 0 || (finished.Mode == "live" && finished.LeaseOwner == "" && successes < int64(finished.PageCount)) {
+			status, errorCode = "uncertain", "MODEL_OUTCOME_UNKNOWN"
+			if finished.BillingOrderID != "" {
+				if err := (&Repository{db: tx}).MarkBillingUncertain(finished.BillingOrderID, "电商出图已提交页面的上游结果尚未确认，请人工核对"); err != nil {
+					return err
+				}
+			}
+		} else if finished.BillingOrderID != "" {
 			if successes == 0 {
 				if err := (&Repository{db: tx}).RefundBillingOrder(finished.BillingOrderID, status); err != nil {
 					return err
@@ -143,9 +164,51 @@ func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode st
 		}
 		now := time.Now()
 		finished.Status, finished.ErrorCode, finished.SuccessPages, finished.FinishedAt = status, errorCode, int(successes), &now
-		return tx.Model(&finished).Updates(map[string]any{"status": status, "error_code": errorCode, "success_pages": successes, "finished_at": now, "updated_at": now}).Error
+		return tx.Model(&finished).Updates(map[string]any{"status": status, "error_code": errorCode, "success_pages": successes, "finished_at": now, "updated_at": now, "lease_owner": "", "lease_expires_at": nil}).Error
 	})
 	return &finished, err
+}
+
+func ecommerceAgentLeaseValid(run *model.EcommerceAgentRun, owner string, now time.Time) bool {
+	return owner != "" && run.LeaseOwner == owner && run.LeaseExpiresAt != nil && run.LeaseExpiresAt.After(now)
+}
+
+func (r *Repository) RenewEcommerceAgentLease(userID, runID, owner string, now time.Time, duration time.Duration) (bool, error) {
+	res := r.db.Model(&model.EcommerceAgentRun{}).Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ?", runID, userID, "running", owner, now).
+		Updates(map[string]any{"lease_expires_at": now.Add(duration), "updated_at": now})
+	return res.RowsAffected == 1, res.Error
+}
+
+// A rolling upgrade can overlap a v85 request with no lease. Its configured
+// execution timeout was capped at fifteen minutes, so preserve that window.
+const ecommerceAgentLegacyRunGrace = 15 * time.Minute
+
+func (r *Repository) ExpiredEcommerceAgentRuns(now time.Time, limit int) ([]model.EcommerceAgentRun, error) {
+	var runs []model.EcommerceAgentRun
+	err := r.db.Where("status = ? AND (lease_expires_at <= ? OR (lease_expires_at IS NULL AND (cancel_requested = ? OR updated_at <= ?)))", "running", now, true, now.Add(-ecommerceAgentLegacyRunGrace)).Order("created_at asc").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
+// The row lock fences both heartbeat and page writes before billing recovery.
+func (r *Repository) RecoverExpiredEcommerceAgentRun(userID, runID string, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var run model.EcommerceAgentRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", runID, userID).First(&run).Error; err != nil {
+			return err
+		}
+		if run.Status != "running" || (run.LeaseExpiresAt != nil && run.LeaseExpiresAt.After(now)) {
+			return nil
+		}
+		if run.LeaseExpiresAt == nil && !run.CancelRequested && run.UpdatedAt.Add(ecommerceAgentLegacyRunGrace).After(now) {
+			return nil
+		}
+		status, code := "failed", "WORKER_INTERRUPTED"
+		if run.CancelRequested {
+			status, code = "cancelled", "CANCELLED"
+		}
+		_, err := (&Repository{db: tx}).FinishEcommerceAgentRun(userID, runID, status, code)
+		return err
+	})
 }
 
 func settleEcommerceAgentOrder(tx *gorm.DB, run *model.EcommerceAgentRun, successes int64) error {

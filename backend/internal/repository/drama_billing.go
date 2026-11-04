@@ -37,6 +37,7 @@ type dramaBillingRow struct {
 }
 
 // DramaBillingTotals 一次汇总多部作品的花费（列表页一页一次查询）；只统计当前用户自己的任务与订单。
+// 同一任务重试会替换当前订单指针，因此按 task_id 汇总历次订单，保留已结算的历史花费。
 func (r *Repository) DramaBillingTotals(userID string, projectIDs []string) (map[string]DramaBillingTotals, error) {
 	totals := make(map[string]DramaBillingTotals, len(projectIDs))
 	if len(projectIDs) == 0 {
@@ -47,7 +48,7 @@ func (r *Repository) DramaBillingTotals(userID string, projectIDs []string) (map
 	var pipeline []dramaBillingRow
 	if err := r.db.Table("tasks").
 		Select("tasks.project_id "+selectSums, args...).
-		Joins("JOIN billing_orders ON billing_orders.id = tasks.billing_order_id AND billing_orders.user_id = tasks.user_id").
+		Joins("JOIN billing_orders ON billing_orders.task_id = tasks.id AND billing_orders.user_id = tasks.user_id").
 		Where("tasks.user_id = ? AND tasks.project_id IN ?", userID, projectIDs).
 		Group("tasks.project_id").
 		Scan(&pipeline).Error; err != nil {
@@ -57,7 +58,7 @@ func (r *Repository) DramaBillingTotals(userID string, projectIDs []string) (map
 	if err := r.db.Table("canvas_projects").
 		Select("canvas_projects.project_id "+selectSums, args...).
 		Joins("JOIN tasks ON tasks.project_id = canvas_projects.id AND tasks.user_id = canvas_projects.user_id").
-		Joins("JOIN billing_orders ON billing_orders.id = tasks.billing_order_id AND billing_orders.user_id = tasks.user_id").
+		Joins("JOIN billing_orders ON billing_orders.task_id = tasks.id AND billing_orders.user_id = tasks.user_id").
 		Where("canvas_projects.user_id = ? AND canvas_projects.project_id IN ?", userID, projectIDs).
 		Group("canvas_projects.project_id").
 		Scan(&canvas).Error; err != nil {

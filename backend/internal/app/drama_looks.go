@@ -46,12 +46,16 @@ func dramaResolveShotLook(character model.DramaCast, looks []model.DramaCast, ch
 	if len(looks) == 0 {
 		return ""
 	}
-	if name := strings.TrimSpace(chosenLookName); name != "" && !production.IsBaseLookName(name) {
+	if name := strings.TrimSpace(chosenLookName); name != "" {
+		if production.IsBaseLookName(name) {
+			return ""
+		}
 		for _, look := range looks {
 			if production.NormalizeName(look.LookName) == production.NormalizeName(name) {
 				return look.ID
 			}
 		}
+		return ""
 	}
 	return production.DefaultLook(dramaLookRanges(looks), chapters)
 }

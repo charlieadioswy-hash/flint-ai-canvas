@@ -65,16 +65,20 @@ const DRAMA_ASSET_BATCH = 64;
  * 为投送到画布的短剧媒体登记素材记录并载入本机素材库：画布保存要求媒体节点由当前用户的素材引用资源。
  * 同一资源服务端只登记一次，重复投送直接复用。返回值里缺少的资源已不可用，由调用方决定是否继续。
  */
-export async function ensureDramaCanvasAssets(dramaId: string, items: DramaCanvasAssetItem[]) {
+export async function ensureDramaCanvasAssets(dramaId: string, items: DramaCanvasAssetItem[], assertCurrent: () => void = () => {}) {
+    assertCurrent();
     const byResource = new Map<string, DramaCanvasAssetItem>();
     for (const item of items) if (item.resourceId && !byResource.has(item.resourceId)) byResource.set(item.resourceId, item);
     const pending = [...byResource.values()];
     const assetIds = new Map<string, string>();
     for (let offset = 0; offset < pending.length; offset += DRAMA_ASSET_BATCH) {
+        assertCurrent();
         const { assets } = await registerDramaCanvasAssets(dramaId, pending.slice(offset, offset + DRAMA_ASSET_BATCH));
+        assertCurrent();
         for (const asset of assets) assetIds.set(asset.resourceId, asset.assetId);
     }
     if (assetIds.size) await loadAssetsForUse([...new Set(assetIds.values())]);
+    assertCurrent();
     return assetIds;
 }
 

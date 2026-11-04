@@ -12,6 +12,9 @@ import (
 	"yingce/backend/internal/service"
 )
 
+// 500 张当前/历史策划图的 32KB 提示词与 128KiB 参数快照约占 78MiB，另为 JSON 和策划元数据预留空间。
+const maxEcommerceProjectSaveBytes int64 = 128 << 20
+
 func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/admin/ecommerce/skills/install", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
@@ -461,9 +464,18 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
+		if c.Request.ContentLength > maxEcommerceProjectSaveBytes {
+			fail(c, http.StatusRequestEntityTooLarge, errors.New("商品项目内容超过 128MiB 保存上限"))
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxEcommerceProjectSaveBytes)
 		var req service.SaveEcommerceProjectRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			var maxBytesError *http.MaxBytesError
+			if errors.As(err, &maxBytesError) {
+				fail(c, http.StatusRequestEntityTooLarge, errors.New("商品项目内容超过 128MiB 保存上限"))
+				return
+			}
 			fail(c, http.StatusBadRequest, err)
 			return
 		}

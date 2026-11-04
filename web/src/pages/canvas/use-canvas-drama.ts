@@ -27,6 +27,7 @@ import {
 } from "@/lib/canvas/drama-canvas-projection";
 import { DRAMA_CAST_KIND_LABEL } from "@/lib/drama/drama-format";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { getDrama, getDramaEpisode, listDramaCast, listDramaTakes, type DramaCast, type DramaEpisode, type DramaEpisodeDetail, type DramaSegment, type DramaSettings, type DramaSummary, type DramaTake, type DramaTakeKind } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import { resourceFileUrl } from "@/services/api/resources";
@@ -112,6 +113,17 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     const { canvasId, dramaId, projectLoaded, nodes, nodesRef, setNodes, setConnections, searchParams, setSearchParams } = input;
     const { message, modal } = App.useApp();
     const queryClient = useQueryClient();
+    const accountScope = getActiveUserScope();
+    const actionSession = useMemo(() => ({ canvasId, dramaId, accountScope }), [accountScope, canvasId, dramaId]);
+    const currentSessionRef = useRef(actionSession);
+    currentSessionRef.current = actionSession;
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     const summaryQuery = useQuery({
         queryKey: dramaKeys.summary(dramaId),
@@ -205,26 +217,35 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     const latest = useRef({ input, summary, current });
     latest.current = { input, summary, current };
 
-    const [busyKey, setBusyKey] = useState<string | null>(null);
-    const busyRef = useRef<string | null>(null);
+    const [busy, setBusy] = useState<{ session: typeof actionSession; key: string } | null>(null);
+    const busyKey = busy?.session === actionSession ? busy.key : null;
+    const busyRef = useRef<typeof busy>(null);
     const run = useCallback(
-        async (key: string, failure: string, task: () => Promise<void>) => {
-            if (busyRef.current) {
+        async (key: string, failure: string, task: (assertCurrent: () => void) => Promise<void>) => {
+            const assertCurrent = () => {
+                if (!mountedRef.current || currentSessionRef.current !== actionSession || getActiveUserScope() !== actionSession.accountScope) throw new DOMException("画布或账号已切换，已停止投送", "AbortError");
+            };
+            if (!mountedRef.current || currentSessionRef.current !== actionSession || getActiveUserScope() !== actionSession.accountScope) return;
+            if (busyRef.current?.session === actionSession) {
                 message.info("上一次投送还在进行，请稍候");
                 return;
             }
-            busyRef.current = key;
-            setBusyKey(key);
+            const operation = { session: actionSession, key };
+            busyRef.current = operation;
+            setBusy(operation);
             try {
-                await task();
+                await task(assertCurrent);
             } catch (error) {
+                if (currentSessionRef.current !== actionSession || getActiveUserScope() !== actionSession.accountScope || !mountedRef.current || (error instanceof Error && error.name === "AbortError")) return;
                 message.error(error instanceof Error && error.message ? error.message : failure);
             } finally {
-                busyRef.current = null;
-                setBusyKey(null);
+                if (busyRef.current === operation) {
+                    busyRef.current = null;
+                    if (mountedRef.current) setBusy(null);
+                }
             }
         },
-        [message],
+        [actionSession, message],
     );
 
     const focus = useCallback((nodeIds: string[]) => latest.current.input.focusNodes(nodeIds), []);
@@ -236,8 +257,9 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     );
     /** 登记素材；required 里的资源缺失时中止投送，历史版本缺失只少带一个版本。 */
     const registerMedia = useCallback(
-        async (items: DramaCanvasAssetItem[], required: string[]): Promise<DramaProjectionMedia> => {
-            const assetIds = await ensureDramaCanvasAssets(dramaId, items);
+        async (items: DramaCanvasAssetItem[], required: string[], assertCurrent: () => void): Promise<DramaProjectionMedia> => {
+            const assetIds = await ensureDramaCanvasAssets(dramaId, items, assertCurrent);
+            assertCurrent();
             if (required.some((resourceId) => !assetIds.has(resourceId))) throw new Error("部分参考图或视频已不可用（可能已删除），请在制作台检查后再投送");
             return { assetIdOf: (resourceId) => assetIds.get(resourceId), urlOf: resourceFileUrl };
         },
@@ -257,12 +279,14 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
         async (castId: string) => {
             const placed = standaloneCastNode(nodesRef.current, castId);
             if (placed) return focus([placed.id]);
-            await run(`cast:${castId}`, "设定投送失败", async () => {
+            await run(`cast:${castId}`, "设定投送失败", async (assertCurrent) => {
                 const [allCast, takes] = await Promise.all([fetchCast(), fetchTakes(castId, "cast")]);
+                assertCurrent();
                 const cast = allCast.find((item) => item.id === castId);
                 if (!cast) throw new Error("这个设定已被删除");
                 const items = dramaCastResourceIds(cast, takes).map((resourceId) => ({ resourceId, title: castTitle(cast), category: dramaCastAssetCategory(cast.kind) }));
-                const media = await registerMedia(items, cast.imageResourceId ? [cast.imageResourceId] : []);
+                const media = await registerMedia(items, cast.imageResourceId ? [cast.imageResourceId] : [], assertCurrent);
+                assertCurrent();
                 const existing = standaloneCastNode(nodesRef.current, castId);
                 if (existing) return focus([existing.id]);
                 const draft = buildDramaCastNode({ projectId: dramaId, cast, ratio: castRatio(cast.kind, latest.current.summary?.production.settings), takes, media, topLeft: { x: 0, y: 0 } });
@@ -300,14 +324,17 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
 
     const projectSegment = useCallback(
         (episodeId: string, segmentIndex: number) =>
-            run(`segment:${episodeId}:${segmentIndex}`, "剧情段投送失败", async () => {
+            run(`segment:${episodeId}:${segmentIndex}`, "剧情段投送失败", async (assertCurrent) => {
                 const detail = await fetchEpisode(episodeId);
+                assertCurrent();
                 const segment = detail.segments.find((item) => item.index === segmentIndex);
                 if (!segment) throw new Error("这个剧情段不存在，可能已重新改编");
                 const existing = findDramaSegmentFrame(nodesRef.current, segment.id);
                 if (existing) return focus([existing.id]);
                 const [allCast, takes] = await Promise.all([fetchCast(), fetchTakes(segment.id, "video")]);
-                const media = await registerMedia(segmentAssetItems(detail.episode, segment, takes), dramaSegmentRequiredResourceIds(segment));
+                assertCurrent();
+                const media = await registerMedia(segmentAssetItems(detail.episode, segment, takes), dramaSegmentRequiredResourceIds(segment), assertCurrent);
+                assertCurrent();
                 const raced = findDramaSegmentFrame(nodesRef.current, segment.id);
                 if (raced) return focus([raced.id]);
                 focus(placeSegments(detail, [segment], [takes], allCast, media));
@@ -317,17 +344,21 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
 
     const projectEpisode = useCallback(
         (episodeId: string) =>
-            run(`episode:${episodeId}`, "整集投送失败", async () => {
+            run(`episode:${episodeId}`, "整集投送失败", async (assertCurrent) => {
                 const detail = await fetchEpisode(episodeId);
+                assertCurrent();
                 if (!detail.segments.length) throw new Error("这一集还没有剧情段，剧本和分镜完成后再投送");
                 const ordered = [...detail.segments].sort((left, right) => left.index - right.index);
                 const missing = ordered.filter((segment) => !findDramaSegmentFrame(nodesRef.current, segment.id));
                 if (missing.length) {
                     const [allCast, takesList] = await Promise.all([fetchCast(), Promise.all(missing.map((segment) => fetchTakes(segment.id, "video")))]);
+                    assertCurrent();
                     const media = await registerMedia(
                         missing.flatMap((segment, index) => segmentAssetItems(detail.episode, segment, takesList[index])),
                         missing.flatMap((segment) => dramaSegmentRequiredResourceIds(segment)),
+                        assertCurrent,
                     );
+                    assertCurrent();
                     const pending = missing.map((segment, index) => ({ segment, takes: takesList[index] })).filter(({ segment }) => !findDramaSegmentFrame(nodesRef.current, segment.id));
                     placeSegments(
                         detail,
@@ -345,15 +376,19 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
 
     /** 成片节点；requireMedia=false 时允许没有成片的占位节点（剪辑时间线需要一个承载节点）。 */
     const buildFinal = useCallback(
-        async (episodeId: string, requireMedia: boolean) => {
+        async (episodeId: string, requireMedia: boolean, assertCurrent: () => void) => {
             const { episode } = await fetchEpisode(episodeId);
+            assertCurrent();
             if (requireMedia && !episode.finalResourceId) throw new Error("这一集还没有成片");
             const takes = episode.finalResourceId ? await fetchTakes(episode.id, "final") : [];
+            assertCurrent();
             const title = `第 ${episode.number} 集成片 · ${episode.title}`;
             const media = await registerMedia(
                 dramaFinalResourceIds(episode, takes).map((resourceId) => ({ resourceId, title, category: "material" })),
                 episode.finalResourceId ? [episode.finalResourceId] : [],
+                assertCurrent,
             );
+            assertCurrent();
             const draft = buildDramaFinalNode({ projectId: dramaId, episode, aspectRatio: latest.current.summary?.production.settings.aspectRatio || "9:16", takes, media, topLeft: { x: 0, y: 0 } });
             return { ...draft, position: dramaPlacement(nodesRef.current, draft, { kind: "final", episodeId: episode.id }) };
         },
@@ -364,8 +399,9 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
         async (episodeId: string) => {
             const placed = findDramaFinalNode(nodesRef.current, episodeId);
             if (placed) return focus([placed.id]);
-            await run(`final:${episodeId}`, "成片投送失败", async () => {
-                const node = await buildFinal(episodeId, true);
+            await run(`final:${episodeId}`, "成片投送失败", async (assertCurrent) => {
+                const node = await buildFinal(episodeId, true, assertCurrent);
+                assertCurrent();
                 const existing = findDramaFinalNode(nodesRef.current, episodeId);
                 if (existing) return focus([existing.id]);
                 setNodes((items) => [...items, node]);
@@ -378,14 +414,17 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     /** 把一集的剧情段视频按成片顺序载入画布时间线，在画布里精剪；时间线只有一条，已有内容需确认后替换。 */
     const openEpisodeCut = useCallback(
         (episodeId: string) =>
-            run(`cut:${episodeId}`, "载入剪辑失败", async () => {
+            run(`cut:${episodeId}`, "载入剪辑失败", async (assertCurrent) => {
                 const detail = await fetchEpisode(episodeId);
+                assertCurrent();
                 const usable = detail.segments.filter((segment) => segment.videoResourceId && (segment.videoStatus === "ready" || segment.videoStatus === "stale"));
                 if (!usable.length) throw new Error("这一集还没有可剪辑的剧情段视频");
                 const media = await registerMedia(
                     usable.map((segment) => ({ resourceId: segment.videoResourceId!, title: `${segmentLabel(detail.episode, segment)} · 视频`, category: "material" })),
                     [],
+                    assertCurrent,
                 );
+                assertCurrent();
                 const { timeline, skipped } = buildDramaEpisodeTimeline({ episode: detail.episode, segments: [...detail.segments].sort((left, right) => left.index - right.index), media });
                 if (!timeline.clips.length) throw new Error("这一集的剧情段视频暂时不可用");
                 const existingClips = latest.current.input.timeline?.clips.length || 0;
@@ -396,11 +435,13 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
                         okText: "替换并载入",
                         cancelText: "保留现有时间线",
                     });
+                    assertCurrent();
                     if (!confirmed) return;
                 }
                 let anchor = findDramaFinalNode(nodesRef.current, episodeId);
                 if (!anchor) {
-                    const created = await buildFinal(episodeId, false);
+                    const created = await buildFinal(episodeId, false, assertCurrent);
+                    assertCurrent();
                     anchor = findDramaFinalNode(nodesRef.current, episodeId) || created;
                     if (anchor === created) setNodes((items) => [...items, created]);
                 }
@@ -414,7 +455,7 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     /** 短剧侧已更新：把节点换成短剧当前的媒体，画布上原来的版本留在版本历史里。 */
     const refreshNode = useCallback(
         (node: CanvasNodeData) =>
-            run(`refresh:${node.id}`, "同步短剧最新版本失败", async () => {
+            run(`refresh:${node.id}`, "同步短剧最新版本失败", async (assertCurrent) => {
                 const ref = node.metadata?.dramaRef;
                 if (!ref) return;
                 const now = latest.current.current;
@@ -424,7 +465,8 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
                 if (block === "missing") return;
                 if (block === "locked") throw new Error("节点已锁定，解锁后再同步");
                 if (block === "loading") throw new Error("节点正在生成或上传，完成后再同步");
-                const media = await registerMedia([{ resourceId, title: node.title, category: node.metadata?.assetCategory }], [resourceId]);
+                const media = await registerMedia([{ resourceId, title: node.title, category: node.metadata?.assetCategory }], [resourceId], assertCurrent);
+                assertCurrent();
                 const target = nodesRef.current.find((item) => item.id === node.id);
                 if (!target) return;
                 const next = withDramaMedia(target, resourceId, media.assetIdOf(resourceId)!, { ...ref, baseResourceId: resourceId });

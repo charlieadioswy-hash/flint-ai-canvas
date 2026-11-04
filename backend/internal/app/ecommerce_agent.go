@@ -71,10 +71,10 @@ func validateEcommerceAgentRequest(req ecommerceagent.Request, generate bool) (e
 	return p, nil
 }
 
-func (s *Service) ecommerceReference(userID, rawURL string) (string, []byte, string, error) {
+func (s *Service) ecommerceReferenceResource(userID, rawURL string) (*model.Resource, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", nil, "", ecommerceErr("INVALID_INPUT", "商品图地址无效")
+		return nil, ecommerceErr("INVALID_INPUT", "商品图地址无效")
 	}
 	var id string
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
@@ -83,15 +83,30 @@ func (s *Service) ecommerceReference(userID, rawURL string) (string, []byte, str
 	}
 	if id == "" {
 		if u.Scheme != "https" || u.Host == "" {
-			return "", nil, "", ecommerceErr("INVALID_INPUT", "仅支持已上传素材或 HTTPS 商品图")
+			return nil, ecommerceErr("INVALID_INPUT", "仅支持已上传素材或 HTTPS 商品图")
 		}
 		resource, importErr := s.ImportResourceURL(userID, rawURL, "image", 0, 0, 0)
 		if importErr != nil {
-			return "", nil, "", importErr
+			return nil, importErr
 		}
 		id = resource.ID
 	}
-	resource, stream, err := s.OpenResource(userID, id)
+	resource, err := s.repo.ResourceForUser(userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if resource.Kind != "image" || resource.Size > 10<<20 || (resource.MimeType != "image/png" && resource.MimeType != "image/jpeg" && resource.MimeType != "image/webp") {
+		return nil, ecommerceErr("INVALID_INPUT", "商品图须为不超过 10 MB 的 PNG、JPEG 或 WebP 图片")
+	}
+	return resource, nil
+}
+
+func (s *Service) ecommerceReference(userID, rawURL string) (string, []byte, string, error) {
+	ref, err := s.ecommerceReferenceResource(userID, rawURL)
+	if err != nil {
+		return "", nil, "", err
+	}
+	resource, stream, err := s.OpenResource(userID, ref.ID)
 	if err != nil {
 		return "", nil, "", err
 	}
@@ -148,14 +163,14 @@ func (s *Service) AnalyzeEcommerceAgent(ctx context.Context, userID string, req 
 	if cfg.Mode == "live" {
 		images := make([]string, 0, len(req.FileInfoList))
 		for _, f := range req.FileInfoList {
-			uri, _, _, e := s.ecommerceReference(userID, f.URL)
-			if e != nil {
-				return nil, e
-			}
-			images = append(images, uri)
+			images = append(images, f.URL)
 		}
 		prompt := ecommerceagent.BuildVisionPrompt(req)
-		if err := s.ecommerceChatJSON(ctx, cfg, "analyze", ecommerceagent.SystemVision, prompt, images, &brief); err != nil {
+		if err := s.ecommerceChatJSON(ctx, userID, cfg, "analyze", ecommerceagent.SystemVision, prompt, images, &brief); err != nil {
+			var admission *AppError
+			if errors.As(err, &admission) {
+				return nil, err
+			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -175,7 +190,12 @@ func (s *Service) AnalyzeEcommerceAgent(ctx context.Context, userID string, req 
 	if cfg.Mode == "live" {
 		var proposed []ecommerceagent.Recommendation
 		prompt := ecommerceagent.BuildRecommendPrompt(brief, p, req.Language, styles)
-		if err := s.ecommerceChatJSON(ctx, cfg, "recommend", ecommerceagent.SystemRecommend, prompt, nil, &proposed); err == nil && len(proposed) >= 4 && len(proposed) <= 6 {
+		if err := s.ecommerceChatJSON(ctx, userID, cfg, "recommend", ecommerceagent.SystemRecommend, prompt, nil, &proposed); err != nil {
+			var admission *AppError
+			if errors.As(err, &admission) {
+				return nil, err
+			}
+		} else if len(proposed) >= 4 && len(proposed) <= 6 {
 			valid := true
 			for i := range proposed {
 				r := &proposed[i]
@@ -247,9 +267,9 @@ func (s *Service) HelpWriteEcommerceAgent(ctx context.Context, userID, text, pla
 		return map[string]any{"status": "normal", "optimized": text + "；请以真实商品图为准，指定场景、光线和构图，不添加未经确认的参数。", "reason": "补充画面与真实性约束", "alternatives": []map[string]string{{"label": "白底商品", "text": text + "，纯白背景，完整商品"}, {"label": "真实场景", "text": text + "，自然光下的真实使用环境"}}}, nil
 	}
 	var result map[string]any
-	err = s.ecommerceChatJSON(ctx, cfg, "help-write", ecommerceagent.SystemHelpWrite, fmt.Sprintf("【卖家原话】%s\n【平台】%s\n【语言】%s", text, platform, language), nil, &result)
+	err = s.ecommerceChatJSON(ctx, userID, cfg, "help-write", ecommerceagent.SystemHelpWrite, fmt.Sprintf("【卖家原话】%s\n【平台】%s\n【语言】%s", text, platform, language), nil, &result)
 	if err != nil {
-		return nil, ecommerceErr("UPSTREAM_ERROR", "提示词优化失败")
+		return nil, err
 	}
 	return result, nil
 }
@@ -334,7 +354,24 @@ func (s *Service) QuoteEcommerceAgent(userID string, req ecommerceagent.Request)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"pageCount": count, "unitMicrocredits": unit, "totalMicrocredits": order.AmountMicrocredits, "modelKey": order.Model, "channel": req.Channel}, nil
+	quote := map[string]any{"pageCount": count, "unitMicrocredits": unit, "totalMicrocredits": order.AmountMicrocredits, "imageTotalMicrocredits": order.AmountMicrocredits, "modelKey": order.Model, "channel": req.Channel, "includesTextCharges": cfg.Mode != "live"}
+	if cfg.Mode == "live" {
+		planning, err := s.ecommerceConfiguredText(userID, cfg)
+		if err != nil {
+			return nil, err
+		}
+		vision, err := s.ecommerceVisionText(userID, cfg)
+		if err != nil {
+			return nil, err
+		}
+		quote["textBilling"] = map[string]any{
+			"mode": "separate_tasks", "maxCalls": 4,
+			"visionModelKey": vision.TextProvider.ChannelModelKey, "planningModelKey": planning.TextProvider.ChannelModelKey,
+			"stages": []string{"analyze", "recommend", "copy", "planning"},
+			"notice": "以上积分仅为图片费用；商品理解、方向推荐、文案和策划另建文本任务，按后台文本模型价格独立计费。命中分析缓存时不重复调用识图和推荐。",
+		}
+	}
+	return quote, nil
 }
 
 func (s *Service) ecommerceLiveImageConfig(req ecommerceagent.Request, cfg ecommerceProviderConfig) (ecommerceProviderConfig, error) {
@@ -488,7 +525,8 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 			cfg.ImageProvider.Model = cfg.ImageModel
 		}
 	}
-	run := &model.EcommerceAgentRun{ID: runID, UserID: userID, IdempotencyKey: key, ProjectID: projectID, BillingOrderID: order.ID, Status: "running", Mode: cfg.Mode, Platform: req.Platform, Language: req.Language, GenerateType: req.GenerateType, PageCount: len(pages), UnitMicrocredits: unit}
+	leaseOwner, leaseUntil := newID(), time.Now().Add(ecommerceAgentLeaseDuration)
+	run := &model.EcommerceAgentRun{ID: runID, UserID: userID, IdempotencyKey: key, ProjectID: projectID, BillingOrderID: order.ID, Status: "running", LeaseOwner: leaseOwner, LeaseExpiresAt: &leaseUntil, Mode: cfg.Mode, Platform: req.Platform, Language: req.Language, GenerateType: req.GenerateType, PageCount: len(pages), UnitMicrocredits: unit}
 	if err = s.repo.CreateEcommerceAgentRun(run, project, order); err != nil {
 		if prior, e := s.repo.EcommerceAgentRunByKey(userID, key); e == nil {
 			return s.replayEcommerceAgent(userID, prior, emit)
@@ -499,7 +537,7 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 		return nil, err
 	}
 	if err = s.MarkBillingRunning(order.ID); err != nil {
-		_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, "failed", "UPSTREAM_ERROR")
+		_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, "failed", "UPSTREAM_ERROR", leaseOwner)
 		return nil, err
 	}
 	workCtx, cancel := context.WithTimeout(ctx, cfg.GenerateTimeout)
@@ -508,11 +546,20 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
+		renewAt := time.Now().Add(10 * time.Second)
 		for {
 			select {
 			case <-workCtx.Done():
 				return
 			case <-ticker.C:
+				if time.Now().After(renewAt) {
+					owned, renewErr := s.repo.RenewEcommerceAgentLease(userID, runID, leaseOwner, time.Now(), ecommerceAgentLeaseDuration)
+					if renewErr != nil || !owned {
+						cancel()
+						return
+					}
+					renewAt = time.Now().Add(10 * time.Second)
+				}
 				run, pollErr := s.repo.EcommerceAgentRun(userID, runID)
 				if pollErr == nil && run.CancelRequested {
 					cancel()
@@ -532,10 +579,10 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 					status, code = "cancelled", "CANCELLED"
 				}
 			}
-			_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, status, code)
+			_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, status, code, leaseOwner)
 		}
 	}()
-	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: runID, ConversationID: projectID, Data: map[string]any{"pageCount": len(pages), "charged": float64(order.AmountMicrocredits) / float64(CreditScale), "mode": cfg.Mode}}); err != nil {
+	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: runID, ConversationID: projectID, Data: map[string]any{"pageCount": len(pages), "charged": float64(order.AmountMicrocredits) / float64(CreditScale), "mode": cfg.Mode, "textBilledSeparately": cfg.Mode == "live"}}); err != nil {
 		return nil, err
 	}
 	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"step": map[string]string{"name": "vision", "label": "分析商品图"}, "outputs": map[string]any{"answer": analysis.Brief}}}); err != nil {
@@ -545,15 +592,25 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	if cfg.Mode == "live" {
 		var proposedCopy map[string]any
 		copyPrompt := ecommerceagent.BuildCopyPrompt(analysis.Brief, p, req.Language, req.UserSellingPoints)
-		if e := s.ecommerceChatJSON(workCtx, cfg, runID, ecommerceagent.SystemCopy, copyPrompt, nil, &proposedCopy); e == nil {
+		if e := s.ecommerceChatJSON(workCtx, userID, cfg, runID, ecommerceagent.SystemCopy, copyPrompt, nil, &proposedCopy); e == nil {
 			// Keep the model's proposed copy outside the published canvas until a
 			// seller verifies claims. The canvas only receives neutral headlines.
 			copyResult["proposedDraft"] = proposedCopy
 			copyResult["requiresReview"] = true
+		} else {
+			var admission *AppError
+			if errors.As(e, &admission) {
+				return nil, e
+			}
 		}
 		var proposed []ecommerceagent.Page
 		planPrompt := ecommerceagent.BuildPlannerPrompt(copyResult, pages, p, req.Language, analysis.Brief)
-		if e := s.ecommerceChatJSON(workCtx, cfg, runID, ecommerceagent.SystemPlanner, planPrompt, nil, &proposed); e == nil && len(proposed) == len(pages) {
+		if e := s.ecommerceChatJSON(workCtx, userID, cfg, runID, ecommerceagent.SystemPlanner, planPrompt, nil, &proposed); e != nil {
+			var admission *AppError
+			if errors.As(e, &admission) {
+				return nil, e
+			}
+		} else if len(proposed) == len(pages) {
 			for i := range pages {
 				candidate := proposed[i].ImagePrompt
 				if safeEcommerceImagePrompt(candidate, req) {
@@ -585,11 +642,19 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	results := make(chan result, cfg.MaxConcurrent)
 	next, active, done := 0, 0, 0
 	persisted := make([]bool, len(pages))
-	launch := func(index int) {
+	launch := func(index int) error {
 		page := pages[index]
+		page.Prompt = ecommerceImagePrompt(page, p, req.Brand, analysis.Brief, selected)
+		if cfg.Mode == "live" {
+			// Persist before submission: a crash at any later point must preserve
+			// the reservation until the upstream outcome can be established.
+			row := &model.EcommerceAgentPage{ID: newID(), RunID: runID, Index: page.Index, Role: page.Role, Title: page.Title, Headline: page.Headline, Prompt: page.Prompt, Status: "submitted", Ratio: page.AspectRatio, NeedText: page.NeedText}
+			if err := s.repo.SaveEcommerceAgentPage(userID, row, leaseOwner); err != nil {
+				return err
+			}
+		}
 		go func() {
 			start := time.Now()
-			page.Prompt = ecommerceImagePrompt(page, p, req.Brand, analysis.Brief, selected)
 			if cfg.Mode == "mock" {
 				page.URL = ecommerceagent.MockImage(page, analysis.Brief.Category)
 			} else {
@@ -603,10 +668,29 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 			}
 			results <- result{page: page, latency: time.Since(start).Milliseconds()}
 		}()
+		return nil
+	}
+	persistResult := func(item result) error {
+		page := item.page
+		status := "failed"
+		if page.URL != "" {
+			status = "completed"
+		} else if cfg.Mode == "live" {
+			status = "uncertain"
+		}
+		row := &model.EcommerceAgentPage{ID: newID(), RunID: runID, Index: page.Index, Role: page.Role, Title: page.Title, Headline: page.Headline, Prompt: page.Prompt, URL: page.URL, Status: status, Error: page.Error, Ratio: page.AspectRatio, NeedText: page.NeedText, LatencyMs: item.latency}
+		if err := s.repo.SaveEcommerceAgentPage(userID, row, leaseOwner); err != nil {
+			return err
+		}
+		persisted[page.Index-1] = true
+		pages[page.Index-1] = page
+		return nil
 	}
 	for done < len(pages) {
 		for next < len(pages) && active < cfg.MaxConcurrent && workCtx.Err() == nil {
-			launch(next)
+			if err := launch(next); err != nil {
+				return nil, err
+			}
 			next++
 			active++
 		}
@@ -616,24 +700,20 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 		select {
 		case <-workCtx.Done(): // The workers share this context and will stop before further upstream requests.
 			for active > 0 {
-				<-results
+				item := <-results
 				active--
+				if err := persistResult(item); err != nil {
+					return nil, err
+				}
 			}
 			done = len(pages)
 		case item := <-results:
 			active--
 			done++
 			page := item.page
-			status := "failed"
-			if page.URL != "" {
-				status = "completed"
-			}
-			row := &model.EcommerceAgentPage{ID: newID(), RunID: runID, Index: page.Index, Role: page.Role, Title: page.Title, Headline: page.Headline, Prompt: page.Prompt, URL: page.URL, Status: status, Error: page.Error, Ratio: page.AspectRatio, NeedText: page.NeedText, LatencyMs: item.latency}
-			if saveErr := s.repo.SaveEcommerceAgentPage(userID, row); saveErr != nil {
+			if saveErr := persistResult(item); saveErr != nil {
 				return nil, saveErr
 			}
-			persisted[page.Index-1] = true
-			pages[page.Index-1] = page
 			if emitErr := emit(ecommerceagent.Event{Event: "iteration_completed", Data: map[string]any{"page": page, "progress": float64(done) / float64(len(pages))}}); emitErr != nil {
 				return nil, emitErr
 			}
@@ -651,7 +731,7 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 			page := &pages[i]
 			page.Error = code
 			row := &model.EcommerceAgentPage{ID: newID(), RunID: runID, Index: page.Index, Role: page.Role, Title: page.Title, Headline: page.Headline, Status: "failed", Error: code, Ratio: page.AspectRatio, NeedText: page.NeedText}
-			if saveErr := s.repo.SaveEcommerceAgentPage(userID, row); saveErr != nil {
+			if saveErr := s.repo.SaveEcommerceAgentPage(userID, row, leaseOwner); saveErr != nil {
 				return nil, saveErr
 			}
 		}
@@ -664,13 +744,13 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	briefJSON, _ := json.Marshal(analysis.Brief)
 	copyJSON, _ := json.Marshal(copyResult)
 	canvasJSON, _ := json.Marshal(canvas)
-	if err = s.repo.SaveEcommerceAgentResult(userID, runID, string(briefJSON), string(copyJSON), string(canvasJSON)); err != nil {
+	if err = s.repo.SaveEcommerceAgentResult(userID, runID, string(briefJSON), string(copyJSON), string(canvasJSON), leaseOwner); err != nil {
 		return nil, err
 	}
 	if _, err = s.repo.SaveEcommerceAgentCanvas(userID, projectID, string(canvasJSON)); err != nil {
 		return nil, err
 	}
-	if run, err = s.repo.FinishEcommerceAgentRun(userID, runID, "completed", ""); err != nil {
+	if run, err = s.repo.FinishEcommerceAgentRun(userID, runID, "completed", "", leaseOwner); err != nil {
 		return nil, err
 	}
 	finished = true
@@ -678,10 +758,14 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	if err != nil {
 		return nil, err
 	}
-	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"outputs": map[string]any{"answer": "出图完成", "files": pages}, "posterCanvas": canvas, "brief": analysis.Brief, "copy": copyResult, "pages": pages, "credit": map[string]any{"charged": float64(run.UnitMicrocredits*int64(run.SuccessPages)) / float64(CreditScale)}, "projectId": projectID}}); err != nil {
+	message := "出图完成"
+	if run.Status == "uncertain" {
+		message = "部分出图的上游结果待确认，积分保留冻结，请联系管理员核对"
+	}
+	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"outputs": map[string]any{"answer": message, "files": pages}, "posterCanvas": canvas, "brief": analysis.Brief, "copy": copyResult, "pages": pages, "credit": map[string]any{"charged": float64(run.UnitMicrocredits*int64(run.SuccessPages)) / float64(CreditScale), "textBilledSeparately": cfg.Mode == "live", "status": run.Status}, "projectId": projectID}}); err != nil {
 		return view, err
 	}
-	err = emit(ecommerceagent.Event{Event: "message", Data: map[string]any{"done": true}})
+	err = emit(ecommerceagent.Event{Event: "message", Data: map[string]any{"done": true, "status": run.Status, "errorCode": run.ErrorCode}})
 	return view, err
 }
 
@@ -706,6 +790,7 @@ func (s *Service) replayEcommerceAgent(userID string, run *model.EcommerceAgentR
 	if err != nil {
 		return nil, err
 	}
+	run = view.Run
 	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: run.ID, ConversationID: run.ProjectID, Data: map[string]any{"pageCount": run.PageCount, "charged": float64(run.UnitMicrocredits*int64(run.PageCount)) / float64(CreditScale), "mode": run.Mode, "replayed": true}}); err != nil {
 		return nil, err
 	}
@@ -719,6 +804,9 @@ func (s *Service) replayEcommerceAgent(userID string, run *model.EcommerceAgentR
 }
 
 func (s *Service) EcommerceAgentTask(userID, runID string) (*EcommerceAgentTaskView, error) {
+	if err := s.repo.RecoverExpiredEcommerceAgentRun(userID, runID, time.Now()); err != nil {
+		return nil, err
+	}
 	run, err := s.repo.EcommerceAgentRun(userID, runID)
 	if err != nil {
 		return nil, err
@@ -754,6 +842,9 @@ func (s *Service) CancelEcommerceAgent(userID, runID string) (*EcommerceAgentTas
 			return nil, err
 		}
 		s.cancelActiveTask(runID)
+		if err := s.repo.RecoverExpiredEcommerceAgentRun(userID, runID, time.Now()); err != nil {
+			return nil, err
+		}
 	}
 	return s.EcommerceAgentTask(userID, runID)
 }

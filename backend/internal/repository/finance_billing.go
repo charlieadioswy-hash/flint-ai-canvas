@@ -116,6 +116,7 @@ func (r *Repository) AutoRefundableBillingOrders(limit int) ([]model.BillingOrde
 	var items []model.BillingOrder
 	err := r.db.Model(&model.BillingOrder{}).
 		Joins("LEFT JOIN tasks ON tasks.id = billing_orders.task_id").
+		Where("(billing_orders.scene IS NULL OR billing_orders.scene <> ?)", "ecommerce_agent").
 		Where(
 			"billing_orders.status = ? OR (billing_orders.status = ? AND billing_orders.updated_at < ?) OR (billing_orders.status = ? AND tasks.status IN ?)",
 			model.BillingStatusUncertain, model.BillingStatusRunning, time.Now().Add(-40*time.Minute), model.BillingStatusReserved,

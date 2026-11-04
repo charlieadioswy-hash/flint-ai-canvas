@@ -21,7 +21,7 @@ func (s *Service) hydrateGenerationMedia(userID string, input *canvasGenerationI
 		mediaPolicy := policy
 		// 识图规划与 Agent 看图都发送归属校验后的实际像素，避免供应商无法读取签名 URL。
 		// 视频、音频及其他普通生成任务保留原来的协议策略。
-		inlineVision := input.Mode == "text" && ((input.AgentRequests != nil && input.AgentRequests.Canonical != nil) || metadataString(input.Metadata, "edit") == "layer-planning")
+		inlineVision := input.Mode == "text" && ((input.AgentRequests != nil && input.AgentRequests.Canonical != nil) || metadataString(input.Metadata, "edit") == "layer-planning" || metadataString(input.Metadata, "source") == "ecommerce-direct")
 		if groupIndex == 0 && inlineVision {
 			mediaPolicy = providerMediaHydrationPolicy{imageOnly: true}
 			if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {

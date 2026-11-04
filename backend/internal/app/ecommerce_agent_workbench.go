@@ -441,11 +441,7 @@ func (s *Service) RecommendEcommerceCreativeDirectionsContext(ctx context.Contex
 			if ref.Role == "model" || ref.Role == "style" || ref.Role == "competitor" {
 				continue
 			}
-			uri, _, _, err := s.ecommerceReference(userID, "/api/resources/"+ref.ResourceID+"/file")
-			if err != nil {
-				return nil, err
-			}
-			images = append(images, uri)
+			images = append(images, "/api/resources/"+ref.ResourceID+"/file")
 		}
 		ratio := draft.Ratio
 		if ratio == "" {
@@ -455,7 +451,7 @@ func (s *Service) RecommendEcommerceCreativeDirectionsContext(ctx context.Contex
 		if cfg.Mode == "live" {
 			system, prompt := ecommerceWorkbenchDirectionsPrompt(draft)
 			prompt += "\n" + knowledge
-			if err := s.ecommerceChatJSON(ctx, cfg, "workbench-analysis", system, prompt, images, &analysis); err != nil {
+			if err := s.ecommerceChatJSON(ctx, userID, cfg, "workbench-analysis", system, prompt, images, &analysis); err != nil {
 				return nil, err
 			}
 			if strings.TrimSpace(analysis.Brief.Category) == "" {

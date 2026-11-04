@@ -19,6 +19,12 @@ description: 电商创作工作流、阶段模型和知识来源管理
 
 服务启动在离线包之后自动初始化 KB11–KB19、技能方法知识和行业类目。内置技能正文随二进制嵌入，类目字典随程序交付；新安装和升级不需要手工导入。管理员只需配置自己的文本、图片模型和四阶段模型绑定；实际模型调用仍使用宿主报价、权限与计费流程。
 
+独立协议的帮写、商品分析、推荐与创意方向在 live 模式下也创建普通文本任务，经服务端目录重新校验模型、价格、余额和活跃任务额度，再由 worker 执行。HTTP 取消或等待超时只停止等待，不代替任务结算；任务结果可在任务中心查看。仅配置环境变量文本凭据而未选择后台计价模型时拒绝 live 调用。
+
+独立出图报价的 `imageTotalMicrocredits` 为图片预占，`includesTextCharges=false` 表示不包含文本调用；`textBilling` 列出独立计费的阶段、模型及最多四次文本调用说明。生成事件同时返回 `textBilledSeparately`。各文本阶段按后台模型价格独立准入和结算，额度不足时停止本轮生成。
+
+项目保存请求支持最大 128 MiB JSON，以容纳多轮归档策划及来源快照，超限返回 413。当前图片数量、历史总数、单图提示词和快照仍按服务端业务合同校验。
+
 小夜的形象资源、眨眼/尾巴等动效、拖动与面板交互随前端交付，支持减少动态效果和后台配置。「电商 Agent 配置」页的创作助手分区配置模型、启用范围和外观（接口仍为 `/api/admin/settings/yoru`）；未配置模型时保持关闭，不发起模型调用。帮助文案与导航使用当前项目的真实路由。
 
 ## 随程序交付的知识数据
@@ -34,5 +40,9 @@ HTTP 路由由 `backend/internal/handler/ecommerce.go` 和 `ecommerce_agent.go` 
 `/api/ecommerce` 下提供项目、创意方向与技能提示接口；`/api/ecommerce/knowledge` 下提供知识与阶段模型管理接口，由服务端执行管理员权限校验。`/api/agent/quote`、`/api/agent/analyze`、`/api/agent/generate` 等接口提供独立 Agent 协议；`/api/canvas`、`/api/task` 下提供对应画布版本及任务查询接口。具体请求与响应以 handler 和前端 API 类型为准。管理员权限与用户资源归属均在服务端校验。
 
 迁移 85 新增 `ecommerce_projects`、`ecommerce_knowledge_sources`、`ecommerce_knowledge_entries`、`ecommerce_creative_recommendations`、`ecommerce_agent_analyses`、`ecommerce_agent_runs`、`ecommerce_agent_pages`、`ecommerce_agent_canvas_versions`，包括知识域索引。保留本分支已发布的 1–78 迁移身份，电商能力在 85 追加。电商图片读取使用 `ecommerce-export`，仅允许当前用户拥有的、32 MB 以内的 PNG、JPEG、WebP 原图，经受限同源流读取。
+
+迁移 86 为独立出图运行增加持久租约。运行每 10 秒续租，租约 45 秒过期，后台每 15 秒扫描，查询或取消也会触发过期恢复；健康实例的运行不受影响。恢复只结算已保存的成功页并释放确定未提交的余额。已记录提交而结果未知的页，以及缺少检查点的旧 live 运行，转为 `uncertain`，保留预占等待管理员核对，避免服务重启或取消后误退款；旧执行者迟到写回会被租约校验拒绝。
+
+滚动升级时，无租约的旧版运行自最近更新时间保留 15 分钟（旧版生成超时的最大值），给仍存活的旧实例完成写回的机会；显式取消可立即触发保守恢复。宽限期后的旧 live 运行保留预占待核对。
 
 本次功能未包含旧版通用画布的一键详情／复刻节点，也不引入品牌、登录注册、支付充值或部署定制。真实浏览器、付费生成及已有部署的完整升级流程仍需人工验收；自动化数据库迁移和初始化检查不能代替这些验收。

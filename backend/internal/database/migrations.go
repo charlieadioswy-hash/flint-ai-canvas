@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 85
+const CurrentSchemaVersion int64 = 86
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -294,6 +294,9 @@ var schemaMigrations = []migration{
 	{version: 83, name: "agent_memory_document_columns", checksum: "sha256:agent-memory-document-columns-v77-20261028", apply: migrateAgentMemoryDocumentColumns},
 	{version: 84, name: "drama_cast_voice_looks", checksum: "sha256:drama-cast-voice-looks-v78-20261101", apply: migrateDramaCastVoiceLooks},
 	{version: 85, name: "ecommerce_agent_and_knowledge", checksum: "sha256:ecommerce-agent-and-knowledge-v79-20261101", apply: migrateEcommerceFeature},
+	{version: 86, name: "ecommerce_agent_run_leases", checksum: "sha256:ecommerce-agent-run-leases-v86-20261104", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.EcommerceAgentRun{})
+	}},
 }
 
 func migrateModel3DRequests(tx *gorm.DB) error {

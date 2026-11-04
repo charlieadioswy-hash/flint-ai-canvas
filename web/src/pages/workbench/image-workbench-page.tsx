@@ -25,11 +25,23 @@ import { resolveBrowserMediaDownloadHref, startBrowserDownload } from "@/service
 import { prepareBackendGenerationTask } from "@/services/api/generation-task";
 import { quoteModel } from "@/services/api/logical-models";
 import { resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
-import { cancelGenerationTask, createGenerationTask, queryGenerationTask, retryGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { capabilitySupportedModes, createWorkbenchTask, listWorkbenchTasks, listWorkbenchTools, resolveWorkbenchResourceURL, type WorkbenchKind, type WorkbenchPromptPreset, type WorkbenchReferenceSlot, type WorkbenchTool } from "@/services/api/workbench";
+import { cancelGenerationTask, createGenerationTask, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask } from "@/services/api/task-center";
+import {
+    capabilitySupportedModes,
+    createWorkbenchTask,
+    listWorkbenchTasks,
+    listWorkbenchTools,
+    resolveWorkbenchResourceURL,
+    type CreateWorkbenchTaskInput,
+    type WorkbenchKind,
+    type WorkbenchPromptPreset,
+    type WorkbenchReferenceSlot,
+    type WorkbenchTool,
+} from "@/services/api/workbench";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { logicalModelIDForConfig, modelDisplayName, modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { ApiError } from "@/services/api/request";
 
 import {
     aspectRatioOf,
@@ -50,6 +62,7 @@ import { missingWorkbenchInput, workbenchPromptRequired, workbenchVideoOperation
 import { isModelIdLike, WORKBENCH_INSPIRATIONS, WORKBENCH_SPEC_TIPS, workbenchQuickTools, workbenchRatioUsage } from "./workbench-presets";
 import { SceneLibraryModal } from "./workbench-scene-library";
 import { WorkbenchViewer } from "./workbench-viewer";
+import { prepareWorkbenchBatchSubmission, reconcileWorkbenchBatchReceipts, unsubmittedWorkbenchBatchIndices, workbenchBatchOperationId, type WorkbenchSubmissionState } from "./workbench-batch-submission";
 import "./workbench.css";
 
 export { filterWorkbenchTools } from "./workbench-presets";
@@ -88,12 +101,15 @@ type LocalBatch = {
     parameters: Record<string, unknown>;
     ratio?: number;
     plan: number[];
-    states: Array<"pending" | "submitting" | "created" | "failed">;
+    states: WorkbenchSubmissionState[];
     receipts: Record<number, GenerationTask>;
     submitting: boolean;
     error?: string;
     request: BatchRequest;
+    preparedRequests: Map<number, Promise<PreparedBatchSubmission>>;
 };
+
+type PreparedBatchSubmission = { route: "workbench"; input: CreateWorkbenchTaskInput } | { route: "tasks"; input: CreateTaskInput };
 
 function revokeReferencePreview(reference: WorkbenchReference) {
     if (reference.previewUrl.startsWith("blob:")) URL.revokeObjectURL(reference.previewUrl);
@@ -410,6 +426,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             const result = await listWorkbenchTasks(kind, 100);
             loadFailedRef.current = false;
             setTasks(result);
+            setLocalBatches((current) => current.map((batch) => reconcileWorkbenchBatchReceipts(batch, result)));
             return result;
         } catch (error) {
             if (!loadFailedRef.current) message.error(errorMessage(error, "作品列表加载失败"));
@@ -418,7 +435,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         } finally {
             setTasksLoading(false);
         }
-    }, [kind, message]);
+    }, [kind, message, setLocalBatches]);
     const taskIds = useMemo(() => new Set(tasks.map((task) => task.id)), [tasks]);
     const hasActiveWork = tasks.some(isActiveWorkbenchTask) || localBatches.some((batch) => batch.submitting || Object.values(batch.receipts).some((receipt) => !taskIds.has(receipt.id) && isActiveWorkbenchTask(receipt)));
     const hasActiveWorkRef = useRef(hasActiveWork);
@@ -964,54 +981,62 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         };
     };
 
-    const createBatchTask = async (request: BatchRequest, batchPlan: number[], index: number, batchId: string) => {
+    const createBatchTask = async (local: LocalBatch, index: number) => {
+        const { request, plan: batchPlan, id: batchId } = local;
         const batch = { id: batchId, index, count: batchPlan.length };
-        const outputs = batchPlan[index] || 1;
-        const parameters = request.kind === "image" ? { ...request.parameters, count: outputs } : request.parameters;
-        const referenceSnapshot = request.references.map((reference) => ({ resourceId: reference.resourceId!, kind: reference.kind, role: reference.role, ...(reference.slotKey ? { slotKey: reference.slotKey } : {}) }));
-        if (request.route === "workbench") {
-            const created = await createWorkbenchTask({
-                kind: request.kind,
-                ...(request.toolId ? { toolId: request.toolId } : {}),
-                ...(request.presetId ? { presetId: request.presetId } : {}),
-                prompt: request.prompt,
-                model: request.model,
-                ...(request.logicalModelId ? { logicalModelId: request.logicalModelId } : { channelId: request.channelId }),
-                parameters,
-                references: referenceSnapshot,
-                batch,
+        const clientOperationId = workbenchBatchOperationId(batchId, index);
+        const submission = await prepareWorkbenchBatchSubmission<PreparedBatchSubmission>(local.preparedRequests, index, async () => {
+            const outputs = batchPlan[index] || 1;
+            const parameters = request.kind === "image" ? { ...request.parameters, count: outputs } : request.parameters;
+            const referenceSnapshot = request.references.map((reference) => ({ resourceId: reference.resourceId!, kind: reference.kind, role: reference.role, ...(reference.slotKey ? { slotKey: reference.slotKey } : {}) }));
+            if (request.route === "workbench") {
+                return {
+                    route: "workbench",
+                    input: {
+                        kind: request.kind,
+                        ...(request.toolId ? { toolId: request.toolId } : {}),
+                        ...(request.presetId ? { presetId: request.presetId } : {}),
+                        prompt: request.prompt,
+                        model: request.model,
+                        ...(request.logicalModelId ? { logicalModelId: request.logicalModelId } : { channelId: request.channelId }),
+                        parameters,
+                        references: referenceSnapshot,
+                        batch,
+                        clientOperationId,
+                    },
+                };
+            }
+            const mediaReference = (reference: WorkbenchReference, type: string) => ({
+                id: reference.id,
+                name: reference.name,
+                type,
+                storageKey: resourceStorageKey(reference.resourceId!),
+                role: reference.role,
+                ...(reference.slotKey ? { slotKey: reference.slotKey } : {}),
             });
-            return receiptTask(created as Partial<GenerationTask> & { id: string }, request, batch);
-        }
-        const mediaReference = (reference: WorkbenchReference, type: string) => ({
-            id: reference.id,
-            name: reference.name,
-            type,
-            storageKey: resourceStorageKey(reference.resourceId!),
-            role: reference.role,
-            ...(reference.slotKey ? { slotKey: reference.slotKey } : {}),
+            const taskInput = await prepareBackendGenerationTask({
+                mode: request.kind,
+                prompt: request.prompt,
+                config: request.kind === "image" ? { ...request.generationConfig, count: String(outputs) } : request.generationConfig,
+                referenceImages: request.references.filter((reference) => reference.kind === "image").map((reference) => ({ ...mediaReference(reference, "image/*"), dataUrl: "" })),
+                referenceVideos: request.references.filter((reference) => reference.kind === "video").map((reference) => ({ ...mediaReference(reference, "video/*"), url: "" })),
+                referenceAudios: request.references.filter((reference) => reference.kind === "audio").map((reference) => ({ ...mediaReference(reference, "audio/*"), url: "" })),
+                metadata: {
+                    source: "workbench",
+                    workbenchKind: request.kind,
+                    ...(request.videoOperation ? { videoEditOperation: request.videoOperation } : {}),
+                    ...Object.fromEntries(
+                        request.references.filter((reference) => reference.role === "first_frame" || reference.role === "last_frame").map((reference) => [reference.role === "first_frame" ? "videoStartFrameNodeId" : "videoEndFrameNodeId", reference.id]),
+                    ),
+                    ...(request.toolId ? { workbenchToolId: request.toolId, workbenchToolName: tools.find((item) => item.id === request.toolId)?.name || "" } : {}),
+                    ...(request.presetId ? { workbenchPresetId: request.presetId } : {}),
+                    workbench: { kind: request.kind, ...(request.toolId ? { toolId: request.toolId } : {}), ...(request.presetId ? { presetId: request.presetId } : {}), parameters, references: referenceSnapshot, batch },
+                },
+            });
+            return { route: "tasks", input: { ...taskInput, clientOperationId, ...(request.videoOperation ? { operation: request.videoOperation } : {}) } };
         });
-        const taskInput = await prepareBackendGenerationTask({
-            mode: request.kind,
-            prompt: request.prompt,
-            config: request.kind === "image" ? { ...request.generationConfig, count: String(outputs) } : request.generationConfig,
-            referenceImages: request.references.filter((reference) => reference.kind === "image").map((reference) => ({ ...mediaReference(reference, "image/*"), dataUrl: "" })),
-            referenceVideos: request.references.filter((reference) => reference.kind === "video").map((reference) => ({ ...mediaReference(reference, "video/*"), url: "" })),
-            referenceAudios: request.references.filter((reference) => reference.kind === "audio").map((reference) => ({ ...mediaReference(reference, "audio/*"), url: "" })),
-            metadata: {
-                source: "workbench",
-                workbenchKind: request.kind,
-                ...(request.videoOperation ? { videoEditOperation: request.videoOperation } : {}),
-                ...Object.fromEntries(
-                    request.references.filter((reference) => reference.role === "first_frame" || reference.role === "last_frame").map((reference) => [reference.role === "first_frame" ? "videoStartFrameNodeId" : "videoEndFrameNodeId", reference.id]),
-                ),
-                ...(request.toolId ? { workbenchToolId: request.toolId, workbenchToolName: tools.find((item) => item.id === request.toolId)?.name || "" } : {}),
-                ...(request.presetId ? { workbenchPresetId: request.presetId } : {}),
-                workbench: { kind: request.kind, ...(request.toolId ? { toolId: request.toolId } : {}), ...(request.presetId ? { presetId: request.presetId } : {}), parameters, references: referenceSnapshot, batch },
-            },
-        });
-        const created = await createGenerationTask({ ...taskInput, ...(request.videoOperation ? { operation: request.videoOperation } : {}) });
-        return receiptTask(created, request, batch);
+        const created = submission.route === "workbench" ? await createWorkbenchTask(submission.input) : await createGenerationTask(submission.input);
+        return receiptTask(created as Partial<GenerationTask> & { id: string }, request, batch);
     };
 
     const runBatchSubmission = async (batchId: string, indices: number[]) => {
@@ -1019,21 +1044,28 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         updateLocalBatch(batchId, (batch) => ({ ...batch, submitting: true, error: undefined, states: batch.states.map((state, index) => (indices.includes(index) ? "pending" : state)) }));
         let created = 0;
         let failure = "";
+        let uncertain = false;
         try {
             for (let position = 0; position < indices.length; position += 1) {
                 const index = indices[position];
                 const local = localBatchesRef.current.find((batch) => batch.id === batchId);
                 if (!local) return;
+                if (local.receipts[index]) continue;
                 updateLocalBatch(batchId, (batch) => ({ ...batch, states: batch.states.map((state, itemIndex) => (itemIndex === index ? "submitting" : state)) }));
                 try {
-                    const task = await createBatchTask(local.request, local.plan, index, batchId);
+                    const task = await createBatchTask(local, index);
                     created += 1;
                     updateLocalBatch(batchId, (batch) => ({ ...batch, states: batch.states.map((state, itemIndex) => (itemIndex === index ? "created" : state)), receipts: { ...batch.receipts, [index]: task } }));
                 } catch (error) {
-                    // 一个任务失败（并发上限、积分不足、参数被拒）时后面的大概率同样失败：停下来，交给用户决定是否继续提交。
-                    failure = errorMessage(error, "任务提交失败");
+                    const rejected = error instanceof ApiError && Boolean(error.status && error.status >= 400 && error.status < 500 && error.status !== 408);
+                    uncertain = !rejected;
+                    failure = rejected ? errorMessage(error, "任务提交失败") : "提交结果待确认，继续提交将按原请求核实，不会重复生成";
                     const remaining = new Set(indices.slice(position));
-                    updateLocalBatch(batchId, (batch) => ({ ...batch, error: failure, states: batch.states.map((state, itemIndex) => (remaining.has(itemIndex) ? "failed" : state)) }));
+                    updateLocalBatch(batchId, (batch) => ({
+                        ...batch,
+                        error: failure,
+                        states: batch.states.map((state, itemIndex) => (batch.receipts[itemIndex] ? "created" : itemIndex === index ? (rejected ? "failed" : "unknown") : remaining.has(itemIndex) ? "pending" : state)),
+                    }));
                     break;
                 }
             }
@@ -1042,10 +1074,10 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             setBusy(false);
             pollKickRef.current();
         }
-        const unit = kind === "image" ? "批" : "条";
         if (created && !failure) message.success(created > 1 ? `已提交 ${created} 个任务，正在生成` : "已提交，正在生成");
-        else if (created) message.warning(`已提交 ${created} 个任务，其余未提交：${failure}`);
-        else if (failure) message.error(indices.length > 1 ? `这${unit}没有提交成功：${failure}` : failure);
+        else if (created) message.warning(`已确认提交 ${created} 个任务；${failure}`);
+        else if (failure && uncertain) message.warning(failure);
+        else if (failure) message.error(failure);
     };
 
     const submit = async () => {
@@ -1070,6 +1102,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             receipts: {},
             submitting: true,
             request,
+            preparedRequests: new Map(),
         };
         setLocalBatches((current) => [local, ...current]);
         setFilter("all");
@@ -1302,7 +1335,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         resume: (batch) => {
             const local = localBatchesRef.current.find((item) => `batch:${item.id}` === batch.key);
             if (!local || local.submitting || busy) return;
-            const indices = local.states.flatMap((state, index) => (state === "failed" || state === "pending" ? [index] : []));
+            const indices = unsubmittedWorkbenchBatchIndices(local);
             if (indices.length) void runBatchSubmission(local.id, indices);
         },
         dismiss: (batch) => setLocalBatches((current) => current.filter((item) => `batch:${item.id}` !== batch.key || item.submitting)),

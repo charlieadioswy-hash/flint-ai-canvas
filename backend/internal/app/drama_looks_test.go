@@ -7,6 +7,34 @@ import (
 	"yingce/backend/internal/production"
 )
 
+func TestDramaResolveShotLookHonorsExplicitChoice(t *testing.T) {
+	character := model.DramaCast{ID: "hero", Kind: "character"}
+	looks := []model.DramaCast{
+		{ID: "chapter-default", ParentID: character.ID, LookName: "门派服饰", LookFromChapter: 1, LookToChapter: 10},
+		{ID: "wedding", ParentID: character.ID, LookName: "婚礼礼服"},
+	}
+	for _, tc := range []struct {
+		name     string
+		choice   string
+		chapters []int
+		want     string
+	}{
+		{name: "omitted uses chapter default", chapters: []int{5}, want: "chapter-default"},
+		{name: "blank uses chapter default", choice: "  ", chapters: []int{5}, want: "chapter-default"},
+		{name: "existing explicit look", choice: " 婚礼礼服 ", chapters: []int{5}, want: "wedding"},
+		{name: "explicit base", choice: "基础造型", chapters: []int{5}},
+		{name: "explicit base alias", choice: "原始造型", chapters: []int{5}},
+		{name: "new explicit look remains unresolved", choice: "新婚礼服", chapters: []int{5}},
+		{name: "no chapter default", chapters: []int{11}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dramaResolveShotLook(character, looks, tc.choice, tc.chapters); got != tc.want {
+				t.Fatalf("dramaResolveShotLook(%q, %v) = %q, want %q", tc.choice, tc.chapters, got, tc.want)
+			}
+		})
+	}
+}
+
 // DefaultLook 按本集第一章在造型的默认章节范围里选：命中多套时取起始最晚、范围更窄的；没有命中回退角色本体。
 func TestDefaultLookByChapter(t *testing.T) {
 	looks := []production.LookRange{

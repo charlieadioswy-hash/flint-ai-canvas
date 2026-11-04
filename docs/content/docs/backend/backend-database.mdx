@@ -220,7 +220,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 ## 结构迁移与版本
 
-当前结构版本为 85。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力，62 增加供应商进度字段，63–65 依次补充 Agent 记忆提案、渠道模型协议长度及用户反馈；66–77 追加短剧制作、存储套餐、作品补传及推广中心。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
+当前结构版本为 86。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力，62 增加供应商进度字段，63–65 依次补充 Agent 记忆提案、渠道模型协议长度及用户反馈；66–77 追加短剧制作、存储套餐、作品补传及推广中心。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
 
 | 迁移 | 新库及本分支顺序 | 既有上游合并账本 | 旧原生上游合并账本 | 已合并本地能力的新版上游账本 |
 | --- | --- | --- | --- | --- |
@@ -269,7 +269,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 85 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。不支持结构版本 86 的旧二进制不能直接回退，需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 ### 生成成功后的作品保存恢复
 
@@ -606,6 +606,12 @@ Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 
 ## 可选技能策展
 
 电商 Agent 的迁移 85 新增八张电商项目、知识与 Agent 执行表及知识域索引，详见 [电商 Agent 与知识库](./ecommerce-agent)。本分支保留已发布的 1–78 迁移身份，新功能在 79–85 追加；原生上游已应用的迁移按账本身份保留。
+
+迁移 86 `ecommerce_agent_run_leases` 为 `ecommerce_agent_runs` 增加 `lease_owner`、`lease_expires_at` 及过期时间索引。执行者续租并在页提交前记录 `submitted` 检查点，结果、页及终态写回校验租约；其他实例只恢复过期运行。已持久成功页按页结算，确定未提交页退回预占；存在提交结果未知的页或缺少检查点的旧 live 运行时，运行和账单标记为 `uncertain`，交由管理员核对，不进入冻结积分自动退款。
+
+无租约的旧版运行保留最近更新时间起 15 分钟的滚动升级宽限期，显式取消除外，避免新版实例提前结束旧实例仍在执行的请求。
+
+普通任务的可选客户端提交标识通过按用户派生的稳定任务主键去重；原始请求摘要保留在 `tasks.input_json` 的私有 `_taskSubmission` 中，完成与存储精简后仍保留。公开任务响应隐藏该凭证，本项无需新增表或迁移。
 
 知识数据另由随二进制嵌入的离线包初始化：23 个知识源、14740 条知识。`system_settings` 中的 `ecommerce_knowledge_bundle_receipt` 记录已安装数据包摘要，与来源和条目在同一事务中提交。再次启动不重复导入，已有内容、审核和停用状态优先保留；不新增表或修改迁移 85 的身份。
 

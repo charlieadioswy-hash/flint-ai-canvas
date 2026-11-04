@@ -128,6 +128,8 @@ export type TaskLog = {
 };
 
 export type CreateTaskInput = {
+    /** 同一任务的原请求重放身份，不能随重试生成新值。 */
+    clientOperationId?: string;
     projectId?: string;
     type?: string;
     operation?: string;

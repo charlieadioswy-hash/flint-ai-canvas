@@ -29,7 +29,31 @@ type taskAdmission struct {
 // CreateTask 校验并创建一条生成任务。
 // 这是常规模型生成任务的写入口：客户端只提交创作意图，模型、渠道、协议和计价信息必须由服务端目录重新解析，
 // 以保证“可展示的模型”与“实际执行及扣费的模型”来自同一份有效配置。
-func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task, error) {
+func (s *Service) CreateTask(userID string, req CreateTaskRequest) (result *model.Task, resultErr error) {
+	if req.submission == nil {
+		var err error
+		req.submission, err = newTaskSubmission(userID, req.ClientOperationID, "tasks", req)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if req.submission != nil {
+		if req.admission != nil || req.creationPrepare != nil {
+			return nil, BadAuthRequest("内部任务不能使用客户端提交标识")
+		}
+		if task, err := s.replayTaskSubmission(userID, req.submission); task != nil || err != nil {
+			return task, err
+		}
+		// A concurrent request may commit after the initial lookup, including
+		// before this request reaches wallet or active-task checks.
+		defer func() {
+			if resultErr != nil {
+				if task, err := s.replayTaskSubmission(userID, req.submission); task != nil || err != nil {
+					result, resultErr = task, err
+				}
+			}
+		}()
+	}
 	if req.Type == model.TaskTypeCanvasModel3D || req.Type == model.TaskTypeModel3DExport {
 		return nil, BadAuthRequest("3D 任务必须通过专用接口创建")
 	}
@@ -50,6 +74,10 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
 		return nil, err
+	}
+	delete(normalizedInput, taskSubmissionInputKey)
+	if req.submission != nil {
+		normalizedInput[taskSubmissionInputKey] = req.submission
 	}
 	if metadata, ok := normalizedInput["metadata"].(map[string]any); ok {
 		// Upload checkpoints are issued by the worker, never by the caller.
@@ -196,6 +224,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		workbenchKind = workbenchKindFromTaskInput(normalizedInput, taskType)
 	}
 	task := model.Task{ID: newID(), UserID: userID, TraceID: req.TraceID, RequestID: req.RequestID, ProjectID: req.ProjectID, Type: taskType, WorkbenchKind: workbenchKind, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
+	if req.submission != nil {
+		task.ID = req.submission.ID
+	}
 	if req.admission != nil {
 		task.ID = req.admission.ID
 		task.AgentRunID = req.admission.AgentRunID
@@ -528,6 +559,9 @@ func (s *Service) createTextReplayTask(userID string, req CreateTaskRequest, nor
 		ID: newID(), UserID: userID, TraceID: req.TraceID, RequestID: req.RequestID, ProjectID: req.ProjectID,
 		Type: taskType, Status: model.TaskStatusTextReplay, Stage: "文本持久化（前端自管）", Progress: 5,
 		Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: strings.TrimSpace(req.Model),
+	}
+	if req.submission != nil {
+		task.ID = req.submission.ID
 	}
 	if err := s.protectTaskSecrets(normalizedInput); err != nil {
 		return nil, err

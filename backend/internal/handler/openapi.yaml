@@ -3533,6 +3533,11 @@ paths:
               required: [kind, prompt, model]
               properties:
                 kind: { type: string, enum: [image, video] }
+                clientOperationId:
+                  type: string
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9_:.-]{1,128}$"
+                  description: 当前用户的稳定提交标识；同标识同正文返回原任务，正文变化返回409。批量提交使用批次ID加下标，超时后沿用原值。
                 ecommerceProjectId:
                   type: string
                   description: 电商工作台提交时关联当前用户的电商项目；服务端校验归属，并对新生成应用电商总开关，图片还需生图开关，视频还需电商视频与原视频开关。
@@ -3623,10 +3628,13 @@ paths:
     post:
       tags: [tasks]
       summary: 创建生成任务
+      description: 可选顶层 clientOperationId（1–128位字母、数字、下划线、冒号、点或连字符）按用户去重；相同标识及正文返回原任务，同标识改变正文返回409。响应丢失后应沿用原标识及正文。
       responses:
         "200":
           $ref: "#/components/responses/Envelope"
         "400":
+          $ref: "#/components/responses/Error"
+        "409":
           $ref: "#/components/responses/Error"
   /tasks/{id}/recover-media:
     post:

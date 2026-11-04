@@ -355,7 +355,12 @@ func manifestModelID(request GenerationRequest) string {
 
 func manifestMediaValues(values []MediaReference) []any {
 	result := make([]any, 0, len(values))
-	for index, value := range values {
+	counts := make(map[string]int)
+	for _, value := range values {
+		// Host orders are local to a media kind: image 0, video 0, video 1
+		// must stay image 0, video 0, video 1 in a mixed inputs array.
+		index := counts[value.Kind]
+		counts[value.Kind]++
 		order := value.Order
 		if order == 0 && index > 0 {
 			order = index

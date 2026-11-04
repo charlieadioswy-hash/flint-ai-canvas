@@ -123,3 +123,58 @@ func TestDramaBillingTotalsGroupPipelineAndCanvasPerProject(t *testing.T) {
 		t.Fatalf("no project IDs must not query: %+v", empty)
 	}
 }
+
+func TestDramaBillingTotalsRetainPaidAttemptsAfterRetry(t *testing.T) {
+	repo, db := newDramaBillingRepository(t)
+	const user, drama = "user-1", "drama-1"
+	if err := db.AutoMigrate(&model.TaskTextDelta{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CreditAccount{UserID: user, AvailableMicrocredits: 1_000_000}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CanvasProject{ID: "canvas-1", UserID: user, ProjectID: drama, PayloadJSON: "{}"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	seedDramaBillingTask(t, db, user, drama, "pipeline-retry", model.BillingOrder{AmountMicrocredits: 300_000, ActualAmountMicrocredits: 250_000, Status: model.BillingStatusSettled})
+	seedDramaBillingTask(t, db, user, "canvas-1", "canvas-free-retry", model.BillingOrder{AmountMicrocredits: 200_000, ActualAmountMicrocredits: 200_000, Status: model.BillingStatusSettled})
+	if err := db.Model(&model.Task{}).Where("user_id = ?", user).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, order := range []model.BillingOrder{
+		{ID: "earlier-refund", UserID: user, TaskID: "pipeline-retry", IdempotencyKey: "earlier-refund", AmountMicrocredits: 900_000, ActualAmountMicrocredits: 900_000, Status: model.BillingStatusRefunded},
+		{ID: "foreign-order", UserID: "user-2", TaskID: "pipeline-retry", IdempotencyKey: "foreign-order", AmountMicrocredits: 900_000, ActualAmountMicrocredits: 900_000, Status: model.BillingStatusSettled},
+	} {
+		if err := db.Create(&order).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	newOrder := &model.BillingOrder{
+		ID: "retry-order", UserID: user, TaskID: "pipeline-retry", IdempotencyKey: "retry-order",
+		AmountMicrocredits: 100_000, Status: model.BillingStatusReserved,
+	}
+	paidRetry, err := repo.RetryTaskWithBilling(user, &model.Task{ID: "pipeline-retry"}, newOrder, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freeRetry, err := repo.RetryTaskWithBilling(user, &model.Task{ID: "canvas-free-retry"}, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paidRetry.BillingOrderID != newOrder.ID || freeRetry.BillingOrderID != "" {
+		t.Fatalf("retry did not replace or clear the current billing pointer: paid=%q free=%q", paidRetry.BillingOrderID, freeRetry.BillingOrderID)
+	}
+	want := DramaBillingTotals{PipelineChargedMicrocredits: 250_000, PipelineHeldMicrocredits: 100_000, CanvasChargedMicrocredits: 200_000}
+	if got := dramaTotalsFor(t, repo, user, drama)[drama]; got != want {
+		t.Fatalf("retry must retain historical charges and include the new hold: got %+v, want %+v", got, want)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("id = ?", newOrder.ID).Updates(map[string]any{
+		"status": model.BillingStatusSettled, "actual_amount_microcredits": 80_000, "refunded_amount_microcredits": 20_000,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	want.PipelineChargedMicrocredits, want.PipelineHeldMicrocredits = 330_000, 0
+	if got := dramaTotalsFor(t, repo, user, drama)[drama]; got != want {
+		t.Fatalf("settled retry must add its actual charge to earlier attempts: got %+v, want %+v", got, want)
+	}
+}

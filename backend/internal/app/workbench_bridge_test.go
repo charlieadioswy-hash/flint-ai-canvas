@@ -39,6 +39,7 @@ func TestCreateWorkbenchVideoTaskUsesReferenceModeAndPrice(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := WorkbenchTaskInput{Kind: WorkbenchKindVideo, Prompt: "Animate the subject", Model: "MiniMax-H3", ChannelID: "channel", Parameters: map[string]any{"resolution": "480P", "ratio": "16:9", "seconds": 15}}
+			req.ClientOperationID = "batch:" + tc.operation
 			if tc.role != "" {
 				req.References = []workbench.TaskReference{{ResourceID: "video-image", Kind: "image", Role: tc.role}}
 			}
@@ -53,6 +54,15 @@ func TestCreateWorkbenchVideoTaskUsesReferenceModeAndPrice(t *testing.T) {
 			task, err := s.CreateWorkbenchTask("user", req, "", "")
 			if err != nil {
 				t.Fatal(err)
+			}
+			replayed, err := s.CreateWorkbenchTask("user", req, "new-trace", "new-request")
+			if err != nil || replayed.ID != task.ID || replayed.BillingOrderID != task.BillingOrderID {
+				t.Fatalf("lost-response replay = %+v, error = %v", replayed, err)
+			}
+			changed := req
+			changed.Prompt = "Different intent"
+			if _, err := s.CreateWorkbenchTask("user", changed, "", ""); !isAppErrorStatus(err, 409) {
+				t.Fatalf("changed batch item must conflict, got %v", err)
 			}
 			var input struct {
 				Metadata struct {

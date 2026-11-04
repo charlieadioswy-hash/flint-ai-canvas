@@ -20,6 +20,8 @@ type EcommerceAgentRun struct {
 	ProjectID        string     `json:"projectId" gorm:"size:36;index"`
 	BillingOrderID   string     `json:"-" gorm:"size:36;index"`
 	Status           string     `json:"status" gorm:"size:24;index"`
+	LeaseOwner       string     `json:"-" gorm:"size:120"`
+	LeaseExpiresAt   *time.Time `json:"-" gorm:"index"`
 	Mode             string     `json:"mode" gorm:"size:12"`
 	Platform         string     `json:"platform" gorm:"size:48"`
 	Language         string     `json:"language" gorm:"size:48"`

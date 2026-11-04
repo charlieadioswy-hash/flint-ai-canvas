@@ -76,6 +76,8 @@ export type WorkbenchToolDirectory = {
 };
 
 export type CreateWorkbenchTaskInput = {
+    /** 同一次任务提交的幂等身份；响应丢失后必须原样重用。 */
+    clientOperationId?: string;
     ecommerceProjectId?: string;
     kind: WorkbenchKind;
     toolId?: string;

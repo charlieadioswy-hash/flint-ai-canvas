@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"yingce/backend/internal/ecommerceagent"
+	"yingce/backend/internal/model"
 )
 
 type ecommerceProviderConfig struct {
@@ -98,7 +99,7 @@ func (c ecommerceProviderConfig) validate() error {
 // storyboards and prompts. Its channel owns the credential, protocol and
 // upstream model key.
 func (s *Service) ecommerceConfiguredText(userID string, cfg ecommerceProviderConfig) (ecommerceProviderConfig, error) {
-	if cfg.Mode != "live" || cfg.TextKey != "" {
+	if cfg.Mode != "live" {
 		return cfg, nil
 	}
 	setting, err := s.EcommerceAgentSetting()
@@ -112,7 +113,7 @@ func (s *Service) ecommerceConfiguredText(userID string, cfg ecommerceProviderCo
 // reads the product images and proposes the style directions. Without a
 // separate recognition model it is the planning model.
 func (s *Service) ecommerceVisionText(userID string, cfg ecommerceProviderConfig) (ecommerceProviderConfig, error) {
-	if cfg.Mode != "live" || cfg.TextKey != "" {
+	if cfg.Mode != "live" {
 		return cfg, nil
 	}
 	setting, err := s.EcommerceAgentSetting()
@@ -214,66 +215,61 @@ func ecommerceRequest(ctx context.Context, endpoint, key string, timeout time.Du
 	return nil, 0, last
 }
 
-func (s *Service) ecommerceChatJSON(ctx context.Context, cfg ecommerceProviderConfig, taskID, system, prompt string, images []string, out any) error {
-	if cfg.TextProvider != nil {
-		callCtx, cancel := context.WithTimeout(ctx, cfg.TextTimeout)
-		defer cancel()
-		provider := *cfg.TextProvider
-		provider.SystemPrompt = system
-		input := canvasGenerationInput{Mode: "text", Prompt: prompt, Config: provider}
-		for _, imageURL := range images {
-			input.ReferenceImages = append(input.ReferenceImages, providerMedia{DataURL: imageURL})
-		}
-		started := time.Now()
-		result, err := runTextTask(withProtocolRegistry(callCtx, s.protocolRegistry()), input)
+func (s *Service) ecommerceChatJSON(ctx context.Context, userID string, cfg ecommerceProviderConfig, stage, system, prompt string, images []string, out any) error {
+	if cfg.TextProvider == nil {
+		return ecommerceErr("UNAVAILABLE", "请先在后台选择已配置计价的电商 Agent 文本模型")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	provider := cfg.TextProvider
+	refs := make([]providerMedia, 0, len(images))
+	for _, rawURL := range images {
+		resource, err := s.ecommerceReferenceResource(userID, rawURL)
 		if err != nil {
-			slog.Warn("ecommerce agent text failed", "taskId", taskID, "model", provider.Model, "latencyMs", time.Since(started).Milliseconds(), "error", err)
 			return err
 		}
-		content, _ := result["text"].(string)
-		slog.Info("ecommerce agent text", "taskId", taskID, "model", provider.Model, "latencyMs", time.Since(started).Milliseconds())
-		return ecommerceParseJSON(content, out)
+		refs = append(refs, providerMedia{StorageKey: "resource:" + resource.ID, Type: "image", MimeType: resource.MimeType})
 	}
-	var content any = prompt
-	if len(images) > 0 {
-		parts := []any{map[string]any{"type": "text", "text": prompt}}
-		for _, u := range images {
-			parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": u}})
-		}
-		content = parts
-	}
-	payload := map[string]any{"model": cfg.TextModel, "messages": []any{map[string]any{"role": "system", "content": system}, map[string]any{"role": "user", "content": content}}}
-	switch out.(type) {
-	case *[]ecommerceagent.Page, *[]ecommerceagent.Recommendation:
-	default:
-		payload["response_format"] = map[string]string{"type": "json_object"}
-	}
-	body, _ := json.Marshal(payload)
-	start := time.Now()
-	data, _, err := ecommerceRequest(ctx, cfg.TextBaseURL+"/chat/completions", cfg.TextKey, cfg.TextTimeout, body, "application/json", 3)
+	// Use the same durable admission and worker path as every paid model call.
+	// HTTP cancellation only stops waiting: the worker retains ownership of its
+	// billing outcome, including an already submitted upstream request.
+	task, err := s.CreateTask(userID, CreateTaskRequest{
+		Type: "canvas_text", Operation: "ecommerce_agent_text", Model: provider.ChannelModelKey, Prompt: prompt,
+		Input: map[string]any{"mode": "text", "prompt": prompt, "referenceImages": refs,
+			"config":   map[string]any{"channelId": provider.ChannelID, "channelModelKey": provider.ChannelModelKey, "model": provider.ChannelModelKey, "systemPrompt": system},
+			"metadata": map[string]any{"source": "ecommerce-direct", "stage": stage}},
+	})
 	if err != nil {
-		slog.Warn("ecommerce agent text failed", "taskId", taskID, "model", cfg.TextModel, "latencyMs", time.Since(start).Milliseconds(), "error", err)
 		return err
 	}
-	var response struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			Total int `json:"total_tokens"`
-		} `json:"usage"`
-		Model string `json:"model"`
+	callCtx, cancel := context.WithTimeout(ctx, cfg.TextTimeout)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		stored, err := s.repo.TaskForUser(userID, task.ID)
+		if err != nil {
+			return err
+		}
+		switch stored.Status {
+		case model.TaskStatusSucceeded:
+			var result struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal([]byte(stored.ResultJSON), &result); err != nil {
+				return err
+			}
+			return ecommerceParseJSON(result.Text, out)
+		case model.TaskStatusFailed, model.TaskStatusCancelled:
+			return ecommerceErr("UPSTREAM_ERROR", "电商文本任务失败，请在任务中心查看详情")
+		}
+		select {
+		case <-callCtx.Done():
+			return callCtx.Err()
+		case <-ticker.C:
+		}
 	}
-	if err := json.Unmarshal(data, &response); err != nil {
-		return err
-	}
-	if len(response.Choices) == 0 {
-		return errors.New("文本模型未返回内容")
-	}
-	slog.Info("ecommerce agent text", "taskId", taskID, "model", response.Model, "tokens", response.Usage.Total, "latencyMs", time.Since(start).Milliseconds())
-	return ecommerceParseJSON(response.Choices[0].Message.Content, out)
 }
 
 func ecommerceImage(ctx context.Context, cfg ecommerceProviderConfig, taskID, prompt, ratio, mime string, reference []byte, estimatedCostMicrocredits int64) ([]byte, string, error) {
