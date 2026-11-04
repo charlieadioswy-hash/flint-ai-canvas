@@ -290,7 +290,9 @@ test("processing survives an uncertain POST and a reload without posting again",
     await h.flush();
     await h.value.refresh();
     await h.flush();
-    h.behavior.create = async () => { throw new Error("response lost"); };
+    h.behavior.create = async () => {
+        throw new Error("response lost");
+    };
     await h.value.processModel(defaultModel3DProcessing(original, "segment"));
     await h.flush();
     expect(h.creates).toHaveLength(1);
@@ -311,7 +313,10 @@ test("processing survives an uncertain POST and a reload without posting again",
 test("existing segmentation outside the loaded history is opened without a paid POST", async () => {
     const h = harness();
     const existing = task("older-segment", { processing: { operation: "segment", sourceTaskId: "source" } });
-    h.behavior.segmentation = async (id) => { expect(id).toBe("source"); return existing; };
+    h.behavior.segmentation = async (id) => {
+        expect(id).toBe("source");
+        return existing;
+    };
     try {
         await h.flush();
         await h.value.processModel({ operation: "segment", sourceTaskId: "source", model: "v1.0-20250506" });
@@ -319,7 +324,9 @@ test("existing segmentation outside the loaded history is opened without a paid 
         expect(h.creates).toHaveLength(0);
         expect(h.value.selectedTaskId).toBe(existing.id);
         expect(h.value.tasks.find((item) => item.id === existing.id)).toEqual(existing);
-    } finally { h.unmount(); }
+    } finally {
+        h.unmount();
+    }
 });
 
 test("late segmentation lookup cannot override a newer task selection or account", async () => {
@@ -345,7 +352,9 @@ test("late segmentation lookup cannot override a newer task selection or account
             expect(h.value.selectedTaskId).toBe(switchAccount ? "" : "other");
             expect(h.value.tasks.some((item) => item.id === "segment")).toBe(false);
             expect(h.creates).toHaveLength(0);
-        } finally { h.unmount(); }
+        } finally {
+            h.unmount();
+        }
     }
 });
 
@@ -368,7 +377,9 @@ test("a concurrent segmentation reuse response replaces the pending request and 
             expect(h.value.selectedTaskId).toBe(existing.id);
             expect(h.value.tasks.filter((item) => item.processing?.operation === "segment")).toEqual([existing]);
             expect(h.value.tasks.some((item) => item.localStatus)).toBe(false);
-        } finally { h.unmount(); }
+        } finally {
+            h.unmount();
+        }
     }
 });
 
@@ -379,7 +390,10 @@ test("lost segmentation reuse response recovers failed and cancelled tasks by th
         const terminal = task("existing-segment", { status, stage: status, sourceFingerprint: "original-body", processing: { operation: "segment", sourceTaskId: original.id } });
         h.behavior.list = async ({ activeOnly }) => ({ tasks: activeOnly ? [] : [original] });
         h.behavior.create = async (input) => {
-            h.behavior.request = async (id) => { expect(id).toBe(input.requestId); return terminal; };
+            h.behavior.request = async (id) => {
+                expect(id).toBe(input.requestId);
+                return terminal;
+            };
             throw new Error("response lost");
         };
         // Source lookup excludes definitive terminal tasks; recovery must use the accepted request.
@@ -398,7 +412,9 @@ test("lost segmentation reuse response recovers failed and cancelled tasks by th
             expect(h.value.tasks.find((item) => item.id === terminal.id)?.status).toBe(status);
             expect(h.value.tasks.some((item) => item.localStatus)).toBe(false);
             expect(h.creates).toHaveLength(1);
-        } finally { h.unmount(); }
+        } finally {
+            h.unmount();
+        }
     }
 });
 
@@ -432,7 +448,10 @@ test("selecting an unloaded source fetches and selects it on the first click wit
     const child = task("child", { processing: { operation: "segment", sourceTaskId: parent.id } });
     const h = harness();
     h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [child], nextCursor: input.activeOnly ? undefined : "older-page" });
-    h.behavior.get = async (id) => { expect(id).toBe(parent.id); return parent; };
+    h.behavior.get = async (id) => {
+        expect(id).toBe(parent.id);
+        return parent;
+    };
     try {
         await h.flush();
         h.value.setDraft(draft("keep editing this model"));
@@ -448,7 +467,9 @@ test("selecting an unloaded source fetches and selects it on the first click wit
         expect(h.creates).toHaveLength(0);
         expect(h.recovers).toBe(0);
         expect(JSON.parse([...h.cache.values()][0]).selectedTaskId).toBe(parent.id);
-    } finally { h.unmount(); }
+    } finally {
+        h.unmount();
+    }
 });
 
 for (const latestId of ["child", "other", "another-parent"]) {
@@ -457,7 +478,7 @@ for (const latestId of ["child", "other", "another-parent"]) {
         const pending = deferred<Model3DTaskView>();
         const latest = deferred<Model3DTaskView>();
         h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child"), task("other")] });
-        h.behavior.get = (id) => id === "parent" ? pending.promise : latest.promise;
+        h.behavior.get = (id) => (id === "parent" ? pending.promise : latest.promise);
         try {
             await h.flush();
             await h.value.selectTask("child");
@@ -477,14 +498,18 @@ for (const latestId of ["child", "other", "another-parent"]) {
             expect(h.value.tasks.some((item) => item.id === "parent")).toBe(false);
             expect(h.value.error).toBe("");
             expect(h.creates).toHaveLength(0);
-        } finally { h.unmount(); }
+        } finally {
+            h.unmount();
+        }
     });
 }
 
 test("a failed source read preserves the selected version and can be retried", async () => {
     const h = harness();
     h.behavior.list = async (input) => ({ tasks: input.activeOnly ? [] : [task("child")] });
-    h.behavior.get = async () => { throw new ApiError("来源任务不可用", { status: 404, reason: "not_found" }); };
+    h.behavior.get = async () => {
+        throw new ApiError("来源任务不可用", { status: 404, reason: "not_found" });
+    };
     try {
         await h.flush();
         await h.value.selectTask("parent");
@@ -498,7 +523,9 @@ test("a failed source read preserves the selected version and can be retried", a
         expect(h.value.selectedTaskId).toBe("parent");
         expect(h.value.error).toBe("");
         expect(h.creates).toHaveLength(0);
-    } finally { h.unmount(); }
+    } finally {
+        h.unmount();
+    }
 });
 
 test("generating a new version cancels pending source navigation", async () => {
@@ -519,7 +546,9 @@ test("generating a new version cancels pending source navigation", async () => {
         await h.flush();
         expect(h.value.selectedTaskId).toBe(`task-${h.creates[0].requestId}`);
         expect(h.value.tasks.some((item) => item.id === "parent")).toBe(false);
-    } finally { h.unmount(); }
+    } finally {
+        h.unmount();
+    }
 });
 
 test("switching accounts cancels source navigation and ignores the old response", async () => {
@@ -542,7 +571,9 @@ test("switching accounts cancels source navigation and ignores the old response"
         expect(h.value.tasks).toEqual([]);
         expect(h.value.selectedTaskId).toBe("");
         expect(h.creates).toHaveLength(0);
-    } finally { h.unmount(); }
+    } finally {
+        h.unmount();
+    }
 });
 
 test("list API forwards standalone filters, compacts empty cursors and preserves AbortSignal", async () => {

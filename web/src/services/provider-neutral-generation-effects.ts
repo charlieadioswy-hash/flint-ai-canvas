@@ -133,6 +133,7 @@ export function createProviderNeutralGenerationTaskEffectStore(
     dependencies: {
         now?: () => Date;
         leaseMs?: number;
+        requireCrossRealmLock?: boolean;
     } = {},
 ): GenerationTaskEffectStore {
     const now = dependencies.now ?? (() => new Date());

@@ -20,7 +20,15 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
     const partsToolsRef = useRef<HTMLDivElement>(null);
     const axesRef = useRef<SVGSVGElement>(null);
     const gridVisibleRef = useRef(true);
-    const controller = useRef<{ reset: () => void; rotate: (x: number, y: number) => void; setGridVisible: (visible: boolean) => void; setSkeletonVisible: (visible: boolean) => void; setPartVisible: (id: string, visible: boolean) => void; setPartsSeparated: (value: boolean) => void; updateAppearance: () => void } | null>(null);
+    const controller = useRef<{
+        reset: () => void;
+        rotate: (x: number, y: number) => void;
+        setGridVisible: (visible: boolean) => void;
+        setSkeletonVisible: (visible: boolean) => void;
+        setPartVisible: (id: string, visible: boolean) => void;
+        setPartsSeparated: (value: boolean) => void;
+        updateAppearance: () => void;
+    } | null>(null);
     const playback = useRef<ReturnType<typeof createModel3DPlayback> | null>(null);
     const partsKey = JSON.stringify(partNames || []);
     const identity = `${getActiveUserScope()}:${storageKey || url}:${format}`;
@@ -141,7 +149,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             controls.addEventListener("change", render);
             let inView = true;
             const syncVisibility = () => playback.current?.setVisible(!document.hidden && inView);
-            const visibilityObserver = new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; syncVisibility(); });
+            const visibilityObserver = new IntersectionObserver(([entry]) => {
+                inView = entry.isIntersecting;
+                syncVisibility();
+            });
             visibilityObserver.observe(host);
             document.addEventListener("visibilitychange", syncVisibility);
             const lost = (event: Event) => {
@@ -155,7 +166,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                     camera.position.set(2.7, 1.6, 3.2);
                     controls.target.set(0, 0, 0);
                     controls.update();
-                    if (partsSeparated) { frameParts?.(); return; }
+                    if (partsSeparated) {
+                        frameParts?.();
+                        return;
+                    }
                     render();
                 },
                 rotate: (x, y) => {
@@ -170,8 +184,15 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                     if (ground) ground.visible = visible;
                     render();
                 },
-                setSkeletonVisible: (visible) => { if (skeleton) skeleton.visible = visible; render(); },
-                setPartVisible: (id, visible) => { const part = partObjects.find((value) => value.id === id); if (part) part.object.visible = visible; render(); },
+                setSkeletonVisible: (visible) => {
+                    if (skeleton) skeleton.visible = visible;
+                    render();
+                },
+                setPartVisible: (id, visible) => {
+                    const part = partObjects.find((value) => value.id === id);
+                    if (part) part.object.visible = visible;
+                    render();
+                },
                 setPartsSeparated: (value) => {
                     if (value && !partsSeparated) {
                         assembledView.position.copy(camera.position);
@@ -232,7 +253,9 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             ground.visible = gridVisibleRef.current;
             scene.add(ground);
             let boneCount = 0;
-            model.traverse((object) => { if ((object as ThreeBone).isBone) boneCount++; });
+            model.traverse((object) => {
+                if ((object as ThreeBone).isBone) boneCount++;
+            });
             if (boneCount > 0) {
                 skeleton = new THREE.SkeletonHelper(model);
                 skeleton.visible = false;
@@ -245,7 +268,9 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 const bounds = new THREE.Box3().setFromObject(group);
                 if (partsSeparated) {
                     const meshBounds: Box3[] = [];
-                    group.traverse((object) => { if (object instanceof THREE.Mesh) meshBounds.push(new THREE.Box3().setFromObject(object)); });
+                    group.traverse((object) => {
+                        if (object instanceof THREE.Mesh) meshBounds.push(new THREE.Box3().setFromObject(object));
+                    });
                     const { center, distance } = frameModel3DParts(camera, meshBounds.length ? meshBounds : [bounds], Math.max(host.clientWidth, 1), Math.max(host.clientHeight, 1), partsToolsRef.current?.offsetHeight || 0);
                     controls.maxDistance = Math.max(15, distance * 3);
                     controls.target.copy(center);
@@ -258,7 +283,10 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 }
                 camera.updateProjectionMatrix();
                 controls.update();
-                if (ground) { scene.remove(ground); disposePrevisObject3D(ground); }
+                if (ground) {
+                    scene.remove(ground);
+                    disposePrevisObject3D(ground);
+                }
                 ground = createModel3DGround(bounds, new THREE.Color());
                 ground.visible = gridVisibleRef.current;
                 scene.add(ground);
@@ -266,7 +294,9 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
                 render();
             };
             setParts(partObjects.map(({ id, name, object }) => ({ id, name, visible: object.visible })));
-            playback.current = createModel3DPlayback(model, render, (state) => { if (active) setAnimation(state); });
+            playback.current = createModel3DPlayback(model, render, (state) => {
+                if (active) setAnimation(state);
+            });
             setClips(playback.current.clips);
             if (playback.current.clips.length) playback.current.select(0);
             syncVisibility();
@@ -350,40 +380,122 @@ export function Model3DViewer({ storageKey, url, format, theme, expanded = false
             {!error && loadedIdentity === identity ? (
                 <>
                     <div ref={partsToolsRef} className="absolute left-2 top-2 flex max-w-[calc(100%-6rem)] flex-col items-start gap-2" data-canvas-no-zoom>
-                    <div role="group" aria-label="3D 辅助显示" className="flex flex-wrap gap-1 rounded-[var(--r-md)] border p-1" style={{ background: panel, borderColor: stroke }}>
-                        <ToolButton
-                            size="sm"
-                            icon={<Grid2X2 />}
-                            label="网格"
-                            active={showGrid}
-                            aria-pressed={showGrid}
-                            aria-label="显示地面网格"
-                            title="地面网格仅作方向参考，不代表实际尺寸"
-                            onClick={() => {
-                                const visible = !showGrid;
-                                gridVisibleRef.current = visible;
-                                setShowGrid(visible);
-                                controller.current?.setGridVisible(visible);
-                            }}
-                        />
-                        <ToolButton size="sm" icon={<Axis3D />} label="坐标" active={showAxes} aria-pressed={showAxes} aria-label="显示 XYZ 方向指示" onClick={() => setShowAxes((value) => !value)} />
-                        {hasSkeleton ? <ToolButton size="sm" icon={<Bone />} label="骨骼" active={showSkeleton} aria-pressed={showSkeleton} onClick={() => { setShowSkeleton(!showSkeleton); controller.current?.setSkeletonVisible(!showSkeleton); }} /> : null}
-                        {parts.length > 1 && clips.length === 0 ? <ToolButton size="sm" icon={<Boxes />} label={separated ? "还原组装" : "分离展示"} active={separated} aria-pressed={separated} title="保持原有结构与朝向，拉开部件间隙；仅影响预览" onClick={() => { const value = !separated; setSeparated(value); controller.current?.setPartsSeparated(value); }} /> : null}
-                    </div>
-                    {parts.length > 0 ? <details className="max-w-full rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} onToggle={() => { if (separated) controller.current?.setPartsSeparated(true); }}>
-                        <summary className="cursor-pointer">部件显隐 · {parts.length}</summary>
-                        <div className="mt-2 grid max-h-40 gap-2 overflow-auto" data-canvas-wheel-scroll>
-                            {parts.map((part) => <label key={part.id} className="flex items-center gap-2"><input type="checkbox" checked={part.visible} onChange={(event) => { const visible = event.target.checked; controller.current?.setPartVisible(part.id, visible); setParts((current) => current.map((item) => item.id === part.id ? { ...item, visible } : item)); }} /><span className="truncate" title={part.name}>{part.name}</span></label>)}
+                        <div role="group" aria-label="3D 辅助显示" className="flex flex-wrap gap-1 rounded-[var(--r-md)] border p-1" style={{ background: panel, borderColor: stroke }}>
+                            <ToolButton
+                                size="sm"
+                                icon={<Grid2X2 />}
+                                label="网格"
+                                active={showGrid}
+                                aria-pressed={showGrid}
+                                aria-label="显示地面网格"
+                                title="地面网格仅作方向参考，不代表实际尺寸"
+                                onClick={() => {
+                                    const visible = !showGrid;
+                                    gridVisibleRef.current = visible;
+                                    setShowGrid(visible);
+                                    controller.current?.setGridVisible(visible);
+                                }}
+                            />
+                            <ToolButton size="sm" icon={<Axis3D />} label="坐标" active={showAxes} aria-pressed={showAxes} aria-label="显示 XYZ 方向指示" onClick={() => setShowAxes((value) => !value)} />
+                            {hasSkeleton ? (
+                                <ToolButton
+                                    size="sm"
+                                    icon={<Bone />}
+                                    label="骨骼"
+                                    active={showSkeleton}
+                                    aria-pressed={showSkeleton}
+                                    onClick={() => {
+                                        setShowSkeleton(!showSkeleton);
+                                        controller.current?.setSkeletonVisible(!showSkeleton);
+                                    }}
+                                />
+                            ) : null}
+                            {parts.length > 1 && clips.length === 0 ? (
+                                <ToolButton
+                                    size="sm"
+                                    icon={<Boxes />}
+                                    label={separated ? "还原组装" : "分离展示"}
+                                    active={separated}
+                                    aria-pressed={separated}
+                                    title="保持原有结构与朝向，拉开部件间隙；仅影响预览"
+                                    onClick={() => {
+                                        const value = !separated;
+                                        setSeparated(value);
+                                        controller.current?.setPartsSeparated(value);
+                                    }}
+                                />
+                            ) : null}
                         </div>
-                    </details> : null}
+                        {parts.length > 0 ? (
+                            <details
+                                className="max-w-full rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]"
+                                style={{ background: panel, borderColor: stroke }}
+                                onToggle={() => {
+                                    if (separated) controller.current?.setPartsSeparated(true);
+                                }}
+                            >
+                                <summary className="cursor-pointer">部件显隐 · {parts.length}</summary>
+                                <div className="mt-2 grid max-h-40 gap-2 overflow-auto" data-canvas-wheel-scroll>
+                                    {parts.map((part) => (
+                                        <label key={part.id} className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={part.visible}
+                                                onChange={(event) => {
+                                                    const visible = event.target.checked;
+                                                    controller.current?.setPartVisible(part.id, visible);
+                                                    setParts((current) => current.map((item) => (item.id === part.id ? { ...item, visible } : item)));
+                                                }}
+                                            />
+                                            <span className="truncate" title={part.name}>
+                                                {part.name}
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </details>
+                        ) : null}
                     </div>
-                    {clips.length > 0 ? <div className="absolute bottom-10 left-2 right-2 flex flex-wrap items-center gap-2 rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} data-canvas-no-zoom>
-                        <IconButton icon={animation.playing ? Pause : Play} aria-label={animation.playing ? "暂停动画" : "播放动画"} title={animation.playing ? "暂停动画" : "播放动画"} onClick={() => { if (animation.playing) playback.current?.pause(); else playback.current?.play(); }} />
-                        <select aria-label="预览动作" className="min-w-0 max-w-[40%] bg-transparent" value={animation.index} onChange={(event) => playback.current?.select(Number(event.target.value))}>{clips.map((clip, i) => <option key={i} value={i}>{clip.name}</option>)}</select>
-                        <input aria-label="动画进度" className="min-w-16 flex-1" type="range" min={0} max={animation.duration || 1} step={0.01} value={animation.time} onChange={(event) => playback.current?.seek(Number(event.target.value))} />
-                        <span>{animation.time.toFixed(1)} / {animation.duration.toFixed(1)}s</span>
-                        <select aria-label="播放速度" className="bg-transparent" value={speed} onChange={(event) => { const value = Number(event.target.value); setSpeed(value); playback.current?.setSpeed(value); }}>{[0.5, 1, 1.5, 2].map((value) => <option key={value} value={value}>{value}×</option>)}</select>
-                    </div> : null}
+                    {clips.length > 0 ? (
+                        <div className="absolute bottom-10 left-2 right-2 flex flex-wrap items-center gap-2 rounded-[var(--r-md)] border p-2 text-[var(--fs-caption)]" style={{ background: panel, borderColor: stroke }} data-canvas-no-zoom>
+                            <IconButton
+                                icon={animation.playing ? Pause : Play}
+                                aria-label={animation.playing ? "暂停动画" : "播放动画"}
+                                title={animation.playing ? "暂停动画" : "播放动画"}
+                                onClick={() => {
+                                    if (animation.playing) playback.current?.pause();
+                                    else playback.current?.play();
+                                }}
+                            />
+                            <select aria-label="预览动作" className="min-w-0 max-w-[40%] bg-transparent" value={animation.index} onChange={(event) => playback.current?.select(Number(event.target.value))}>
+                                {clips.map((clip, i) => (
+                                    <option key={i} value={i}>
+                                        {clip.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <input aria-label="动画进度" className="min-w-16 flex-1" type="range" min={0} max={animation.duration || 1} step={0.01} value={animation.time} onChange={(event) => playback.current?.seek(Number(event.target.value))} />
+                            <span>
+                                {animation.time.toFixed(1)} / {animation.duration.toFixed(1)}s
+                            </span>
+                            <select
+                                aria-label="播放速度"
+                                className="bg-transparent"
+                                value={speed}
+                                onChange={(event) => {
+                                    const value = Number(event.target.value);
+                                    setSpeed(value);
+                                    playback.current?.setSpeed(value);
+                                }}
+                            >
+                                {[0.5, 1, 1.5, 2].map((value) => (
+                                    <option key={value} value={value}>
+                                        {value}×
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    ) : null}
                     <IconButton
                         icon={RotateCcw}
                         variant="outline"

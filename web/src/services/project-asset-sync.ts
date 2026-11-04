@@ -2,6 +2,7 @@ import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset
 import { canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { readImageMeta } from "@/lib/image-utils";
 import { generationAssetId } from "@/lib/generation-asset-id";
+import { parseAssetStorageDocumentRecovering } from "@/lib/asset-storage-revision";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError } from "@/services/api/request";
 import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
@@ -22,7 +23,7 @@ import { hasRemoteUserDataSyncSession, loadAssetsForUse, saveRemoteUserDataNow, 
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeAssetCategory } from "@/lib/asset-category";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { useAssetStore, type AssetCategory, type AssetStatus, type NewAsset } from "@/stores/use-asset-store";
+import { ASSET_STORE_KEY, flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetStatus, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -464,9 +465,10 @@ async function storedGenerationMedia(dataUrl: string, effectKey: string, mediaTy
 async function cachedRemoteGenerationVideo(video: NonNullable<BackendGenerationResult["video"]>, signal?: AbortSignal) {
     if (!video.storageKey) throw new Error("生成视频缺少云端资源标识");
     throwIfAborted(signal);
-    const blob = await getCachedResourceBlob(video.storageKey);
-    throwIfAborted(signal);
-    if (!blob) throw new Error("生成视频资源缓存失败，未标记为成功");
+    // 后端任务成功即代表视频已作为资源持久化；登记素材只需要可用的展示地址。
+    // 整段下载到浏览器只是本地缓存加速层：大视频超时或跨域下载失败不能让已落库的作品在页面上“消失”，
+    // 所以缓存放到后台预热，不阻塞素材登记或画布节点回写。
+    void getCachedResourceBlob(video.storageKey).catch(() => undefined);
     const url = await resolveMediaUrl(video.storageKey, video.dataUrl);
     throwIfAborted(signal);
     if (!url) throw new Error("生成视频资源地址为空，未标记为成功");
@@ -476,8 +478,8 @@ async function cachedRemoteGenerationVideo(video: NonNullable<BackendGenerationR
         width: video.width || 0,
         height: video.height || 0,
         durationMs: video.durationMs,
-        bytes: video.bytes || blob.size,
-        mimeType: video.mimeType || blob.type || "video/mp4",
+        bytes: video.bytes || 0,
+        mimeType: video.mimeType || "video/mp4",
     };
 }
 
@@ -634,7 +636,7 @@ const materializeGenerationOutput: MaterializeGenerationTaskOutput = createIdemp
 function remoteGenerationTaskMaterializer() {
     return createGenerationTaskMaterializer({
         // 每个页面实例持有自己的租约；共享浏览器 storage + Web Lock 提供跨标签原子权威。
-        effects: createProviderNeutralGenerationTaskEffectStore(),
+        effects: createProviderNeutralGenerationTaskEffectStore({ requireCrossRealmLock: true }),
         materializeOutput: materializeGenerationOutput,
     });
 }
@@ -643,15 +645,35 @@ function generationTaskMaterializer(task: GenerationTask) {
     return remoteGenerationTaskMaterializer();
 }
 
+/** 生成结果对应的素材已被用户从素材库删除：这是终态，重新获取不会恢复，也不能复活素材。 */
+export class GenerationOutputAssetDeletedError extends Error {
+    constructor() {
+        super("生成任务输出素材已被用户删除");
+        this.name = "GenerationOutputAssetDeletedError";
+    }
+}
+
+export function isGenerationOutputAssetDeletedError(error: unknown): boolean {
+    for (let current = error, depth = 0; current && depth < 5; current = (current as { cause?: unknown }).cause, depth += 1) {
+        if (current instanceof GenerationOutputAssetDeletedError) return true;
+        if (current instanceof Error && (current.message === "生成任务输出素材已被用户删除" || current.message === "生成素材已被用户删除")) return true;
+    }
+    return false;
+}
+
 export async function materializeGenerationTaskAssets(task: GenerationTask, signal?: AbortSignal): Promise<GenerationTask> {
-    throwIfAborted(signal);
+    const scope = getActiveUserScope();
+    const ensureCurrentScope = () => {
+        throwIfAborted(signal);
+        if (scope !== getActiveUserScope()) throw new DOMException("账号已切换，无法恢复生成素材", "AbortError");
+    };
     const projected = projectGenerationTaskResult(task);
     const outputs = projected.outputs || [];
-    if (task.status === "succeeded" && outputs.length && outputs.every((output) => output.providerArtifactRef?.startsWith("resource:"))) {
+    let registeredTask: GenerationTask | undefined;
+    if (typeof window !== "undefined" && !globalThis.navigator?.locks && task.status === "succeeded" && outputs.length && outputs.every((output) => output.providerArtifactRef?.startsWith("resource:"))) {
         const identities = outputs.map((output) => output.materializedAssetId || generationAssetId(materializeEffectKey(task.id, output.outputIndex)));
-        // 后端完成交易已登记的资源只需读取素材；不能再次依赖浏览器 Web Lock / Web Crypto 入库。
         const assets = await loadAssetsForUse(identities, { allowMissing: true });
-        throwIfAborted(signal);
+        ensureCurrentScope();
         const registered = outputs.map((output, index) => {
             const asset = assets.find((candidate) => candidate.id === identities[index]);
             if (!asset) return undefined;
@@ -659,10 +681,54 @@ export async function materializeGenerationTaskAssets(task: GenerationTask, sign
             return { ...output, materializedAssetId: asset.id };
         });
         if (registered.every((output): output is GenerationTaskOutput & { materializedAssetId: string } => Boolean(output)) && typeof window !== "undefined" && !globalThis.navigator?.locks) {
-            return { ...projected, outputs: registered, resultState: "READY" };
+            registeredTask = { ...projected, outputs: registered, resultState: "READY" };
         }
     }
-    return generationTaskMaterializer(task).materialize(projected, signal);
+    const materialized = registeredTask ?? (await generationTaskMaterializer(task).materialize(projected, signal));
+    ensureCurrentScope();
+    const assetIds = [...new Set((materialized.outputs || []).map((output) => output.materializedAssetId).filter((id): id is string => Boolean(id)))];
+    if (!assetIds.length) return materialized;
+    const readTombstones = async () => {
+        await flushAssetStorePersistence();
+        ensureCurrentScope();
+        const document = parseAssetStorageDocumentRecovering(await localForageStorageForScope(scope).getItem(ASSET_STORE_KEY)).document;
+        ensureCurrentScope();
+        return document.tombstones.assets;
+    };
+
+    const initialTombstones = await readTombstones();
+    if (assetIds.some((id) => Boolean(initialTombstones[id]))) throw new GenerationOutputAssetDeletedError();
+
+    const loadedIds = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
+    const missingIds = assetIds.filter((id) => !loadedIds.has(id));
+    if (missingIds.length) {
+        try {
+            await loadAssetsForUse(missingIds);
+        } catch (error) {
+            // 本机与云端都找不到时不立即报错：物化记录可能早于素材落盘，或素材从未同步成功。
+            // 下面按任务结果重新登记同一 ID 的素材；用户删除的素材有墓碑，不会被复活。
+            if (error instanceof Error && error.name === "AbortError") throw error;
+        }
+    }
+    ensureCurrentScope();
+    const tombstones = await readTombstones();
+    if (assetIds.some((id) => Boolean(tombstones[id]))) throw new GenerationOutputAssetDeletedError();
+
+    const availableIds = new Set(useAssetStore.getState().assets.map((asset) => asset.id));
+    for (const output of materialized.outputs || []) {
+        if (!output.materializedAssetId || availableIds.has(output.materializedAssetId)) continue;
+        // 物化 effect 已完成但素材缺失：按同一 effectKey 重新登记。只在素材 ID 正是该 effectKey 派生的 ID 时补登，
+        // 结果与原记录一致；来历不明的 ID 不重建，避免凭空生成新素材。
+        const effectKey = materializeEffectKey(task.id, output.outputIndex);
+        if ((await generationAssetId(effectKey)) !== output.materializedAssetId) throw new Error("生成任务输出素材不存在");
+        const result = await materializeGenerationOutput({ task: projected, output, effectKey, signal });
+        ensureCurrentScope();
+        if (result.materializedAssetId !== output.materializedAssetId) throw new Error("生成任务输出素材不存在");
+        availableIds.add(result.materializedAssetId);
+    }
+    const unavailableId = assetIds.find((id) => !new Set(useAssetStore.getState().assets.map((asset) => asset.id)).has(id));
+    if (unavailableId) throw new Error("生成任务输出素材不存在");
+    return materialized;
 }
 
 export function attachGenerationTaskNode(task: GenerationTask, nodeId: string, outputIndex: number, consumer: Parameters<ReturnType<typeof generationTaskMaterializer>["attachNode"]>[3], signal?: AbortSignal) {

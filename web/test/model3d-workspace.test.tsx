@@ -94,7 +94,9 @@ async function fixture(dark = false, existingTask = task(), busy = false, findSe
                             setCount={setCount}
                             tasks={[existingTask]}
                             selectedTaskId={existingTask.id}
-                            selectTask={async (id) => { calls.select.push(id); }}
+                            selectTask={async (id) => {
+                                calls.select.push(id);
+                            }}
                             submitting={false}
                             uploading={busy}
                             hasMore={false}
@@ -102,12 +104,19 @@ async function fixture(dark = false, existingTask = task(), busy = false, findSe
                             generate={async (...args) => {
                                 calls.generate.push(args);
                             }}
-                            processModel={async (processing) => { calls.process.push(processing); }}
-                            findSegmentation={async (id) => { calls.segmentation.push(id); return findSegmentation(id); }}
+                            processModel={async (processing) => {
+                                calls.process.push(processing);
+                            }}
+                            findSegmentation={async (id) => {
+                                calls.segmentation.push(id);
+                                return findSegmentation(id);
+                            }}
                             refresh={async () => {
                                 ++calls.refresh;
                             }}
-                            refreshTask={async (id) => { calls.refreshTask.push(id); }}
+                            refreshTask={async (id) => {
+                                calls.refreshTask.push(id);
+                            }}
                             recover={async () => {}}
                             loadMore={async () => {}}
                             uploadImage={async () => ({ resourceId: "image" })}
@@ -140,7 +149,11 @@ async function fixture(dark = false, existingTask = task(), busy = false, findSe
 
 for (const outcome of ["found", "missing", "error"] as const) {
     test(`segmentation ${outcome}: existing results bypass paid confirmation, new tasks require it`, async () => {
-        const original = task({ scope: "standalone", status: "succeeded", result: { assetId: "asset", resourceId: "model", storageKey: "resource:model", url: "/api/resources/model/file", fileName: "model.glb", mimeType: "model/gltf-binary", bytes: 100, format: "glb" } });
+        const original = task({
+            scope: "standalone",
+            status: "succeeded",
+            result: { assetId: "asset", resourceId: "model", storageKey: "resource:model", url: "/api/resources/model/file", fileName: "model.glb", mimeType: "model/gltf-binary", bytes: 100, format: "glb" },
+        });
         const f = await fixture(false, original, false, async () => {
             if (outcome === "error") throw new Error("拆分结果暂时无法读取");
             return outcome === "found";
@@ -163,7 +176,9 @@ for (const outcome of ["found", "missing", "error"] as const) {
                 if (outcome === "error") expect(f.host.textContent).toContain("暂时无法读取");
             }
             expect(f.calls.generate).toHaveLength(0);
-        } finally { await f.dispose(); }
+        } finally {
+            await f.dispose();
+        }
     });
 }
 
@@ -182,7 +197,9 @@ test("rig check results expose rigging only after confirmation and never start g
         await f.click("开始处理");
         expect(f.calls.process).toEqual([{ operation: "rig", sourceTaskId: "task", model: "v3.0-20260909", rigType: "biped", spec: "tripo", outFormat: "glb" }]);
         expect(f.calls.generate).toHaveLength(0);
-    } finally { await f.dispose(); }
+    } finally {
+        await f.dispose();
+    }
 });
 
 test("viewing a source delegates to task selection without a separate refresh or generation", async () => {
@@ -194,7 +211,9 @@ test("viewing a source delegates to task selection without a separate refresh or
         expect(f.calls.refreshTask).toHaveLength(0);
         expect(f.calls.process).toHaveLength(0);
         expect(f.calls.generate).toHaveLength(0);
-    } finally { await f.dispose(); }
+    } finally {
+        await f.dispose();
+    }
 });
 
 for (const dark of [false, true]) {

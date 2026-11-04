@@ -7,39 +7,46 @@ import { createModel3DPartsLayout, frameModel3DParts } from "@/components/assets
 
 test("separated model fits below controls and above the footer across preview widths", () => {
     const bounds = new Box3(new Vector3(-2, -1, -0.5), new Vector3(2, 1, 0.5));
-    for (const [width, height, toolsHeight] of [[360, 340, 85], [660, 340, 85], [360, 340, 230], [1280, 720, 85]]) for (const position of [new Vector3(0, 0, 5), new Vector3(2.7, 1.6, 3.2), new Vector3(5, 0, 0)]) {
-        const camera = new PerspectiveCamera(40, width / height, 0.01, 100);
-        camera.position.copy(position);
-        camera.lookAt(bounds.getCenter(new Vector3()));
-        const direction = camera.getWorldDirection(new Vector3());
-        frameModel3DParts(camera, [bounds], width, height, toolsHeight);
-        expect(camera.getWorldDirection(new Vector3()).distanceTo(direction)).toBeLessThan(1e-12);
-        for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
-            const projected = new Vector3(x, y, z).project(camera);
-            const screenY = (1 - projected.y) * height / 2;
-            expect(Math.abs(projected.x)).toBeLessThan(1);
-            expect(screenY).toBeGreaterThan(toolsHeight + 8);
-            expect(screenY).toBeLessThan(height - 32);
+    for (const [width, height, toolsHeight] of [
+        [360, 340, 85],
+        [660, 340, 85],
+        [360, 340, 230],
+        [1280, 720, 85],
+    ])
+        for (const position of [new Vector3(0, 0, 5), new Vector3(2.7, 1.6, 3.2), new Vector3(5, 0, 0)]) {
+            const camera = new PerspectiveCamera(40, width / height, 0.01, 100);
+            camera.position.copy(position);
+            camera.lookAt(bounds.getCenter(new Vector3()));
+            const direction = camera.getWorldDirection(new Vector3());
+            frameModel3DParts(camera, [bounds], width, height, toolsHeight);
+            expect(camera.getWorldDirection(new Vector3()).distanceTo(direction)).toBeLessThan(1e-12);
+            for (const x of [bounds.min.x, bounds.max.x])
+                for (const y of [bounds.min.y, bounds.max.y])
+                    for (const z of [bounds.min.z, bounds.max.z]) {
+                        const projected = new Vector3(x, y, z).project(camera);
+                        const screenY = ((1 - projected.y) * height) / 2;
+                        expect(Math.abs(projected.x)).toBeLessThan(1);
+                        expect(screenY).toBeGreaterThan(toolsHeight + 8);
+                        expect(screenY).toBeLessThan(height - 32);
+                    }
         }
-    }
 });
 
 test("exploded assembly framing uses occupied parts without shrinking to empty outer corners", () => {
-    const boxes = [
-        new Box3(new Vector3(-0.3, -1.5, -0.3), new Vector3(0.3, 1.5, 0.3)),
-        new Box3(new Vector3(-1.5, 0, -0.3), new Vector3(1.5, 0.3, 0.3)),
-    ];
+    const boxes = [new Box3(new Vector3(-0.3, -1.5, -0.3), new Vector3(0.3, 1.5, 0.3)), new Box3(new Vector3(-1.5, 0, -0.3), new Vector3(1.5, 0.3, 0.3))];
     const camera = new PerspectiveCamera(40, 660 / 370, 0.01, 100);
     camera.position.set(2.7, 1.6, 3.2);
     camera.lookAt(0, 0, 0);
     frameModel3DParts(camera, boxes, 660, 370, 85);
     const screenYs: number[] = [];
     for (const box of boxes) {
-        for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
-            const projected = new Vector3(x, y, z).project(camera);
-            expect(Math.abs(projected.x)).toBeLessThan(1);
-            screenYs.push((1 - projected.y) * 185);
-        }
+        for (const x of [box.min.x, box.max.x])
+            for (const y of [box.min.y, box.max.y])
+                for (const z of [box.min.z, box.max.z]) {
+                    const projected = new Vector3(x, y, z).project(camera);
+                    expect(Math.abs(projected.x)).toBeLessThan(1);
+                    screenYs.push((1 - projected.y) * 185);
+                }
     }
     expect(Math.min(...screenYs)).toBeGreaterThan(101);
     expect(Math.max(...screenYs)).toBeLessThan(338);
@@ -60,25 +67,64 @@ test("processing prerequisites follow completed source kind and matching rig pre
 
 test("animation updates geometry only while playing, pauses offscreen and releases frames", () => {
     const root = new Group();
-    const part = new Group(); part.name = "moving"; root.add(part);
+    const part = new Group();
+    part.name = "moving";
+    root.add(part);
     root.animations = [new AnimationClip("walk", 2, [new VectorKeyframeTrack("moving.position", [0, 2], [0, 0, 0, 2, 0, 0])])];
-    const frames = new Map<number, FrameRequestCallback>(); let id = 0; let draws = 0;
-    const player = createModel3DPlayback(root, () => draws++, () => {}, (callback) => { frames.set(++id, callback); return id; }, (value) => { frames.delete(value); });
-    const tick = (time: number) => { const next = frames.entries().next().value; if (next) { frames.delete(next[0]); next[1](time); } };
+    const frames = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    let draws = 0;
+    const player = createModel3DPlayback(
+        root,
+        () => draws++,
+        () => {},
+        (callback) => {
+            frames.set(++id, callback);
+            return id;
+        },
+        (value) => {
+            frames.delete(value);
+        },
+    );
+    const tick = (time: number) => {
+        const next = frames.entries().next().value;
+        if (next) {
+            frames.delete(next[0]);
+            next[1](time);
+        }
+    };
     expect(frames.size).toBe(0);
-    player.play(); tick(1000); tick(1100);
+    player.play();
+    tick(1000);
+    tick(1100);
     expect(part.position.x).toBeCloseTo(0.1);
-    player.pause(); const pausedDraws = draws;
-    expect(frames.size).toBe(0); tick(1200); expect(draws).toBe(pausedDraws);
-    player.seek(1); expect(part.position.x).toBeCloseTo(1);
-    player.play(); player.setVisible(false); expect(frames.size).toBe(0);
-    player.setVisible(true); tick(9000); expect(part.position.x).toBeCloseTo(1);
-    player.dispose(); expect(frames.size).toBe(0);
-    player.play(); expect(frames.size).toBe(0);
+    player.pause();
+    const pausedDraws = draws;
+    expect(frames.size).toBe(0);
+    tick(1200);
+    expect(draws).toBe(pausedDraws);
+    player.seek(1);
+    expect(part.position.x).toBeCloseTo(1);
+    player.play();
+    player.setVisible(false);
+    expect(frames.size).toBe(0);
+    player.setVisible(true);
+    tick(9000);
+    expect(part.position.x).toBeCloseTo(1);
+    player.dispose();
+    expect(frames.size).toBe(0);
+    player.play();
+    expect(frames.size).toBe(0);
 });
 
 test("part controls preserve hierarchy and do not rename source nodes", () => {
-    const model = new Group(); const part = new Group(); part.name = "tripo_part_0"; const child = new Group(); child.name = part.name; part.add(child); model.add(part);
+    const model = new Group();
+    const part = new Group();
+    part.name = "tripo_part_0";
+    const child = new Group();
+    child.name = part.name;
+    part.add(child);
+    model.add(part);
     const parts = model3DPartObjects(model, ["tripo_part_0"]);
     expect(parts.map((item) => item.name)).toEqual(["tripo_part_0"]);
     parts[0].object.visible = false;
@@ -94,10 +140,22 @@ test("exploded parts keep the assembly structure, orientation and size beneath t
     model.rotation.set(0.2, 0.5, -0.1);
     const geometry = new BoxGeometry(0.5, 0.5, 0.5);
     const material = new MeshBasicMaterial();
-    const centers = [[0, 0, 0], [0, 1.4, 0], [-1.4, 0.5, 0], [1.4, 0.5, 0], [-0.4, -1.4, 0.25], [0.4, -1.4, 0.25]];
+    const centers = [
+        [0, 0, 0],
+        [0, 1.4, 0],
+        [-1.4, 0.5, 0],
+        [1.4, 0.5, 0],
+        [-0.4, -1.4, 0.25],
+        [0.4, -1.4, 0.25],
+    ];
     const parts = centers.map(([x, y, z], index) => {
-        const parent = new Group(); parent.rotation.z = index * 0.1; model.add(parent);
-        const object = new Mesh(geometry, material); object.name = `part_${index}`; object.position.set(x, y, z); parent.add(object);
+        const parent = new Group();
+        parent.rotation.z = index * 0.1;
+        model.add(parent);
+        const object = new Mesh(geometry, material);
+        object.name = `part_${index}`;
+        object.position.set(x, y, z);
+        parent.add(object);
         return { object };
     });
     model.updateMatrixWorld(true);
@@ -128,13 +186,24 @@ test("exploded parts keep the assembly structure, orientation and size beneath t
                 expect(object.geometry).toBe(geometry);
             });
         }
-    } finally { geometry.dispose(); material.dispose(); }
+    } finally {
+        geometry.dispose();
+        material.dispose();
+    }
 });
 
 test("explosion creates gaps at touching parts using geometry centers even when origins coincide", () => {
     const root = new Group();
     const material = new MeshBasicMaterial();
-    const parts = [[0, 0, 0], [-1, 0, 0], [1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(([x, y, z]) => {
+    const parts = [
+        [0, 0, 0],
+        [-1, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ].map(([x, y, z]) => {
         const object = new Mesh(new BoxGeometry(1, 1, 1).translate(x, y, z), material);
         root.add(object);
         return { object };
@@ -152,5 +221,8 @@ test("explosion creates gaps at touching parts using geometry centers even when 
             expect(object.position.length()).toBe(0);
             expect(new Box3().setFromObject(object).equals(originalBounds[i])).toBe(true);
         });
-    } finally { parts.forEach(({ object }) => object.geometry.dispose()); material.dispose(); }
+    } finally {
+        parts.forEach(({ object }) => object.geometry.dispose());
+        material.dispose();
+    }
 });

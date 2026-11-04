@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { resolveCanvasAppearance, resolveCanvasGridColor, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { resolveCanvasPointerIntent } from "@/lib/canvas/canvas-selection";
 import { isDiscreteCanvasWheel, wheelDeltaToPixels } from "@/lib/canvas/canvas-wheel";
+import { canvasWheelBelongsToViewport, canvasWheelIntentTarget, createCanvasWheelIntent } from "@/lib/canvas/canvas-wheel-intent";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { applyCanvasLiveViewport, CANVAS_GRID_BLEED, canvasGridMetrics, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -18,6 +19,7 @@ type CanvasViewportProps = {
     onViewportPreviewChange?: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     boxSelectEnabled?: boolean;
+    panOverNodes?: boolean;
     onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
     onContextMenu?: (event: React.MouseEvent) => void;
@@ -56,6 +58,7 @@ export function CanvasViewport({
     onViewportPreviewChange,
     onCanvasMouseDown,
     boxSelectEnabled = false,
+    panOverNodes = false,
     onCanvasDoubleClick,
     onCanvasDeselect,
     onContextMenu,
@@ -87,6 +90,7 @@ export function CanvasViewport({
     const interactingRef = useRef(false);
     const touchPointsRef = useRef(new Map<number, TouchPoint>());
     const pinchStateRef = useRef<PinchState>({ active: false, pointerIds: [-1, -1], initialDistance: 1, worldX: 0, worldY: 0, initialScale: viewport.k });
+    const wheelIntentRef = useRef(createCanvasWheelIntent<Element>());
     const spacePressedRef = useRef(false);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
@@ -188,6 +192,7 @@ export function CanvasViewport({
         };
 
         const handleBlur = () => {
+            wheelIntentRef.current.reset();
             spacePressedRef.current = false;
             setIsSpacePressed(false);
         };
@@ -204,20 +209,31 @@ export function CanvasViewport({
 
     const handleWheel = useCallback(
         (event: WheelEvent) => {
+            const container = containerRef.current;
             const target = event.target instanceof Element ? event.target : null;
+            if (!container || event.defaultPrevented || !canvasWheelBelongsToViewport(target, container)) return;
+            if (target?.closest(".ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,[role='dialog'],[role='menu'],[role='listbox'],[data-canvas-resource-mention-menu]")) {
+                if (event.ctrlKey || event.metaKey) event.preventDefault();
+                return;
+            }
+
             const deltaX = wheelDeltaToPixels(event.deltaX, event.deltaMode);
             const deltaY = wheelDeltaToPixels(event.deltaY, event.deltaMode);
             const absX = Math.abs(deltaX);
             const absY = Math.abs(deltaY);
             const isPinchZoom = event.ctrlKey || event.metaKey;
-            if (target?.closest(CANVAS_WHEEL_IGNORE_SELECTOR)) {
-                // 浮层和编辑区保留滚动；修饰键不能缩放背景画布或浏览器页面。
+            const intentTarget = canvasWheelIntentTarget(target);
+            const forceCanvas = isPinchZoom || event.shiftKey || absX > absY;
+            const wheelOwner = wheelIntentRef.current.resolve(intentTarget, event, performance.now(), forceCanvas);
+            if (intentTarget && wheelOwner === "scroll") return;
+            if (!intentTarget && target?.closest(CANVAS_WHEEL_IGNORE_SELECTOR)) {
                 const horizontal = event.shiftKey || absX > absY;
                 const horizontalDelta = event.shiftKey && absX < 1 ? deltaY : deltaX;
                 if (isPinchZoom || (horizontal && !canScrollHorizontally(target, containerRef.current, horizontalDelta))) event.preventDefault();
                 return;
             }
 
+            // Modifier wheel/pinch is canvas zoom only inside this canvas or its prompt panel.
             event.preventDefault();
             if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY) || (!deltaX && !deltaY)) return;
             interactingRef.current = true;
@@ -236,7 +252,7 @@ export function CanvasViewport({
                 return;
             }
 
-            const rect = containerRectRef.current || containerRef.current?.getBoundingClientRect();
+            const rect = containerRectRef.current || container.getBoundingClientRect();
             if (!rect) return;
             const mouseX = event.clientX - rect.left;
             const mouseY = event.clientY - rect.top;
@@ -263,7 +279,7 @@ export function CanvasViewport({
         const target = event.target instanceof Element ? event.target : null;
         // AntD 浮层通过 Portal 渲染到节点 DOM 之外；若不统一排除，会被误判为画布空白并捕获指针。
         if (target?.closest(CANVAS_POINTER_IGNORE_SELECTOR)) return;
-        const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
+        const isBackgroundClick = panOverNodes || !target?.closest("[data-node-id],[data-connection-id]");
         const isTouch = event.pointerType === "touch";
 
         const pointerIntent = resolveCanvasPointerIntent({
@@ -434,15 +450,25 @@ export function CanvasViewport({
         const updateRect = () => {
             containerRectRef.current = container.getBoundingClientRect();
         };
+        const handleWheelPointerMove = (event: PointerEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            const belongs = canvasWheelBelongsToViewport(target, container);
+            const promptEditorModal = target?.closest(".canvas-prompt-editor-modal");
+            const popup = target?.closest(".ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown,[role='dialog'],[role='menu'],[role='listbox'],[data-canvas-resource-mention-menu]");
+            const intentTarget = belongs && (!popup || promptEditorModal) ? canvasWheelIntentTarget(target) : null;
+            wheelIntentRef.current.move(intentTarget, event, performance.now());
+        };
         updateRect();
         const observer = new ResizeObserver(updateRect);
         observer.observe(container);
         window.addEventListener("resize", updateRect);
-        container.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+        window.addEventListener("pointermove", handleWheelPointerMove, true);
+        window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
         return () => {
             observer.disconnect();
             window.removeEventListener("resize", updateRect);
-            container.removeEventListener("wheel", handleWheel, { capture: true });
+            window.removeEventListener("pointermove", handleWheelPointerMove, true);
+            window.removeEventListener("wheel", handleWheel, { capture: true });
         };
     }, [interactive, containerRef, handleWheel]);
 

@@ -311,7 +311,7 @@ func TestLiblibLoRAProjectStyleLogicalRoutingQuoteAndRetryKeepAdmissionRevision(
 	if err := json.Unmarshal([]byte(private.InputJSON), &retryInput); err != nil {
 		t.Fatal(err)
 	}
-	quote, err := svc.QuoteLogicalModel(logical.ID, ModelRequestIntentFromTaskInput(retryInput, task.Type, task.Operation))
+	quote, err := svc.QuoteLogicalModel("user", logical.ID, ModelRequestIntentFromTaskInput(retryInput, task.Type, task.Operation))
 	if err != nil || quote.AmountMicrocredits != 100 {
 		t.Fatalf("admitted LoRA and quote diverged: %#v %v", quote, err)
 	}

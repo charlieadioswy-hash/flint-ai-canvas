@@ -9,6 +9,7 @@ import { parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { generationAssetId } from "@/lib/generation-asset-id";
+export { generationAssetId } from "@/lib/generation-asset-id";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { cleanupUnusedImages, collectImageStorageKeys, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/services/file-storage";

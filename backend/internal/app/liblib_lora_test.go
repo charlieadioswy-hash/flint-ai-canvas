@@ -174,7 +174,7 @@ func TestLiblibLoRAQuoteValidatesSelectionsAndKeepsPrice(t *testing.T) {
 	}
 	for _, networks := range []any{[]any{map[string]any{"modelId": liblibLoRATestID, "weight": -2}}, []any{}} {
 		intent := ModelRequestIntent{Capability: "image", Inputs: map[string]int{"image": 1}, Options: map[string]any{"count": 1}, ProviderOptions: map[string]map[string]any{protocol.LiblibImageProtocolID: {"additionalNetwork": networks}}}
-		quote, err := svc.QuoteChannelModel(ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: saved.ModelKey, Intent: intent})
+		quote, err := svc.QuoteChannelModel(testGroupUserID(svc), ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: saved.ModelKey, Intent: intent})
 		if err != nil || quote.AmountMicrocredits != 1_000_000 {
 			t.Fatalf("LoRA changed the per-request quote: %#v %v", quote, err)
 		}
@@ -187,7 +187,7 @@ func TestLiblibLoRAQuoteValidatesSelectionsAndKeepsPrice(t *testing.T) {
 		{"loraCatalog": []any{}},
 	} {
 		intent := ModelRequestIntent{Capability: "image", ProviderOptions: map[string]map[string]any{protocol.LiblibImageProtocolID: options}}
-		if quote, err := svc.QuoteChannelModel(ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: saved.ModelKey, Intent: intent}); err == nil || quote != nil {
+		if quote, err := svc.QuoteChannelModel(testGroupUserID(svc), ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: saved.ModelKey, Intent: intent}); err == nil || quote != nil {
 			t.Fatalf("quote accepted unsupported LoRA options: %#v", options)
 		}
 	}
@@ -211,11 +211,11 @@ func TestLiblibLoRARouteEligibilityRequiresCompatibleCatalogue(t *testing.T) {
 		{Route: model.LogicalModelRoute{ID: "wrong", Enabled: true, Weight: 100, Priority: 10}, ChannelModel: invalid, CapabilitySpec: capability},
 		{Route: model.LogicalModelRoute{ID: "right", Enabled: true, Weight: 1, Priority: 1}, ChannelModel: valid, CapabilitySpec: capability},
 	}
-	eligible := (&Service{}).eligibleLogicalRoutes(routes, intent, nil, false)
+	eligible := (&Service{}).eligibleLogicalRoutes(nil, routes, intent, nil, false)
 	if len(eligible) != 1 || eligible[0].Route.ID != "right" {
 		t.Fatalf("routing selected an incompatible high-priority catalogue: %#v", eligible)
 	}
-	if remaining := (&Service{}).eligibleLogicalRoutes(routes, intent, map[string]bool{"right": true}, false); len(remaining) != 0 {
+	if remaining := (&Service{}).eligibleLogicalRoutes(nil, routes, intent, map[string]bool{"right": true}, false); len(remaining) != 0 {
 		t.Fatal("retry fell back to a route that cannot execute the selected LoRA")
 	}
 }
@@ -239,17 +239,17 @@ func TestLiblibLoRARouteEligibilityCompilesProjectAssetsBeforeSelection(t *testi
 		{Route: model.LogicalModelRoute{ID: "other", Enabled: true, Weight: 100, Priority: 10}, ChannelModel: other, CapabilitySpec: capability},
 		{Route: model.LogicalModelRoute{ID: "liblib", Enabled: true, Weight: 1, Priority: 1}, ChannelModel: valid, CapabilitySpec: capability},
 	}
-	eligible := (&Service{}).eligibleLogicalRoutes(routes, intent, nil, false)
+	eligible := (&Service{}).eligibleLogicalRoutes(nil, routes, intent, nil, false)
 	if len(eligible) != 1 || eligible[0].Route.ID != "liblib" {
 		t.Fatalf("strict project LoRA selected a route without its adapter: %#v", eligible)
 	}
-	if remaining := (&Service{}).eligibleLogicalRoutes(routes, intent, map[string]bool{"liblib": true}, false); len(remaining) != 0 {
+	if remaining := (&Service{}).eligibleLogicalRoutes(nil, routes, intent, map[string]bool{"liblib": true}, false); len(remaining) != 0 {
 		t.Fatal("project LoRA retry silently dropped its required adapter")
 	}
 	style.ExecutionPolicy = "compatible-fallback"
 	encoded, _ = json.Marshal(style)
 	intent.styleProfileJSON = string(encoded)
-	if eligible := (&Service{}).eligibleLogicalRoutes(routes, intent, nil, false); len(eligible) != 1 || eligible[0].Route.ID != "other" {
+	if eligible := (&Service{}).eligibleLogicalRoutes(nil, routes, intent, nil, false); len(eligible) != 1 || eligible[0].Route.ID != "other" {
 		t.Fatal("compatible-fallback project style lost its allowed fallback")
 	}
 }

@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 78
+const CurrentSchemaVersion int64 = 85
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -275,6 +275,25 @@ var schemaMigrations = []migration{
 	{version: 76, name: "drama_segment_mode", checksum: "sha256:drama-segment-mode-v71-20261026", apply: migrateDramaSegmentMode},
 	{version: 77, name: "referral_center", checksum: "sha256:referral-center-v72-20261027", apply: migrateReferralCenter},
 	{version: 78, name: "model3d_requests", checksum: "sha256:model3d-requests-v78-20261030", apply: migrateModel3DRequests},
+	{version: 79, name: "drama_episode_source_format", checksum: "sha256:drama-episode-source-format-v73-20261027", apply: func(tx *gorm.DB) error {
+		// 旧集没有素材类型，空串按小说原文处理。
+		if tx.Migrator().HasColumn(&model.DramaEpisode{}, "SourceFormat") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaEpisode{}, "SourceFormat")
+	}},
+	{version: 80, name: "drama_segment_references", checksum: "sha256:drama-segment-references-v74-20261027", apply: func(tx *gorm.DB) error {
+		// 空串表示按镜头自动取参考图，旧段保持原行为。
+		if tx.Migrator().HasColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON")
+	}},
+	{version: 81, name: "user_groups_pricing_currency", checksum: "sha256:user-groups-pricing-currency-v75-20261028", apply: migrateUserGroupsPricingCurrency},
+	{version: 82, name: "agent_memory_document_skill_discovery", checksum: "sha256:agent-memory-document-skill-discovery-v76-20261028", apply: migrateAgentMemoryDocumentSkillDiscovery},
+	{version: 83, name: "agent_memory_document_columns", checksum: "sha256:agent-memory-document-columns-v77-20261028", apply: migrateAgentMemoryDocumentColumns},
+	{version: 84, name: "drama_cast_voice_looks", checksum: "sha256:drama-cast-voice-looks-v78-20261101", apply: migrateDramaCastVoiceLooks},
+	{version: 85, name: "ecommerce_agent_and_knowledge", checksum: "sha256:ecommerce-agent-and-knowledge-v79-20261101", apply: migrateEcommerceFeature},
 }
 
 func migrateModel3DRequests(tx *gorm.DB) error {
@@ -284,6 +303,97 @@ func migrateModel3DRequests(tx *gorm.DB) error {
 	return tx.Exec(`INSERT INTO model3d_requests (user_id, request_id, task_id, request_hash, created_at)
 		SELECT user_id, request_id, task_id, request_hash, created_at FROM model3d_submissions WHERE 1 = 1
 		ON CONFLICT (user_id, request_id) DO NOTHING`).Error
+}
+
+// migrateDramaCastVoiceLooks 为短剧设定补角色声音（声音库条目与样本音频）和造型（所属角色、造型名、默认适用章节）。
+// 旧设定都是没有指定声音的角色本体，新增列写成零值。
+func migrateDramaCastVoiceLooks(tx *gorm.DB) error {
+	for _, field := range []string{"VoiceProfileID", "VoiceSampleResourceID", "ParentID", "LookName", "LookFromChapter", "LookToChapter"} {
+		if tx.Migrator().HasColumn(&model.DramaCast{}, field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(&model.DramaCast{}, field); err != nil {
+			return err
+		}
+	}
+	for column, value := range map[string]any{"voice_profile_id": "", "voice_sample_resource_id": "", "parent_id": "", "look_name": "", "look_from_chapter": 0, "look_to_chapter": 0} {
+		if err := tx.Model(&model.DramaCast{}).Where(column+" IS NULL").Update(column, value).Error; err != nil {
+			return err
+		}
+	}
+	if !tx.Migrator().HasColumn(&model.DramaShot{}, "LookCastIDsJSON") {
+		if err := tx.Migrator().AddColumn(&model.DramaShot{}, "LookCastIDsJSON"); err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&model.DramaShot{}).Where("look_cast_ids_json IS NULL").Update("look_cast_ids_json", "").Error; err != nil {
+		return err
+	}
+	if tx.Migrator().HasIndex(&model.DramaCast{}, "ParentID") {
+		return nil
+	}
+	return tx.Migrator().CreateIndex(&model.DramaCast{}, "ParentID")
+}
+
+// migrateAgentMemoryDocumentColumns 补齐记忆文件的条目序号与修订的工具调用 ID。
+// 早期构建执行记忆文件迁移时这两列还不存在，已记为完成不会重跑；新库由记忆文件迁移建全，这里是空操作。
+func migrateAgentMemoryDocumentColumns(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	// 新增列对旧行是 NULL；写成零值，与新建行一致。
+	if err := tx.Model(&model.AgentMemoryDocument{}).Where("next_entry_seq IS NULL").Update("next_entry_seq", 0).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.AgentMemoryDocumentRevision{}).Where("call_id IS NULL").Update("call_id", "").Error
+}
+
+// migrateAgentMemoryDocumentSkillDiscovery 新建用户记忆文件及其修订表，并给用户技能状态补
+// Agent 自动发现模式与读取统计列。旧状态 agent_mode 为空，按 auto 处理，行为与“已安装即可发现”一致。
+func migrateAgentMemoryDocumentSkillDiscovery(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	for _, field := range []string{"AgentMode", "AgentUseCount", "AgentLastUsedAt"} {
+		if tx.Migrator().HasColumn(&model.UserSkillState{}, field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(&model.UserSkillState{}, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateUserGroupsPricingCurrency 增加用户分组、分组渠道绑定，以及模型计价货币、充值商品货币和账单分组快照列。
+// 旧用户 user_group 为空（归入 default），旧模型按积分计价，旧商品按人民币计价，计费结果不变。
+func migrateUserGroupsPricingCurrency(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.UserGroup{}, &model.UserGroupChannel{}); err != nil {
+		return err
+	}
+	columns := []struct {
+		model any
+		field string
+	}{
+		{&model.User{}, "UserGroup"},
+		{&model.ChannelModel{}, "PriceCurrency"},
+		{&model.TopupProduct{}, "Currency"},
+		{&model.BillingOrder{}, "UserGroup"},
+		{&model.BillingOrder{}, "PriceCurrency"},
+		{&model.BillingOrder{}, "CurrencyRateMicrocredits"},
+	}
+	for _, column := range columns {
+		if tx.Migrator().HasColumn(column.model, column.field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(column.model, column.field); err != nil {
+			return err
+		}
+	}
+	if !tx.Migrator().HasIndex(&model.User{}, "UserGroup") {
+		return tx.Migrator().CreateIndex(&model.User{}, "UserGroup")
+	}
+	return nil
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。
@@ -558,6 +668,7 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			nativeUpstream := errors.Is(err, gorm.ErrRecordNotFound) || version55.Name == "provider_catalog_source"
 			var extendedUpstream bool
 			var dramaUpstream bool
+			var nativeDramaTail bool
 			if nativeUpstream {
 				var version58 schemaMigration
 				err := db.First(&version58, "version = ?", 58).Error
@@ -576,6 +687,14 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 					// Native drama releases occupied v61-v72; earlier merged
 					// releases already appended local capabilities at v61-v65.
 					dramaUpstream = err == nil && version61.Name == "drama_production"
+					if dramaUpstream {
+						var version73 schemaMigration
+						err := db.First(&version73, "version = ?", 73).Error
+						if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+							return nil, fmt.Errorf("读取数据库迁移 73：%w", err)
+						}
+						nativeDramaTail = err == nil && version73.Name == "drama_episode_source_format"
+					}
 				}
 			}
 			for index, item := range plan {
@@ -649,6 +768,17 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 							}
 							if item.version >= 66 && item.version <= 77 {
 								plan[index].version = item.version - 5
+							}
+							if nativeDramaTail {
+								switch item.name {
+								case "canvas_model3d", "model3d_base_url", "model3d_asset_timestamps", "channel_model_provider_defaults", "task_provider_progress":
+									plan[index].version += 7
+								case "model3d_requests":
+									plan[index].version = 85
+								}
+								if item.version >= 79 && item.version <= 85 {
+									plan[index].version = item.version - 6
+								}
 							}
 						}
 					}

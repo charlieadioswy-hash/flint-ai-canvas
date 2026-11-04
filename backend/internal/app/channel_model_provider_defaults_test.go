@@ -174,7 +174,7 @@ func TestSaveChannelProviderDefaultsPersistsAndPublishes(t *testing.T) {
 		t.Fatalf("defaults not published: %#v, %v", public.DefaultOptions, err)
 	}
 	input := map[string]any{"mode": "image", "config": map[string]any{"channelId": channel.ID, "model": stored.ModelKey, "size": "1024x1024"}, "referenceImages": []any{map[string]any{"storageKey": "resource:content"}}}
-	resolved, err := svc.resolveSystemChannelModelSelection(input, "canvas_image", "")
+	resolved, err := svc.resolveSystemChannelModelSelection(testGroupAccess(svc), input, "canvas_image", "")
 	if err != nil {
 		t.Fatal(err)
 	}

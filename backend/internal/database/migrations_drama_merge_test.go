@@ -105,6 +105,49 @@ func TestDramaMergePreservesReleasedMigrationHistories(t *testing.T) {
 	}
 }
 
+func TestDramaMergePreservesNativeUpstreamThrough79(t *testing.T) {
+	for _, version := range []int64{73, 75, 79} {
+		t.Run(fmt.Sprintf("upstream-v%d", version), func(t *testing.T) {
+			db := schemaBranchFixture(t, "upstream", 72)
+			for _, item := range schemaMigrations {
+				if item.version < 79 || item.version > version+6 {
+					continue
+				}
+				if err := item.apply(db); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Create(&schemaMigration{Version: item.version - 6, Name: item.name, Checksum: item.checksum, AppliedAt: db.NowFunc()}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			var before []schemaMigration
+			if err := db.Order("version").Find(&before).Error; err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := MigrateSchema(db); err != nil {
+					t.Fatal(err)
+				}
+				if err := RequireSchemaVersion(db); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, record := range before {
+				var after schemaMigration
+				if err := db.First(&after, "version = ?", record.Version).Error; err != nil || record.Name != after.Name || record.Checksum != after.Checksum || !record.AppliedAt.Equal(after.AppliedAt) {
+					t.Fatalf("native upstream ledger changed: before=%+v after=%+v err=%v", record, after, err)
+				}
+			}
+			for name, expected := range map[string]int64{"canvas_model3d": 80, "model3d_base_url": 81, "model3d_asset_timestamps": 82, "channel_model_provider_defaults": 83, "task_provider_progress": 84, "model3d_requests": 85} {
+				var record schemaMigration
+				if err := db.First(&record, "name = ?", name).Error; err != nil || record.Version != expected {
+					t.Fatalf("migration %s: %+v, expected %d, error=%v", name, record, expected, err)
+				}
+			}
+		})
+	}
+}
+
 func TestDramaMergeRejectsChangedMigrationHistories(t *testing.T) {
 	for _, tc := range []struct {
 		lineage string

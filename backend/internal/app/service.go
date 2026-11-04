@@ -96,7 +96,9 @@ type Service struct {
 	disablePiRuntime bool
 	// legacyCloudAgentRootTask is enabled only by tests that exercise the pre-Pi
 	// model-worker path. Runtime availability must not change root task semantics.
-	legacyCloudAgentRootTask       bool
+	legacyCloudAgentRootTask bool
+	// cloudAgentModelRetryBase 是模型步骤重试的指数退避基数；零值为 1 秒，只有测试会调小。
+	cloudAgentModelRetryBase       time.Duration
 	approvedMediaMu                sync.Mutex
 	approvedMediaWg                sync.WaitGroup
 	approvedMediaWaiters           map[string]context.CancelFunc
@@ -106,12 +108,12 @@ type Service struct {
 	model3DConverter               model3d.Converter
 	providerCatalogOnce            sync.Once
 	providerCatalog                *providercatalog.Source
-	creditPolicyMu                 sync.RWMutex
-	creditPolicyCache              *CreditPolicy
-	creditPolicyAt                 time.Time
+	userGroups                     userGroupState
 	modelAvailabilityMu            sync.RWMutex
 	modelAvailabilityCache         map[publicModelAvailabilityKey]*PublicModelAvailability
 	modelAvailabilityAt            time.Time
+	adminModelHealthMu             sync.Mutex
+	adminModelHealthCache          *AdminChannelModelHealthReport
 	// dramaTaskHook 只在测试中替换短剧调度的任务提交，生产路径始终走 CreateTask 准入。
 	dramaTailFrameHook func(userID, resourceID string) (string, error)
 	dramaTaskHook      func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error)
@@ -199,6 +201,7 @@ func (s *Service) StartWorker() {
 	s.startImageModerationWorker(ctx)
 	s.startResourceOffloadWorker()
 	s.startSkillSyncWorker(ctx)
+	s.startEcommerceSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()
 	s.startDramaScheduler()

@@ -126,6 +126,8 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         "@/stores/use-plugin-store": { usePluginStore: (selector: (state: unknown) => unknown) => selector({ installations: [], pluginStates: {} }) },
         "@/stores/canvas/use-canvas-theme-store": { useActiveTheme: () => themeName },
         "@/stores/canvas/use-canvas-store": { useCanvasStore: () => undefined },
+        "@/stores/canvas/use-canvas-prompt-preferences-store": { useCanvasPromptPreferencesStore: (selector: (state: { fontSize: number }) => unknown) => selector({ fontSize: 14 }) },
+        "./canvas-image-toolbar-tools": { getNineGridMenuItems: () => [], parseToolMentionTokens: () => [] },
         "@/lib/canvas-theme": { canvasThemes },
         "@/lib/canvas/generation-contract": generationContract,
         "@/lib/canvas/canvas-resource-references": resourceReferences,

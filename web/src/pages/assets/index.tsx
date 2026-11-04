@@ -28,7 +28,7 @@ import { downloadBrowserMedia } from "@/services/browser-download";
 import { flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetKind, type ImageAsset, type ModelAsset } from "@/stores/use-asset-store";
 import { loadAssetLibraryPage, loadAssetsForUse, saveRemoteUserDataNow, localSavedRemotePendingMessage, deleteAssetsWithRemoteSync, deleteAssetWithRemoteSync, emptyAssetTrashWithRemoteSync } from "@/services/user-data-sync";
 import { useUserStore } from "@/stores/use-user-store";
-import { createAssetFolder, deleteAssetFolder, listAssetFolders, updateAssetFolder, type AssetFolder, moveRemoteAssetsToFolder } from "@/services/api/user-data";
+import { createAssetFolder, deleteAssetFolder, listAssetFolders, listRemoteAssetsPage, updateAssetFolder, type AssetFolder, moveRemoteAssetsToFolder } from "@/services/api/user-data";
 import { assetCountMap, assetSearchText, readAssetGridDensity, assetKindIcons } from "./asset-library-format";
 import { ASSET_GRID_DENSITY_KEY, type LibraryAsset } from "./asset-library-format";
 import { selectAssetIds } from "./asset-library-selection";
@@ -451,12 +451,42 @@ export default function AssetsPage() {
         }
     };
 
-    const exportAllAssets = async () => {
-        if (!validAssets.length) {
-            message.warning("暂无素材可导出");
-            return;
+    const collectAllAssetIds = async (status: "active" | "archived") => {
+        if (!userId)
+            return useAssetStore
+                .getState()
+                .assets.filter((asset) => (asset.status === "archived") === (status === "archived"))
+                .map((asset) => asset.id);
+        // 先提交本机待保存素材，再固定完整集合；删除期间不继续翻页，避免页偏移漏项。
+        await flushAssetStorePersistence();
+        await saveRemoteUserDataNow([]);
+        const ids = new Set<string>();
+        for (let currentPage = 1; ; currentPage++) {
+            if (useUserStore.getState().user?.id !== userId) throw new Error("账号已切换，请重新操作素材库");
+            const result = await listRemoteAssetsPage({ page: currentPage, pageSize, status });
+            if (useUserStore.getState().user?.id !== userId) throw new Error("账号已切换，请重新操作素材库");
+            for (const asset of result.assets) ids.add(asset.id);
+            if (!result.hasMore) return [...ids];
         }
-        await exportAssets(validAssets);
+    };
+
+    const exportAllAssets = async () => {
+        if (batchWorking) return;
+        setBatchWorking(true);
+        try {
+            const ids = await collectAllAssetIds(viewMode === "trash" ? "archived" : "active");
+            if (!ids.length) {
+                message.warning("暂无素材可导出");
+                return;
+            }
+            await loadAssetsForUse(ids);
+            const byId = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
+            await exportAssets(ids.map((id) => byId.get(id)!));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "导出失败");
+        } finally {
+            setBatchWorking(false);
+        }
     };
 
     const importAssetZip = async (file?: File) => {
@@ -510,6 +540,7 @@ export default function AssetsPage() {
             const count = await emptyAssetTrashWithRemoteSync();
             setSelectedIds([]);
             message.success(`已彻底清空回收站 ${count} 个素材`);
+            void invalidateAssetLibrary();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "清空回收站失败");
         } finally {

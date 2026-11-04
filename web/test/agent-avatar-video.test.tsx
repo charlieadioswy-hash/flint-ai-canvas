@@ -67,6 +67,8 @@ async function fixture(videoFrames = true) {
         await act(async () => root.render(<AgentAvatarVideo src={src} loop={loop} onError={() => failures++} />));
     };
     await render();
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    playSpy.mockClear();
     const video = host.querySelector("video")!;
     const canvas = host.querySelector("canvas")!;
     Object.defineProperties(video, {

@@ -11,6 +11,7 @@ type PendingCreationMessage = {
     taskIds?: string[];
     resultUrls?: string[];
     resultStorageKeys?: string[];
+    errorKind?: string;
 };
 
 export type StoredCreationConversation = {
@@ -30,13 +31,15 @@ export function removeCreationConversationSnapshot<T extends { id: string }>(con
     return next;
 }
 
+/**
+ * 媒体消息的前端等待可能先于后端结束（轮询中断、长视频），消息曾被判失败但任务其实已经成功。
+ * 失败态一并纳入恢复：任务成功就把结果补回消息；后端已确认失败（errorKind=task）的不再反复订阅。
+ */
 export function isRecoverableCreationMessage(message: PendingCreationMessage) {
     if (message.role !== "assistant" || !message.taskIds?.some((id) => id.trim())) return false;
     if (message.mode === "text") return message.status === "streaming" || message.status === "pending";
     if (message.mode !== "image" && message.mode !== "video") return false;
-    // 媒体消息的前端等待可能先于后端结束（例如长视频），消息被判失败但任务其实已经成功。
-    // 只回读尚无结果的失败消息，避免覆盖部分结果或已由用户编辑的内容。
-    return message.status === "pending" || (message.status === "error" && !message.resultUrls?.length && !message.resultStorageKeys?.length);
+    return message.status === "pending" || (message.status === "error" && message.errorKind !== "task");
 }
 
 export function pendingCreationTaskKey(conversations: StoredCreationConversation[]) {

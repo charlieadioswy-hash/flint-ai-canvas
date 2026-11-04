@@ -29,7 +29,7 @@ func TestImageCountEnumProjectionKeepsAdmissionAndExecutionConsistent(t *testing
 	)
 	profile.Size.Presets = []ImageSizePreset{{Tier: "1k", Ratio: "1:1", Size: "1024x1024", Width: 1024, Height: 1024}}
 	svc, _, channel, channelModel := createSystemChannelSelectionFixture(t, "image", model.ChannelInterfaceOpenAIImage, &ModelCapabilityConfig{Version: 1, Image: profile}, []model.ChannelModelPriceTier{newSelectionPriceTier("enum-count", `{}`, "image-model", "fixed_request")})
-	resolved, err := svc.resolveSystemChannelModelSelection(map[string]any{
+	resolved, err := svc.resolveSystemChannelModelSelection(testGroupAccess(svc), map[string]any{
 		"mode": "image", "config": map[string]any{"channelId": channel.ID, "model": channelModel.ModelKey}, "capabilityOptions": map[string]any{"count": 4},
 	}, "canvas_image", "")
 	if err != nil {
@@ -86,7 +86,7 @@ func TestChannelImageQuoteAndAdmissionRejectSameInvalidParameters(t *testing.T) 
 	if err := db.AutoMigrate(&model.SystemSetting{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.QuoteChannelModel(ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: ModelRequestIntent{Capability: "image", Options: map[string]any{"count": 2}}}); err != nil {
+	if _, err := svc.QuoteChannelModel(testGroupUserID(svc), ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: ModelRequestIntent{Capability: "image", Options: map[string]any{"count": 2}}}); err != nil {
 		t.Fatalf("valid request did not reach billing quote: %v", err)
 	}
 	for _, options := range []map[string]any{{"size": "0x1024"}, {"imageResolution": "8k"}, {"count": 0}, {"count": 5}, {"count": 2.5}} {
@@ -100,11 +100,11 @@ func TestChannelImageQuoteAndAdmissionRejectSameInvalidParameters(t *testing.T) 
 				t.Fatalf("%s did not reject parameters %#v at capability admission: %v", stage, options, err)
 			}
 		}
-		_, err := svc.resolveSystemChannelModelSelection(input(), "canvas_image", "")
+		_, err := svc.resolveSystemChannelModelSelection(testGroupAccess(svc), input(), "canvas_image", "")
 		assertCapabilityError(err, "selection")
-		_, err = svc.QuoteChannelModel(ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: ModelRequestIntent{Capability: "image", Options: options}})
+		_, err = svc.QuoteChannelModel(testGroupUserID(svc), ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: ModelRequestIntent{Capability: "image", Options: options}})
 		assertCapabilityError(err, "quote")
-		_, err = svc.CreateTask("user", CreateTaskRequest{Type: "canvas_image", Prompt: "test", Input: input()})
+		_, err = svc.CreateTask(testGroupUserID(svc), CreateTaskRequest{Type: "canvas_image", Prompt: "test", Input: input()})
 		assertCapabilityError(err, "task creation")
 	}
 	for _, record := range []any{&model.Task{}, &model.BillingOrder{}} {

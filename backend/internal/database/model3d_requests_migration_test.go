@@ -104,7 +104,7 @@ func testModel3DRequestsMigration(t *testing.T, db *gorm.DB) {
 			t.Fatalf("submission checkpoint changed: %+v", preserved)
 		}
 		var after []schemaMigration
-		if err := db.Where("version < ?", 78).Order("version").Find(&after).Error; err != nil {
+		if err := db.Where("version <> ?", 78).Order("version").Find(&after).Error; err != nil {
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(history, after) {

@@ -341,7 +341,7 @@ func TestWangsuNativePixelSizePreservesQualityAndPricing(t *testing.T) {
 				"mode": "image", "prompt": "A gray circle.",
 				"config": map[string]any{"channelId": channel.ID, "model": channelModel.ModelKey, "size": tc.size, "quality": tc.quality, "count": "2"},
 			}
-			resolved, err := svc.resolveSystemChannelModelSelection(input, "canvas_image", "")
+			resolved, err := svc.resolveSystemChannelModelSelection(testGroupAccess(svc), input, "canvas_image", "")
 			if err != nil {
 				t.Fatal(err)
 			}

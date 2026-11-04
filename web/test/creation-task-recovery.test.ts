@@ -1,162 +1,104 @@
 import { describe, expect, test } from "bun:test";
 
-import { createGenerationTaskSubscriptionService, type GenerationTask } from "../src/services/api/task-center";
-import { pendingCreationTaskIds, pendingCreationTaskKey } from "../src/services/creation-conversation-store";
-import { attachCreationTaskContexts, materializeCreationTaskResults, reconcileCreationTaskMessages } from "../src/pages/create/creation-conversations";
-import type { CreationConversation, CreationMessage } from "../src/pages/create/creation-types";
+import { creationMessageNeedsResultSync, reconcileCreationTaskMessages, type PersistedCreationTask } from "@/pages/create/creation-conversations";
+import type { CreationConversation, CreationMessage } from "@/pages/create/creation-types";
+import { pendingCreationTaskIds } from "@/services/creation-conversation-store";
+import { recoverCreationTextTask } from "@/services/creation-text-task-recovery";
 
-type CreationRuntime = Parameters<typeof reconcileCreationTaskMessages>[0];
-const runtime = {} as CreationRuntime;
-const createdAt = "2026-10-01T00:00:00.000Z";
-const completedAt = "2026-10-01T00:01:00.000Z";
+const runtime = { recoverCreationTextTask } as unknown as Parameters<typeof reconcileCreationTaskMessages>[0];
+const at = "2026-10-27T11:00:00.000Z";
 
-function history(overrides: Partial<CreationMessage> = {}): CreationConversation[] {
-    return [
-        {
-            id: "conversation-1",
-            title: "创作",
-            updatedAt: createdAt,
-            messages: [
-                {
-                    id: "message-1",
-                    role: "assistant",
-                    mode: "image",
-                    status: "error",
-                    content: "生成失败",
-                    error: "当前浏览器不支持跨页面生成副作用互斥",
-                    generationErrorCode: "provider_error",
-                    createdAt,
-                    taskIds: ["task-1"],
-                    ...overrides,
-                },
-            ],
-        },
-    ];
+function task(overrides: Partial<PersistedCreationTask> = {}): PersistedCreationTask {
+    return { id: "task-1", type: "canvas_video", status: "running", prompt: "镜头", attempts: 1, createdAt: at, updatedAt: "2026-10-27T11:02:00.000Z", ...overrides };
 }
 
-function task(overrides: Partial<GenerationTask> = {}): GenerationTask {
-    return { id: "task-1", type: "canvas_image", status: "succeeded", prompt: "fixture", attempts: 1, createdAt, updatedAt: completedAt, ...overrides };
+function assistant(overrides: Partial<CreationMessage> = {}): CreationMessage {
+    return { id: "assistant-1", role: "assistant", mode: "video", content: "", createdAt: at, taskIds: ["task-1"], ...overrides };
 }
 
-describe("creation media task recovery", () => {
-    test("refresh reads the original succeeded task and restores its registered result", async () => {
-        const conversations = history();
-        const queried: string[] = [];
-        let waits = 0;
-        let materialized = 0;
-        const subscription = createGenerationTaskSubscriptionService({
-            async queryTask(id) {
-                queried.push(id);
-                return task();
-            },
-            async waitTask() {
-                waits += 1;
-                throw new Error("terminal tasks must not wait again");
-            },
-        });
-        const observed = await new Promise<GenerationTask>((resolve) => subscription.subscribe(pendingCreationTaskIds(conversations), resolve));
-        const recoveryRuntime = {
-            async runGenerationConsumer(_signal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<GenerationTask>) {
-                return operation(new AbortController().signal);
-            },
-            async materializeGenerationTaskAssets(existing: GenerationTask) {
-                materialized += 1;
-                return { ...existing, outputs: [{ outputIndex: 0, mediaType: "image", materializedAssetId: "asset-1" }] };
-            },
-            generationTaskMaterializedUrls: () => [],
-            generationTaskMaterializedStorageKeys: () => ["resource:asset-1"],
-        } as unknown as CreationRuntime;
-        const contextual = attachCreationTaskContexts([observed], conversations);
-        const results = await materializeCreationTaskResults(recoveryRuntime, contextual);
-        const recovered = reconcileCreationTaskMessages(recoveryRuntime, conversations, results);
+function conversations(message: CreationMessage): CreationConversation[] {
+    return [{ id: "conversation-1", title: "镜头", updatedAt: at, messages: [{ id: "user-1", role: "user", mode: "video", content: "镜头", createdAt: at }, message] }];
+}
 
-        expect(queried).toEqual(["task-1"]);
-        expect(waits).toBe(0);
-        expect(materialized).toBe(1);
-        expect(recovered[0].messages[0]).toMatchObject({ status: "done", content: "图片已生成", resultStorageKeys: ["resource:asset-1"], taskIds: ["task-1"] });
-        expect(recovered[0].messages[0].error).toBeUndefined();
-        expect(recovered[0].messages[0].generationErrorCode).toBeUndefined();
-        expect(recovered[0].updatedAt).toBe(completedAt);
-        expect(pendingCreationTaskIds(recovered)).toEqual([]);
-        expect(reconcileCreationTaskMessages(recoveryRuntime, recovered, results)).toBe(recovered);
+const messageOf = (value: CreationConversation[]) => value[0].messages[1];
+
+describe("首页创作：页面没跟上 ≠ 生成失败", () => {
+    test("轮询中断后任务仍在跑：失败消息回到生成中，并带上真实阶段与进度", () => {
+        const next = messageOf(reconcileCreationTaskMessages(runtime, conversations(assistant({ status: "error", errorKind: "sync", error: "网络异常。", content: "生成失败" })), [task({ stage: "上游生成中", progress: 40 })]));
+        expect(next).toMatchObject({ status: "pending", generationStatus: "running", generationStage: "上游生成中", generationProgress: 40 });
+        expect(next.error).toBeUndefined();
+        expect(next.errorKind).toBeUndefined();
+        expect(next.content).toBe("");
     });
 
-    test("errors without task IDs and errors with existing partial results are not queried", () => {
-        for (const overrides of [
-            { taskIds: undefined },
-            { taskIds: [] },
-            { taskIds: ["", " "] },
-            { resultUrls: ["blob:existing"], taskIds: ["task-1", "task-2"] },
-            { resultStorageKeys: ["resource:existing"], taskIds: ["task-1", "task-2"] },
-            { status: "cancelled" },
-            { status: "done" },
-            { mode: "text" },
-            { mode: undefined },
-            { role: "user" },
-        ] satisfies Partial<CreationMessage>[]) {
-            const conversations = history(overrides);
-            expect(pendingCreationTaskIds(conversations)).toEqual([]);
-            expect(pendingCreationTaskKey(conversations)).toBe("");
-        }
-        expect(pendingCreationTaskIds(history({ taskIds: ["", "task-1", "task-1"] }))).toEqual(["task-1"]);
+    test("旧版本未分类的“网络异常”失败，在任务成功后补回作品", () => {
+        const legacy = assistant({ status: "error", error: "网络异常。", content: "生成失败" });
+        expect(creationMessageNeedsResultSync(legacy)).toBe(true);
+        const next = messageOf(reconcileCreationTaskMessages(runtime, conversations(legacy), [task({ status: "succeeded", creationResultStorageKeys: ["resource:video-1"] })]));
+        expect(next).toMatchObject({ status: "done", content: "视频已生成", resultStorageKeys: ["resource:video-1"] });
+        expect(next.error).toBeUndefined();
     });
 
-    test("genuine provider failure remains stable and never enters task waiting", async () => {
-        const conversations = history({ error: "供应商拒绝了生成请求" });
-        let queries = 0;
-        let waits = 0;
-        const subscription = createGenerationTaskSubscriptionService({
-            async queryTask() {
-                queries += 1;
-                return task({ status: "failed", error: "供应商拒绝了生成请求" });
+    test("任务成功但结果暂时读不出来：保持“结果待同步”，不引导重新生成", () => {
+        const next = messageOf(reconcileCreationTaskMessages(runtime, conversations(assistant({ status: "pending", syncInterrupted: true })), [task({ status: "succeeded", creationError: "Failed to fetch" })]));
+        expect(next).toMatchObject({ status: "error", errorKind: "sync", error: "网络异常。" });
+        expect(next.syncInterrupted).toBeUndefined();
+        expect(creationMessageNeedsResultSync(next)).toBe(true);
+    });
+
+    test("后端确认失败：标记为任务失败；作品已生成可重新保存时保留入口", () => {
+        const next = messageOf(reconcileCreationTaskMessages(runtime, conversations(assistant({ status: "pending" })), [task({ status: "failed", error: "作品已生成，但保存未完成：上传 OSS", mediaStage: "upload", canRecoverMedia: true })]));
+        expect(next).toMatchObject({ status: "error", errorKind: "task", mediaRecoverable: true });
+        expect(creationMessageNeedsResultSync(next)).toBe(false);
+    });
+
+    test("后端已确认失败的消息不会被之后的快照改写", () => {
+        const source = conversations(assistant({ status: "error", errorKind: "task", error: "模型服务处理失败" }));
+        expect(reconcileCreationTaskMessages(runtime, source, [task({ status: "succeeded", creationResultStorageKeys: ["resource:video-1"] })])).toBe(source);
+    });
+
+    test("阶段和进度没有变化时不产生新对象，避免每次轮询都重写本地记录", () => {
+        const source = conversations(assistant({ status: "pending", generationStatus: "running", generationStage: "上游生成中", generationProgress: 40 }));
+        expect(reconcileCreationTaskMessages(runtime, source, [task({ stage: "上游生成中", progress: 40 })])).toBe(source);
+    });
+
+    test("多图任务要等全部任务快照到齐才下结论", () => {
+        const source = conversations(assistant({ mode: "image", status: "pending", taskIds: ["task-a", "task-b"] }));
+        const first = task({ id: "task-a", type: "canvas_image", status: "succeeded", creationResultStorageKeys: ["resource:a"], clientContext: { conversationId: "conversation-1", messageId: "assistant-1", batchIndex: 0, batchCount: 2 } });
+        expect(reconcileCreationTaskMessages(runtime, source, [first])).toBe(source);
+        const second = task({ id: "task-b", type: "canvas_image", status: "failed", error: "上游拒绝", clientContext: { conversationId: "conversation-1", messageId: "assistant-1", batchIndex: 1, batchCount: 2 } });
+        expect(messageOf(reconcileCreationTaskMessages(runtime, source, [first, second]))).toMatchObject({ status: "done", resultStorageKeys: ["resource:a"], content: "1 张图片已生成，1 张失败" });
+    });
+
+    test("手动重新获取可以重算已完成但没有可预览结果的消息", () => {
+        const source = conversations(assistant({ status: "done", content: "视频已生成" }));
+        const snapshot = [task({ status: "succeeded", creationResultStorageKeys: ["resource:video-1"] })];
+        expect(reconcileCreationTaskMessages(runtime, source, snapshot)).toBe(source);
+        expect(messageOf(reconcileCreationTaskMessages(runtime, source, snapshot, { reviveMessageIds: new Set(["assistant-1"]) }))).toMatchObject({ status: "done", resultStorageKeys: ["resource:video-1"] });
+    });
+
+    test("文本消息恢复监听拿到进行中状态后收起连接中断提示", () => {
+        const source = conversations(assistant({ mode: "text", status: "pending", syncInterrupted: true, content: "第一段" }));
+        const next = messageOf(reconcileCreationTaskMessages(runtime, source, [task({ type: "canvas_text" })]));
+        expect(next.syncInterrupted).toBeUndefined();
+        expect(next).toMatchObject({ status: "pending", content: "第一段" });
+    });
+});
+
+describe("首页创作恢复监听范围", () => {
+    test("生成中、结果待同步与旧版本失败继续跟进；后端确认失败的不再订阅", () => {
+        const stored = [
+            {
+                id: "conversation-1",
+                messages: [
+                    { id: "pending", role: "assistant" as const, mode: "video", status: "pending", taskIds: ["task-pending"] },
+                    { id: "sync", role: "assistant" as const, mode: "video", status: "error", errorKind: "sync", taskIds: ["task-sync"] },
+                    { id: "legacy", role: "assistant" as const, mode: "video", status: "error", taskIds: ["task-legacy"] },
+                    { id: "failed", role: "assistant" as const, mode: "video", status: "error", errorKind: "task", taskIds: ["task-failed"] },
+                    { id: "done", role: "assistant" as const, mode: "video", status: "done", taskIds: ["task-done"] },
+                ],
             },
-            async waitTask() {
-                waits += 1;
-                throw new Error("failed task must not be polled");
-            },
-        });
-        const observed = await new Promise<GenerationTask>((resolve) => subscription.subscribe(pendingCreationTaskIds(conversations), resolve));
-        expect(reconcileCreationTaskMessages(runtime, conversations, [observed])).toBe(conversations);
-        subscription.subscribe(pendingCreationTaskIds(conversations), () => {});
-        await Promise.resolve();
-        expect(queries).toBe(1);
-        expect(waits).toBe(0);
-    });
-
-    test("running tasks and unreadable successful results leave the local error intact", () => {
-        const conversations = history();
-        for (const observed of [task({ status: "queued" }), task({ status: "running" }), task(), { ...task(), creationError: "素材暂时不可读取" }]) {
-            expect(reconcileCreationTaskMessages(runtime, conversations, [observed])).toBe(conversations);
-        }
-    });
-
-    test("late recovery preserves cancelled, completed, result-bearing and unbound messages", () => {
-        const ready = { ...task({ clientContext: { conversationId: "conversation-1", messageId: "message-1" } }), creationResultStorageKeys: ["resource:asset-1"] };
-        for (const overrides of [
-            { status: "cancelled", content: "已停止" },
-            { status: "done", content: "用户编辑的说明" },
-            { resultStorageKeys: ["resource:existing"], taskIds: ["task-1", "task-2"] },
-            { resultUrls: ["blob:existing"], taskIds: ["task-1", "task-2"] },
-            { taskIds: undefined },
-        ] satisfies Partial<CreationMessage>[]) {
-            const conversations = history(overrides);
-            expect(reconcileCreationTaskMessages(runtime, conversations, [ready])).toBe(conversations);
-        }
-    });
-
-    test("batch recovery waits for all original task results and keeps a partial-success summary", () => {
-        const conversations = history({ taskIds: ["task-1", "task-2"] });
-        const succeeded = { ...task({ clientContext: { batchIndex: 0, batchCount: 2 } }), creationResultStorageKeys: ["resource:asset-1"] };
-        const failed = task({ id: "task-2", status: "failed", clientContext: { batchIndex: 1, batchCount: 2 } });
-        expect(reconcileCreationTaskMessages(runtime, conversations, [succeeded])).toBe(conversations);
-        const recovered = reconcileCreationTaskMessages(runtime, conversations, [failed, succeeded]);
-        expect(recovered[0].messages[0]).toMatchObject({ status: "done", content: "1 张图片已生成，1 张失败", resultStorageKeys: ["resource:asset-1"] });
-    });
-
-    test("pending media and text observations keep their existing recovery eligibility", () => {
-        expect(pendingCreationTaskIds(history({ status: "pending", resultStorageKeys: ["resource:partial"] }))).toEqual(["task-1"]);
-        expect(pendingCreationTaskIds(history({ mode: "text", status: "streaming" }))).toEqual(["task-1"]);
-        const recovered = reconcileCreationTaskMessages(runtime, history({ mode: "video", status: "pending" }), [{ ...task({ type: "canvas_video" }), creationResultStorageKeys: ["resource:video-1"] }]);
-        expect(recovered[0].messages[0]).toMatchObject({ status: "done", content: "视频已生成" });
+        ];
+        expect(pendingCreationTaskIds(stored)).toEqual(["task-pending", "task-sync", "task-legacy"]);
     });
 });

@@ -27,6 +27,11 @@ const PAGE_TITLES: Record<string, string> = {
     settings: "设置",
 };
 
+const TOOLBOX_TITLES: Record<string, string> = {
+    image: "图片生成",
+    video: "视频生成",
+};
+
 export function WorkspaceTopBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen: boolean; onToggleSidebar: () => void }) {
     const brandName = useAppearanceStore((state) => state.appearance.brandName);
     const theme = useThemeStore((state) => state.theme);
@@ -35,8 +40,10 @@ export function WorkspaceTopBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen:
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const { availableMicrocredits } = useWalletBalance(user?.id, creditsEnabled);
     const { pathname } = useLocation();
-    const slug = pathname.split("/").filter(Boolean)[0];
-    const pageTitle = slug ? PAGE_TITLES[slug] || brandName : PAGE_TITLES.home;
+    const [slug, subSlug] = pathname.split("/").filter(Boolean);
+    // /toolbox/image 和 /toolbox/video 共用 toolbox 首段，标题按第二段区分。
+    const sectionTitle = slug === "toolbox" ? TOOLBOX_TITLES[subSlug ?? ""] : PAGE_TITLES[slug ?? ""];
+    const pageTitle = slug ? sectionTitle || brandName : PAGE_TITLES.home;
     const balance = availableMicrocredits === null ? "--" : (availableMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 
     return (

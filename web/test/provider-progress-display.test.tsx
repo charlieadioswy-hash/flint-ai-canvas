@@ -18,8 +18,9 @@ test("task card and canvas node show measured zero and remove stale percentages"
             node.metadata = { ...node.metadata, ...generationTaskMetadata(current), status: "loading" };
             const card = renderToStaticMarkup(<TaskGridCard task={current} actingId="" onOpen={() => {}} onRetry={() => {}} />);
             const loading = renderToStaticMarkup(<LoadingContent node={node} theme={theme} />);
+            expect(card).toContain("作品创作中");
+            expect(loading).toContain("正在生成图片");
             for (const html of [card, loading]) {
-                expect(html).toContain("作品创作中");
                 expect(html).not.toContain("35%");
                 if (providerProgress !== undefined) expect(html).toContain(`${providerProgress}%`);
                 else expect(html).not.toMatch(/\d+%/);
@@ -31,7 +32,7 @@ test("task card and canvas node show measured zero and remove stale percentages"
         expect(renderToStaticMarkup(<LoadingContent node={node} theme={theme} />)).not.toContain("37%");
         const saving = { ...task, providerProgress: 99, mediaStage: "upload" as const };
         const html = renderToStaticMarkup(<TaskGridCard task={saving} actingId="" onOpen={() => {}} onRetry={() => {}} />);
-        expect(html).toContain("作品已生成，正在保存");
+        expect(html).toContain("已生成，正在存入素材库");
         expect(html).not.toContain("99%");
     }
 });
