@@ -58,8 +58,11 @@ func dramaCanvasAssetID(resourceID string) string {
 // 这里只建素材入口，不复制媒体，资源仍由短剧表持有（素材删除时会保留被短剧使用的资源）。
 // 重复登记是幂等的，同时为旧版本登记的素材补项目归属、项目链接与真实尺寸。
 func (s *Service) DramaCanvasAssets(userID, projectID string, req DramaCanvasAssetsRequest) (map[string]any, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	if len(req.Resources) == 0 || len(req.Resources) > dramaCanvasAssetLimit {
@@ -339,6 +342,9 @@ type dramaSegmentAdoption struct {
 func (s *Service) prepareDramaSegmentAdoption(userID, projectID, episodeID string, index int, req AdoptDramaSegmentVideoRequest) (*dramaSegmentAdoption, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return nil, err
 	}
 	episode, err := s.repo.DramaEpisode(project.ID, strings.TrimSpace(episodeID))

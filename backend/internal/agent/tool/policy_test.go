@@ -10,7 +10,7 @@ import (
 var (
 	legacyWrite      = []string{"canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "image_layer_split", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "previs_scene_create", "previs_apply_patch", "drama_adopt_canvas_media"}
 	legacyCacheable  = []string{"agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "skill_read_file", "model_list"}
-	legacyReadOnly   = []string{"agent_profile_read", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "skill_market_search", "model_list", "task_get", "drama_get_context"}
+	legacyReadOnly   = []string{"agent_profile_read", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "skill_market_search", "model_list", "task_get", "drama_get_context", "drama_propose_changes"}
 	legacyCanvasRev  = []string{"canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read"}
 	legacyOffsetNorm = []string{"skill_read_file", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "canvas_read_batch_table"}
 	legacyMedia      = []string{"generate_media", "image_layer_split"}
@@ -58,5 +58,18 @@ func TestCacheableToolsAreReadOnly(t *testing.T) {
 		if p.Cacheable && !p.ReadOnly() {
 			t.Errorf("%s 可缓存但不是只读工具", name)
 		}
+	}
+}
+
+func TestDramaGuideRejectsUnrelatedToolsAtExecutionGate(t *testing.T) {
+	scope := Scope{Canvas: true, Skills: true, Vision: true, Drama: true, DramaGuide: true, Memory: true, IncludeProfile: true}
+	want := map[string]bool{DramaGetContext: true, DramaProposeChanges: true, AskUser: true, PlanUpdate: true}
+	for _, name := range Names() {
+		if got := Of(name).Allowed(scope); got != want[name] {
+			t.Errorf("guide tool %s allowed=%v want %v", name, got, want[name])
+		}
+	}
+	if Of(DramaProposeChanges).Allowed(Scope{Drama: true, Canvas: true}) {
+		t.Fatal("canvas conversation must not expose guide proposals")
 	}
 }

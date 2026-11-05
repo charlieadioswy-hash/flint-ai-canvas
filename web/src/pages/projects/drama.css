@@ -2728,11 +2728,6 @@
         opacity: 1;
     }
 }
-.drama-library-hero {
-    min-height: 440px;
-    flex: none;
-    margin-top: 8px;
-}
 .drama-library-drop {
     position: absolute;
     inset: 0;

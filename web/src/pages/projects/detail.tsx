@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { App, Button } from "antd";
 import { ArrowLeft, Brush, CheckCheck, Clapperboard, Film, Inbox, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
@@ -45,6 +45,7 @@ import { ScriptView } from "./studio/script-view";
 import { Storyboard, type EpisodeEmpty } from "./studio/storyboard";
 import { isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
 import { progressFillStyle } from "@/lib/progress-fill";
+import { activeDramaGuide, dramaProjectPath } from "./guide-state";
 import "./drama.css";
 
 type Tab = "board" | "script" | "final";
@@ -298,6 +299,7 @@ export default function DramaStudioPage() {
         );
 
     const { production } = summary;
+    if (activeDramaGuide(production.guideStep)) return <Navigate to={dramaProjectPath(projectId, production.guideStep)} replace />;
     const runLabel = running ? "暂停" : production.status === "draft" ? "开始制作" : "继续制作";
     const doneEpisodes = episodes.filter((episode) => episode.stage === "done" && !episode.finalStale).length;
     const progress = episodes.length ? doneEpisodes / episodes.length : 0;

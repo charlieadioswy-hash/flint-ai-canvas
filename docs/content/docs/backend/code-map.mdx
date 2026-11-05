@@ -5,6 +5,15 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 短剧 Agent 引导创建
+
+- 列表与双入口：`web/src/pages/projects/index.tsx`；原创建页：`create.tsx`；引导页：`guide.tsx`；恢复路由：`web/src/router.tsx`、项目 `detail.tsx`。
+- 唯一业务请求面：`web/src/services/api/drama.ts`；Agent 会话合同：`services/api/agent.ts`；嵌入宿主：`stores/use-global-agent-store.ts`、`components/canvas/canvas-cloud-agent-panel.tsx`。引导左栏承载全局同一个面板实例，继续复用 SSE 与会话恢复。
+- 引导状态、正文与确认：`backend/internal/app/drama_guide.go`，经 `handler/drama_routes.go`、`service/aliases_drama.go` 对外；调度准入复用 `drama_orchestrator.go`，文字编辑保护接入原 `drama_actions*.go`。
+- 引导资产增删：`app/drama_cast.go` 复用引导阶段、制作版本和文字任务保护；`repository/repository_drama_cast.go` 检查分镜、段、造型、画布与在途任务引用，删除目录记录时保留媒体历史。Agent 在 `cloud_agent_drama.go` 输出 `cast_create/cast_delete` 待确认建议，前端 `pages/projects/guide.tsx` 审阅后调用同一业务 API。
+- 短剧 Agent 上下文与建议：`backend/internal/app/cloud_agent_drama.go`、`cloud_agent*.go`；工具策略：`backend/internal/agent/tool/`。工具只返回建议，业务写入和阶段推进继续由短剧 API 执行。
+- 控制面字段：`backend/internal/model/models_drama.go`；迁移：`backend/internal/database/migrations.go`。方案边界见 `docs/design/short-drama-guided-creation.md`，API 与运行验收分别记录在 HTTP API 合同和待测试清单。
+
 ## Wangsu 网宿协议
 
 - 独立协议与完整字段文档：`plugin-packages/wangsu/`，生成器 `plugin-packages/generate-wangsu.mjs`；发布包 `wangsu.yingce-plugin`。

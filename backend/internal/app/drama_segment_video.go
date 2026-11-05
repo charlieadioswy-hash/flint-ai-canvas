@@ -45,6 +45,8 @@ func dramaSegmentVideoDone(segment model.DramaSegment) bool {
 // dramaVideoWaitReason 说明第 index 段视频为何还不能提交；空串表示调度会提交它。调度与详情页共用。
 func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *model.DramaEpisode, segments []model.DramaSegment, index int, shots []model.DramaShot, lookup func(string) (model.DramaCast, bool)) string {
 	switch {
+	case dramaGuideActive(p):
+		return "请先完成文字创作引导"
 	case p.Status == model.DramaStatusPaused:
 		if reason := strings.TrimSpace(p.PauseReason); reason != "" {
 			return "制作已暂停：" + reason
@@ -486,6 +488,9 @@ func dramaVideoJobReplayable(job model.DramaJob) bool {
 func (s *Service) ReprocessDramaSegmentVideo(userID, projectID, episodeID string, index int) (map[string]any, error) {
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	episode, err := s.repo.DramaEpisode(project.ID, episodeID)

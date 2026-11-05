@@ -233,7 +233,11 @@ func agentProfileText(layers []AgentProfileLayer) string {
 }
 
 func (s *Service) cloudAgentProfileSnapshot(userID, canvasID string) (cloudAgentProfileSnapshot, error) {
-	view, err := s.CloudAgentProfile(userID, canvasID)
+	return s.cloudAgentProfileSnapshotForScope(userID, "", canvasID)
+}
+
+func (s *Service) cloudAgentProfileSnapshotForScope(userID, projectID, canvasID string) (cloudAgentProfileSnapshot, error) {
+	view, err := s.CloudAgentProfileForScope(userID, projectID, canvasID)
 	if err != nil {
 		return cloudAgentProfileSnapshot{}, err
 	}

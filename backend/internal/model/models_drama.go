@@ -16,6 +16,11 @@ const (
 	DramaStageProduce = "produce"
 	DramaStageDone    = "done"
 
+	DramaGuideConfiguring = "configuring"
+	DramaGuideAssets      = "assets"
+	DramaGuideStory       = "story"
+	DramaGuideCompleted   = "completed"
+
 	// 单集阶段：剧本 → 撰写各剧情段完整视频提示词 →（确认）→ 按段顺序生成视频 → 合成成片。
 	DramaEpisodeQueued  = "queued"
 	DramaEpisodeScript  = "script"
@@ -57,17 +62,20 @@ const (
 
 // DramaProduction 是一个项目的自动制作控制面，项目内唯一。
 type DramaProduction struct {
-	ProjectID          string `json:"projectId" gorm:"primaryKey;size:36"`
-	UserID             string `json:"userId" gorm:"index;size:36"`
-	Status             string `json:"status" gorm:"index;size:24"`
-	Stage              string `json:"stage" gorm:"size:24"`
-	SettingsJSON       string `json:"settingsJson" gorm:"type:text"`
-	BibleJSON          string `json:"bibleJson" gorm:"type:text"`
-	BudgetMicrocredits int64  `json:"budgetMicrocredits"`
-	SpentMicrocredits  int64  `json:"spentMicrocredits"`
-	PlanCursor         int    `json:"planCursor"`
-	PlanDone           bool   `json:"planDone"`
-	SampleApproved     bool   `json:"sampleApproved"`
+	ProjectID           string `json:"projectId" gorm:"primaryKey;size:36"`
+	UserID              string `json:"userId" gorm:"index;size:36"`
+	Status              string `json:"status" gorm:"index;size:24"`
+	Stage               string `json:"stage" gorm:"size:24"`
+	SettingsJSON        string `json:"settingsJson" gorm:"type:text"`
+	GuideStep           string `json:"guideStep,omitempty" gorm:"size:24"`
+	GuideConversationID string `json:"guideConversationId,omitempty" gorm:"size:64"`
+	CreativeBrief       string `json:"creativeBrief,omitempty" gorm:"type:text"`
+	BibleJSON           string `json:"bibleJson" gorm:"type:text"`
+	BudgetMicrocredits  int64  `json:"budgetMicrocredits"`
+	SpentMicrocredits   int64  `json:"spentMicrocredits"`
+	PlanCursor          int    `json:"planCursor"`
+	PlanDone            bool   `json:"planDone"`
+	SampleApproved      bool   `json:"sampleApproved"`
 	// AssetsReleased 为 true 后才自动生成角色/场景参考图；手动生图模式下由用户确认资产后打开。
 	AssetsReleased bool       `json:"assetsReleased"`
 	PauseReason    string     `json:"pauseReason" gorm:"size:500"`

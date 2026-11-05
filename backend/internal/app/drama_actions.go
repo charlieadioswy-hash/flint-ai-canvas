@@ -9,6 +9,7 @@ import (
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/production"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -23,8 +24,14 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 	}
 	fields := map[string]any{}
 	if req.Settings != nil {
+		if dramaGuideActive(productionRow) && productionRow.GuideStep != model.DramaGuideConfiguring {
+			return DramaSummary{}, BadAuthRequest("请在开始改编前确认制作方案；当前引导只允许调整文字成果")
+		}
 		current := parseDramaSettings(productionRow.SettingsJSON)
 		next := req.Settings.normalized()
+		if dramaGuideActive(productionRow) {
+			next.MediaMode = DramaMediaManual
+		}
 		if !production.ValidAspectRatio(next.AspectRatio) {
 			return DramaSummary{}, BadAuthRequest("不支持的画幅：" + next.AspectRatio)
 		}
@@ -43,7 +50,7 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 		}
 		// 分集方式只影响尚未分集的章节：分集完成后已有的集里可能写好了剧本，不重新分组。
 		if next.EpisodeMode != current.EpisodeMode || next.ChaptersPerEpisode != current.ChaptersPerEpisode {
-			if productionRow.PlanDone {
+			if productionRow.PlanDone && productionRow.GuideStep != model.DramaGuideConfiguring {
 				return DramaSummary{}, BadAuthRequest("已完成分集，不能再修改分集方式；之后可在制作台逐集追加新的一集")
 			}
 			if next.EpisodeMode == "" {
@@ -79,9 +86,53 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			}
 		}
 	}
-	if len(fields) > 0 {
-		if err := s.repo.UpdateDramaProduction(productionRow.ProjectID, fields); err != nil {
+	if req.GuideConversationID != nil {
+		id := strings.TrimSpace(*req.GuideConversationID)
+		if productionRow.GuideStep == "" || id == "" {
+			return DramaSummary{}, BadAuthRequest("请选择有效的短剧引导会话")
+		}
+		if err := s.validateDramaGuideConversation(userID, projectID, id); err != nil {
 			return DramaSummary{}, err
+		}
+		fields["guide_conversation_id"] = id
+	}
+	if len(fields) > 0 {
+		err := s.repo.Transaction(func(tx *repository.Repository) error {
+			current, err := tx.DramaProductionForUpdate(projectID)
+			if err != nil {
+				return err
+			}
+			if req.GuideConversationID != nil && current.GuideConversationID != "" && current.GuideConversationID != fields["guide_conversation_id"] {
+				return dramaGuideConflict("此项目已关联另一段引导会话")
+			}
+			if req.GuideConversationID != nil && req.Settings == nil && req.BudgetMicrocredits == nil {
+				if req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision {
+					return repository.ErrDramaGuideChanged
+				}
+				return tx.BindDramaGuideConversation(projectID, current.Revision, fields["guide_conversation_id"].(string))
+			}
+			if dramaGuideActive(current) {
+				if req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision || req.Settings != nil && req.ExpectedRevision == nil {
+					return repository.ErrDramaGuideChanged
+				}
+				if req.Settings != nil {
+					if current.GuideStep != model.DramaGuideConfiguring {
+						return repository.ErrDramaGuideChanged
+					}
+					active, err := tx.DramaTextJobsActive(projectID)
+					if err != nil {
+						return err
+					}
+					if active {
+						return dramaGuideConflict("文字任务正在进行，请稍候再修改")
+					}
+				}
+				return tx.UpdateDramaGuideIf(projectID, current.Revision, current.GuideStep, fields)
+			}
+			return tx.UpdateDramaProduction(projectID, fields)
+		})
+		if err != nil {
+			return DramaSummary{}, dramaGuideError(err)
 		}
 	}
 	return s.DramaSummary(userID, projectID)
@@ -91,6 +142,9 @@ func (s *Service) SetDramaRunning(userID string, projectID string, running bool)
 	_, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return DramaSummary{}, err
+	}
+	if running && productionRow.GuideStep == model.DramaGuideConfiguring {
+		return DramaSummary{}, BadAuthRequest("请先确认制作方案，再开始改编")
 	}
 	if running {
 		if err := s.resumeDrama(productionRow); err != nil {
@@ -206,6 +260,9 @@ func (s *Service) ApproveDramaEpisode(userID, projectID, episodeID string) (Dram
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
+	if err := requireDramaGuideComplete(p); err != nil {
+		return DramaEpisodeDetail{}, err
+	}
 	episode, err := s.repo.DramaEpisode(project.ID, episodeID)
 	if err != nil {
 		return DramaEpisodeDetail{}, err
@@ -247,18 +304,24 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
+	if dramaGuideActive(productionRow) && productionRow.GuideStep != model.DramaGuideStory {
+		return DramaEpisodeDetail{}, BadAuthRequest("请先确认资产文字设定，再改编剧本")
+	}
 	episode, err := s.repo.DramaEpisode(project.ID, episodeID)
 	if err != nil {
-		return DramaEpisodeDetail{}, err
-	}
-	if err := s.repo.CancelQueuedDramaJobs(project.ID, func(db *gorm.DB) *gorm.DB { return db.Where("episode_id = ?", episode.ID) }); err != nil {
 		return DramaEpisodeDetail{}, err
 	}
 	fields := map[string]any{"stage": model.DramaEpisodeScript, "shot_count": 0, "approved": false, "error": ""}
 	if episode.FinalResourceID != "" {
 		fields["final_stale"] = true
 	}
-	if _, err := s.repo.ApplyDramaScript(episode.ID, nil, fields, nil); err != nil {
+	if err := s.withDramaGuideEdit(projectID, &productionRow.Revision, false, func(tx *repository.Repository) error {
+		if err := tx.CancelQueuedDramaJobs(project.ID, func(db *gorm.DB) *gorm.DB { return db.Where("episode_id = ?", episode.ID) }); err != nil {
+			return err
+		}
+		_, err := tx.ApplyDramaScript(episode.ID, nil, fields, nil)
+		return err
+	}); err != nil {
 		return DramaEpisodeDetail{}, err
 	}
 	if err := s.requestDramaWork(productionRow); err != nil {
@@ -324,14 +387,16 @@ func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDr
 	if len(fields) == 0 {
 		return *shot, nil
 	}
-	if err := s.repo.UpdateDramaShotScript(*shot, fields); err != nil {
+	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		return tx.UpdateDramaShotScript(*shot, fields)
+	}); err != nil {
 		return model.DramaShot{}, err
 	}
 	return *shot, s.reopenDrama(p)
 }
 
 func (s *Service) UpdateDramaCast(userID string, projectID string, castID string, req UpdateDramaCastRequest) (model.DramaCast, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return model.DramaCast{}, err
 	}
@@ -370,7 +435,12 @@ func (s *Service) UpdateDramaCast(userID string, projectID string, castID string
 		fields["locked"] = *req.Locked
 	}
 	if len(fields) > 0 {
-		if err := s.repo.UpdateDramaCastFields(cast.ID, fields); err != nil {
+		if dramaGuideActive(p) && (req.Appearance != nil || req.Description != nil) && cast.ImageStatus != "" {
+			fields["image_status"] = model.DramaMediaStale
+		}
+		if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
+			return tx.UpdateDramaCastFields(cast.ID, fields)
+		}); err != nil {
 			return model.DramaCast{}, err
 		}
 	}
@@ -386,6 +456,9 @@ func (s *Service) UpdateDramaCast(userID string, projectID string, castID string
 func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCastLookRequest) (map[string]any, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return nil, err
 	}
 	character, err := s.repo.DramaCast(project.ID, castID)
@@ -427,8 +500,11 @@ func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCa
 
 // UpdateDramaCastLook 修改一套造型的造型名、外观或默认适用章节；外观变化会让引用它的剧情段参考图与视频过期。
 func (s *Service) UpdateDramaCastLook(userID, projectID, lookID string, req DramaCastLookRequest) (map[string]any, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	look, err := s.repo.DramaCast(project.ID, lookID)
@@ -479,8 +555,11 @@ func (s *Service) UpdateDramaCastLook(userID, projectID, lookID string, req Dram
 
 // DeleteDramaCastLook 删除一套造型；引用它的镜头回退到角色本体，受影响的剧情段视频过期需重做。
 func (s *Service) DeleteDramaCastLook(userID, projectID, lookID string, restyleSegments bool) (map[string]any, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	look, err := s.repo.DramaCast(project.ID, lookID)
@@ -522,8 +601,11 @@ func dramaNormalizeLookRange(from, to *int) (int, int) {
 // clear=true 时清除，只按声线描述生成。视频模型支持参考音频时，该角色说话的剧情段会带上这段样本；
 // restyleSegments=true 时让引用该角色的剧情段视频过期，需重新生成。造型沿用所属角色的声音，不能单独指定。
 func (s *Service) SetDramaCastVoice(userID, projectID, castID string, req SetDramaCastVoiceRequest, clear bool) (map[string]any, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	cast, err := s.repo.DramaCast(project.ID, castID)
@@ -568,6 +650,9 @@ func (s *Service) RegenerateDramaCast(userID string, projectID string, castID st
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if productionRow.GuideStep == model.DramaGuideConfiguring {
+		return nil, BadAuthRequest("请先确认制作方案并生成资产文字设定")
 	}
 	cast, err := s.repo.DramaCast(project.ID, castID)
 	if err != nil {
@@ -644,8 +729,11 @@ func (s *Service) RegenerateDramaCasts(userID string, projectID string, req Rege
 	if req.Kind != "character" && req.Kind != "prop" && req.Kind != "scene" {
 		return nil, BadAuthRequest("请选择要重做的是角色、道具还是场景")
 	}
-	project, _, err := s.dramaForUser(userID, projectID)
+	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	casts, err := s.repo.DramaCasts(project.ID)
@@ -759,6 +847,9 @@ type GenerateDramaSegmentsRequest struct {
 func (s *Service) GenerateDramaSegments(userID, projectID, episodeID string, req GenerateDramaSegmentsRequest) (map[string]any, error) {
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(p); err != nil {
 		return nil, err
 	}
 	if len(req.Segments) == 0 || len(req.Segments) > 200 {
@@ -908,6 +999,9 @@ func (s *Service) releaseDramaEpisodes(projectID string, episodeIDs []string) er
 func (s *Service) ReleaseDramaMedia(userID string, projectID string, req ReleaseDramaMediaRequest) (DramaSummary, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return DramaSummary{}, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return DramaSummary{}, err
 	}
 	switch req.Target {

@@ -4,11 +4,15 @@ import "yingce/backend/internal/app"
 
 type (
 	CreateDramaRequest            = app.CreateDramaRequest
+	UpdateDramaGuideSourceRequest = app.UpdateDramaGuideSourceRequest
+	ConfirmDramaGuideRequest      = app.ConfirmDramaGuideRequest
 	UpdateDramaSettingsRequest    = app.UpdateDramaSettingsRequest
 	UpdateDramaShotRequest        = app.UpdateDramaShotRequest
 	UpdateDramaSegmentRequest     = app.UpdateDramaSegmentRequest
 	DramaSegmentView              = app.DramaSegmentView
 	UpdateDramaCastRequest        = app.UpdateDramaCastRequest
+	CreateDramaCastRequest        = app.CreateDramaCastRequest
+	DeleteDramaCastRequest        = app.DeleteDramaCastRequest
 	SetDramaCastVoiceRequest      = app.SetDramaCastVoiceRequest
 	DramaCastLookRequest          = app.DramaCastLookRequest
 	DramaEstimateRequest          = app.DramaEstimateRequest

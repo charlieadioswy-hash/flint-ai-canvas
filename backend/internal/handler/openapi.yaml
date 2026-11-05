@@ -24,6 +24,7 @@ tags:
   - name: assets
   - name: models
   - name: agent
+  - name: dramas
   - name: admin
   - name: skills
   - name: workbench
@@ -32,6 +33,121 @@ tags:
   - name: referral
     description: 推广中心：推广码、邀请记录与返佣
 paths:
+  /dramas/{id}/cast:
+    post:
+      tags: [dramas]
+      summary: 在短剧引导中新增文字资产
+      description: 仅当前用户的 assets/story 引导项目可用。校验 production.revision，拒绝进行中的文字任务；story 编辑回到资产确认。不自动生成图片。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, kind, name]
+              properties:
+                expectedRevision: {type: integer, minimum: 1}
+                kind: {type: string, enum: [character, scene, prop]}
+                name: {type: string, minLength: 1, maxLength: 60}
+                aliases: {type: array, maxItems: 20, items: {type: string, maxLength: 40}}
+                appearance: {type: string, maxLength: 1000}
+                description: {type: string, maxLength: 1000}
+                voiceInstructions: {type: string, maxLength: 500}
+      responses:
+        "200": {description: 成功信封，data.cast 为新增资产}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/cast/{castId}:
+    delete:
+      tags: [dramas]
+      summary: 在短剧引导中删除未使用的资产
+      description: 仅当前用户的 assets/story 引导项目可用，按制作版本原子校验。仍被分镜、剧情段、造型或画布引用，或有进行中任务时拒绝。保留已生成的媒体资源及任务历史，不自动重做下游内容。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+        - {in: path, name: castId, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: {type: integer, minimum: 1}
+      responses:
+        "200": {description: 成功信封，data 为 deleted:true 与 castId}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/guide/source:
+    put:
+      tags: [dramas]
+      summary: 保存引导项目的正式章节正文
+      description: 仅允许当前用户的 configuring 引导项目；同事务替换章节与未启动分集，不提交生成任务。传统项目与引导已启动项目拒绝此操作。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, chapters]
+              properties:
+                expectedRevision: {type: integer, minimum: 1}
+                sourceFormat: {type: string, enum: [novel, script, storyboard]}
+                chapters:
+                  type: array
+                  minItems: 1
+                  maxItems: 3000
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [text]
+                    properties:
+                      title: {type: string}
+                      text: {type: string, minLength: 1, maxLength: 60000}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/guide/confirm:
+    post:
+      tags: [dramas]
+      summary: 确认当前引导阶段并放行下一段文字流程
+      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings；assets 等待作品圣经落库；story 等待全部选定范围文字就绪。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedStep, expectedRevision]
+              properties:
+                expectedStep: {type: string, enum: [configuring, assets, story]}
+                expectedRevision: {type: integer, minimum: 1}
+                settings:
+                  type: object
+                  description: 复用现有 DramaSettings；引导固定 mediaMode=manual，仍校验所选模型能力与制作范围。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /model3d/capabilities:
     get:
       tags: [models]
@@ -2584,7 +2700,7 @@ paths:
           schema: { type: string, maxLength: 512 }
       responses:
         "200":
-          description: 信封 data 为 items（与 data.run 相同的运行视图，含 conversationId、userPrompt、idempotencyKey）和可选 nextCursor
+          description: 信封 data 为 items（与 data.run 相同的运行视图，含 conversationId、userPrompt、idempotencyKey，短剧轮次另含 dramaProjectId）和可选 nextCursor
         "400":
           description: 会话 ID、limit 或分页游标无效
         "404":
@@ -2593,7 +2709,7 @@ paths:
     post:
       tags: [agent]
       summary: 创建一轮云端 Agent 任务
-      description: 同一画布同时只允许一轮执行。排队、运行、等待审批及终态收尾均占用；服务端在创建任务和预留积分前以事务串行校验。浏览器断开不释放占用，同一轮幂等恢复不受影响。
+      description: 同一画布同时只允许一轮执行。排队、运行、等待审批及终态收尾均占用；服务端在创建任务和预留积分前以事务串行校验。浏览器断开不释放占用，同一轮幂等恢复不受影响。显式短剧引导使用 dramaProjectId、contextScope=[drama] 和 permissionMode=read_only，不能同时传画布、焦点节点或固定技能；短剧身份参与幂等校验。
       requestBody:
         required: true
         content:
@@ -2602,7 +2718,7 @@ paths:
               $ref: "#/components/schemas/CloudAgentRequest"
       responses:
         "200":
-          description: 信封 data.run，包含新一轮 id、conversationId、userPrompt、idempotencyKey、canvasId、status、permissionMode、model 及时间
+          description: 信封 data.run，包含新一轮 id、conversationId、userPrompt、idempotencyKey、canvasId、status、permissionMode、model 及时间；显式短剧轮次包含 dramaProjectId
         "400":
           description: 参数、能力、模型或预算不符合要求，未创建任务
         "409":
@@ -2631,7 +2747,7 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 500 }
       responses:
         "200":
-          description: 信封 data.run（含 events 与 eventSeqBase / eventCount / latestSeq / eventsTruncated）
+          description: 信封 data.run（含 events 与 eventSeqBase / eventCount / latestSeq / eventsTruncated）；显式短剧轮次保留 dramaProjectId
         "400":
           description: fromStart 不是布尔值，或 sinceSeq、eventLimit 不是整数或超出范围
         "404":
@@ -2642,6 +2758,7 @@ paths:
     post:
       tags: [agent]
       summary: 从服务端父轮历史创建新轮次
+      description: 短剧续轮保留显式 dramaProjectId，并要求 contextScope=[drama]、permissionMode=read_only；不能混入画布、焦点节点或固定技能。短剧身份参与上下文与幂等比较。
       requestBody:
         required: true
         content:
@@ -2650,7 +2767,7 @@ paths:
               $ref: "#/components/schemas/CloudAgentRequest"
       responses:
         "200":
-          description: 信封 data.run（新的 ID）
+          description: 信封 data.run（新的 ID）；显式短剧轮次包含 dramaProjectId
         "409":
           description: 父轮仍在执行、幂等键冲突，或画布已有另一轮 Agent 占用。旧父轮已有后续轮次时 reason 为 agent_conversation_stale_parent，客户端应同步最新历史，不能自动重发。原请求幂等回放优先于旧父轮检查。占用拒绝的 reason 为 canvas_agent_busy，details 包含 canvasId 和 agent（runId、status、cleanupPending），用于立即更新占用状态；不自动重试。
   /agent/runs/{id}/interjections:
@@ -2816,6 +2933,7 @@ paths:
         "200":
           description: |
             首次及 revision 变化时发送紧凑 run_snapshot；无变化时 heartbeat；agent_event.seq 为递增游标，cleanupPending 期间持续发送。
+            显式短剧轮次的运行快照保留 dramaProjectId。drama_propose_changes 的 tool_completed 事件在 result 中返回 kind、targetId（可选）、baseRevision 和 changes；baseRevision 对应短剧 production.revision，事件持久化和回放本身不执行业务写入。
             canvas_updated 的 payload 可含 AgentCanvasUpdatedPayload 中的 undo 凭据。仅无已提交收费任务且有完整快照的普通写入提供非空凭据；缺省或 null 不显示可执行撤销。
           content:
             text/event-stream:
@@ -4623,7 +4741,11 @@ components:
         canvasId:
           type: string
           maxLength: 80
-          description: 可选。为空时是平台级对话：不占画布锁、只开放无画布工具，contextScope 和 focusNodeIds 必须为空。续轮可换绑画布，服务端会注入换绑说明。
+          description: 可选。与 dramaProjectId 互斥。两者均为空时是平台级对话：不占画布锁、只开放无画布工具，contextScope 和 focusNodeIds 必须为空。续轮可换绑画布，服务端会注入换绑说明。
+        dramaProjectId:
+          type: string
+          maxLength: 80
+          description: 显式绑定本人短剧引导项目；要求 contextScope=[drama]、permissionMode=read_only，与 canvasId 互斥，禁止 focusNodeIds、非零 focusNodeOmittedCount 和 pinnedSkillIds。沿用同一 Agent 运行、会话及 SSE，工具仅提供读取、文字建议和必要提问；运行和恢复视图返回该字段。
         prompt:
           type: string
           description: 非空，最多 16000 字节
@@ -4656,7 +4778,7 @@ components:
           maxItems: 1
           items:
             type: string
-            enum: [canvas]
+            enum: [canvas, drama]
         focusNodeIds:
           type: array
           maxItems: 8

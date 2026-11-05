@@ -374,7 +374,7 @@ export function applyAgentEvent(
         return;
     }
     if (event.type.startsWith("tool_")) {
-        const message: CloudAgentChatMessage = { id: event.eventId, role: "tool", title: String(payload.toolName || payload.title || "工具执行"), text: text || event.type, detail: { ...payload, eventType: event.type } };
+        const message: CloudAgentChatMessage = { id: event.eventId, role: "tool", title: String(payload.toolName || payload.title || "工具执行"), text: text || event.type, detail: { ...payload, runId: event.runId, eventType: event.type } };
         if (payload.toolName === "generate_media") {
             setMessages((current) => upsertMediaToolTrace(current, message));
         } else {

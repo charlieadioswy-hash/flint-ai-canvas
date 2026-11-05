@@ -4,6 +4,16 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CloudAgentMessagePresentation } from "@/services/cloud-agent-conversations";
 import type { CanvasNodeData } from "@/types/canvas";
+import type { DramaAgentProposal } from "@/services/api/agent";
+
+export type AgentDramaContext = {
+    projectId: string;
+    guideConversationId?: string;
+    host: HTMLElement;
+    prefillRequest?: AgentPrefillRequest | null;
+    onConversationBound?: (id: string) => void;
+    onProposal?: (proposal: DramaAgentProposal) => void;
+};
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean };
 /** 画布为 Agent 输入框新建的节点，输入框据此显示附件卡片。 */
@@ -42,6 +52,8 @@ type GlobalAgentStore = {
     /** 平台唯一 Agent 面板的开合状态，跨路由保持。 */
     open: boolean;
     canvas: AgentCanvasContext | null;
+    drama: AgentDramaContext | null;
+    setDrama: (drama: AgentDramaContext | null) => void;
     /** 本机 UI 偏好：在画布里是否停靠到右侧，以及停靠宽度。账号切换不影响。 */
     dock: AgentPanelDockPreference;
     openAgent: () => void;
@@ -113,6 +125,8 @@ function persistDockPreference(dock: AgentPanelDockPreference) {
 export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     open: false,
     canvas: null,
+    drama: null,
+    setDrama: (drama) => set({ drama }),
     dock: readDockPreference(),
     openAgent: () => set({ open: true }),
     closeAgent: () => set({ open: false }),
@@ -133,5 +147,5 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
         set({ dock });
         persistDockPreference(dock);
     },
-    reset: () => set({ open: false, canvas: null }),
+    reset: () => set({ open: false, canvas: null, drama: null }),
 }));

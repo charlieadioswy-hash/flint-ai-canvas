@@ -127,7 +127,14 @@ export type DramaEpisodeStage = "queued" | "script" | "prompts" | "review" | "vi
 
 export type DramaMediaStatus = "" | "queued" | "running" | "ready" | "failed" | "stale" | "skipped";
 
+export type DramaGuideStep = "configuring" | "assets" | "story" | "completed";
+export type DramaChapterInput = { title: string; text: string };
+
 export type DramaProductionView = {
+    revision: number;
+    guideStep?: DramaGuideStep | "";
+    guideConversationId?: string;
+    creativeBrief?: string;
     status: DramaStatus;
     stage: "bible" | "produce" | "done";
     pauseReason: string;
@@ -194,6 +201,7 @@ export type DramaSummary = {
     jobCounts: Partial<Record<"queued" | "running" | "succeeded" | "failed" | "canceled", number>>;
     inbox: DramaInboxItem[];
     castCount: number;
+    guide?: { step: DramaGuideStep; canConfirm: boolean; blockingReason?: string };
 };
 
 export type DramaShot = {
@@ -405,6 +413,7 @@ export type DramaCast = {
 
 export type DramaListItem = {
     project: Project;
+    guideStep?: DramaGuideStep | "";
     status: DramaStatus;
     stage: string;
     pauseReason: string;
@@ -467,7 +476,9 @@ export type DramaEstimate = {
 
 export type CreateDramaInput = {
     name: string;
-    chapters: Array<{ title: string; text: string }>;
+    chapters: DramaChapterInput[];
+    guided?: boolean;
+    brief?: string;
     settings: Partial<DramaSettings>;
     budgetMicrocredits: number;
     start: boolean;
@@ -508,8 +519,16 @@ export function getDrama(projectId: string, signal?: AbortSignal) {
     return http.get<DramaSummary>(base(projectId), { signal });
 }
 
-export function updateDramaSettings(projectId: string, input: { settings?: DramaSettings; budgetMicrocredits?: number }) {
+export function updateDramaSettings(projectId: string, input: { settings?: DramaSettings; budgetMicrocredits?: number; guideConversationId?: string; expectedRevision?: number }) {
     return http.patch<DramaSummary>(`${base(projectId)}/settings`, input);
+}
+
+export function saveDramaGuideSource(projectId: string, input: { expectedRevision: number; chapters: DramaChapterInput[]; sourceFormat?: DramaSourceFormat }) {
+    return http.put<DramaSummary>(`${base(projectId)}/guide/source`, input);
+}
+
+export function confirmDramaGuide(projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }) {
+    return http.post<DramaSummary>(`${base(projectId)}/guide/confirm`, input);
 }
 
 export function startDrama(projectId: string) {
@@ -564,7 +583,7 @@ export function produceDramaChapters(projectId: string, input: { chapterIds: str
     return http.post<{ episodeIds: string[] }>(`${base(projectId)}/chapters/produce`, input);
 }
 
-export function updateDramaChapter(projectId: string, chapterId: string, patch: { title?: string; text?: string }) {
+export function updateDramaChapter(projectId: string, chapterId: string, patch: { title?: string; text?: string; expectedRevision?: number }) {
     return http.patch<{ chapter: { id: string; title: string; sourceText: string; wordCount: number; position: number } }>(`${base(projectId)}/chapters/${encodeURIComponent(chapterId)}`, patch);
 }
 
@@ -585,7 +604,7 @@ export function rescriptDramaEpisode(projectId: string, episodeId: string) {
     return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/rescript`);
 }
 
-export type DramaShotPatch = Partial<Pick<DramaShot, "speaker" | "dialogue" | "action" | "shotSize" | "camera" | "imagePrompt" | "videoPrompt">> & { transition?: DramaTransition; durationSeconds?: number };
+export type DramaShotPatch = Partial<Pick<DramaShot, "speaker" | "dialogue" | "action" | "shotSize" | "camera" | "imagePrompt" | "videoPrompt">> & { transition?: DramaTransition; durationSeconds?: number; expectedRevision?: number };
 
 /** 让文本模型（重新）撰写指定剧情段的完整视频提示词。 */
 export function writeDramaSegmentPrompts(projectId: string, episodeId: string, segments: number[]) {
@@ -593,8 +612,8 @@ export function writeDramaSegmentPrompts(projectId: string, episodeId: string, s
 }
 
 /** 保存整段视频提示词改写；传空串恢复为模型撰写的版本。 */
-export function updateDramaSegment(projectId: string, episodeId: string, index: number, videoPromptOverride: string) {
-    return http.patch<{ saved: boolean }>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/segments/${index}`, { videoPromptOverride });
+export function updateDramaSegment(projectId: string, episodeId: string, index: number, videoPromptOverride: string, expectedRevision?: number) {
+    return http.patch<{ saved: boolean }>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/segments/${index}`, { videoPromptOverride, ...(expectedRevision === undefined ? {} : { expectedRevision }) });
 }
 
 /** 指定本段参考图（顺序即编号，空数组表示不发参考图）；传 null 恢复按镜头自动取。模型撰写的提示词会标记过期。 */
@@ -610,7 +629,19 @@ export function listDramaCast(projectId: string, signal?: AbortSignal) {
     return http.get<{ cast: DramaCast[] }>(`${base(projectId)}/cast`, { signal });
 }
 
-export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked">> & { aliases?: string[] };
+export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked">> & { aliases?: string[]; expectedRevision?: number };
+
+export type DramaCastCreateInput = Pick<DramaCast, "kind" | "name"> & Partial<Pick<DramaCast, "appearance" | "description" | "voiceInstructions">> & { aliases?: string[]; expectedRevision: number };
+
+/** 新增文字资产；参考图由用户另行生成。 */
+export function createDramaCast(projectId: string, input: DramaCastCreateInput) {
+    return http.post<{ cast: DramaCast }>(`${base(projectId)}/cast`, input);
+}
+
+/** 删除未被使用且无在途任务的资产条目，保留已有资源和生成历史。 */
+export function deleteDramaCast(projectId: string, castId: string, expectedRevision: number) {
+    return http.deleteWithBody<{ deleted: boolean; castId: string }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}`, { expectedRevision });
+}
 
 export function updateDramaCast(projectId: string, castId: string, patch: DramaCastPatch) {
     return http.patch<{ cast: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}`, patch);

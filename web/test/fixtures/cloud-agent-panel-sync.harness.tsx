@@ -40,6 +40,8 @@ let remote: CloudAgentConversation[] = [];
 let activeId = "";
 let pending: CloudAgentPendingSubmission | null = null;
 let refreshOverride: (() => Promise<CloudAgentConversation[]>) | undefined;
+let loadOverride: ((id: string) => Promise<CloudAgentConversation>) | undefined;
+const conversationLoads: Array<{ id: string; scope: string }> = [];
 const subscriptions: Array<{ id: string; after: number; event: (event: AgentEvent) => void; connection: (status: string) => void; closed: boolean }> = [];
 const sent: string[] = [];
 const sendInputs: Array<Record<string, any>> = [];
@@ -124,7 +126,10 @@ mock.module("@/services/cloud-agent-history", () => ({
         if (options.scope !== "sync-user") return [];
         return refreshOverride ? refreshOverride() : remote;
     },
-    loadCloudAgentConversation: async (id: string) => remote.find((item) => item.serverConversationId === id)!,
+    loadCloudAgentConversation: async (id: string, options: { scope: string }) => {
+        conversationLoads.push({ id, scope: options.scope });
+        return loadOverride ? loadOverride(id) : remote.find((item) => item.serverConversationId === id)!;
+    },
 }));
 mock.module("@/services/api/skills", () => ({
     ...skillsApi,
@@ -226,16 +231,18 @@ const persist = async () => {
         window.dispatchEvent(new Event("pagehide"));
     });
 };
-async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null) {
+async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string) {
     local = [initial];
     activeId = initial.id;
     remote = cloud;
     pending = initialPending;
     refreshOverride = undefined;
+    loadOverride = undefined;
+    conversationLoads.length = 0;
     sent.length = 0;
     sendInputs.length = 0;
     sendFailure = undefined;
-    capabilitiesOverride = undefined;
+    capabilitiesOverride = guideProjectId ? async () => ({ permissionModes: ["read_only", "request_approval"], skills: true }) : undefined;
     sendOverride = undefined;
     generated = 0;
     subscriptions.length = 0;
@@ -243,9 +250,13 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     setActiveUserScope("sync-user");
     useUserStore.setState({ hydrated: true, user: { id: "sync-user", username: "test", displayName: "test", role: "user", status: "active" } });
     configureModels(false);
-    useGlobalAgentStore.setState({ open: true, canvas: { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] } });
     const host = document.createElement("div");
     document.body.append(host);
+    useGlobalAgentStore.setState({
+        open: true,
+        canvas: guideProjectId ? null : { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
+        drama: guideProjectId ? { projectId: guideProjectId, guideConversationId: initial.serverConversationId, host } : null,
+    });
     const root = createRoot(host);
     await act(async () => {
         root.render(<CanvasCloudAgentPanel />);
@@ -530,6 +541,118 @@ test("另一端已推进parent的明确拒绝只同步上下文，保留草稿�
         expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-child")).toBe(true);
         expect(conversationUI.messages.some((item: any) => item.role === "user" && item.text === "确认新上下文后再发送这条")).toBe(false);
         expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+function guideChat(id: string, runId: string, projectId = "guide-project"): CloudAgentConversation {
+    return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
+}
+
+test("引导会话冲突重新加载最新轮次，保留本机身份与加载期间的新草稿，明确发送才续接", async () => {
+    const first = guideChat("guide-local", "guide-first");
+    const mounted = await mount(first, [first], null, "guide-project");
+    try {
+        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
+        await act(async () => composer.onPromptChange("保留这条引导草稿"));
+        const latest = guideChat("guide-server", "guide-other-device-child");
+        latest.run!.parentId = "guide-first";
+        let resolveLoad!: (conversation: CloudAgentConversation) => void;
+        loadOverride = () => new Promise((resolve) => (resolveLoad = resolve));
+        sendFailure = new ApiError("会话已在另一端推进", { status: 409, reason: "agent_conversation_stale_parent" });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toEqual(["guide-first"]);
+        expect(conversationLoads).toHaveLength(2);
+        expect(pending).toBeNull();
+        expect(composer.prompt).toBe("保留这条引导草稿");
+        await act(async () => {
+            composer.onPromptChange("加载期间继续编辑的草稿");
+            resolveLoad(latest);
+            await settle();
+        });
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-guide-other-device-child")).toBe(true);
+        expect(composer.prompt).toBe("加载期间继续编辑的草稿");
+        expect(sent).toHaveLength(1);
+        await persist();
+        expect(activeId).toBe("guide-local");
+        sendFailure = undefined;
+        sendOverride = async () => ({ run: { ...latest.run!, id: "guide-next", parentId: latest.run!.id } });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toEqual(["guide-first", "guide-other-device-child"]);
+        expect(sendInputs[1]).toMatchObject({ prompt: "加载期间继续编辑的草稿", dramaProjectId: "guide-project", permissionMode: "read_only", budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 } });
+        expect(sendInputs[1].idempotencyKey).not.toBe(sendInputs[0].idempotencyKey);
+        expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("引导未知提交原样重试后收到明确冲突，释放原身份并同步，保留正文等待确认", async () => {
+    const first = guideChat("guide-local", "guide-pending-parent");
+    const original: CloudAgentPendingSubmission = {
+        key: "guide-original-key",
+        fingerprint: "frozen",
+        parentRunId: first.run!.id,
+        messageId: "user-guide-original-key",
+        request: { prompt: "引导待确认请求", idempotencyKey: "guide-original-key", dramaProjectId: "guide-project", permissionMode: "read_only" },
+    };
+    const mounted = await mount(first, [first], original, "guide-project");
+    try {
+        expect(composer.prompt).toBe(original.request!.prompt);
+        expect(pending?.key).toBe(original.key);
+        remote = [guideChat("guide-server", "guide-pending-new-parent")];
+        sendFailure = new ApiError("原请求未受理，会话已经更新", { status: 409, reason: "agent_conversation_stale_parent" });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sendInputs).toHaveLength(1);
+        expect(sendInputs[0]).toEqual(original.request);
+        expect(pending).toBeNull();
+        expect(composer.prompt).toBe(original.request!.prompt);
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-guide-pending-new-parent")).toBe(true);
+        expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("引导冲突恢复时切换项目，迟到的旧会话不能写入新项目", async () => {
+    const first = guideChat("guide-local", "guide-first");
+    const mounted = await mount(first, [first], null, "guide-project");
+    try {
+        let resolveLoad!: (conversation: CloudAgentConversation) => void;
+        const next = guideChat("next-guide", "next-guide-run", "next-project");
+        next.serverConversationId = "next-session";
+        next.run!.conversationId = "next-session";
+        loadOverride = (id) => (id === "next-session" ? Promise.resolve(next) : new Promise((resolve) => (resolveLoad = resolve)));
+        await act(async () => composer.onPromptChange("旧项目的草稿"));
+        sendFailure = new ApiError("会话已经更新", { status: 409, reason: "agent_conversation_stale_parent" });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(conversationLoads).toHaveLength(2);
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { projectId: "next-project", guideConversationId: "next-session", host: mounted.host } });
+            await settle();
+        });
+        await act(async () => {
+            composer.onPromptChange("新项目草稿");
+            resolveLoad(guideChat("old-cloud", "late-old-guide"));
+            await settle();
+        });
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-next-guide-run")).toBe(true);
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-late-old-guide")).toBe(false);
+        expect(composer.prompt).toBe("新项目草稿");
+        expect(sent).toEqual(["guide-first"]);
     } finally {
         await mounted.close();
     }

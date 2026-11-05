@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 import { useNavigate } from "react-router";
@@ -39,12 +39,21 @@ export function useDramaEpisode(projectId: string, episodeId: string, active: bo
     });
 }
 
-export function useDramaCast(projectId: string, active: boolean) {
+export function useDramaCast(projectId: string, active: boolean, contentRevision?: number) {
+    const queryClient = useQueryClient();
+    useEffect(() => {
+        if (projectId && contentRevision !== undefined) void queryClient.invalidateQueries({ queryKey: dramaKeys.cast(projectId), exact: true });
+    }, [queryClient, projectId, contentRevision]);
     const query = useQuery({
         queryKey: dramaKeys.cast(projectId),
         queryFn: ({ signal }) => listDramaCast(projectId, signal),
         enabled: Boolean(projectId),
-        refetchInterval: (state) => (active && state.state.data?.cast.some((cast) => cast.imageStatus !== "ready" && cast.imageStatus !== "failed" && !cast.locked) ? 4_000 : false),
+        refetchInterval: (state) => {
+            const cast = state.state.data?.cast || [];
+            const pending = cast.some((item) => item.imageStatus === "queued" || item.imageStatus === "running");
+            const waiting = active && cast.some((item) => item.imageStatus !== "ready" && item.imageStatus !== "failed" && !item.locked);
+            return pending || waiting ? 4_000 : false;
+        },
     });
     const byId = useMemo(() => new Map((query.data?.cast || []).map((cast) => [cast.id, cast] as const)), [query.data]);
     return { ...query, cast: query.data?.cast || [], byId };

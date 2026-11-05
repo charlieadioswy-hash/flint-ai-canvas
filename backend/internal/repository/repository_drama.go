@@ -645,10 +645,21 @@ func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) err
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		fields["updated_at"] = time.Now()
 		fields["revision"] = gorm.Expr("revision + 1")
+		// 任何版本变更都会拒绝旧图片结果，待生成槽位也必须退出等待，避免永久显示运行中。
+		imageStatus, explicitImageStatus := fields["image_status"]
+		if !explicitImageStatus {
+			fields["image_status"] = gorm.Expr("CASE WHEN image_status IN ? THEN ? ELSE image_status END", []string{model.DramaMediaQueued, model.DramaMediaRunning}, model.DramaMediaStale)
+		}
+		if !explicitImageStatus || imageStatus == model.DramaMediaStale {
+			if err := tx.Model(&model.DramaJob{}).Where("cast_id = ? AND kind = ? AND status = ?", id, model.DramaJobCastImage, model.DramaJobQueued).
+				Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Model(&model.DramaCast{}).Where("id = ?", id).Updates(fields).Error; err != nil {
 			return err
 		}
-		// Textual cast changes invalidate prompt inputs. Lock-only edits do not change media.
+		// Textual cast changes invalidate prompt inputs. Lock-only edits do not invalidate downstream prompts.
 		changed := false
 		for _, key := range []string{"name", "appearance", "description", "voice_instructions", "aliases_json"} {
 			if _, ok := fields[key]; ok {

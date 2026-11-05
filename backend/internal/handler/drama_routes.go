@@ -75,6 +75,20 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/dramas/:id", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.DramaSummary(userID, c.Param("id"))
 	}))
+	r.PUT("/dramas/:id/guide/source", dramaRoute(svc, 32<<20, func(c *gin.Context, userID string) (any, error) {
+		var req service.UpdateDramaGuideSourceRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.UpdateDramaGuideSource(userID, c.Param("id"), req)
+	}))
+	r.POST("/dramas/:id/guide/confirm", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.ConfirmDramaGuideRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.ConfirmDramaGuide(userID, c.Param("id"), req)
+	}))
 	r.PATCH("/dramas/:id/settings", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaSettingsRequest
 		if err := bindDramaJSON(c, &req); err != nil {
@@ -247,6 +261,21 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/dramas/:id/cast", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		casts, err := svc.DramaCasts(userID, c.Param("id"))
 		return gin.H{"cast": casts}, err
+	}))
+	r.POST("/dramas/:id/cast", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.CreateDramaCastRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		cast, err := svc.CreateDramaCast(userID, c.Param("id"), req)
+		return gin.H{"cast": cast}, err
+	}))
+	r.DELETE("/dramas/:id/cast/:castId", dramaRoute(svc, 4<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DeleteDramaCastRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return gin.H{"deleted": true, "castId": c.Param("castId")}, svc.DeleteDramaCast(userID, c.Param("id"), c.Param("castId"), req)
 	}))
 	r.PATCH("/dramas/:id/cast/:castId", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaCastRequest

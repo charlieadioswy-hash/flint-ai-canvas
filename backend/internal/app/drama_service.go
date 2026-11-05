@@ -26,6 +26,13 @@ const (
 
 // CreateDrama 一次性写入项目、小说章节与制作控制面；start=true 时立即进入自动制作。
 func (s *Service) CreateDrama(userID string, req CreateDramaRequest) (DramaSummary, error) {
+	brief := strings.TrimSpace(req.Brief)
+	if req.Guided {
+		req.Start, req.Settings.MediaMode = false, DramaMediaManual
+		if utf8.RuneCountInString(brief) > 20000 {
+			return DramaSummary{}, BadAuthRequest("创作简述不能超过 2 万字")
+		}
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return DramaSummary{}, BadAuthRequest("作品名称不能为空")
@@ -33,7 +40,7 @@ func (s *Service) CreateDrama(userID string, req CreateDramaRequest) (DramaSumma
 	if utf8.RuneCountInString(name) > 80 {
 		return DramaSummary{}, BadAuthRequest("作品名称不能超过 80 字")
 	}
-	if len(req.Chapters) == 0 || len(req.Chapters) > dramaMaxChapters {
+	if (len(req.Chapters) == 0 && (!req.Guided || brief == "")) || len(req.Chapters) > dramaMaxChapters {
 		return DramaSummary{}, BadAuthRequest("章节数量必须在 1 到 3000 之间")
 	}
 	if req.BudgetMicrocredits < 0 {
@@ -123,7 +130,7 @@ func (s *Service) CreateDrama(userID string, req CreateDramaRequest) (DramaSumma
 			producedRunes += runes
 		}
 	}
-	if totalRunes == 0 || producedRunes == 0 {
+	if (totalRunes == 0 || producedRunes == 0) && !(req.Guided && len(req.Chapters) == 0 && brief != "") {
 		return DramaSummary{}, BadAuthRequest("原文为空")
 	}
 	if totalRunes > dramaMaxNovelRunes {
@@ -134,6 +141,9 @@ func (s *Service) CreateDrama(userID string, req CreateDramaRequest) (DramaSumma
 		status = model.DramaStatusRunning
 	}
 	productionRow := model.DramaProduction{ProjectID: project.ID, UserID: userID, Status: status, Stage: model.DramaStageBible, SettingsJSON: encodeDramaSettings(settings), BudgetMicrocredits: req.BudgetMicrocredits, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if req.Guided {
+		productionRow.GuideStep, productionRow.CreativeBrief = model.DramaGuideConfiguring, brief
+	}
 	var episodes []model.DramaEpisode
 	if perChapter {
 		// 按章分组直接建集，分集规划视为已完成；建档后各集按窗口依次写剧本。游标只数加入制作的章节。
@@ -217,6 +227,9 @@ func itoa(value int) string {
 func (s *Service) dramaForUser(userID string, projectID string) (*model.Project, *model.DramaProduction, error) {
 	project, err := s.repo.ProjectForUser(userID, strings.TrimSpace(projectID))
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, NewAppError(http.StatusNotFound, "短剧项目不存在或无权访问")
+		}
 		return nil, nil, err
 	}
 	productionRow, err := s.repo.DramaProduction(project.ID)
@@ -280,7 +293,8 @@ func (s *Service) ListDramas(userID string, req DramaListRequest) (map[string]an
 		count := counts[project.ID]
 		settings := parseDramaSettings(productionRow.SettingsJSON)
 		item := DramaListItem{
-			Project: project, Status: productionRow.Status, Stage: productionRow.Stage, PauseReason: productionRow.PauseReason,
+			GuideStep: productionRow.GuideStep,
+			Project:   project, Status: productionRow.Status, Stage: productionRow.Stage, PauseReason: productionRow.PauseReason,
 			EpisodeCount: count[0], DoneCount: count[1], CoverResourceIDs: covers[project.ID], AspectRatio: settings.AspectRatio,
 			StyleName: settings.StyleName, SpentMicrocredits: spends[project.ID].ChargedMicrocredits(), HeldMicrocredits: spends[project.ID].HeldMicrocredits(),
 			UpdatedAt: project.UpdatedAt.Format(time.RFC3339),
@@ -341,6 +355,7 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	summary := DramaSummary{
 		Project: *project,
 		Production: DramaProductionView{
+			Revision: productionRow.Revision, GuideStep: productionRow.GuideStep, GuideConversationID: productionRow.GuideConversationID, CreativeBrief: productionRow.CreativeBrief,
 			Status: productionRow.Status, Stage: productionRow.Stage, PauseReason: productionRow.PauseReason,
 			Settings: parseDramaSettings(productionRow.SettingsJSON), BudgetMicrocredits: productionRow.BudgetMicrocredits,
 			SpentMicrocredits: spend.ChargedMicrocredits(), CanvasSpentMicrocredits: spend.CanvasChargedMicrocredits, HeldMicrocredits: spend.HeldMicrocredits(),
@@ -352,6 +367,9 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 		JobCounts: jobCounts,
 		Inbox:     []DramaInboxItem{},
 		CastCount: len(casts),
+	}
+	if summary.Guide, err = s.dramaGuideView(productionRow); err != nil {
+		return DramaSummary{}, err
 	}
 	settings := summary.Production.Settings
 	awaiting := 0
@@ -920,6 +938,9 @@ func (s *Service) RequestDramaSegmentPrompts(userID string, projectID string, ep
 	if err != nil {
 		return nil, err
 	}
+	if dramaGuideActive(productionRow) && productionRow.GuideStep != model.DramaGuideStory {
+		return nil, BadAuthRequest("请先确认资产文字设定，再撰写剧情段提示词")
+	}
 	if len(req.Segments) == 0 || len(req.Segments) > 200 {
 		return nil, BadAuthRequest("请选择要撰写的剧情段")
 	}
@@ -942,7 +963,12 @@ func (s *Service) RequestDramaSegmentPrompts(userID string, projectID string, ep
 		}
 		indexes = append(indexes, index)
 	}
-	queued, err := s.repo.RequestDramaSegmentPrompts(project.ID, episode.ID, indexes)
+	queued := 0
+	err = s.withDramaGuideEdit(projectID, &productionRow.Revision, false, func(tx *repository.Repository) error {
+		var err error
+		queued, err = tx.RequestDramaSegmentPrompts(project.ID, episode.ID, indexes)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -976,9 +1002,9 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 	if !found {
 		return BadAuthRequest("剧情段不存在")
 	}
+	encoded := ""
 	if req.AutoReferences || req.ReferenceCastIDs != nil {
 		// 参考图编号写在提示词里，换参考图后模型撰写的提示词标记过期；手写的提示词保留，由用户自行核对编号。
-		encoded := ""
 		if !req.AutoReferences {
 			ids, err := s.dramaSegmentReferenceIDs(project.ID, *req.ReferenceCastIDs)
 			if err != nil {
@@ -986,18 +1012,26 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 			}
 			encoded = encodeStringList(ids)
 		}
-		if err := s.repo.SaveDramaSegmentReferences(episode.ID, index, encoded); err != nil {
-			return err
-		}
 	}
+	prompt := ""
 	if req.VideoPromptOverride != nil {
-		prompt := production.NormalizeReferenceTokens(strings.TrimSpace(*req.VideoPromptOverride))
+		prompt = production.NormalizeReferenceTokens(strings.TrimSpace(*req.VideoPromptOverride))
 		if utf8.RuneCountInString(prompt) > 12000 {
 			return BadAuthRequest("段提示词过长（最多 12000 字）")
 		}
-		if err := s.repo.SaveDramaSegmentOverride(model.DramaSegment{ProjectID: project.ID, EpisodeID: episode.ID, SegmentIndex: index, VideoPromptOverride: prompt}); err != nil {
-			return err
+	}
+	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		if req.AutoReferences || req.ReferenceCastIDs != nil {
+			if err := tx.SaveDramaSegmentReferences(episode.ID, index, encoded); err != nil {
+				return err
+			}
 		}
+		if req.VideoPromptOverride != nil {
+			return tx.SaveDramaSegmentOverride(model.DramaSegment{ProjectID: project.ID, EpisodeID: episode.ID, SegmentIndex: index, VideoPromptOverride: prompt})
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	s.wakeDramaScheduler()
 	return nil

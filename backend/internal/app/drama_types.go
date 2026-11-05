@@ -249,6 +249,8 @@ const (
 )
 
 type CreateDramaRequest struct {
+	Guided             bool                `json:"guided,omitempty"`
+	Brief              string              `json:"brief,omitempty"`
 	Name               string              `json:"name"`
 	Chapters           []DramaChapterInput `json:"chapters"`
 	Settings           DramaSettings       `json:"settings"`
@@ -283,13 +285,15 @@ type AddDramaEpisodeRequest struct {
 
 // UpdateDramaChapterRequest 修改原文；已写好的剧本不会自动重写，需要用户点重新改编。
 type UpdateDramaChapterRequest struct {
-	Title *string `json:"title"`
-	Text  *string `json:"text"`
+	ExpectedRevision *int64  `json:"expectedRevision,omitempty"`
+	Title            *string `json:"title"`
+	Text             *string `json:"text"`
 }
 
 type UpdateDramaEpisodeRequest struct {
-	Title        *string `json:"title"`
-	SourceFormat *string `json:"sourceFormat"`
+	ExpectedRevision *int64  `json:"expectedRevision,omitempty"`
+	Title            *string `json:"title"`
+	SourceFormat     *string `json:"sourceFormat"`
 }
 
 // InsertDramaShotRequest 在指定镜头前或后插入一个空镜头，归入同一剧情段。
@@ -352,16 +356,22 @@ type DramaDialogueCheck struct {
 }
 
 type UpdateDramaSettingsRequest struct {
-	Settings           *DramaSettings `json:"settings"`
-	BudgetMicrocredits *int64         `json:"budgetMicrocredits"`
+	ExpectedRevision    *int64         `json:"expectedRevision,omitempty"`
+	GuideConversationID *string        `json:"guideConversationId,omitempty"`
+	Settings            *DramaSettings `json:"settings"`
+	BudgetMicrocredits  *int64         `json:"budgetMicrocredits"`
 }
 
 type DramaProductionView struct {
-	Status             string        `json:"status"`
-	Stage              string        `json:"stage"`
-	PauseReason        string        `json:"pauseReason"`
-	Settings           DramaSettings `json:"settings"`
-	BudgetMicrocredits int64         `json:"budgetMicrocredits"`
+	Revision            int64         `json:"revision"`
+	GuideStep           string        `json:"guideStep,omitempty"`
+	GuideConversationID string        `json:"guideConversationId,omitempty"`
+	CreativeBrief       string        `json:"creativeBrief,omitempty"`
+	Status              string        `json:"status"`
+	Stage               string        `json:"stage"`
+	PauseReason         string        `json:"pauseReason"`
+	Settings            DramaSettings `json:"settings"`
+	BudgetMicrocredits  int64         `json:"budgetMicrocredits"`
 	// SpentMicrocredits 是作品已实际扣费的总额：流水线任务加关联画布上的精修任务，按订单结算实收计（退回不计）。
 	// CanvasSpentMicrocredits 是其中画布精修的部分；HeldMicrocredits 是尚未结算订单的冻结额（冻结中）。
 	// 预算按 SpentMicrocredits + HeldMicrocredits 保守判断。
@@ -485,6 +495,7 @@ type DramaJobDetail struct {
 }
 
 type DramaSummary struct {
+	Guide      *DramaGuideView     `json:"guide,omitempty"`
 	Project    model.Project       `json:"project"`
 	Production DramaProductionView `json:"production"`
 	Episodes   []DramaEpisodeRow   `json:"episodes"`
@@ -609,6 +620,7 @@ type DramaSegmentReference struct {
 }
 
 type UpdateDramaSegmentRequest struct {
+	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
 	// VideoPromptOverride 传空串表示恢复模型撰写的版本。
 	VideoPromptOverride *string `json:"videoPromptOverride"`
 	// ReferenceCastIDs 指定本段参考图（顺序即编号，可为空数组表示不发参考图）；AutoReferences=true 恢复按镜头自动取。
@@ -618,13 +630,14 @@ type UpdateDramaSegmentRequest struct {
 
 // UpdateDramaShotRequest 修改镜头的剧本内容；镜头只是撰写视频提示词的素材，修改后本段提示词标记过期。
 type UpdateDramaShotRequest struct {
-	Speaker     *string `json:"speaker"`
-	Dialogue    *string `json:"dialogue"`
-	Action      *string `json:"action"`
-	ShotSize    *string `json:"shotSize"`
-	Camera      *string `json:"camera"`
-	ImagePrompt *string `json:"imagePrompt"`
-	VideoPrompt *string `json:"videoPrompt"`
+	ExpectedRevision *int64  `json:"expectedRevision,omitempty"`
+	Speaker          *string `json:"speaker"`
+	Dialogue         *string `json:"dialogue"`
+	Action           *string `json:"action"`
+	ShotSize         *string `json:"shotSize"`
+	Camera           *string `json:"camera"`
+	ImagePrompt      *string `json:"imagePrompt"`
+	VideoPrompt      *string `json:"videoPrompt"`
 	// Transition 是进入本镜头的转场；DurationSeconds 手动设置镜头时长。
 	Transition      *string  `json:"transition"`
 	DurationSeconds *float64 `json:"durationSeconds"`
@@ -649,7 +662,22 @@ type DramaCastLookRequest struct {
 	RestyleSegments bool   `json:"restyleSegments"`
 }
 
+type CreateDramaCastRequest struct {
+	ExpectedRevision  *int64   `json:"expectedRevision,omitempty"`
+	Kind              string   `json:"kind"`
+	Name              string   `json:"name"`
+	Aliases           []string `json:"aliases"`
+	Appearance        string   `json:"appearance"`
+	Description       string   `json:"description"`
+	VoiceInstructions string   `json:"voiceInstructions"`
+}
+
+type DeleteDramaCastRequest struct {
+	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
+}
+
 type UpdateDramaCastRequest struct {
+	ExpectedRevision  *int64    `json:"expectedRevision,omitempty"`
 	Name              *string   `json:"name"`
 	Aliases           *[]string `json:"aliases"`
 	Appearance        *string   `json:"appearance"`
@@ -659,6 +687,7 @@ type UpdateDramaCastRequest struct {
 }
 
 type DramaListItem struct {
+	GuideStep       string        `json:"guideStep,omitempty"`
 	Project         model.Project `json:"project"`
 	Status          string        `json:"status"`
 	Stage           string        `json:"stage"`

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ const (
 type cloudAgentDramaContextArgs struct {
 	EpisodeID     string `json:"episodeId"`
 	EpisodeNumber int    `json:"episodeNumber"`
+	ChapterID     string `json:"chapterId"`
 }
 
 type cloudAgentDramaRef struct {
@@ -90,15 +92,20 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 	}
 	// readAt 取在读库之前：返回的状态不早于这个时间。
 	readAt := time.Now()
-	canvas, nodes, err := cloudAgentDramaCanvas(repo, userID, state.Request.CanvasID)
+	projectID := state.Request.DramaProjectID
+	nodes := map[string]map[string]any{}
+	if projectID == "" {
+		canvas, canvasNodes, err := cloudAgentDramaCanvas(repo, userID, state.Request.CanvasID)
+		if err != nil {
+			return nil, err
+		}
+		projectID, nodes = canvas.ProjectID, canvasNodes
+	}
+	summary, err := service.DramaSummary(userID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	summary, err := service.DramaSummary(userID, canvas.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	casts, err := service.DramaCasts(userID, canvas.ProjectID)
+	casts, err := service.DramaCasts(userID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +117,26 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 			"aspectRatio": production.Settings.AspectRatio, "budgetCredits": float64(production.BudgetMicrocredits) / 1e6,
 			"spentCredits": float64(production.SpentMicrocredits) / 1e6, "canvasSpentCredits": float64(production.CanvasSpentMicrocredits) / 1e6,
 			"heldCredits": float64(production.HeldMicrocredits) / 1e6,
+			"revision":    production.Revision, "settings": production.Settings,
 		},
+	}
+	if state.Request.DramaProjectID != "" {
+		result["guide"] = map[string]any{"step": production.GuideStep, "creativeBrief": production.CreativeBrief, "baseRevision": production.Revision}
+		chapters, err := service.DramaChapterOutline(userID, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if len(chapters) > cloudAgentDramaListLimit {
+			chapters = chapters[:cloudAgentDramaListLimit]
+		}
+		result["chapters"] = chapters
+		if args.ChapterID != "" {
+			chapter, err := service.DramaChapter(userID, projectID, args.ChapterID)
+			if err != nil {
+				return nil, err
+			}
+			result["chapter"] = map[string]any{"id": chapter.ID, "title": chapter.Title, "text": truncateRunes(chapter.SourceText, 16000), "truncated": len([]rune(chapter.SourceText)) > 16000}
+		}
 	}
 	episodes := make([]map[string]any, 0, min(len(summary.Episodes), cloudAgentDramaListLimit))
 	for _, episode := range summary.Episodes {
@@ -132,6 +158,7 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 		castViews = append(castViews, map[string]any{
 			"id": cast.ID, "kind": cast.Kind, "name": cast.Name, "imageStatus": cast.ImageStatus, "hasImage": cast.ImageResourceID != "",
 			"locked": cast.Locked, "appearance": truncateRunes(cast.Appearance, 200),
+			"description": truncateRunes(cast.Description, 1000), "voiceInstructions": truncateRunes(cast.VoiceInstructions, 500),
 		})
 	}
 	result["casts"] = castViews
@@ -154,14 +181,14 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 			}
 		}
 		if episodeID == "" {
-			return nil, &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("没有第 %d 集", args.EpisodeNumber))}
+			return nil, &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("没有第 %d 集；请用{}或episodeNumber:0读取总览，只使用分集目录中真实存在的集号", args.EpisodeNumber))}
 		}
 	}
 	if episodeID != "" {
-		detail, err := service.DramaEpisodeDetail(userID, canvas.ProjectID, episodeID)
+		detail, err := service.DramaEpisodeDetail(userID, projectID, episodeID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("这一集不存在")}
+				return nil, &cloudAgentArgumentError{BadAuthRequest("这一集不存在；请省略episodeId，用{}读取总览，只使用分集目录中真实存在的集ID")}
 			}
 			return nil, err
 		}
@@ -182,8 +209,135 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 			"id": detail.Episode.ID, "number": detail.Episode.Number, "title": detail.Episode.Title, "stage": detail.Episode.Stage,
 			"revision": detail.Episode.Revision, "updatedAt": detail.Episode.UpdatedAt.Format(time.RFC3339), "segments": segments,
 		}
+		result["shots"] = detail.Shots
 	}
 	return result, nil
+}
+
+type cloudAgentDramaProposal struct {
+	Kind         string         `json:"kind"`
+	TargetID     string         `json:"targetId,omitempty"`
+	BaseRevision int64          `json:"baseRevision"`
+	Changes      map[string]any `json:"changes"`
+}
+
+// 建议沿用持久工具事件回放；这里只读取并校验，不写短剧，也不提交生成任务。
+func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
+	if len(services) == 0 || services[0] == nil || state.Request.DramaProjectID == "" {
+		return nil, BadAuthRequest("建议工具仅用于已绑定项目的短剧引导")
+	}
+	var args cloudAgentDramaProposal
+	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
+		return nil, cloudAgentJSONArgumentError(err)
+	}
+	allowed := map[string][]string{
+		"setup":          {"aspectRatio", "styleName", "stylePrompt", "language", "episodeSeconds", "videoResolution"},
+		"source":         {"chapters", "sourceFormat"},
+		"cast":           {"name", "aliases", "appearance", "description", "voiceInstructions"},
+		"cast_create":    {"kind", "name", "aliases", "appearance", "description", "voiceInstructions"},
+		"cast_delete":    {"reason"},
+		"shot":           {"speaker", "dialogue", "action", "shotSize", "camera", "imagePrompt", "videoPrompt", "transition", "durationSeconds"},
+		"segment_prompt": {"videoPromptOverride"},
+	}
+	keys, ok := allowed[args.Kind]
+	if !ok || len(args.Changes) == 0 || args.BaseRevision <= 0 {
+		return nil, &cloudAgentArgumentError{BadAuthRequest("需要有效建议类型、修改内容和当前制作版本")}
+	}
+	for key, value := range args.Changes {
+		found := false
+		for _, allowedKey := range keys {
+			found = found || key == allowedKey
+		}
+		if !found || value == nil {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("建议包含不允许修改的字段：" + key)}
+		}
+		if key == "episodeSeconds" || key == "durationSeconds" {
+			if number, ok := value.(float64); !ok || number <= 0 || number > 3600 {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("建议时长无效")}
+			}
+		} else if key == "aliases" {
+			values, ok := value.([]any)
+			if !ok || len(values) > 20 {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("建议别名无效")}
+			}
+			for _, alias := range values {
+				if text, ok := alias.(string); !ok || len([]rune(text)) > 120 {
+					return nil, &cloudAgentArgumentError{BadAuthRequest("建议别名无效")}
+				}
+			}
+		} else if key != "chapters" {
+			if text, ok := value.(string); !ok || len([]rune(text)) > 16000 {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("建议文字无效")}
+			}
+		}
+	}
+	if args.Kind == "source" {
+		encoded, _ := json.Marshal(args.Changes)
+		var source struct {
+			Chapters []struct {
+				Title string `json:"title"`
+				Text  string `json:"text"`
+			} `json:"chapters"`
+			SourceFormat string `json:"sourceFormat"`
+		}
+		if err := decodeCloudAgentJSONObject(string(encoded), &source); err != nil || len(source.Chapters) == 0 || len(source.Chapters) > 20 || len(encoded) > 64000 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("正文建议需要 1–20 个章节，合计不超过 64KB")}
+		}
+		for _, chapter := range source.Chapters {
+			if strings.TrimSpace(chapter.Title) == "" || strings.TrimSpace(chapter.Text) == "" {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("章节标题与正文不能为空")}
+			}
+		}
+	}
+	service := services[0]
+	_, production, err := service.dramaForUser(userID, state.Request.DramaProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if production.Revision != args.BaseRevision {
+		return nil, &cloudAgentArgumentError{creationConflict("短剧内容已变化，请重新读取上下文后提出建议")}
+	}
+	if args.Kind == "cast_create" || args.Kind == "cast_delete" {
+		if production.GuideStep != model.DramaGuideAssets && production.GuideStep != model.DramaGuideStory {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("请在角色与场景或剧本与分镜阶段调整资产")}
+		}
+		if args.Kind == "cast_create" {
+			kind, _ := args.Changes["kind"].(string)
+			name, _ := args.Changes["name"].(string)
+			name = strings.TrimSpace(name)
+			if (kind != "character" && kind != "scene" && kind != "prop") || name == "" || len([]rune(name)) > 60 {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("新增资产需要有效类型 character/scene/prop 和 1–60 字名称")}
+			}
+			args.Changes["name"] = name
+		} else if reason, _ := args.Changes["reason"].(string); strings.TrimSpace(reason) == "" || len([]rune(reason)) > 1000 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("删除资产需要 1–1000 字的删除原因，供用户确认")}
+		}
+	}
+	if args.Kind == "setup" || args.Kind == "source" || args.Kind == "cast_create" {
+		if args.TargetID != "" {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("配置、正文与新增资产建议不需要 targetId")}
+		}
+	} else {
+		if err := validateCloudAgentID(args.TargetID, "建议目标 ID", 80); err != nil {
+			return nil, &cloudAgentArgumentError{err}
+		}
+		var lookupErr error
+		switch args.Kind {
+		case "cast", "cast_delete":
+			_, lookupErr = repo.DramaCast(production.ProjectID, args.TargetID)
+		case "shot":
+			_, lookupErr = repo.DramaShot(production.ProjectID, args.TargetID)
+		case "segment_prompt":
+			_, lookupErr = repo.DramaSegment(production.ProjectID, args.TargetID)
+		}
+		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("建议目标不属于当前短剧，请重新读取上下文")}
+		}
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+	}
+	return args, nil
 }
 
 type cloudAgentDramaAdoptArgs struct {

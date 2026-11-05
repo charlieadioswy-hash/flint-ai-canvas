@@ -22,6 +22,9 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
+		return DramaEpisodeDetail{}, err
+	}
 	text := strings.TrimSpace(strings.ReplaceAll(req.Text, "\r\n", "\n"))
 	runes := utf8.RuneCountInString(text)
 	if runes == 0 {
@@ -92,6 +95,9 @@ func (s *Service) DramaChapterOutline(userID, projectID string) ([]DramaChapterR
 func (s *Service) ProduceDramaChapters(userID, projectID string, req ProduceDramaChaptersRequest) (ProduceDramaChaptersResult, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return ProduceDramaChaptersResult{}, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return ProduceDramaChaptersResult{}, err
 	}
 	if len(req.ChapterIDs) == 0 || len(req.ChapterIDs) > dramaMaxChapters {
@@ -196,7 +202,9 @@ func (s *Service) UpdateDramaChapter(userID, projectID, chapterID string, req Up
 	if len(fields) == 0 {
 		return *unit, nil
 	}
-	if err := s.repo.UpdateDramaChapterSource(project.ID, unit.ID, fields); err != nil {
+	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		return tx.UpdateDramaChapterSource(project.ID, unit.ID, fields)
+	}); err != nil {
 		return model.ProjectUnit{}, err
 	}
 	return *unit, nil
@@ -230,7 +238,9 @@ func (s *Service) UpdateDramaEpisode(userID, projectID, episodeID string, req Up
 	if len(fields) == 0 {
 		return *episode, nil
 	}
-	if err := s.repo.UpdateDramaEpisodeMeta(episode.ID, fields); err != nil {
+	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		return tx.UpdateDramaEpisodeMeta(episode.ID, fields)
+	}); err != nil {
 		return model.DramaEpisode{}, err
 	}
 	return *episode, nil
@@ -240,6 +250,9 @@ func (s *Service) UpdateDramaEpisode(userID, projectID, episodeID string, req Up
 func (s *Service) InsertDramaShot(userID, projectID, shotID string, req InsertDramaShotRequest) (model.DramaShot, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return model.DramaShot{}, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return model.DramaShot{}, err
 	}
 	anchor, err := s.repo.DramaShot(project.ID, shotID)
@@ -283,6 +296,9 @@ func (s *Service) DeleteDramaShot(userID, projectID, shotID string) error {
 	if err != nil {
 		return err
 	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
+		return err
+	}
 	shot, err := s.repo.DramaShot(project.ID, shotID)
 	if err != nil {
 		return err
@@ -311,6 +327,9 @@ func (s *Service) DeleteDramaShot(userID, projectID, shotID string) error {
 func (s *Service) SetDramaCastImage(userID, projectID, castID string, req SetDramaCastImageRequest) (map[string]any, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return nil, err
 	}
 	cast, err := s.repo.DramaCast(project.ID, castID)

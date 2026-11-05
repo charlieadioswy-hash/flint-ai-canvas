@@ -69,6 +69,7 @@ const TasksPage = lazy(() => import("@/pages/tasks"));
 const ProjectsPage = lazy(loadProjectsPage);
 const ProjectDetailPage = lazy(loadProjectDetailPage);
 const ProjectCreatePage = lazy(loadProjectCreatePage);
+const ProjectGuidePage = lazy(() => import("@/pages/projects/guide"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const ReferralPage = lazy(() => import("@/pages/referral"));
 const AdminReferralPage = lazyAdminPage(() => import("@/pages/admin/referral/referral-admin-page"));
@@ -218,6 +219,14 @@ export const router = createBrowserRouter([
                 element: (
                     <RequireAuth>
                         <RequireFeature feature="shortDramaEnabled">{deferred(<ProjectDetailPage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
+            {
+                path: "/projects/:projectId/guide",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="shortDramaEnabled">{deferred(<ProjectGuidePage />)}</RequireFeature>
                     </RequireAuth>
                 ),
             },

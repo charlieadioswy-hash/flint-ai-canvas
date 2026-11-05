@@ -28,6 +28,7 @@ type CloudAgentRequest struct {
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
 	CanvasID        string `json:"canvasId"`
+	DramaProjectID  string `json:"dramaProjectId,omitempty"`
 	Prompt          string `json:"prompt"`
 	Model           string `json:"model,omitempty"`
 	LogicalModelID  string `json:"logicalModelId,omitempty"`
@@ -95,6 +96,7 @@ type CloudAgentRun struct {
 	UserPrompt     string              `json:"userPrompt"`
 	IdempotencyKey string              `json:"idempotencyKey"`
 	CanvasID       string              `json:"canvasId"`
+	DramaProjectID string              `json:"dramaProjectId,omitempty"`
 	ParentID       string              `json:"parentId,omitempty"`
 	Status         string              `json:"status"`
 	Revision       int64               `json:"revision"`
@@ -138,6 +140,17 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 	if req.CanvasID != "" {
 		if err := validateCloudAgentID(req.CanvasID, "画布 ID", 80); err != nil {
 			return err
+		}
+	}
+	if req.DramaProjectID != "" {
+		if err := validateCloudAgentID(req.DramaProjectID, "短剧项目 ID", 80); err != nil {
+			return err
+		}
+		if req.CanvasID != "" || len(req.ContextScope) != 1 || req.ContextScope[0] != "drama" || len(req.FocusNodeIDs) != 0 || req.FocusNodeOmittedCount != 0 {
+			return BadAuthRequest("短剧引导必须独立绑定短剧项目，不能混入画布上下文")
+		}
+		if req.PermissionMode != "read_only" || len(req.PinnedSkillIDs) != 0 {
+			return BadAuthRequest("短剧引导仅支持只读建议，不支持画布执行或固定技能")
 		}
 	}
 	if err := validateCloudAgentPrompt(req.Prompt, 16000); err != nil {
@@ -232,10 +245,13 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 	if req.PermissionMode == "read_only" && (req.Budget.MaxGenerationTasks != 0 || req.Budget.MaxVideoSeconds != 0) {
 		return BadAuthRequest("只读模式不能设置生成预算")
 	}
-	if len(req.ContextScope) > 1 || (len(req.ContextScope) == 1 && req.ContextScope[0] != "canvas") {
-		return BadAuthRequest("当前仅支持已保存画布摘要，其他上下文尚未开放")
+	if len(req.ContextScope) > 1 || (len(req.ContextScope) == 1 && req.ContextScope[0] != "canvas" && req.ContextScope[0] != "drama") {
+		return BadAuthRequest("仅支持画布或短剧上下文")
 	}
-	if req.CanvasID == "" && (len(req.ContextScope) > 0 || len(req.FocusNodeIDs) > 0 || req.FocusNodeOmittedCount > 0) {
+	if len(req.ContextScope) == 1 && req.ContextScope[0] == "drama" && req.DramaProjectID == "" {
+		return BadAuthRequest("短剧上下文需要绑定短剧项目")
+	}
+	if req.CanvasID == "" && req.DramaProjectID == "" && (len(req.ContextScope) > 0 || len(req.FocusNodeIDs) > 0 || req.FocusNodeOmittedCount > 0) {
 		return BadAuthRequest("未绑定画布的对话不能读取画布上下文或焦点节点")
 	}
 	if math.IsNaN(req.Budget.MaxCredits) || math.IsInf(req.Budget.MaxCredits, 0) || req.Budget.MaxCredits <= 0 || req.Budget.MaxCredits > 1000000 {
@@ -275,7 +291,7 @@ func agentRunOutput(task *model.Task, state cloudAgentState) *CloudAgentRun {
 	if task.Status == model.TaskStatusSucceeded {
 		status = "completed"
 	}
-	return &CloudAgentRun{ID: task.ID, UserPrompt: state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey, CanvasID: task.ProjectID, ParentID: state.ParentID, Status: status, PermissionMode: state.Request.PermissionMode, Model: task.Model, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt, Skills: state.Skills}
+	return &CloudAgentRun{ID: task.ID, UserPrompt: state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey, CanvasID: task.ProjectID, DramaProjectID: state.Request.DramaProjectID, ParentID: state.ParentID, Status: status, PermissionMode: state.Request.PermissionMode, Model: task.Model, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt, Skills: state.Skills}
 }
 
 func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentState, error) {
@@ -393,7 +409,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	// lookup. A retry without an explicit revision must still refer to the same
 	// immutable input; a changed profile therefore cannot silently create a
 	// different run under the same key.
-	profile, err := s.cloudAgentProfileSnapshot(userID, req.CanvasID)
+	if req.DramaProjectID != "" {
+		if _, _, err := s.dramaForUser(userID, req.DramaProjectID); err != nil {
+			return nil, err
+		}
+	}
+	profile, err := s.cloudAgentProfileSnapshotForScope(userID, req.DramaProjectID, req.CanvasID)
 	if err != nil {
 		return nil, err
 	}
@@ -427,9 +448,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	var inheritedConfirmationFingerprints []string
 	parentStatus := ""
 	if parentID != "" {
-		parent, _, parentErr := s.cloudAgentTask(userID, parentID)
+		parent, initialParent, parentErr := s.cloudAgentTask(userID, parentID)
 		if parentErr != nil {
 			return nil, parentErr
+		}
+		if initialParent.Request.DramaProjectID != req.DramaProjectID {
+			return nil, BadAuthRequest("短剧引导会话不能切换项目，请使用该项目的会话")
 		}
 		// 同一段对话可以跟随页面切换画布绑定（首页 → 画布 → 离开画布）。
 		// 归属已由 cloudAgentTask 按 userID 校验；换绑后旧画布的节点事实不再可用。
@@ -510,22 +534,26 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	// 技能范围（已安装且允许自动使用 + 本轮固定）与记忆快照都在建 run 时冻结：目录进 system，
 	// 固定技能提示和记忆作为有来源的数据消息在每次模型请求前重新插入。
-	skillPool, err := s.cloudAgentBuildSkillPool(userID, req.Prompt, req.PinnedSkillIDs, s.cloudAgentContextBudgetForRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	memory, err := s.cloudAgentMemorySnapshotForRun(userID, req.Prompt)
-	if err != nil {
-		return nil, err
+	var skillPool cloudAgentSkillPool
+	memory := cloudAgentMemorySnapshot{Mode: model.AgentMemoryDocumentModeOff}
+	if req.DramaProjectID == "" {
+		skillPool, err = s.cloudAgentBuildSkillPool(userID, req.Prompt, req.PinnedSkillIDs, s.cloudAgentContextBudgetForRequest(req))
+		if err != nil {
+			return nil, err
+		}
+		memory, err = s.cloudAgentMemorySnapshotForRun(userID, req.Prompt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 看图能力取决于本轮渠道模型自己的合同（text.references.maxImages），在建 run 时定格并
 	// 持久化：工具授权每步都从落库状态重建，运行期间不再变化，客户端传入值被忽略。
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
-	req.DramaLinked = len(req.ContextScope) != 0 && dramaLinkedCanvas(s.repo, canvas)
+	req.DramaLinked = req.DramaProjectID != "" || (len(req.ContextScope) != 0 && dramaLinkedCanvas(s.repo, canvas))
 	req.SkillsEnabled = len(skillPool.Versions) > 0
 	req.MemoryMode = memory.Mode
 	canvasSummary := ""
-	if len(req.ContextScope) != 0 {
+	if req.CanvasID != "" && len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummaryWithOmitted(canvas, req.FocusNodeOmittedCount, req.FocusNodeIDs...)
 		if err != nil {
 			return nil, err

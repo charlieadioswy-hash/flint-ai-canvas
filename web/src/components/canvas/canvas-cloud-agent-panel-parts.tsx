@@ -659,6 +659,7 @@ export function AgentConversation({
     retryableErrorId = null,
     onRetryRun,
     retryingRun = false,
+    guideMode = false,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -690,6 +691,7 @@ export function AgentConversation({
     retryableErrorId?: string | null;
     onRetryRun?: () => void;
     retryingRun?: boolean;
+    guideMode?: boolean;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -769,7 +771,13 @@ export function AgentConversation({
                 }}
             >
                 {!messages.length ? (
-                    <AgentWelcome appearance={appearance} nodeCount={nodeCount} installedSkillCount={installedSkillCount} onChooseSkill={onChooseSkill} onOpenSkillRecommendations={onOpenSkillRecommendations} onDraftPrompt={onDraftPrompt} />
+                    guideMode ? (
+                        <div className="px-5 py-8 text-sm leading-7" style={{ color: theme.node.muted }}>
+                            告诉我你希望调整的风格、视频配置或故事方向，我会结合当前作品提出建议。剧本、分镜和资产文字将逐步确认，图片可以稍后再生成。
+                        </div>
+                    ) : (
+                        <AgentWelcome appearance={appearance} nodeCount={nodeCount} installedSkillCount={installedSkillCount} onChooseSkill={onChooseSkill} onOpenSkillRecommendations={onOpenSkillRecommendations} onDraftPrompt={onDraftPrompt} />
+                    )
                 ) : null}
                 <div ref={contentRef} className="agent-conversation-messages">
                     {startIndex > 0 ? (
@@ -863,6 +871,7 @@ export function ComposerControls({
     skillsOpen,
     onSkillsOpenChange,
     selectedSkillCount,
+    guideMode = false,
 }: {
     config: ReturnType<typeof useEffectiveConfig>;
     selectedModel: string;
@@ -873,6 +882,7 @@ export function ComposerControls({
     skillsOpen: boolean;
     onSkillsOpenChange: (open: boolean) => void;
     selectedSkillCount: number;
+    guideMode?: boolean;
 }) {
     const permissionVisual = agentPermissionVisual(permissionMode);
     const PermissionIcon = permissionVisual.icon;
@@ -892,33 +902,37 @@ export function ComposerControls({
                 placeholder="选择文本模型"
             />
             {/* 权限常显文字：只读 / 审批 / 自动，面板窄时只留图标。图标形状和颜色同时区分三种权限。 */}
-            <Dropdown trigger={["click"]} placement="topLeft" menu={{ items: agentPermissionMenuItems(permissionMode, onPermissionChange) }}>
+            {!guideMode ? (
+                <Dropdown trigger={["click"]} placement="topLeft" menu={{ items: agentPermissionMenuItems(permissionMode, onPermissionChange) }}>
+                    <button
+                        type="button"
+                        className="agent-permission-trigger"
+                        style={{ "--agent-permission-color": permissionVisual.color } as CSSProperties}
+                        aria-label={`执行权限：${agentPermissionLabel(permissionMode)}，点击切换`}
+                        title={`执行权限：${agentPermissionLabel(permissionMode)}，点击切换`}
+                    >
+                        <PermissionIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="agent-permission-label">{agentPermissionShortLabel(permissionMode)}</span>
+                    </button>
+                </Dropdown>
+            ) : null}
+            {!guideMode ? (
                 <button
                     type="button"
-                    className="agent-permission-trigger"
-                    style={{ "--agent-permission-color": permissionVisual.color } as CSSProperties}
-                    aria-label={`执行权限：${agentPermissionLabel(permissionMode)}，点击切换`}
-                    title={`执行权限：${agentPermissionLabel(permissionMode)}，点击切换`}
+                    className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[var(--fs-label)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/25"
+                    style={{ color: selectedSkillCount ? theme.accent.primary : theme.node.muted, background: skillsOpen ? theme.node.fill : "transparent" }}
+                    aria-label={`打开 Skills 技能库${selectedSkillCount ? `，本对话已固定 ${selectedSkillCount} 个` : ""}`}
+                    aria-expanded={skillsOpen}
+                    aria-haspopup="dialog"
+                    title={selectedSkillCount ? `本对话已固定 ${selectedSkillCount} 个技能；其他已安装技能 Agent 会按任务自动查找` : "已安装的技能 Agent 会按任务自动查找"}
+                    onClick={() => onSkillsOpenChange(true)}
                 >
-                    <PermissionIcon className="size-3.5 shrink-0" aria-hidden="true" />
-                    <span className="agent-permission-label">{agentPermissionShortLabel(permissionMode)}</span>
+                    <Blocks className="size-3.5" aria-hidden="true" />
+                    {/* 面板窄时只留图标和数量，把位置让给模型名。 */}
+                    <span className="agent-skills-label">技能</span>
+                    {selectedSkillCount ? <span className="tabular-nums">{selectedSkillCount}</span> : null}
                 </button>
-            </Dropdown>
-            <button
-                type="button"
-                className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[var(--fs-label)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/25"
-                style={{ color: selectedSkillCount ? theme.accent.primary : theme.node.muted, background: skillsOpen ? theme.node.fill : "transparent" }}
-                aria-label={`打开 Skills 技能库${selectedSkillCount ? `，本对话已固定 ${selectedSkillCount} 个` : ""}`}
-                aria-expanded={skillsOpen}
-                aria-haspopup="dialog"
-                title={selectedSkillCount ? `本对话已固定 ${selectedSkillCount} 个技能；其他已安装技能 Agent 会按任务自动查找` : "已安装的技能 Agent 会按任务自动查找"}
-                onClick={() => onSkillsOpenChange(true)}
-            >
-                <Blocks className="size-3.5" aria-hidden="true" />
-                {/* 面板窄时只留图标和数量，把位置让给模型名。 */}
-                <span className="agent-skills-label">技能</span>
-                {selectedSkillCount ? <span className="tabular-nums">{selectedSkillCount}</span> : null}
-            </button>
+            ) : null}
         </div>
     );
 }
