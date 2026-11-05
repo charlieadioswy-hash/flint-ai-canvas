@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -121,7 +122,10 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 		},
 	}
 	if state.Request.DramaProjectID != "" {
-		result["guide"] = map[string]any{"step": production.GuideStep, "creativeBrief": production.CreativeBrief, "baseRevision": production.Revision}
+		result["guide"] = map[string]any{
+			"step": production.GuideStep, "creativeBrief": production.CreativeBrief, "baseRevision": production.Revision,
+			"videoModel": cloudAgentDramaVideoModelContext(service, production.Settings),
+		}
 		chapters, err := service.DramaChapterOutline(userID, projectID)
 		if err != nil {
 			return nil, err
@@ -214,6 +218,33 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 	return result, nil
 }
 
+type cloudAgentDramaVideoModel struct {
+	Choice                 DramaModelChoice `json:"choice"`
+	VideoRatios            []string         `json:"videoRatios"`
+	VideoResolutions       []string         `json:"videoResolutions"`
+	DefaultVideoResolution string           `json:"defaultVideoResolution"`
+	Issue                  string           `json:"issue,omitempty"`
+}
+
+func cloudAgentDramaVideoModelContext(service *Service, settings DramaSettings) cloudAgentDramaVideoModel {
+	result := cloudAgentDramaVideoModel{Choice: settings.Models.Video, VideoRatios: []string{}, VideoResolutions: []string{}}
+	if result.Choice.Empty() {
+		result.Issue = "尚未选择视频模型，请先在制作方案中选择"
+		return result
+	}
+	profile, err := service.dramaVideoProfile(result.Choice)
+	if err != nil {
+		result.Issue = "所选视频模型暂不可用：" + err.Error()
+		return result
+	}
+	result.VideoRatios = profile.ratios()
+	result.VideoResolutions, result.DefaultVideoResolution = dramaVideoResolutionsFor(profile.video)
+	if len(result.VideoRatios) == 0 {
+		result.Issue = "所选视频模型没有可用于短剧的画幅，请先调整视频模型"
+	}
+	return result
+}
+
 type cloudAgentDramaProposal struct {
 	Kind         string         `json:"kind"`
 	TargetID     string         `json:"targetId,omitempty"`
@@ -254,6 +285,8 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 		if key == "episodeSeconds" || key == "durationSeconds" {
 			if number, ok := value.(float64); !ok || number <= 0 || number > 3600 {
 				return nil, &cloudAgentArgumentError{BadAuthRequest("建议时长无效")}
+			} else if key == "episodeSeconds" && math.Trunc(number) != number {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("每集时长 episodeSeconds 需要整数秒")}
 			}
 		} else if key == "aliases" {
 			values, ok := value.([]any)
@@ -296,6 +329,31 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 	}
 	if production.Revision != args.BaseRevision {
 		return nil, &cloudAgentArgumentError{creationConflict("短剧内容已变化，请重新读取上下文后提出建议")}
+	}
+	if args.Kind == "setup" {
+		if production.GuideStep != model.DramaGuideConfiguring {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议仅限配置确认前，请重新读取短剧上下文")}
+		}
+		settings := parseDramaSettings(production.SettingsJSON)
+		encoded, err := json.Marshal(args.Changes)
+		if err != nil {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议格式无效")}
+		}
+		if err := json.Unmarshal(encoded, &settings); err != nil {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议格式无效")}
+		}
+		normalized, err := service.validateDramaGuideSettings(userID, settings)
+		if err != nil {
+			video := cloudAgentDramaVideoModelContext(service, settings)
+			return nil, &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("%s。请重新读取 drama_get_context，videoResolution 必须取 guide.videoModel.videoResolutions 中的真实值（当前可选：%s），或传空字符串使用模型默认；画幅单独填写 aspectRatio。不要自行使用宽×高像素值，除非模型可选值明确包含它", err.Error(), strings.Join(video.VideoResolutions, "、")))}
+		}
+		values := map[string]any{
+			"aspectRatio": normalized.AspectRatio, "styleName": normalized.StyleName, "stylePrompt": normalized.StylePrompt,
+			"language": normalized.Language, "episodeSeconds": float64(normalized.EpisodeSeconds), "videoResolution": normalized.VideoResolution,
+		}
+		for key := range args.Changes {
+			args.Changes[key] = values[key]
+		}
 	}
 	if args.Kind == "cast_create" || args.Kind == "cast_delete" {
 		if production.GuideStep != model.DramaGuideAssets && production.GuideStep != model.DramaGuideStory {

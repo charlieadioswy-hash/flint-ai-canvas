@@ -61,6 +61,7 @@ mock.module("@/components/layout/workspace-state", () => ({ WorkspaceErrorState:
 mock.module("@/components/ui/product/app-modal", () => ({ AppModal: () => null }));
 mock.module("@/services/drama-canvas", () => ({ encodeDramaCanvasFocus: () => "", openDramaCanvasPath: async () => "" }));
 mock.module("@/pages/projects/drama-shared", () => ({ CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" }, SourceFormatPicker: () => null }));
+mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: undefined }) }));
 mock.module("@/pages/projects/guide-panels", () => ({
     GuideConfiguration: () => null,
     GuideStory: () => null,

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,7 +151,7 @@ func TestCloudAgentDramaAssetProposalsRequireConfirmationAndCurrentScope(t *test
 
 func TestCloudAgentDramaGuideReadsAndProposesWithoutWriting(t *testing.T) {
 	svc, fake := newDramaTestService(t)
-	projectID := createTestDrama(t, svc, DramaReviewAuto).Project.ID
+	projectID := createGuidedDrama(t, svc).Project.ID
 	_, before, err := svc.dramaForUser("usr-drama", projectID)
 	if err != nil {
 		t.Fatal(err)
@@ -202,5 +203,152 @@ func TestCloudAgentDramaGuideReadsAndProposesWithoutWriting(t *testing.T) {
 	}
 	if fresh.(map[string]any)["guide"].(map[string]any)["baseRevision"] != before.Revision+1 {
 		t.Fatal("same-run context read reused a stale production revision")
+	}
+}
+
+func TestCloudAgentDramaGuideSetupUsesVideoModelContract(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	video := dramaVideoFixture()
+	video.Resolutions, video.DefaultResolution = []string{"480p", "720p", "1080p"}, "720p"
+	setDramaVideoCapability(t, svc, fake, video)
+	draft := createGuidedDrama(t, svc)
+	projectID := draft.Project.ID
+	before, err := svc.repo.DramaProduction(projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{DramaProjectID: projectID}}
+	read := cloudAgentCall{ID: "read-model-contract"}
+	read.Function.Arguments = `{}`
+	context, err := cloudAgentHandleDramaGetContext(svc.repo, "usr-drama", state, read, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := context.(map[string]any)["guide"].(map[string]any)["videoModel"].(cloudAgentDramaVideoModel)
+	if !slices.Equal(contract.VideoRatios, []string{"9:16", "16:9"}) || !slices.Equal(contract.VideoResolutions, video.Resolutions) || contract.DefaultVideoResolution != "720p" || contract.Issue != "" {
+		t.Fatalf("context must expose the selected model contract: %+v", contract)
+	}
+	propose := func(changes map[string]any) (any, error) {
+		arguments, _ := json.Marshal(cloudAgentDramaProposal{Kind: "setup", BaseRevision: before.Revision, Changes: changes})
+		call := cloudAgentCall{ID: "setup-contract"}
+		call.Function.Arguments = string(arguments)
+		return cloudAgentHandleDramaProposeChanges(svc.repo, "usr-drama", state, call, svc)
+	}
+	result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": "1080x1920"})
+	if _, ok := err.(*cloudAgentArgumentError); !ok || result != nil {
+		t.Fatalf("invalid resolution must fail before a proposal can be emitted: %+v %v", result, err)
+	}
+	for _, correction := range []string{"480p", "720p", "1080p", "guide.videoModel.videoResolutions", "空字符串", "aspectRatio"} {
+		if !strings.Contains(err.Error(), correction) {
+			t.Fatalf("missing actionable correction %q: %v", correction, err)
+		}
+	}
+	for _, resolution := range []string{"1080p", "", " auto "} {
+		result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": resolution, "episodeSeconds": 90.0})
+		if err != nil {
+			t.Fatalf("valid resolution %q rejected: %v", resolution, err)
+		}
+		want := resolution
+		if isAutomaticVideoResolution(resolution) {
+			want = ""
+		}
+		proposal := result.(cloudAgentDramaProposal)
+		if proposal.Changes["videoResolution"] != want || proposal.Changes["episodeSeconds"] != float64(90) || len(proposal.Changes) != 3 {
+			t.Fatalf("proposal must show exactly the fields that would be saved: %+v", proposal)
+		}
+	}
+	for _, changes := range []map[string]any{
+		{"episodeSeconds": 90.5},
+		{"aspectRatio": "3:4", "videoResolution": "1080p"},
+		{"aspectRatio": "1080x1920"},
+	} {
+		if result, err := propose(changes); err == nil || result != nil {
+			t.Fatalf("invalid setup returned a proposal: %+v %v", result, err)
+		}
+	}
+	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideStory, model.DramaGuideCompleted, ""} {
+		if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
+			t.Fatal(err)
+		}
+		if result, err := propose(map[string]any{"language": "English"}); err == nil || result != nil {
+			t.Fatalf("setup proposal accepted after configuration in %q", step)
+		}
+	}
+	after, err := svc.repo.DramaProduction(projectID)
+	if err != nil || after.Revision != before.Revision || after.SettingsJSON != before.SettingsJSON || len(fake.requests) != 0 {
+		t.Fatalf("validation must not save settings or dispatch generation: %+v %v", after, err)
+	}
+	for _, entity := range []any{&model.DramaJob{}, &model.Task{}} {
+		var count int64
+		if err := fake.db.Model(entity).Where("project_id = ?", projectID).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("proposal created work: %T count=%d err=%v", entity, count, err)
+		}
+	}
+}
+
+func TestCloudAgentDramaGuideKeepsDeclaredPixelAndFixedScreenResolutions(t *testing.T) {
+	for _, fixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fixedScreen=%t", fixed), func(t *testing.T) {
+			svc, fake := newDramaTestService(t)
+			video := dramaVideoFixture()
+			video.Resolutions, video.DefaultResolution = []string{"1080x1920", "1920x1080"}, "1080x1920"
+			wantResolutions, wantDefault := video.Resolutions, video.DefaultResolution
+			validRequests := []string{"1080x1920", ""}
+			if fixed {
+				video.Ratios, video.DefaultRatio = []string{}, ""
+				video.Resolutions, video.DefaultResolution = []string{"768p竖(768*1376)", "768p横(1376*768)"}, "768p横(1376*768)"
+				video.FixedScreenSpec = &VideoScreenSpecConfig{Resolutions: video.Resolutions, DefaultResolution: video.DefaultResolution}
+				wantResolutions, wantDefault = []string{"768p"}, "768p"
+				validRequests = []string{"768p", "768p竖(768*1376)", ""}
+			}
+			setDramaVideoCapability(t, svc, fake, video)
+			draft := createGuidedDrama(t, svc)
+			state := &cloudAgentRuntime{Request: CloudAgentRequest{DramaProjectID: draft.Project.ID}}
+			call := cloudAgentCall{ID: "model-contract"}
+			call.Function.Arguments = `{}`
+			result, err := cloudAgentHandleDramaGetContext(svc.repo, "usr-drama", state, call, svc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contract := result.(map[string]any)["guide"].(map[string]any)["videoModel"].(cloudAgentDramaVideoModel)
+			if contract.Issue != "" || !slices.Equal(contract.VideoResolutions, wantResolutions) || contract.DefaultVideoResolution != wantDefault || !slices.Contains(contract.VideoRatios, "9:16") {
+				t.Fatalf("declared values were guessed or discarded: %+v", contract)
+			}
+			for _, resolution := range validRequests {
+				arguments, _ := json.Marshal(cloudAgentDramaProposal{Kind: "setup", BaseRevision: draft.Production.Revision, Changes: map[string]any{"aspectRatio": "9:16", "videoResolution": resolution}})
+				call.Function.Arguments = string(arguments)
+				result, err := cloudAgentHandleDramaProposeChanges(svc.repo, "usr-drama", state, call, svc)
+				if err != nil || result.(cloudAgentDramaProposal).Changes["videoResolution"] != resolution {
+					t.Fatalf("declared resolution %q must remain valid: %+v %v", resolution, result, err)
+				}
+			}
+			if len(fake.requests) != 0 {
+				t.Fatal("context and proposals must not call models")
+			}
+		})
+	}
+}
+
+func TestCloudAgentDramaGuideMissingVideoModelKeepsBasicContext(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	draft := createGuidedDrama(t, svc, DramaChapterInput{Title: "第一章", Text: "故事正文"})
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{DramaProjectID: draft.Project.ID}}
+	for _, choice := range []DramaModelChoice{{}, {ChannelID: "missing", ModelKey: "missing"}} {
+		settings := draft.Production.Settings
+		settings.Models.Video = choice
+		if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", draft.Project.ID).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+			t.Fatal(err)
+		}
+		call := cloudAgentCall{ID: "missing-model-context"}
+		call.Function.Arguments = `{}`
+		result, err := cloudAgentHandleDramaGetContext(svc.repo, "usr-drama", state, call, svc)
+		if err != nil {
+			t.Fatalf("unavailable video model must not block reading the story: %v", err)
+		}
+		context := result.(map[string]any)
+		contract := context["guide"].(map[string]any)["videoModel"].(cloudAgentDramaVideoModel)
+		if contract.Issue == "" || len(contract.VideoRatios) != 0 || len(contract.VideoResolutions) != 0 || len(context["chapters"].([]DramaChapterRef)) == 0 {
+			t.Fatalf("missing model needs readable feedback and basic story context: %+v", context)
+		}
 	}
 }

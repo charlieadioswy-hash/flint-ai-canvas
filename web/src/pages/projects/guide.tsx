@@ -8,6 +8,7 @@ import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { analyzeNovel, EPISODE_SOURCE_CHARS, sourceChars } from "@/lib/drama/novel-parse";
+import { dramaChoiceKey, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import type { DramaAgentProposal } from "@/services/api/agent";
 import {
     confirmDramaGuide,
@@ -33,6 +34,7 @@ import {
 import { useGlobalAgentStore, type AgentPrefillRequest } from "@/stores/use-global-agent-store";
 
 import { GuideAssets, GuideConfiguration, GuideStory, GuideTextField } from "./guide-panels";
+import { useDramaModelCatalog } from "./drama-model-picker";
 import { dramaGuideChange, dramaProposalKey } from "./guide-state";
 import { CAST_KIND_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys, useDramaCast, useDramaEpisode, useDramaSummary } from "./studio/use-studio";
@@ -56,6 +58,7 @@ export default function DramaGuidePage() {
     const { message, modal } = App.useApp();
     const queryClient = useQueryClient();
     const summaryQuery = useDramaSummary(projectId);
+    const catalog = useDramaModelCatalog();
     const summary = summaryQuery.data;
     const summaryRef = useRef(summary);
     summaryRef.current = summary;
@@ -63,6 +66,7 @@ export default function DramaGuidePage() {
     const revision = summary?.production.revision || 0;
     const stepIndex = STEPS.findIndex((item) => item.key === step);
     const [viewStep, setViewStep] = useState<VisibleStep>("configuring");
+    const configurationRef = useRef<HTMLDivElement | null>(null);
     const [host, setHost] = useState<HTMLDivElement | null>(null);
     const [mobilePane, setMobilePane] = useState<"chat" | "results">("results");
     const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
@@ -157,6 +161,33 @@ export default function DramaGuidePage() {
         }
         throw new Error("建议对应的内容已不存在，请让 Agent 重新读取并提出建议");
     };
+    const setupProposalIssue = (proposal: DramaAgentProposal) => {
+        if (proposal.kind !== "setup") return "";
+        const settings = summaryRef.current?.production.settings;
+        const option = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings?.models.video));
+        const resolution = typeof proposal.changes.videoResolution === "string" ? proposal.changes.videoResolution : settings?.videoResolution;
+        return dramaVideoResolutionIssue(option, resolution);
+    };
+    const adjustSetupProposal = (proposal: DramaAgentProposal) => {
+        if (busyRef.current) {
+            message.info("正在保存上一项调整，请稍候");
+            return;
+        }
+        if (settingsDraft) {
+            message.info("请先保存或重新载入右侧配置，再调整建议");
+            return;
+        }
+        const current = summaryRef.current;
+        const change = current?.production.guideStep ? dramaGuideChange(proposal, current.production.guideStep, current.production.revision) : null;
+        if (!current || change?.kind !== "setup") {
+            message.warning("建议已过期或不适用于当前步骤，请根据最新内容重新建议");
+            return;
+        }
+        setSettingsDraft((previous) => previous ?? { value: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, revision: proposal.baseRevision });
+        setViewStep("configuring");
+        setMobilePane("results");
+        window.requestAnimationFrame(() => configurationRef.current?.scrollIntoView?.({ block: "start" }));
+    };
     const saveProposal = (proposal: DramaAgentProposal) =>
         perform(
             async () => {
@@ -166,6 +197,8 @@ export default function DramaGuidePage() {
                 if (!change) throw new Error("建议已过期或不适用于当前步骤，请让 Agent 根据最新内容重新建议");
                 if (change.kind === "setup") {
                     if (settingsDraft) throw new Error("请先保存或重新载入右侧配置，再应用建议");
+                    const issue = setupProposalIssue(proposal);
+                    if (issue) throw new Error(`当前视频模型${issue}，请调整建议后保存`);
                     await updateDramaSettings(projectId, { settings: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, expectedRevision: proposal.baseRevision });
                 } else if (change.kind === "source") {
                     await saveDramaGuideSource(projectId, { chapters: change.chapters, sourceFormat: change.sourceFormat, expectedRevision: proposal.baseRevision });
@@ -370,26 +403,30 @@ export default function DramaGuidePage() {
                                         valid={Boolean(dramaGuideChange(proposal, step, revision)) && (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))}
                                         busy={busy}
                                         dirty={dirty && proposal.kind === "setup"}
+                                        issue={setupProposalIssue(proposal)}
                                         onApply={() => applyProposal(proposal)}
+                                        onAdjust={proposal.kind === "setup" ? () => adjustSetupProposal(proposal) : undefined}
                                         onDismiss={() => setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)))}
                                     />
                                 ))}
                             </section>
                         ) : null}
                         {viewStep === "configuring" ? (
-                            <GuideConfiguration
-                                summary={summary}
-                                settings={settings}
-                                editable={step === "configuring"}
-                                busy={busy}
-                                dirty={dirty}
-                                stale={stale}
-                                onChange={(value) => setSettingsDraft((previous) => ({ value, revision: previous?.revision ?? revision }))}
-                                onSave={saveSettings}
-                                onDiscard={() => setSettingsDraft(null)}
-                                onEditSource={() => setSourceDraft({ text: "", sourceFormat: "novel", revision })}
-                                onAskAgent={askAgent}
-                            />
+                            <div ref={configurationRef}>
+                                <GuideConfiguration
+                                    summary={summary}
+                                    settings={settings}
+                                    editable={step === "configuring"}
+                                    busy={busy}
+                                    dirty={dirty}
+                                    stale={stale}
+                                    onChange={(value) => setSettingsDraft((previous) => ({ value, revision: previous?.revision ?? revision }))}
+                                    onSave={saveSettings}
+                                    onDiscard={() => setSettingsDraft(null)}
+                                    onEditSource={() => setSourceDraft({ text: "", sourceFormat: "novel", revision })}
+                                    onAskAgent={askAgent}
+                                />
+                            </div>
                         ) : viewStep === "assets" ? (
                             castQuery.isError ? (
                                 <WorkspaceErrorState description="资产暂时无法读取。" onRetry={() => void castQuery.refetch()} />
@@ -590,7 +627,27 @@ const CHANGE_LABEL: Record<string, string> = {
     durationSeconds: "镜头时长（秒）",
     transition: "转场",
 };
-function ProposalReview({ proposal, target, valid, busy, dirty, onApply, onDismiss }: { proposal: DramaAgentProposal; target?: DramaCast; valid: boolean; busy: boolean; dirty: boolean; onApply: () => void; onDismiss: () => void }) {
+function ProposalReview({
+    proposal,
+    target,
+    valid,
+    busy,
+    dirty,
+    issue,
+    onApply,
+    onAdjust,
+    onDismiss,
+}: {
+    proposal: DramaAgentProposal;
+    target?: DramaCast;
+    valid: boolean;
+    busy: boolean;
+    dirty: boolean;
+    issue?: string;
+    onApply: () => void;
+    onAdjust?: () => void;
+    onDismiss: () => void;
+}) {
     const title = { setup: "创作配置建议", source: "故事正文草稿", cast: "资产设定调整", cast_create: "新增资产建议", cast_delete: "删除资产建议", shot: "镜头文字调整", segment_prompt: "段提示词调整" }[proposal.kind];
     const deleting = proposal.kind === "cast_delete";
     return (
@@ -623,6 +680,11 @@ function ProposalReview({ proposal, target, valid, busy, dirty, onApply, onDismi
                         ))}
                 </dl>
             )}
+            {valid && issue ? (
+                <p role="alert" className="drama-guide-note">
+                    当前视频模型{issue}，请调整建议后保存。
+                </p>
+            ) : null}
             <div className="drama-guide-inline-actions">
                 <span className="drama-guide-note">
                     {!valid
@@ -635,7 +697,12 @@ function ProposalReview({ proposal, target, valid, busy, dirty, onApply, onDismi
                               ? "仅保存文字设定，参考图可稍后手动生成"
                               : "仅在你确认后保存到作品"}
                 </span>
-                <Button danger={deleting} disabled={!valid || busy || dirty} onClick={onApply}>
+                {onAdjust ? (
+                    <Button disabled={!valid || busy || dirty} onClick={onAdjust}>
+                        调整建议
+                    </Button>
+                ) : null}
+                <Button danger={deleting} disabled={!valid || busy || dirty || Boolean(issue)} onClick={onApply}>
                     {deleting ? "删除此资产" : proposal.kind === "cast_create" ? "新增此资产" : "应用此建议"}
                 </Button>
             </div>
