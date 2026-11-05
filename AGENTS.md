@@ -135,6 +135,7 @@ cd web && bun run dev
 
 ## 7. 本地开发、部署和数据目录
 
+- 生产发布必须由用户针对本次变更明确发出“发布到生产”指令后才执行；历史发布授权只覆盖对应那次发布，不得沿用到后续变更。修复、开发、测试、提交、推送和 `update-all` 均不构成生产发布授权。没有明确发布指令时，完成本地工作并交付结果，等待用户主动要求发布；不得自动在生产节点构建或上传待发布版本、执行发布迁移、切换版本或为发布重启服务。
 - 先阅读 `.env.example` 和对应 Compose 文件。宿主机后端开发必须使用 Git 忽略的 `.local/project-workbench-debug`，通过 `CANVAS_BACKEND_DATA_DIR` 显式指定；不要把 `backend/data` 当作开发账号数据库。
 - 本地缓存放 `.local/cache`；不要提交数据库、上传文件、`.env`、真实密钥、构建产物或编辑器配置。
 - 宿主机开发：`backend/` 运行 `CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug go run ./cmd/server`，`web/` 使用 Bun 和 Vite；不要用 pnpm/npm 覆盖同一套 `node_modules`，也不要提交 `pnpm-lock.yaml` 或 `package-lock.json`。Docker 热更新使用 `docker-compose.dev.yml`；本地构建运行使用 `docker-compose.local.yml`。
