@@ -21,6 +21,8 @@ description: 信封、错误码与 OpenAPI
 
 进行中的引导项目保存正文、设置、资产文字、镜头及剧情段提示词时，统一携带当前 `production.revision` 作为 `expectedRevision`；这些文字变更与异步文字结果落库递增该版本。版本变化返回冲突，刷新后重新审阅。相关文字任务仍在运行时拒绝覆盖其输入；实体 revision 继续保护异步结果，不另要求前端提交实体版本。纯会话绑定保留归属、首次绑定和传入版本校验，不递增内容版本；图片状态变化也不使文字版本变化。传统项目及引导完成后的制作台保持既有编辑合同。阶段确认不放行视频、成片或批量图片；单张参考图继续使用原设定重生接口，零图片可以完成引导。两个引导接口拒绝传统项目，不能隐式开启引导。
 
+引导中的有效建议写入成功后统一使版本增加一次；镜头文字实际无变化时也执行引导 CAS，不能用空修改绕过过期校验。携带引导 `expectedRevision` 的旧文字请求在引导结束后返回冲突，不降级为制作台写入。页面可在本地成功写入后、刷新确认恰好增加一个版本且步骤未变时，让同一轮同原版本的独立建议继续使用新的 `expectedRevision`；原工具 `baseRevision` 与回放身份保持不变。该接续只在当前页面生效，不放开服务端 CAS，不接续普通手动保存、外部修改或相互覆盖的建议。
+
 `POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。引导中只开放短剧上下文读取、结构化修改建议及必要提问；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
 
 ## 独立 3D 任务

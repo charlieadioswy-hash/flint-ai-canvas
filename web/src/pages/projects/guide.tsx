@@ -30,12 +30,13 @@ import {
     type DramaSegment,
     type DramaSettings,
     type DramaSourceFormat,
+    type DramaSummary,
 } from "@/services/api/drama";
 import { useGlobalAgentStore, type AgentPrefillRequest } from "@/stores/use-global-agent-store";
 
 import { GuideAssets, GuideConfiguration, GuideStory, GuideTextField } from "./guide-panels";
 import { useDramaModelCatalog } from "./drama-model-picker";
-import { dramaGuideChange, dramaProposalKey } from "./guide-state";
+import { dramaGuideProposal, dramaGuideSetupChange, dramaProposalKey, type DramaGuideChange, type DramaGuideProposalBatch } from "./guide-state";
 import { CAST_KIND_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys, useDramaCast, useDramaEpisode, useDramaSummary } from "./studio/use-studio";
 import "./drama.css";
@@ -48,9 +49,10 @@ const STEPS = [
     { key: "completed", title: "进入制作台", action: "进入制作台", hint: "引导已完成，后续图片与视频在制作台继续" },
 ] as const;
 type VisibleStep = Exclude<DramaGuideStep, "completed">;
-type Operation = { work: () => Promise<unknown>; after?: () => void };
-type SettingsDraft = { value: DramaSettings; revision: number };
+type Operation = { work: () => Promise<unknown>; after?: (summary: DramaSummary | undefined) => void; requireFreshSummary?: boolean };
+type SettingsDraft = { value: DramaSettings; revision: number; proposal?: { value: DramaAgentProposal; baseline: DramaSettings } };
 type CastDraft = { cast: DramaCast; patch: DramaCastPatch; revision: number };
+type ProposalApplication = { proposal: DramaAgentProposal; change: DramaGuideChange; revision: number; step: DramaGuideStep };
 
 export default function DramaGuidePage() {
     const { projectId = "" } = useParams();
@@ -75,6 +77,9 @@ export default function DramaGuidePage() {
     const [promptDraft, setPromptDraft] = useState<{ segment: DramaSegment; episodeId: string; text: string; revision: number } | null>(null);
     const [selectedEpisodeId, setSelectedEpisodeId] = useState("");
     const [proposals, setProposals] = useState<DramaAgentProposal[]>([]);
+    const [proposalBatches, setProposalBatches] = useState<DramaGuideProposalBatch[]>([]);
+    const proposalBatchesRef = useRef(proposalBatches);
+    proposalBatchesRef.current = proposalBatches;
     const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
     const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
     const [prefillRequest, setPrefillRequest] = useState<{ projectId: string; request: AgentPrefillRequest } | null>(null);
@@ -89,30 +94,31 @@ export default function DramaGuidePage() {
         mutationFn: ({ work }: Operation) => work(),
         onSuccess: async (_data, input) => {
             await Promise.all([
-                queryClient.invalidateQueries({ queryKey: dramaKeys.summary(projectId), exact: true }),
+                queryClient.invalidateQueries({ queryKey: dramaKeys.summary(projectId), exact: true }, { throwOnError: input.requireFreshSummary, cancelRefetch: Boolean(input.requireFreshSummary) }),
                 queryClient.invalidateQueries({ queryKey: dramaKeys.cast(projectId) }),
                 queryClient.invalidateQueries({ queryKey: ["drama", projectId, "episode"] }),
                 queryClient.invalidateQueries({ queryKey: dramaKeys.chapters(projectId) }),
                 queryClient.invalidateQueries({ queryKey: ["drama", projectId, "chapter"] }),
                 queryClient.invalidateQueries({ queryKey: ["dramas"] }),
             ]);
-            input.after?.();
+            const state = queryClient.getQueryState<DramaSummary>(dramaKeys.summary(projectId));
+            input.after?.(state?.status === "success" && !state.isInvalidated && state.fetchStatus === "idle" ? state.data : undefined);
         },
         onError: (error) => {
             message.error(error instanceof Error ? error.message : "操作失败，请重试");
-            void summaryQuery.refetch();
+            void summaryQuery.refetch({ cancelRefetch: false });
         },
         onSettled: () => {
             busyRef.current = false;
         },
     });
-    const perform = (work: Operation["work"], after?: Operation["after"]) => {
+    const perform = (work: Operation["work"], after?: Operation["after"], requireFreshSummary = false) => {
         if (busyRef.current) {
             message.info("正在保存上一项调整，请稍候");
             return;
         }
         busyRef.current = true;
-        operation.mutate({ work, after });
+        operation.mutate({ work, after, requireFreshSummary });
     };
     const boundConversation = useCallback((id: string) => setPendingConversationId(id), []);
     const receiveProposal = useCallback((proposal: DramaAgentProposal) => setProposals((previous) => (previous.some((item) => dramaProposalKey(item) === dramaProposalKey(proposal)) ? previous : [...previous, proposal])), []);
@@ -121,7 +127,16 @@ export default function DramaGuidePage() {
         setSettingsDraft(null);
     }, [step, projectId]);
     useEffect(() => {
+        if (proposalBatchesRef.current.some((batch) => batch.currentRevision !== null && (batch.step !== step || batch.currentRevision !== revision))) {
+            const blocked = proposalBatchesRef.current.map((batch) => (batch.step !== step || batch.currentRevision !== revision ? { ...batch, currentRevision: null } : batch));
+            proposalBatchesRef.current = blocked;
+            setProposalBatches(blocked);
+        }
+    }, [step, revision, projectId]);
+    useEffect(() => {
         setProposals([]);
+        proposalBatchesRef.current = [];
+        setProposalBatches([]);
         setDismissed(new Set());
         setSelectedEpisodeId("");
         setCastDraft(null);
@@ -152,7 +167,27 @@ export default function DramaGuidePage() {
     }, [pendingConversationId, summary, operation.isPending]);
 
     const assertRevision = (expected: number) => {
-        if (summaryRef.current?.production.revision !== expected) throw new Error("内容已经更新，请重新载入最新内容后调整");
+        if (summaryRef.current?.project.id !== projectId || summaryRef.current.production.revision !== expected) throw new Error("内容已经更新，请重新载入最新内容后调整");
+    };
+    const currentProposal = (proposal: DramaAgentProposal) => {
+        const current = summaryRef.current;
+        return current?.project.id === projectId && current.production.guideStep && !summaryQuery.isError ? dramaGuideProposal(proposal, current.production.guideStep, current.production.revision, proposalBatchesRef.current, castQuery.cast) : null;
+    };
+    const recordProposalWrite = (application: ProposalApplication) => {
+        if (summaryRef.current?.project.id !== projectId) return;
+        const { proposal, change, step } = application;
+        const previous = proposalBatchesRef.current;
+        const batch = previous.find((item) => item.runId === proposal.runId && item.baseRevision === proposal.baseRevision);
+        const next = [...previous.filter((item) => item !== batch), { runId: proposal.runId, baseRevision: proposal.baseRevision, currentRevision: null, step, appliedChanges: [...(batch?.appliedChanges || []), change] }];
+        // 写入成功但刷新尚未确认时也保留阻断记录，旧缓存不能重新启用这个批次。
+        proposalBatchesRef.current = next;
+        setProposalBatches(next);
+    };
+    const finishProposalWrite = (application: ProposalApplication, latest: DramaSummary | undefined) => {
+        if (summaryRef.current?.project.id !== projectId || latest?.project.id !== projectId || latest.production.revision !== application.revision + 1 || latest.production.guideStep !== application.step) return;
+        const next = proposalBatchesRef.current.map((batch) => (batch.runId === application.proposal.runId && batch.baseRevision === application.proposal.baseRevision ? { ...batch, currentRevision: latest.production.revision } : batch));
+        proposalBatchesRef.current = next;
+        setProposalBatches(next);
     };
     const locateEpisodeTarget = async (targetId: string, kind: "shot" | "segment_prompt") => {
         for (const row of summaryRef.current?.episodes || []) {
@@ -178,55 +213,64 @@ export default function DramaGuidePage() {
             return;
         }
         const current = summaryRef.current;
-        const change = current?.production.guideStep ? dramaGuideChange(proposal, current.production.guideStep, current.production.revision) : null;
-        if (!current || change?.kind !== "setup") {
+        const accepted = currentProposal(proposal);
+        if (!current || accepted?.change.kind !== "setup") {
             message.warning("建议已过期或不适用于当前步骤，请根据最新内容重新建议");
             return;
         }
-        setSettingsDraft((previous) => previous ?? { value: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, revision: proposal.baseRevision });
+        const patch = accepted.change.patch;
+        setSettingsDraft((previous) => previous ?? { value: { ...current.production.settings, ...patch, mediaMode: "manual" }, revision: accepted.revision, proposal: { value: proposal, baseline: current.production.settings } });
         setViewStep("configuring");
         setMobilePane("results");
         window.requestAnimationFrame(() => configurationRef.current?.scrollIntoView?.({ block: "start" }));
     };
-    const saveProposal = (proposal: DramaAgentProposal) =>
+    const saveProposal = (proposal: DramaAgentProposal) => {
+        let application: ProposalApplication | undefined;
         perform(
             async () => {
                 const current = summaryRef.current;
                 if (!current?.production.guideStep) throw new Error("当前作品不在引导中");
-                const change = dramaGuideChange(proposal, current.production.guideStep, current.production.revision);
-                if (!change) throw new Error("建议已过期或不适用于当前步骤，请让 Agent 根据最新内容重新建议");
+                const accepted = currentProposal(proposal);
+                if (!accepted) throw new Error("建议已过期或不适用于当前步骤，请让 Agent 根据最新内容重新建议");
+                const { change, revision: expectedRevision } = accepted;
                 if (change.kind === "setup") {
                     if (settingsDraft) throw new Error("请先保存或重新载入右侧配置，再应用建议");
                     const issue = setupProposalIssue(proposal);
                     if (issue) throw new Error(`当前视频模型${issue}，请调整建议后保存`);
-                    await updateDramaSettings(projectId, { settings: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, expectedRevision: proposal.baseRevision });
+                    await updateDramaSettings(projectId, { settings: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, expectedRevision });
                 } else if (change.kind === "source") {
-                    await saveDramaGuideSource(projectId, { chapters: change.chapters, sourceFormat: change.sourceFormat, expectedRevision: proposal.baseRevision });
+                    await saveDramaGuideSource(projectId, { chapters: change.chapters, sourceFormat: change.sourceFormat, expectedRevision });
                 } else if (change.kind === "cast_create") {
-                    await createDramaCast(projectId, { ...change.input, expectedRevision: proposal.baseRevision });
+                    await createDramaCast(projectId, { ...change.input, expectedRevision });
                 } else if (change.kind === "cast_delete") {
                     if (!castQuery.cast.some((item) => item.id === change.targetId)) throw new Error("建议对应的资产已不存在，请重新读取");
-                    await deleteDramaCast(projectId, change.targetId, proposal.baseRevision);
+                    await deleteDramaCast(projectId, change.targetId, expectedRevision);
                 } else if (change.kind === "cast") {
                     if (!castQuery.cast.some((item) => item.id === change.targetId)) throw new Error("建议对应的资产已不存在，请重新读取");
-                    await updateDramaCast(projectId, change.targetId, { ...change.patch, expectedRevision: proposal.baseRevision });
+                    await updateDramaCast(projectId, change.targetId, { ...change.patch, expectedRevision });
                 } else {
                     const target = await locateEpisodeTarget(change.targetId, change.kind);
-                    assertRevision(proposal.baseRevision);
-                    if (change.kind === "shot") await updateDramaShot(projectId, change.targetId, { ...change.patch, expectedRevision: proposal.baseRevision });
+                    assertRevision(expectedRevision);
+                    if (currentProposal(proposal)?.revision !== expectedRevision) throw new Error("建议已过期，请根据最新内容重新建议");
+                    if (change.kind === "shot") await updateDramaShot(projectId, change.targetId, { ...change.patch, expectedRevision });
                     else {
                         const segment = target.segments.find((item) => item.id === change.targetId)!;
-                        await updateDramaSegment(projectId, target.episode.id, segment.index, change.prompt, proposal.baseRevision);
+                        await updateDramaSegment(projectId, target.episode.id, segment.index, change.prompt, expectedRevision);
                     }
                     await queryClient.invalidateQueries({ queryKey: dramaKeys.episode(projectId, target.episode.id) });
                 }
+                application = { proposal, change, revision: expectedRevision, step: current.production.guideStep };
+                recordProposalWrite(application);
             },
-            () => {
+            (latest) => {
+                if (application) finishProposalWrite(application, latest);
                 setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)));
                 if (proposal.kind === "cast_delete") setCastDraft((previous) => (previous?.cast.id === proposal.targetId ? null : previous));
                 message.success("建议已应用");
             },
+            true,
         );
+    };
     const applyProposal = (proposal: DramaAgentProposal) => {
         if (proposal.kind !== "cast_delete") {
             saveProposal(proposal);
@@ -290,17 +334,32 @@ export default function DramaGuidePage() {
             },
         );
     };
-    const saveSettings = () =>
+    const saveSettings = () => {
+        const draft = settingsDraft;
+        if (!draft) return;
+        const origin = draft.proposal;
+        let application: ProposalApplication | undefined;
         perform(
             async () => {
-                assertRevision(settingsDraft!.revision);
-                await updateDramaSettings(projectId, { settings: { ...settingsDraft!.value, mediaMode: "manual" }, expectedRevision: settingsDraft!.revision });
+                assertRevision(draft.revision);
+                if (origin) {
+                    const accepted = currentProposal(origin.value);
+                    if (accepted?.revision !== draft.revision || accepted.change.kind !== "setup") throw new Error("建议已过期，请重新载入配置后调整");
+                    const change = dramaGuideSetupChange(origin.baseline, draft.value);
+                    if (change) application = { proposal: origin.value, change, revision: accepted.revision, step };
+                }
+                await updateDramaSettings(projectId, { settings: { ...draft.value, mediaMode: "manual" }, expectedRevision: draft.revision });
+                if (application) recordProposalWrite(application);
             },
-            () => {
+            (latest) => {
+                if (application) finishProposalWrite(application, latest);
+                if (origin) setDismissed((previous) => new Set(previous).add(dramaProposalKey(origin.value)));
                 setSettingsDraft(null);
                 message.success("配置已保存");
             },
+            Boolean(origin),
         );
+    };
     return (
         <WorkspacePage fluid scroll={false}>
             <div className="drama-root drama-guide">
@@ -400,7 +459,11 @@ export default function DramaGuidePage() {
                                         key={dramaProposalKey(proposal)}
                                         proposal={proposal}
                                         target={castQuery.cast.find((item) => item.id === proposal.targetId)}
-                                        valid={Boolean(dramaGuideChange(proposal, step, revision)) && (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))}
+                                        valid={
+                                            !summaryQuery.isError &&
+                                            Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast)) &&
+                                            (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))
+                                        }
                                         busy={busy}
                                         dirty={dirty && proposal.kind === "setup"}
                                         issue={setupProposalIssue(proposal)}
@@ -420,7 +483,7 @@ export default function DramaGuidePage() {
                                     busy={busy}
                                     dirty={dirty}
                                     stale={stale}
-                                    onChange={(value) => setSettingsDraft((previous) => ({ value, revision: previous?.revision ?? revision }))}
+                                    onChange={(value) => setSettingsDraft((previous) => (previous ? { ...previous, value } : { value, revision }))}
                                     onSave={saveSettings}
                                     onDiscard={() => setSettingsDraft(null)}
                                     onEditSource={() => setSourceDraft({ text: "", sourceFormat: "novel", revision })}

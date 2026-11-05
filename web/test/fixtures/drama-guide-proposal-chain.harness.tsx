@@ -1,0 +1,502 @@
+import { afterAll, expect, mock, test } from "bun:test";
+import { Window } from "happy-dom";
+import type { DramaAgentProposal } from "@/services/api/agent";
+import type { DramaCast, DramaGuideStep, DramaSettings, DramaSummary } from "@/services/api/drama";
+import type { AgentDramaContext } from "@/stores/use-global-agent-store";
+
+const browser = new Window({ url: "http://localhost/projects/project/guide" });
+for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, IS_REACT_ACT_ENVIRONMENT: true })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+const { act } = await import("react");
+const { createRoot } = await import("react-dom/client");
+const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+const { environmentManager } = await import("@tanstack/query-core");
+environmentManager.setIsServer(() => false);
+
+const videoChoice = { channelId: "video", modelKey: "video" };
+const originalSettings = { language: "中文", aspectRatio: "9:16", videoResolution: "720p", styleName: "写实", stylePrompt: "柔和照明", episodeSeconds: 90, mediaMode: "manual", models: { video: videoChoice }, assets: {}, storyboard: {} } as DramaSettings;
+let summary: DramaSummary;
+let cast: DramaCast[];
+let dramaContext: AgentDramaContext | null = null;
+let writes: Array<{ kind: string; expectedRevision: number; targetId?: string; input?: unknown }>;
+let confirmations: Array<{ onOk: () => unknown }>;
+let errors: string[];
+let failWrite: boolean;
+let failRefresh: boolean;
+let readsFail: boolean;
+let revisionDelta: number;
+let nextStep: DramaGuideStep | undefined;
+let routeProject = "project";
+let pendingRead: { promise: Promise<void>; resolve: () => void; snapshot: DramaSummary; started: boolean } | null = null;
+const silent = () => {};
+const forbidden = async () => {
+    throw new Error("建议接续不应触发生成或阶段确认");
+};
+const agentStore = {
+    get drama() {
+        return dramaContext;
+    },
+    setDrama(value: AgentDramaContext | null) {
+        dramaContext = value;
+    },
+};
+mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: { getState: () => agentStore } }));
+mock.module("antd", () => ({
+    App: { useApp: () => ({ message: { info: silent, warning: silent, success: silent, error: (value: string) => errors.push(value) }, modal: { confirm: (options: (typeof confirmations)[number]) => confirmations.push(options) } }) },
+    Button: ({ children, icon, loading: _loading, type: _type, size: _size, danger: _danger, ...props }: any) => (
+        <button {...props}>
+            {icon}
+            {children}
+        </button>
+    ),
+    Input: (props: any) => <input {...props} />,
+}));
+mock.module("react-router", () => ({ useParams: () => ({ projectId: routeProject }), useNavigate: () => silent, Link: ({ children }: any) => children, Navigate: () => null }));
+mock.module("@/components/layout/workspace-page", () => ({ WorkspacePage: ({ children }: any) => <div>{children}</div> }));
+mock.module("@/components/layout/workspace-state", () => ({ WorkspaceErrorState: () => <div>读取失败</div>, WorkspaceLoadingState: () => <div>读取中</div> }));
+mock.module("@/components/ui/product/app-modal", () => ({ AppModal: () => null }));
+mock.module("@/services/drama-canvas", () => ({ encodeDramaCanvasFocus: () => "", openDramaCanvasPath: async () => "" }));
+mock.module("@/pages/projects/drama-shared", () => ({ CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" }, SourceFormatPicker: () => null }));
+mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: [{ choice: videoChoice, videoResolutions: ["720p", "1080p"] }] } } }) }));
+mock.module("@/pages/projects/guide-panels", () => ({
+    GuideConfiguration: ({ settings, onChange, onSave, dirty, busy, stale }: any) => (
+        <section>
+            <output aria-label="当前配置">{JSON.stringify(settings)}</output>
+            <button onClick={() => onChange({ ...settings, language: "英语" })}>手动更改语言</button>
+            <button onClick={() => onChange({ ...settings, videoResolution: "1080p" })}>改为1080P</button>
+            <button onClick={() => onChange({ ...settings, models: { ...settings.models, video: { modelKey: "other" } } })}>修改高级模型</button>
+            <button onClick={() => onChange(structuredClone(originalSettings))}>恢复原配置</button>
+            {dirty ? (
+                <button disabled={busy || stale} onClick={onSave}>
+                    保存调整
+                </button>
+            ) : null}
+        </section>
+    ),
+    GuideAssets: ({ cast: items }: { cast: DramaCast[] }) => <output aria-label="当前资产">{items.map((item) => item.name).join("、")}</output>,
+    GuideStory: () => null,
+    GuideTextField: () => null,
+}));
+
+function write(kind: string, expectedRevision: number, input?: unknown, targetId?: string) {
+    writes.push({ kind, expectedRevision, input: structuredClone(input), targetId });
+    if (failWrite) throw new Error("模拟保存失败");
+    if (expectedRevision !== summary.production.revision) throw new Error("CAS版本冲突");
+    summary = { ...summary, production: { ...summary.production, revision: expectedRevision + revisionDelta, guideStep: nextStep || summary.production.guideStep } };
+    readsFail = failRefresh;
+}
+const episodeDetail = () => ({
+    episode: { id: "episode", number: 1, title: "第一集", stage: "done" },
+    shots: [{ id: "shot-a" }, { id: "shot-b" }],
+    segments: [
+        { id: "segment-a", index: 1 },
+        { id: "segment-b", index: 2 },
+    ],
+    jobs: [],
+});
+mock.module("@/services/api/drama", () => ({
+    getDrama: async () => {
+        if (pendingRead && !pendingRead.started) {
+            const read = pendingRead;
+            read.started = true;
+            await read.promise;
+            return structuredClone(read.snapshot);
+        }
+        if (readsFail) throw new Error("模拟刷新失败");
+        return structuredClone(summary);
+    },
+    listDramaCast: async () => ({ cast: structuredClone(cast) }),
+    getDramaEpisode: async () => episodeDetail(),
+    updateDramaSettings: async (_project: string, input: { settings: DramaSettings; expectedRevision: number }) => {
+        write("setup", input.expectedRevision, input.settings);
+        summary.production.settings = structuredClone(input.settings);
+        return structuredClone(summary);
+    },
+    saveDramaGuideSource: async (_project: string, input: { expectedRevision: number; chapters: unknown[] }) => {
+        write("source", input.expectedRevision, input);
+        summary.production.chapterCount = input.chapters.length;
+        return structuredClone(summary);
+    },
+    createDramaCast: async (_project: string, input: Record<string, any>) => {
+        write("cast_create", input.expectedRevision, input);
+        const created = { ...input, id: `new-${writes.length}` } as DramaCast;
+        cast.push(created);
+        return { cast: structuredClone(created) };
+    },
+    updateDramaCast: async (_project: string, targetId: string, input: Record<string, any>) => {
+        write("cast", input.expectedRevision, input, targetId);
+        const target = cast.find((item) => item.id === targetId)!;
+        Object.assign(target, input);
+        return { cast: structuredClone(target) };
+    },
+    deleteDramaCast: async (_project: string, targetId: string, expectedRevision: number) => {
+        write("cast_delete", expectedRevision, undefined, targetId);
+        cast = cast.filter((item) => item.id !== targetId);
+        return { deleted: true, castId: targetId };
+    },
+    updateDramaShot: async (_project: string, targetId: string, input: Record<string, any>) => {
+        write("shot", input.expectedRevision, input, targetId);
+        return { shot: { id: targetId, ...input } };
+    },
+    updateDramaSegment: async (_project: string, _episode: string, index: number, prompt: string, expectedRevision: number) => {
+        write("segment_prompt", expectedRevision, prompt, `segment-${index}`);
+        return { saved: true };
+    },
+    confirmDramaGuide: forbidden,
+    regenerateDramaCast: forbidden,
+    rescriptDramaEpisode: forbidden,
+    retryFailedDrama: forbidden,
+    writeDramaSegmentPrompts: forbidden,
+}));
+
+const { dramaKeys } = await import("@/pages/projects/studio/use-studio");
+const { default: DramaGuidePage } = await import("@/pages/projects/guide");
+const settle = async () => {
+    for (let index = 0; index < 6; index++) await Bun.sleep(10);
+};
+afterAll(() => browser.happyDOM.abort());
+function proposal(kind: DramaAgentProposal["kind"], call: string, changes: Record<string, unknown>, targetId?: string, overrides: Partial<DramaAgentProposal> = {}): DramaAgentProposal {
+    return { kind, toolCallId: call, runId: "run", baseRevision: 7, changes, targetId, ...overrides };
+}
+const source = (call = "source") => proposal("source", call, { chapters: [{ title: "第一章", text: "雨夜的小青回到了旧车站。" }], sourceFormat: "novel" });
+const setup = (call = "setup", changes: Record<string, unknown> = { language: "粤语" }) => proposal("setup", call, changes);
+
+async function withGuide(
+    step: DramaGuideStep,
+    check: (ui: {
+        receive: (...items: DramaAgentProposal[]) => Promise<void>;
+        apply: (call: string, label?: string) => Promise<void>;
+        disabled: (call: string) => boolean;
+        click: (label: string) => Promise<void>;
+        refresh: () => Promise<void>;
+        switchProject: () => Promise<void>;
+        startSlowRead: () => Promise<() => Promise<void>>;
+        container: HTMLElement;
+    }) => Promise<void>,
+) {
+    routeProject = "project";
+    pendingRead = null;
+    summary = {
+        project: { id: "project", name: "同轮建议测试" },
+        production: { guideStep: step, revision: 7, status: "draft", stage: "bible", settings: structuredClone(originalSettings), chapterCount: 1 },
+        episodes: step === "story" ? [{ id: "episode", number: 1, title: "第一集", stage: "done" }] : [],
+        jobCounts: {},
+        inbox: [],
+        castCount: 2,
+        guide: { step, canConfirm: false },
+    } as DramaSummary;
+    cast = [
+        { id: "cast-a", kind: "character", name: "小青", imageStatus: "", locked: false },
+        { id: "cast-b", kind: "scene", name: "旧车站", imageStatus: "", locked: false },
+    ] as DramaCast[];
+    writes = [];
+    confirmations = [];
+    errors = [];
+    failWrite = false;
+    failRefresh = false;
+    readsFail = false;
+    revisionDelta = 1;
+    nextStep = undefined;
+    dramaContext = null;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+    client.setQueryData(dramaKeys.summary("project"), structuredClone(summary));
+    client.setQueryData(dramaKeys.cast("project"), { cast: structuredClone(cast) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const cards = new Map<string, HTMLElement>();
+    const button = (scope: HTMLElement, label: string) => {
+        const found = Array.from(scope.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
+        expect(found, `未找到按钮：${label}`).toBeDefined();
+        return found!;
+    };
+    const click = async (target: HTMLButtonElement) => {
+        await act(async () => {
+            target.click();
+            await settle();
+        });
+    };
+    try {
+        await act(async () => {
+            root.render(
+                <QueryClientProvider client={client}>
+                    <DramaGuidePage />
+                </QueryClientProvider>,
+            );
+            await settle();
+        });
+        await act(settle);
+        await check({
+            container,
+            receive: async (...items) => {
+                for (const item of items) {
+                    const previous = new Set(container.querySelectorAll<HTMLElement>(".drama-guide-proposal"));
+                    await act(async () => {
+                        dramaContext!.onProposal!(item);
+                        await settle();
+                    });
+                    const card = Array.from(container.querySelectorAll<HTMLElement>(".drama-guide-proposal")).find((entry) => !previous.has(entry));
+                    expect(card).toBeDefined();
+                    cards.set(item.toolCallId, card!);
+                }
+            },
+            apply: (call, label = "应用此建议") => click(button(cards.get(call)!, label)),
+            disabled: (call) =>
+                Array.from(cards.get(call)!.querySelectorAll("button"))
+                    .filter((item) => ["应用此建议", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
+                    .every((item) => item.disabled),
+            click: (label) => click(button(container, label)),
+            refresh: async () => {
+                await act(async () => {
+                    await client.invalidateQueries({ queryKey: dramaKeys.summary("project"), exact: true });
+                    await settle();
+                });
+            },
+            switchProject: async () => {
+                await act(async () => {
+                    routeProject = "other-project";
+                    summary = { ...summary, project: { ...summary.project, id: routeProject } };
+                    client.setQueryData(dramaKeys.summary(routeProject), structuredClone(summary));
+                    client.setQueryData(dramaKeys.cast(routeProject), { cast: structuredClone(cast) });
+                    root.render(
+                        <QueryClientProvider client={client}>
+                            <DramaGuidePage />
+                        </QueryClientProvider>,
+                    );
+                    await settle();
+                });
+                await act(settle);
+                expect(dramaContext?.projectId).toBe(routeProject);
+            },
+            startSlowRead: async () => {
+                let resolveRead!: () => void;
+                const promise = new Promise<void>((resolve) => {
+                    resolveRead = resolve;
+                });
+                pendingRead = { promise, resolve: resolveRead, snapshot: structuredClone(summary), started: false };
+                await act(async () => {
+                    void client.refetchQueries({ queryKey: dramaKeys.summary("project"), exact: true }, { cancelRefetch: false });
+                    await settle();
+                });
+                expect(pendingRead.started).toBe(true);
+                return async () => {
+                    await act(async () => {
+                        resolveRead();
+                        await settle();
+                    });
+                };
+            },
+        });
+    } finally {
+        pendingRead?.resolve();
+        await act(async () => root.unmount());
+        client.clear();
+        container.remove();
+    }
+}
+
+test("正文与配置双向连续应用，第三条晚到同轮建议也使用最新CAS", async () => {
+    for (const sourceFirst of [true, false])
+        await withGuide("configuring", async ({ receive, apply, disabled, container }) => {
+            const first = sourceFirst ? source() : setup();
+            const second = sourceFirst ? setup() : source();
+            await receive(first, second);
+            await apply(first.toolCallId);
+            expect(disabled(second.toolCallId)).toBe(false);
+            await apply(second.toolCallId);
+            await receive(setup("late", { episodeSeconds: 120 }));
+            expect(disabled("late")).toBe(false);
+            await apply("late");
+            expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9]);
+            expect(summary.production.settings.language).toBe("粤语");
+            expect(summary.production.settings.episodeSeconds).toBe(120);
+            expect(container.querySelectorAll(".drama-guide-proposal")).toHaveLength(0);
+            expect(first.baseRevision).toBe(7);
+            expect(second.baseRevision).toBe(7);
+            expect(errors).toEqual([]);
+        });
+});
+
+test("独立资产与创建可连续，同资产和同名创建及改名撞名被阻断", async () => {
+    await withGuide("assets", async ({ receive, apply, disabled }) => {
+        await receive(proposal("cast", "edit-a", { appearance: "红衣" }, "cast-a"), proposal("cast", "conflict-a", { description: "另一设定" }, "cast-a"), proposal("cast", "edit-b", { description: "雨夜站台" }, "cast-b"));
+        await apply("edit-a");
+        expect(disabled("conflict-a")).toBe(true);
+        expect(disabled("edit-b")).toBe(false);
+        await apply("edit-b");
+        await receive(proposal("cast_create", "create-a", { kind: "character", name: " 小红 " }), proposal("cast_create", "duplicate", { kind: "character", name: "小红" }), proposal("cast_create", "create-b", { kind: "scene", name: "街口" }));
+        await apply("create-a", "新增此资产");
+        expect(disabled("duplicate")).toBe(true);
+        await apply("create-b", "新增此资产");
+        await receive(proposal("cast", "rename", { name: "小红" }, "cast-a"));
+        expect(disabled("rename")).toBe(true);
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9, 10]);
+        expect(errors).toEqual([]);
+    });
+});
+
+test("同字段、关联字段、重复正文与其他run或原始版本不接续", async () => {
+    await withGuide("configuring", async ({ receive, apply, disabled }) => {
+        await receive(setup("first", { styleName: "电影", aspectRatio: "16:9" }), setup("style", { stylePrompt: "高反差" }), setup("frame", { videoResolution: "1080p" }), setup("same-run-language", { language: "英语" }));
+        // 其他run必须真的来自另一轮，且不能由本轮记录抬升。
+        await receive(proposal("setup", "another-run", { language: "英语" }, undefined, { runId: "other" }), proposal("setup", "old-base", { language: "英语" }, undefined, { baseRevision: 6 }));
+        await apply("first");
+        expect(disabled("style")).toBe(true);
+        expect(disabled("frame")).toBe(true);
+        expect(disabled("another-run")).toBe(true);
+        expect(disabled("old-base")).toBe(true);
+        await receive(source(), source("duplicate-source"));
+        await apply("source");
+        expect(disabled("duplicate-source")).toBe(true);
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
+        await receive(proposal("setup", "new-base", { language: "日语" }, undefined, { baseRevision: 9 }), proposal("setup", "new-base-duration", { episodeSeconds: 180 }, undefined, { baseRevision: 9 }));
+        await apply("new-base");
+        expect(disabled("same-run-language")).toBe(true);
+        expect(disabled("new-base-duration")).toBe(false);
+        await apply("new-base-duration");
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9, 10]);
+    });
+});
+
+test("外部更新、写后跳版或阶段回退均不抬升剩余建议", async () => {
+    await withGuide("configuring", async ({ receive, apply, disabled, startSlowRead }) => {
+        await receive(source(), setup());
+        const releaseRead = await startSlowRead();
+        await apply("source");
+        expect(disabled("setup")).toBe(false);
+        await releaseRead();
+        expect(disabled("setup")).toBe(false);
+        await apply("setup");
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
+    });
+    await withGuide("configuring", async ({ receive, disabled, refresh }) => {
+        await receive(source(), setup());
+        summary.production.revision = 8;
+        await refresh();
+        expect(disabled("source")).toBe(true);
+        expect(disabled("setup")).toBe(true);
+        expect(writes).toEqual([]);
+    });
+    await withGuide("configuring", async ({ receive, apply, disabled }) => {
+        await receive(source(), setup());
+        revisionDelta = 2;
+        await apply("source");
+        expect(disabled("setup")).toBe(true);
+        expect(writes).toHaveLength(1);
+    });
+    await withGuide("story", async ({ receive, apply, disabled, refresh }) => {
+        await receive(proposal("cast", "edit-a", { appearance: "红衣" }, "cast-a"), proposal("cast", "edit-b", { description: "站台" }, "cast-b"));
+        nextStep = "assets";
+        await apply("edit-a");
+        expect(disabled("edit-b")).toBe(true);
+        summary.production.guideStep = "story";
+        await refresh();
+        expect(disabled("edit-b")).toBe(true);
+    });
+});
+
+test("保存失败不伪造接续；成功写入但强刷新失败保留阻断记录", async () => {
+    await withGuide("configuring", async ({ receive, apply, disabled }) => {
+        await receive(source(), setup());
+        failWrite = true;
+        await apply("source");
+        expect(summary.production.revision).toBe(7);
+        expect(disabled("setup")).toBe(false);
+        expect(errors).toContain("模拟保存失败");
+    });
+    await withGuide("configuring", async ({ receive, apply, disabled, refresh }) => {
+        await receive(source(), setup());
+        failRefresh = true;
+        await apply("source");
+        expect(summary.production.revision).toBe(8);
+        expect(disabled("setup")).toBe(true);
+        expect(errors).toContain("模拟刷新失败");
+        readsFail = false;
+        await refresh();
+        expect(disabled("setup")).toBe(true);
+    });
+});
+
+test("调整建议保留来源和最终字段足迹；普通手工或高级设置不接续", async () => {
+    await withGuide("configuring", async ({ receive, apply, disabled, click }) => {
+        await receive(setup("setup", { videoResolution: "1080x1920" }), source(), setup("language", { language: "日语" }));
+        await apply("setup", "调整建议");
+        await click("改为1080P");
+        await click("手动更改语言");
+        await click("保存调整");
+        expect(disabled("source")).toBe(false);
+        expect(disabled("language")).toBe(true);
+        await apply("source");
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
+    });
+    await withGuide("configuring", async ({ receive, disabled, click }) => {
+        await receive(source());
+        await click("手动更改语言");
+        await click("保存调整");
+        expect(disabled("source")).toBe(true);
+        expect(writes).toHaveLength(1);
+    });
+    await withGuide("configuring", async ({ receive, apply, disabled, click }) => {
+        await receive(setup(), source());
+        await apply("setup", "调整建议");
+        await click("修改高级模型");
+        await click("保存调整");
+        expect(disabled("source")).toBe(true);
+        expect(writes).toHaveLength(1);
+    });
+    await withGuide("configuring", async ({ receive, apply, disabled, click, container }) => {
+        await receive(setup(), source());
+        await apply("setup", "调整建议");
+        await click("恢复原配置");
+        await click("保存调整");
+        expect(disabled("source")).toBe(false);
+        expect(container.querySelectorAll(".drama-guide-proposal")).toHaveLength(1);
+    });
+});
+
+test("独立镜头或段提示词连续可用，混合种类和同目标仍冲突", async () => {
+    for (const kind of ["shot", "segment_prompt"] as const)
+        await withGuide("story", async ({ receive, apply, disabled }) => {
+            const prefix = kind === "shot" ? "shot" : "segment";
+            const changes = kind === "shot" ? { dialogue: "你好" } : { videoPromptOverride: "雨夜远景" };
+            await receive(
+                proposal(kind, "a", changes, `${prefix}-a`),
+                proposal(kind, "b", changes, `${prefix}-b`),
+                proposal(kind, "same", changes, `${prefix}-a`),
+                proposal(kind === "shot" ? "segment_prompt" : "shot", "mixed", kind === "shot" ? { videoPromptOverride: "提示词" } : { dialogue: "你好" }, kind === "shot" ? "segment-a" : "shot-a"),
+            );
+            await apply("a");
+            expect(disabled("same")).toBe(true);
+            expect(disabled("mixed")).toBe(true);
+            expect(disabled("b")).toBe(false);
+            await apply("b");
+            expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
+            expect(errors).toEqual([]);
+        });
+});
+
+test("删除确认框跨外部版本变化后仍拒绝写入", async () => {
+    await withGuide("assets", async ({ receive, apply, refresh }) => {
+        await receive(proposal("cast_delete", "delete", { reason: "多余" }, "cast-a"));
+        await apply("delete", "删除此资产");
+        expect(confirmations).toHaveLength(1);
+        summary.production.revision = 8;
+        await refresh();
+        await act(async () => {
+            await confirmations[0].onOk();
+            await settle();
+        });
+        expect(writes).toEqual([]);
+        expect(errors.join(" ")).toMatch(/过期|更新/);
+    });
+    await withGuide("assets", async ({ receive, apply, switchProject }) => {
+        await receive(proposal("cast_delete", "delete", { reason: "多余" }, "cast-a"));
+        await apply("delete", "删除此资产");
+        await switchProject();
+        await act(async () => {
+            await confirmations[0].onOk();
+            await settle();
+        });
+        expect(writes).toEqual([]);
+        expect(errors.join(" ")).toMatch(/过期|更新/);
+    });
+});

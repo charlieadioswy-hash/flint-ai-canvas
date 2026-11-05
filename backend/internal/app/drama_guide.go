@@ -76,6 +76,9 @@ func (s *Service) withDramaGuideEdit(projectID string, expected *int64, rewindAs
 			return err
 		}
 		if !dramaGuideActive(p) {
+			if expected != nil {
+				return repository.ErrDramaGuideChanged
+			}
 			return edit(tx)
 		}
 		if expected == nil || *expected != p.Revision {

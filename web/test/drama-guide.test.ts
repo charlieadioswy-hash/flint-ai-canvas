@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { activeDramaGuide, dramaGuideChange, dramaProjectPath, dramaProposalKey } from "../src/pages/projects/guide-state";
+import { activeDramaGuide, dramaGuideChange, dramaGuideChangesConflict, dramaGuideProposal, dramaGuideSetupChange, dramaProjectPath, dramaProposalKey, type DramaGuideChange, type DramaGuideProposalBatch } from "../src/pages/projects/guide-state";
 import type { DramaAgentProposal } from "../src/services/api/agent";
+import type { DramaSettings } from "../src/services/api/drama";
 
 const proposal = (patch: Partial<DramaAgentProposal> = {}): DramaAgentProposal => ({ kind: "setup", baseRevision: 8, changes: { language: "粤语" }, runId: "run-1", toolCallId: "call-1", ...patch });
 
@@ -16,6 +17,59 @@ describe("guided drama route recovery", () => {
     test("completed guides return to the existing studio", () => {
         expect(activeDramaGuide("completed")).toBe(false);
         expect(dramaProjectPath("guided", "completed")).toBe("/projects/guided");
+    });
+});
+
+describe("same-run drama proposal continuation", () => {
+    const setup = (patch: Partial<DramaSettings>): DramaGuideChange => ({ kind: "setup", patch });
+    const source: DramaGuideChange = { kind: "source", chapters: [{ title: "第一章", text: "正文" }] };
+    const cast = (targetId: string, name?: string): DramaGuideChange => ({ kind: "cast", targetId, assetKind: "character", patch: name ? { name } : { appearance: "红衣" } });
+    const create = (name: string, kind: "character" | "scene" = "character"): DramaGuideChange => ({ kind: "cast_create", input: { kind, name } });
+
+    test("only the exact same run, original revision and verified step can continue", () => {
+        const batches: DramaGuideProposalBatch[] = [{ runId: "run-1", baseRevision: 8, currentRevision: 9, step: "configuring", appliedChanges: [source] }];
+        expect(dramaGuideProposal(proposal(), "configuring", 9, batches)?.revision).toBe(9);
+        expect(proposal().baseRevision).toBe(8);
+        expect(dramaGuideProposal(proposal({ runId: "other" }), "configuring", 9, batches)).toBeNull();
+        expect(dramaGuideProposal(proposal({ baseRevision: 7 }), "configuring", 9, batches)).toBeNull();
+        expect(dramaGuideProposal(proposal(), "configuring", 10, batches)).toBeNull();
+        expect(dramaGuideProposal(proposal(), "assets", 9, batches)).toBeNull();
+        expect(dramaGuideProposal(proposal(), "configuring", 8, [{ ...batches[0], currentRevision: null }])).toBeNull();
+    });
+
+    test("source and independent setup fields continue, related style and frame fields conflict", () => {
+        expect(dramaGuideChangesConflict(source, setup({ language: "粤语" }))).toBe(false);
+        expect(dramaGuideChangesConflict(setup({ language: "粤语" }), source)).toBe(false);
+        expect(dramaGuideChangesConflict(source, source)).toBe(true);
+        expect(dramaGuideChangesConflict(setup({ language: "粤语" }), setup({ episodeSeconds: 120 }))).toBe(false);
+        expect(dramaGuideChangesConflict(setup({ styleName: "电影" }), setup({ stylePrompt: "冷色" }))).toBe(true);
+        expect(dramaGuideChangesConflict(setup({ aspectRatio: "9:16" }), setup({ videoResolution: "1080p" }))).toBe(true);
+    });
+
+    test("asset, shot and segment conflict ranges remain conservative", () => {
+        expect(dramaGuideChangesConflict(cast("a"), cast("b"))).toBe(false);
+        expect(dramaGuideChangesConflict(cast("a"), { kind: "cast_delete", targetId: "a", reason: "重复" })).toBe(true);
+        expect(dramaGuideChangesConflict(create(" Ａ 青 "), create("a 青"))).toBe(true);
+        expect(dramaGuideChangesConflict(create("小青"), create("小青", "scene"))).toBe(false);
+        expect(dramaGuideChangesConflict(create("小青"), cast("a", " 小青 "))).toBe(true);
+        expect(dramaGuideChangesConflict(cast("a", "小青"), create("小青"))).toBe(true);
+        expect(dramaGuideChangesConflict(cast("a", "小青"), cast("b", " 小青 "))).toBe(true);
+        const shot: DramaGuideChange = { kind: "shot", targetId: "a", patch: { dialogue: "你好" } };
+        const segment: DramaGuideChange = { kind: "segment_prompt", targetId: "a", prompt: "提示词" };
+        expect(dramaGuideChangesConflict(shot, { ...shot, targetId: "b" })).toBe(false);
+        expect(dramaGuideChangesConflict(shot, shot)).toBe(true);
+        expect(dramaGuideChangesConflict(segment, { ...segment, targetId: "b" })).toBe(false);
+        expect(dramaGuideChangesConflict(segment, segment)).toBe(true);
+        expect(dramaGuideChangesConflict(shot, segment)).toBe(true);
+        expect(dramaGuideChangesConflict(cast("a"), shot)).toBe(true);
+        expect(dramaGuideChangesConflict(cast("a"), segment)).toBe(true);
+    });
+
+    test("adjusted setup uses final whitelisted differences and excludes advanced edits", () => {
+        const before = { language: "中文", videoResolution: "720p", models: {}, mediaMode: "manual" } as DramaSettings;
+        expect(dramaGuideSetupChange(before, { ...before, language: "粤语" })).toEqual(setup({ language: "粤语" }));
+        expect(dramaGuideSetupChange(before, before)).toEqual(setup({}));
+        expect(dramaGuideSetupChange(before, { ...before, models: { video: { modelKey: "other" } } })).toBeNull();
     });
 });
 

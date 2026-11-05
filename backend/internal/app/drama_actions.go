@@ -102,6 +102,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			if err != nil {
 				return err
 			}
+			if req.Settings != nil && req.ExpectedRevision != nil && current.GuideStep != "" && current.GuideStep != model.DramaGuideConfiguring {
+				return repository.ErrDramaGuideChanged
+			}
 			if req.GuideConversationID != nil && current.GuideConversationID != "" && current.GuideConversationID != fields["guide_conversation_id"] {
 				return dramaGuideConflict("此项目已关联另一段引导会话")
 			}
@@ -315,7 +318,11 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 	if episode.FinalResourceID != "" {
 		fields["final_stale"] = true
 	}
-	if err := s.withDramaGuideEdit(projectID, &productionRow.Revision, false, func(tx *repository.Repository) error {
+	var expected *int64
+	if dramaGuideActive(productionRow) {
+		expected = &productionRow.Revision
+	}
+	if err := s.withDramaGuideEdit(projectID, expected, false, func(tx *repository.Repository) error {
 		if err := tx.CancelQueuedDramaJobs(project.ID, func(db *gorm.DB) *gorm.DB { return db.Where("episode_id = ?", episode.ID) }); err != nil {
 			return err
 		}
@@ -385,6 +392,12 @@ func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDr
 		}
 	}
 	if len(fields) == 0 {
+		// Guided no-ops still consume the checked revision, just like other applied proposals.
+		if req.ExpectedRevision != nil || dramaGuideActive(p) {
+			if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(*repository.Repository) error { return nil }); err != nil {
+				return model.DramaShot{}, err
+			}
+		}
 		return *shot, nil
 	}
 	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {

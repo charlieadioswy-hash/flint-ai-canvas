@@ -964,7 +964,11 @@ func (s *Service) RequestDramaSegmentPrompts(userID string, projectID string, ep
 		indexes = append(indexes, index)
 	}
 	queued := 0
-	err = s.withDramaGuideEdit(projectID, &productionRow.Revision, false, func(tx *repository.Repository) error {
+	var expected *int64
+	if dramaGuideActive(productionRow) {
+		expected = &productionRow.Revision
+	}
+	err = s.withDramaGuideEdit(projectID, expected, false, func(tx *repository.Repository) error {
 		var err error
 		queued, err = tx.RequestDramaSegmentPrompts(project.ID, episode.ID, indexes)
 		return err
