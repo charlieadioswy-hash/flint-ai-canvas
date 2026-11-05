@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
 import { ArrowLeft, ArrowRight, Check, CheckCheck, ChevronRight, MessageSquare, RefreshCw, Sparkles, X } from "lucide-react";
@@ -68,9 +69,10 @@ export default function DramaGuidePage() {
     const revision = summary?.production.revision || 0;
     const stepIndex = STEPS.findIndex((item) => item.key === step);
     const [viewStep, setViewStep] = useState<VisibleStep>("configuring");
-    const configurationRef = useRef<HTMLDivElement | null>(null);
     const [host, setHost] = useState<HTMLDivElement | null>(null);
-    const [mobilePane, setMobilePane] = useState<"chat" | "results">("results");
+    const [chatActionsHost, setChatActionsHost] = useState<HTMLDivElement | null>(null);
+    const [mobilePane, setMobilePane] = useState<"chat" | "results">("chat");
+    const [appliedNotice, setAppliedNotice] = useState("");
     const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
     const [castDraft, setCastDraft] = useState<CastDraft | null>(null);
     const [sourceDraft, setSourceDraft] = useState<{ text: string; sourceFormat: DramaSourceFormat; revision: number } | null>(null);
@@ -125,6 +127,7 @@ export default function DramaGuidePage() {
     useEffect(() => {
         setViewStep(step === "completed" ? "story" : step);
         setSettingsDraft(null);
+        setAppliedNotice("");
     }, [step, projectId]);
     useEffect(() => {
         if (proposalBatchesRef.current.some((batch) => batch.currentRevision !== null && (batch.step !== step || batch.currentRevision !== revision))) {
@@ -153,6 +156,7 @@ export default function DramaGuidePage() {
             host,
             onConversationBound: boundConversation,
             onProposal: receiveProposal,
+            onActionsHost: setChatActionsHost,
             prefillRequest: prefillRequest?.projectId === projectId ? prefillRequest.request : null,
         });
         return () => {
@@ -209,7 +213,7 @@ export default function DramaGuidePage() {
             return;
         }
         if (settingsDraft) {
-            message.info("请先保存或重新载入右侧配置，再调整建议");
+            message.info("请先保存或重新载入当前配置，再调整建议");
             return;
         }
         const current = summaryRef.current;
@@ -220,9 +224,7 @@ export default function DramaGuidePage() {
         }
         const patch = accepted.change.patch;
         setSettingsDraft((previous) => previous ?? { value: { ...current.production.settings, ...patch, mediaMode: "manual" }, revision: accepted.revision, proposal: { value: proposal, baseline: current.production.settings } });
-        setViewStep("configuring");
-        setMobilePane("results");
-        window.requestAnimationFrame(() => configurationRef.current?.scrollIntoView?.({ block: "start" }));
+        setMobilePane("chat");
     };
     const saveProposal = (proposal: DramaAgentProposal) => {
         let application: ProposalApplication | undefined;
@@ -234,7 +236,7 @@ export default function DramaGuidePage() {
                 if (!accepted) throw new Error("建议已过期或不适用于当前步骤，请让 Agent 根据最新内容重新建议");
                 const { change, revision: expectedRevision } = accepted;
                 if (change.kind === "setup") {
-                    if (settingsDraft) throw new Error("请先保存或重新载入右侧配置，再应用建议");
+                    if (settingsDraft) throw new Error("请先保存或重新载入当前配置，再应用建议");
                     const issue = setupProposalIssue(proposal);
                     if (issue) throw new Error(`当前视频模型${issue}，请调整建议后保存`);
                     await updateDramaSettings(projectId, { settings: { ...current.production.settings, ...change.patch, mediaMode: "manual" }, expectedRevision });
@@ -266,6 +268,7 @@ export default function DramaGuidePage() {
                 if (application) finishProposalWrite(application, latest);
                 setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)));
                 if (proposal.kind === "cast_delete") setCastDraft((previous) => (previous?.cast.id === proposal.targetId ? null : previous));
+                setAppliedNotice("已保存本次选择，可继续确认下一步。");
                 message.success("建议已应用");
             },
             true,
@@ -327,7 +330,11 @@ export default function DramaGuidePage() {
             return;
         }
         perform(
-            () => confirmDramaGuide(projectId, { expectedStep: step, expectedRevision: settingsDraft?.revision ?? revision, ...(step === "configuring" ? { settings: { ...settings, mediaMode: "manual" } } : {}) }),
+            () => {
+                assertRevision(settingsDraft?.revision ?? revision);
+                if (summaryRef.current?.production.guideStep !== step) throw new Error("引导步骤已经更新，请查看当前内容后再确认");
+                return confirmDramaGuide(projectId, { expectedStep: step, expectedRevision: settingsDraft?.revision ?? revision, ...(step === "configuring" ? { settings: { ...settings, mediaMode: "manual" } } : {}) });
+            },
             () => {
                 setSettingsDraft(null);
                 if (step === "story") navigate(`/projects/${projectId}`, { replace: true });
@@ -355,10 +362,20 @@ export default function DramaGuidePage() {
                 if (application) finishProposalWrite(application, latest);
                 if (origin) setDismissed((previous) => new Set(previous).add(dramaProposalKey(origin.value)));
                 setSettingsDraft(null);
+                if (origin) setAppliedNotice("已保存调整后的方案，可继续确认下一步。");
                 message.success("配置已保存");
             },
             Boolean(origin),
         );
+    };
+    const configurationProps = {
+        summary,
+        busy,
+        onChange: (value: DramaSettings) => setSettingsDraft((previous) => (previous ? { ...previous, value } : { value, revision })),
+        onSave: saveSettings,
+        onDiscard: () => setSettingsDraft(null),
+        onEditSource: () => setSourceDraft({ text: "", sourceFormat: "novel" as const, revision }),
+        onAskAgent: askAgent,
     };
     return (
         <WorkspacePage fluid scroll={false}>
@@ -451,45 +468,14 @@ export default function DramaGuidePage() {
                                 <Button onClick={confirm}>进入制作台</Button>
                             </div>
                         ) : null}
-                        {visibleProposals.length ? (
-                            <section className="drama-guide-proposals" aria-label="待确认的 Agent 建议">
-                                <h2>Agent 的调整建议</h2>
-                                {visibleProposals.map((proposal) => (
-                                    <ProposalReview
-                                        key={dramaProposalKey(proposal)}
-                                        proposal={proposal}
-                                        target={castQuery.cast.find((item) => item.id === proposal.targetId)}
-                                        valid={
-                                            !summaryQuery.isError &&
-                                            Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast)) &&
-                                            (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))
-                                        }
-                                        busy={busy}
-                                        dirty={dirty && proposal.kind === "setup"}
-                                        issue={setupProposalIssue(proposal)}
-                                        onApply={() => applyProposal(proposal)}
-                                        onAdjust={proposal.kind === "setup" ? () => adjustSetupProposal(proposal) : undefined}
-                                        onDismiss={() => setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)))}
-                                    />
-                                ))}
-                            </section>
-                        ) : null}
                         {viewStep === "configuring" ? (
-                            <div ref={configurationRef}>
-                                <GuideConfiguration
-                                    summary={summary}
-                                    settings={settings}
-                                    editable={step === "configuring"}
-                                    busy={busy}
-                                    dirty={dirty}
-                                    stale={stale}
-                                    onChange={(value) => setSettingsDraft((previous) => (previous ? { ...previous, value } : { value, revision }))}
-                                    onSave={saveSettings}
-                                    onDiscard={() => setSettingsDraft(null)}
-                                    onEditSource={() => setSourceDraft({ text: "", sourceFormat: "novel", revision })}
-                                    onAskAgent={askAgent}
-                                />
-                            </div>
+                            <GuideConfiguration
+                                {...configurationProps}
+                                settings={settingsDraft?.proposal ? summary.production.settings : settings}
+                                editable={step === "configuring" && !settingsDraft?.proposal}
+                                dirty={dirty && !settingsDraft?.proposal}
+                                stale={stale && !settingsDraft?.proposal}
+                            />
                         ) : viewStep === "assets" ? (
                             castQuery.isError ? (
                                 <WorkspaceErrorState description="资产暂时无法读取。" onRetry={() => void castQuery.refetch()} />
@@ -545,21 +531,62 @@ export default function DramaGuidePage() {
                         )}
                     </section>
                 </div>
-                <footer className="drama-guide-footer">
-                    <div>
-                        <strong>{currentStep.title}</strong>
-                        <p role="status">{summary.guide?.blockingReason || currentStep.hint}</p>
-                    </div>
-                    <Button
-                        type="primary"
-                        icon={step === "completed" ? <ArrowRight className="size-4" /> : <Check className="size-4" />}
-                        loading={busy}
-                        disabled={busy || stale || summaryQuery.isError || (step !== "completed" && !summary.guide?.canConfirm)}
-                        onClick={confirm}
-                    >
-                        {currentStep.action}
-                    </Button>
-                </footer>
+                {chatActionsHost
+                    ? createPortal(
+                          <section className="drama-guide-chat-actions" aria-label="短剧对话中的选项与确认">
+                              {visibleProposals.length ? (
+                                  <section className="drama-guide-proposals" aria-label="待确认的 Agent 建议">
+                                      <h2>选择要采用的建议</h2>
+                                      <p className="drama-guide-note">点击即可保存到作品；独立建议可以逐项选择。</p>
+                                      {visibleProposals.map((proposal) => (
+                                          <ProposalReview
+                                              key={dramaProposalKey(proposal)}
+                                              proposal={proposal}
+                                              target={castQuery.cast.find((item) => item.id === proposal.targetId)}
+                                              valid={
+                                                  !summaryQuery.isError &&
+                                                  Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast)) &&
+                                                  (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))
+                                              }
+                                              busy={busy}
+                                              dirty={dirty && proposal.kind === "setup"}
+                                              issue={setupProposalIssue(proposal)}
+                                              onApply={() => applyProposal(proposal)}
+                                              onAdjust={proposal.kind === "setup" ? () => adjustSetupProposal(proposal) : undefined}
+                                              onDismiss={() => setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)))}
+                                          />
+                                      ))}
+                                  </section>
+                              ) : null}
+                              {settingsDraft?.proposal ? (
+                                  <section aria-label="在对话中调整创作方案">
+                                      <GuideConfiguration {...configurationProps} settings={settings} editable={step === "configuring"} dirty={dirty} stale={stale} />
+                                  </section>
+                              ) : null}
+                              {appliedNotice ? (
+                                  <p className="drama-guide-notice" role="status">
+                                      {appliedNotice}
+                                  </p>
+                              ) : null}
+                              <footer className="drama-guide-footer">
+                                  <div>
+                                      <strong>{currentStep.title}</strong>
+                                      <p role="status">{settingsDraft?.proposal ? "请先保存或重新载入当前方案，再确认下一步。" : summary.guide?.blockingReason || currentStep.hint}</p>
+                                  </div>
+                                  <Button
+                                      type="primary"
+                                      icon={step === "completed" ? <ArrowRight className="size-4" /> : <Check className="size-4" />}
+                                      loading={busy}
+                                      disabled={busy || stale || Boolean(settingsDraft?.proposal) || summaryQuery.isError || (step !== "completed" && !summary.guide?.canConfirm)}
+                                      onClick={confirm}
+                                  >
+                                      {currentStep.action}
+                                  </Button>
+                              </footer>
+                          </section>,
+                          chatActionsHost,
+                      )
+                    : null}
                 <AppModal
                     rootClassName="drama-root"
                     title={castDraft ? `编辑${CAST_KIND_LABEL[castDraft.cast.kind]} · ${castDraft.cast.name}` : "编辑资产"}
@@ -765,7 +792,7 @@ function ProposalReview({
                         调整建议
                     </Button>
                 ) : null}
-                <Button danger={deleting} disabled={!valid || busy || dirty || Boolean(issue)} onClick={onApply}>
+                <Button className="drama-guide-proposal-choose" danger={deleting} disabled={!valid || busy || dirty || Boolean(issue)} onClick={onApply}>
                     {deleting ? "删除此资产" : proposal.kind === "cast_create" ? "新增此资产" : "应用此建议"}
                 </Button>
             </div>

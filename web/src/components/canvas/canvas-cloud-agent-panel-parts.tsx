@@ -660,6 +660,7 @@ export function AgentConversation({
     onRetryRun,
     retryingRun = false,
     guideMode = false,
+    onActionsHost,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -692,6 +693,7 @@ export function AgentConversation({
     onRetryRun?: () => void;
     retryingRun?: boolean;
     guideMode?: boolean;
+    onActionsHost?: (host: HTMLDivElement | null) => void;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -849,6 +851,7 @@ export function AgentConversation({
                             </motion.div>
                         ) : null}
                     </AnimatePresence>
+                    {guideMode && onActionsHost ? <div ref={onActionsHost} data-drama-agent-actions /> : null}
                 </div>
             </div>
             {awayFromBottom ? (

@@ -115,7 +115,7 @@ function proposal(kind: "cast_create" | "cast_delete", overrides: Partial<DramaA
     };
 }
 
-async function withGuide(check: (ui: { container: HTMLElement; client: InstanceType<typeof QueryClient>; receive: (value: DramaAgentProposal) => Promise<void>; click: (label: string) => Promise<void> }) => Promise<void>) {
+async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDivElement; client: InstanceType<typeof QueryClient>; receive: (value: DramaAgentProposal) => Promise<void>; click: (label: string) => Promise<void> }) => Promise<void>) {
     summary = {
         project: { id: "project", name: "资产建议测试" },
         production: { guideStep: "assets", revision: 7, status: "draft", stage: "bible", settings: {}, chapterCount: 1 },
@@ -154,9 +154,18 @@ async function withGuide(check: (ui: { container: HTMLElement; client: InstanceT
         });
         await act(settle);
         expect(dramaContext?.onProposal).toBeFunction();
+        expect(dramaContext?.onActionsHost).toBeFunction();
+        const chatHost = document.createElement("div");
+        chatHost.setAttribute("aria-label", "创作对话操作");
+        container.querySelector(".drama-guide-agent-host")!.append(chatHost);
+        await act(async () => {
+            dramaContext!.onActionsHost!(chatHost);
+            await settle();
+        });
         invalidations = [];
         await check({
             container,
+            chatHost,
             client,
             receive: async (value) => {
                 await act(async () => {
@@ -180,12 +189,14 @@ async function withGuide(check: (ui: { container: HTMLElement; client: InstanceT
     }
 }
 
-test("新增资产建议先审阅，确认后携带 CAS 版本创建并刷新真实查询", async () => {
-    await withGuide(async ({ container, receive, click }) => {
+test("聊天内新增资产建议点击后携带 CAS 版本创建并刷新真实查询", async () => {
+    await withGuide(async ({ container, chatHost, receive, click }) => {
         await receive(proposal("cast_create"));
         expect(creates).toEqual([]);
         expect(deletes).toEqual([]);
-        expect(container.textContent).toContain("雨夜旧车站");
+        expect(chatHost.textContent).toContain("雨夜旧车站");
+        expect(chatHost.querySelectorAll(".drama-guide-proposal")).toHaveLength(1);
+        expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
         expect(container.querySelector("output")?.textContent).not.toContain("雨夜旧车站");
         await click("新增此资产");
         expect(creates).toEqual([{ projectId: "project", input: { kind: "scene", name: "雨夜旧车站", description: "列车停运后的老站台", appearance: "冷色雨幕", aliases: ["旧车站"], expectedRevision: 7 } }]);

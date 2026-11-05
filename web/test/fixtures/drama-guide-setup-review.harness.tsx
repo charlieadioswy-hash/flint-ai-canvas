@@ -139,7 +139,7 @@ function persistedSetup(baseRevision = 7): DramaAgentProposal {
     };
 }
 
-async function withGuide(check: (ui: { container: HTMLElement; receive: (value: DramaAgentProposal) => Promise<void>; button: (label: string) => HTMLButtonElement; click: (label: string) => Promise<void> }) => Promise<void>) {
+async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDivElement; receive: (value: DramaAgentProposal) => Promise<void>; button: (label: string) => HTMLButtonElement; click: (label: string) => Promise<void> }) => Promise<void>) {
     summary = {
         project: { id: "project", name: "持久化配置建议测试" },
         production: { guideStep: "configuring", revision: 7, status: "draft", stage: "bible", settings: structuredClone(originalSettings), chapterCount: 0, wordCount: 0 },
@@ -160,7 +160,9 @@ async function withGuide(check: (ui: { container: HTMLElement; receive: (value: 
     document.body.append(container);
     const root = createRoot(container);
     const button = (label: string) => {
-        const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
+        const found =
+            Array.from(container.querySelector('[aria-label="创作对话操作"]')?.querySelectorAll("button") || []).find((item) => item.textContent?.trim() === label) ||
+            Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
         expect(found, `未找到按钮：${label}`).toBeDefined();
         return found!;
     };
@@ -175,8 +177,17 @@ async function withGuide(check: (ui: { container: HTMLElement; receive: (value: 
         });
         await act(settle);
         expect(dramaContext?.onProposal).toBeFunction();
+        expect(dramaContext?.onActionsHost).toBeFunction();
+        const chatHost = document.createElement("div");
+        chatHost.setAttribute("aria-label", "创作对话操作");
+        container.querySelector(".drama-guide-agent-host")!.append(chatHost);
+        await act(async () => {
+            dramaContext!.onActionsHost!(chatHost);
+            await settle();
+        });
         await check({
             container,
+            chatHost,
             button,
             receive: async (value) => {
                 await act(async () => {
@@ -199,9 +210,11 @@ async function withGuide(check: (ui: { container: HTMLElement; receive: (value: 
 }
 
 test("旧像素尺寸建议可进入真实配置草稿，选1080P后仅保存白名单修改并携带CAS", async () => {
-    await withGuide(async ({ container, receive, button, click }) => {
+    await withGuide(async ({ container, chatHost, receive, button, click }) => {
         await receive(persistedSetup());
         expect(settingsWrites).toEqual([]);
+        expect(chatHost.querySelectorAll(".drama-guide-proposal")).toHaveLength(1);
+        expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
         expect(button("应用此建议").disabled).toBe(true);
         expect(button("调整建议").disabled).toBe(false);
         await click("应用此建议");
@@ -211,10 +224,10 @@ test("旧像素尺寸建议可进入真实配置草稿，选1080P后仅保存白
         expect(otherWrites).toBe(0);
         expect(dramaContext?.prefillRequest ?? null).toBeNull();
         expect(summary.production.settings).toEqual(originalSettings);
-        expect(container.querySelector(".drama-guide-style-description")?.textContent).toBe("冷色雨幕与高反差电影照明");
-        expect(container.querySelector<HTMLSelectElement>('select[aria-label="对白语言"]')?.value).toBe("粤语");
-        expect(container.querySelector('output[aria-label="单集时长"]')?.textContent).toBe("120");
-        expect(container.querySelector('[role="radiogroup"][aria-label="视频分辨率"]')).not.toBeNull();
+        expect(chatHost.querySelector(".drama-guide-style-description")?.textContent).toBe("冷色雨幕与高反差电影照明");
+        expect(chatHost.querySelector<HTMLSelectElement>('select[aria-label="对白语言"]')?.value).toBe("粤语");
+        expect(chatHost.querySelector('output[aria-label="单集时长"]')?.textContent).toBe("120");
+        expect(chatHost.querySelector('[role="radiogroup"][aria-label="视频分辨率"]')).not.toBeNull();
         expect(button("1080P").getAttribute("aria-checked")).toBe("false");
         await click("1080P");
         expect(button("1080P").getAttribute("aria-checked")).toBe("true");

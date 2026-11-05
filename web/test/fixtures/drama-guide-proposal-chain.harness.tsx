@@ -26,9 +26,13 @@ let readsFail: boolean;
 let revisionDelta: number;
 let nextStep: DramaGuideStep | undefined;
 let routeProject = "project";
+let guideConfirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings } }>;
+let allowGuideConfirm: boolean;
+let unexpectedWrites: number;
 let pendingRead: { promise: Promise<void>; resolve: () => void; snapshot: DramaSummary; started: boolean } | null = null;
 const silent = () => {};
 const forbidden = async () => {
+    unexpectedWrites++;
     throw new Error("建议接续不应触发生成或阶段确认");
 };
 const agentStore = {
@@ -58,13 +62,21 @@ mock.module("@/services/drama-canvas", () => ({ encodeDramaCanvasFocus: () => ""
 mock.module("@/pages/projects/drama-shared", () => ({ CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" }, SourceFormatPicker: () => null }));
 mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: [{ choice: videoChoice, videoResolutions: ["720p", "1080p"] }] } } }) }));
 mock.module("@/pages/projects/guide-panels", () => ({
-    GuideConfiguration: ({ settings, onChange, onSave, dirty, busy, stale }: any) => (
+    GuideConfiguration: ({ settings, onChange, onSave, dirty, busy, stale, editable }: any) => (
         <section>
             <output aria-label="当前配置">{JSON.stringify(settings)}</output>
-            <button onClick={() => onChange({ ...settings, language: "英语" })}>手动更改语言</button>
-            <button onClick={() => onChange({ ...settings, videoResolution: "1080p" })}>改为1080P</button>
-            <button onClick={() => onChange({ ...settings, models: { ...settings.models, video: { modelKey: "other" } } })}>修改高级模型</button>
-            <button onClick={() => onChange(structuredClone(originalSettings))}>恢复原配置</button>
+            <button disabled={!editable} onClick={() => onChange({ ...settings, language: "英语" })}>
+                手动更改语言
+            </button>
+            <button disabled={!editable} onClick={() => onChange({ ...settings, videoResolution: "1080p" })}>
+                改为1080P
+            </button>
+            <button disabled={!editable} onClick={() => onChange({ ...settings, models: { ...settings.models, video: { modelKey: "other" } } })}>
+                修改高级模型
+            </button>
+            <button disabled={!editable} onClick={() => onChange(structuredClone(originalSettings))}>
+                恢复原配置
+            </button>
             {dirty ? (
                 <button disabled={busy || stale} onClick={onSave}>
                     保存调整
@@ -141,7 +153,15 @@ mock.module("@/services/api/drama", () => ({
         write("segment_prompt", expectedRevision, prompt, `segment-${index}`);
         return { saved: true };
     },
-    confirmDramaGuide: forbidden,
+    confirmDramaGuide: async (projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }) => {
+        guideConfirms.push({ projectId, input: structuredClone(input) });
+        if (!allowGuideConfirm) return forbidden();
+        if (failWrite) throw new Error("模拟阶段确认失败");
+        if (input.expectedStep !== summary.production.guideStep || input.expectedRevision !== summary.production.revision) throw new Error("阶段CAS冲突");
+        const next = input.expectedStep === "configuring" ? "assets" : input.expectedStep === "assets" ? "story" : "completed";
+        summary = { ...summary, production: { ...summary.production, guideStep: next, revision: input.expectedRevision + 1 }, guide: { step: next, canConfirm: false } };
+        return structuredClone(summary);
+    },
     regenerateDramaCast: forbidden,
     rescriptDramaEpisode: forbidden,
     retryFailedDrama: forbidden,
@@ -171,6 +191,7 @@ async function withGuide(
         switchProject: () => Promise<void>;
         startSlowRead: () => Promise<() => Promise<void>>;
         container: HTMLElement;
+        chatHost: HTMLDivElement;
     }) => Promise<void>,
 ) {
     routeProject = "project";
@@ -189,6 +210,9 @@ async function withGuide(
         { id: "cast-b", kind: "scene", name: "旧车站", imageStatus: "", locked: false },
     ] as DramaCast[];
     writes = [];
+    guideConfirms = [];
+    allowGuideConfirm = false;
+    unexpectedWrites = 0;
     confirmations = [];
     errors = [];
     failWrite = false;
@@ -201,6 +225,8 @@ async function withGuide(
     client.setQueryData(dramaKeys.summary("project"), structuredClone(summary));
     client.setQueryData(dramaKeys.cast("project"), { cast: structuredClone(cast) });
     const container = document.createElement("div");
+    const chatHost = document.createElement("div");
+    chatHost.setAttribute("aria-label", "创作对话操作");
     document.body.append(container);
     const root = createRoot(container);
     const cards = new Map<string, HTMLElement>();
@@ -225,17 +251,25 @@ async function withGuide(
             await settle();
         });
         await act(settle);
+        expect(dramaContext?.onActionsHost).toBeFunction();
+        container.querySelector(".drama-guide-agent-host")!.append(chatHost);
+        await act(async () => {
+            dramaContext!.onActionsHost!(chatHost);
+            await settle();
+        });
         await check({
             container,
+            chatHost,
             receive: async (...items) => {
                 for (const item of items) {
-                    const previous = new Set(container.querySelectorAll<HTMLElement>(".drama-guide-proposal"));
+                    const previous = new Set(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal"));
                     await act(async () => {
                         dramaContext!.onProposal!(item);
                         await settle();
                     });
-                    const card = Array.from(container.querySelectorAll<HTMLElement>(".drama-guide-proposal")).find((entry) => !previous.has(entry));
+                    const card = Array.from(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal")).find((entry) => !previous.has(entry));
                     expect(card).toBeDefined();
+                    expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
                     cards.set(item.toolCallId, card!);
                 }
             },
@@ -244,7 +278,7 @@ async function withGuide(
                 Array.from(cards.get(call)!.querySelectorAll("button"))
                     .filter((item) => ["应用此建议", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
                     .every((item) => item.disabled),
-            click: (label) => click(button(container, label)),
+            click: (label) => click(button(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === label) ? chatHost : container, label)),
             refresh: async () => {
                 await act(async () => {
                     await client.invalidateQueries({ queryKey: dramaKeys.summary("project"), exact: true });
@@ -266,6 +300,10 @@ async function withGuide(
                 });
                 await act(settle);
                 expect(dramaContext?.projectId).toBe(routeProject);
+                await act(async () => {
+                    dramaContext!.onActionsHost!(chatHost);
+                    await settle();
+                });
             },
             startSlowRead: async () => {
                 let resolveRead!: () => void;
@@ -498,5 +536,46 @@ test("删除确认框跨外部版本变化后仍拒绝写入", async () => {
         });
         expect(writes).toEqual([]);
         expect(errors.join(" ")).toMatch(/过期|更新/);
+    });
+});
+
+test("聊天内单击保存建议，再明确确认才推进原阶段；失败保留当前阶段且不生成媒体", async () => {
+    await withGuide("configuring", async ({ receive, apply, refresh, click, chatHost, container }) => {
+        await receive(setup());
+        expect(writes).toEqual([]);
+        expect(guideConfirms).toEqual([]);
+        await apply("setup");
+        expect(writes.map((item) => item.kind)).toEqual(["setup"]);
+        expect(summary.production.settings.language).toBe("粤语");
+        expect(guideConfirms).toEqual([]);
+        expect(summary.production.guideStep).toBe("configuring");
+        expect(Array.from(chatHost.querySelectorAll('[role="status"]')).some((item) => item.textContent?.includes("已保存本次选择"))).toBe(true);
+        allowGuideConfirm = true;
+        summary.guide!.canConfirm = true;
+        await refresh();
+        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => item.textContent?.trim() === "确认配置，开始提取资产");
+        expect(confirm).toBeDefined();
+        expect(confirm?.disabled).toBe(false);
+        expect(container.querySelector('[aria-label="创作产物"]')?.textContent).not.toContain("确认配置，开始提取资产");
+        await click("确认配置，开始提取资产");
+        expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "configuring", expectedRevision: 8, settings: { ...originalSettings, language: "粤语", mediaMode: "manual" } } }]);
+        expect(summary.production.guideStep).toBe("assets");
+        expect(chatHost.textContent).toContain("确认资产，开始改编剧本与分镜");
+        expect(unexpectedWrites).toBe(0);
+        expect(errors).toEqual([]);
+    });
+    await withGuide("configuring", async ({ refresh, click, chatHost }) => {
+        allowGuideConfirm = true;
+        summary.guide!.canConfirm = true;
+        await refresh();
+        failWrite = true;
+        await click("确认配置，开始提取资产");
+        expect(guideConfirms).toHaveLength(1);
+        expect(summary.production.guideStep).toBe("configuring");
+        expect(summary.production.revision).toBe(7);
+        expect(chatHost.textContent).toContain("确认配置，开始提取资产");
+        expect(errors).toContain("模拟阶段确认失败");
+        expect(writes).toEqual([]);
+        expect(unexpectedWrites).toBe(0);
     });
 });

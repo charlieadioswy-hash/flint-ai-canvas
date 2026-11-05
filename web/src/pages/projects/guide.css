@@ -521,6 +521,48 @@
     margin-bottom: var(--space-5);
 }
 
+.drama-guide-chat-actions {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.drama-guide-chat-actions .drama-guide-proposals {
+    margin-bottom: 0;
+}
+
+.drama-guide-chat-actions .drama-guide-proposals > h2 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+
+.drama-guide-chat-actions .drama-guide-fields,
+.drama-guide-chat-actions .drama-guide-proposal dl > div {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.drama-guide-chat-actions .drama-guide-proposal dl > div {
+    gap: var(--space-1);
+}
+
+.drama-guide-chat-actions .drama-guide-footer {
+    align-items: stretch;
+    flex-direction: column;
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+}
+
+.drama-guide-chat-actions .drama-guide-proposal-choose,
+.drama-guide-chat-actions .drama-guide-footer > button {
+    width: 100%;
+    height: auto;
+    padding-block: var(--space-2);
+    white-space: normal;
+}
+
 .drama-guide-proposal {
     border-color: color-mix(in oklab, var(--workspace-accent) 28%, var(--drama-line));
 }

@@ -13,6 +13,7 @@ export type AgentDramaContext = {
     prefillRequest?: AgentPrefillRequest | null;
     onConversationBound?: (id: string) => void;
     onProposal?: (proposal: DramaAgentProposal) => void;
+    onActionsHost?: (host: HTMLDivElement | null) => void;
 };
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean };

@@ -2709,8 +2709,9 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                         </div>
                                     ) : null}
                                     <AgentConversation
-                                        key={activeConversationId}
+                                        key={dramaProjectId ? `drama:${dramaProjectId}:${activeConversationId}` : activeConversationId}
                                         guideMode={Boolean(drama)}
+                                        onActionsHost={drama?.onActionsHost}
                                         theme={theme}
                                         messages={messages}
                                         onFocusNode={onFocusNode}

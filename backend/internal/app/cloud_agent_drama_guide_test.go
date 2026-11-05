@@ -48,6 +48,52 @@ func TestCloudAgentDramaGuideScopeContract(t *testing.T) {
 	}
 }
 
+func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
+	request := agentTestRequest()
+	request.CanvasID = ""
+	request.DramaProjectID = "drama-project"
+	request.ContextScope = []string{"drama"}
+	text, _, err := compileCloudAgentPolicies(request, defaultCanvasAppearance().AgentName, nil, "", cloudAgentProfileSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, instruction := range []string{
+		"由用户在对话中选择应用",
+		"多个备选方案分别提交建议",
+		"ask_user 仅用于澄清尚不能形成具体修改的创作意图",
+		"保存成功后先用 drama_get_context 重新读取最新上下文",
+		"对话中的明确阶段确认按钮触发现有制作流程",
+		"选择建议本身不推进阶段",
+		"不因选择方案自动生成图片或视频",
+	} {
+		if !strings.Contains(text, instruction) {
+			t.Fatalf("missing guide interaction contract: %s", instruction)
+		}
+	}
+	if strings.Contains(text, "由页面按钮启动") {
+		t.Fatal("guide still directs users to the old page confirmation flow")
+	}
+	var description string
+	for _, tool := range compileCloudAgentTools(request, true) {
+		function := tool["function"].(map[string]any)
+		if function["name"] == agenttool.DramaProposeChanges {
+			description = function["description"].(string)
+		}
+	}
+	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频"} {
+		if !strings.Contains(description, instruction) {
+			t.Fatalf("proposal tool lost confirmation boundary: %s", instruction)
+		}
+	}
+	canvasPolicy, _, err := compileCloudAgentPolicies(agentTestRequest(), defaultCanvasAppearance().AgentName, nil, "", cloudAgentProfileSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(canvasPolicy, "由用户在对话中选择应用") {
+		t.Fatal("short-drama confirmation policy leaked into ordinary canvas sessions")
+	}
+}
+
 func TestCloudAgentDramaGuideContextWithoutEpisodes(t *testing.T) {
 	svc, _ := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc)
