@@ -365,15 +365,7 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		} else if isVideoTaskType(task.Type) && newAPIChannel2TaskSyncExpired(*task, err, time.Now()) {
 			err = errors.New("上游任务长时间未同步，已停止自动查询，请确认渠道任务状态后重试。")
 		}
-		if errors.Is(err, context.DeadlineExceeded) || deadlineExpired {
-			// 画布 Agent 的单步超时是可恢复事件（运行期会关思考重试同一步），
-			// 因此必须与"任务执行超时"区分开，否则只能整轮判死。
-			if cloudAgentModelOperation(task) {
-				err = errors.New(cloudAgentStepTimeoutError + "，已中止这一步")
-			} else {
-				err = errors.New(taskTimeoutMessage(task.Type))
-			}
-		}
+		err = taskExecutionFailure(task, err, deadlineExpired)
 		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return terminal.handleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
 	}
@@ -419,6 +411,17 @@ func taskFailureMessage(err error) string {
 		return denied
 	}
 	return truncateRunes(redactUpstreamAddress(message), 2_000)
+}
+
+func taskExecutionFailure(task *model.Task, err error, deadlineExpired bool) error {
+	// 拨号等上游超时也可能匹配 DeadlineExceeded；只有任务自身到期才改写为执行超时。
+	if !deadlineExpired {
+		return err
+	}
+	if cloudAgentModelOperation(task) {
+		return errors.New(cloudAgentStepTimeoutError + "，已中止这一步")
+	}
+	return errors.New(taskTimeoutMessage(task.Type))
 }
 
 // taskLeaseRenewContext 给续租单独一份"不继承父 context 取消/时限"的上下文（仅 5 秒上限）。

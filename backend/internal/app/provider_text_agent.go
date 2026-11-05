@@ -110,9 +110,12 @@ func agentStepOutputLimit(input canvasGenerationInput) int {
 	return limit
 }
 
-// applyAgentOutputLimit 按协议写入输出上限字段名：Claude 与 Chat Completions 用 max_tokens，
-// Responses 用 max_output_tokens。
+// applyAgentOutputLimit 按实际协议及模型选择字段，并保留旧模型的参数合同。
 func applyAgentOutputLimit(body map[string]interface{}, limit int, protocol string) {
+	if protocol == "chat-completion" {
+		applyChatCompletionOutputLimit(body, limit)
+		return
+	}
 	if limit <= 0 {
 		return
 	}

@@ -39,6 +39,14 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 		data, err := executeProtocolRequest(ctx, input.Config, spec)
 		return data, nil, err
 	}
+	if wire == "chat-completion" {
+		body := protocolBodyObject(spec.Body)
+		if body == nil {
+			return nil, nil, errors.New("声明式文本请求体必须是 JSON 对象")
+		}
+		applyChatCompletionOutputLimit(body, input.MaxOutputTokens)
+		spec.Body = body
+	}
 	if !input.StreamText {
 		data, err := executeProtocolRequest(ctx, input.Config, spec)
 		if err != nil {
@@ -142,7 +150,7 @@ func runChatCompletionsTextTask(ctx context.Context, input canvasGenerationInput
 	messages = append(messages, map[string]interface{}{"role": "user", "content": userContent})
 	body := map[string]interface{}{"model": input.Config.Model, "messages": messages}
 	applyTextThinking(body, input, "chat-completion")
-	applyTextOutputLimit(body, input.MaxOutputTokens, "max_tokens")
+	applyChatCompletionOutputLimit(body, input.MaxOutputTokens)
 	result, err := requestTextProvider(ctx, input.Config, "/chat/completions", body, "chat-completion", input.StreamText, input.OnTextDelta)
 	if err != nil {
 		return nil, err

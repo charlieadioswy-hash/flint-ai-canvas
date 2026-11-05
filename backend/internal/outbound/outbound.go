@@ -322,7 +322,7 @@ func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, e
 			if err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
+			return dialOutboundAddresses(ctx, network, port, addresses, dialer.DialContext)
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
@@ -330,6 +330,65 @@ func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, e
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ExpectContinueTimeout: time.Second,
+	}
+}
+
+// 只拨号已通过出口校验的 IP；IPv6 不可达时允许其它地址接续，避免重新解析域名。
+func dialOutboundAddresses(ctx context.Context, network, port string, addresses []net.IP, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan dialResult)
+	next, active := 0, 0
+	startNext := func() {
+		address := net.JoinHostPort(addresses[next].String(), port)
+		next++
+		active++
+		go func() {
+			conn, err := dial(ctx, network, address)
+			select {
+			case results <- dialResult{conn, err}:
+			case <-ctx.Done():
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+		}()
+	}
+	if len(addresses) == 0 {
+		return nil, errors.New("外部服务域名没有可用地址")
+	}
+	startNext()
+	fallback := time.NewTimer(300 * time.Millisecond)
+	defer fallback.Stop()
+	var firstErr error
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-results:
+			active--
+			if result.err == nil {
+				return result.conn, nil
+			}
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			if next < len(addresses) {
+				startNext()
+				fallback.Reset(300 * time.Millisecond)
+			} else if active == 0 {
+				return nil, firstErr
+			}
+		case <-fallback.C:
+			if next < len(addresses) {
+				startNext()
+				fallback.Reset(300 * time.Millisecond)
+			}
+		}
 	}
 }
 

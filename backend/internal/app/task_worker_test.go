@@ -3,12 +3,51 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"testing"
 	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
+
+func TestTaskExecutionFailurePreservesUpstreamTimeout(t *testing.T) {
+	upstreamTimeout := &net.OpError{
+		Op: "dial", Net: "tcp",
+		Err: fmt.Errorf("i/o timeout: %w", context.DeadlineExceeded),
+	}
+	if !errors.Is(upstreamTimeout, context.DeadlineExceeded) {
+		t.Fatal("回归用例必须覆盖匹配 DeadlineExceeded 的上游拨号超时")
+	}
+	for _, operation := range []string{cloudAgentOperation, cloudAgentStepOperation, cloudAgentContextCompactionOperation, "text"} {
+		t.Run(operation, func(t *testing.T) {
+			task := &model.Task{Type: "canvas_text", Operation: operation}
+			if got := taskExecutionFailure(task, upstreamTimeout, false); got != upstreamTimeout {
+				t.Fatalf("任务未到期时应保留原始上游错误：%v", got)
+			}
+		})
+	}
+}
+
+func TestTaskExecutionFailureUsesTaskDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		operation string
+		want      string
+	}{
+		{"agent_step", cloudAgentStepOperation, cloudAgentStepTimeoutError + "，已中止这一步"},
+		{"text_task", "text", taskTimeoutMessage("canvas_text")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &model.Task{Type: "canvas_text", Operation: tc.operation}
+			got := taskExecutionFailure(task, fmt.Errorf("upstream request failed: %w", context.DeadlineExceeded), true)
+			if got == nil || got.Error() != tc.want {
+				t.Fatalf("任务自身到期后的错误 = %v，期望 %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // 续租必须比"这条任务的执行时限"活得更久：否则父 context 到点时，续租请求会被自己的
 // 执行时限取消，失败后被误判成"租约失效"（任务停在 running，租约过期后被别的 worker 重跑）。
