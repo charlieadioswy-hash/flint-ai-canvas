@@ -39,6 +39,8 @@ export type CloudAgentConversation = {
     draft?: string;
     localNewCanvasId?: string;
     localSelectedCanvasId?: string;
+    /** 首次短剧引导已处理；恢复已有工作、取消排队或刷新后不再次自动发起。 */
+    localDramaStartupRequested?: boolean;
     title: string;
     messages: CloudAgentConversationMessage[];
     run: AgentRun | null;

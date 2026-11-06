@@ -2709,7 +2709,7 @@ paths:
     post:
       tags: [agent]
       summary: 创建一轮云端 Agent 任务
-      description: 同一画布同时只允许一轮执行。排队、运行、等待审批及终态收尾均占用；服务端在创建任务和预留积分前以事务串行校验。浏览器断开不释放占用，同一轮幂等恢复不受影响。显式短剧引导使用 dramaProjectId、contextScope=[drama] 和 permissionMode=read_only，不能同时传画布、焦点节点或固定技能；短剧身份参与幂等校验。
+      description: 同一画布同时只允许一轮执行。排队、运行、等待审批及终态收尾均占用；服务端在创建任务和预留积分前以事务串行校验。浏览器断开不释放占用，同一轮幂等恢复不受影响。同键判断先于新请求的偏好版本校验，携带冻结 profileRevision 的原请求在偏好更新后仍返回原轮次，异内容仍返回结构化幂等冲突；新键携带过期版本拒绝创建。显式短剧引导使用 dramaProjectId、contextScope=[drama] 和 permissionMode=read_only，不能同时传画布、焦点节点或固定技能；短剧身份参与幂等校验。
       requestBody:
         required: true
         content:
@@ -2722,7 +2722,7 @@ paths:
         "400":
           description: 参数、能力、模型或预算不符合要求，未创建任务
         "409":
-          description: 幂等键已用于不同请求，或画布已有另一轮 Agent 占用。占用拒绝的 reason 为 canvas_agent_busy，details 包含 canvasId 和 agent（runId、status、cleanupPending），用于立即更新占用状态；未创建任务或预留积分，不自动重试。
+          description: 幂等键已用于不同请求时 reason 为 agent_idempotency_conflict，明确表示本次请求未接收；已有请求属于当前用户且 dramaProjectId、canvasId、父轮均一致时，details 包含 runId、conversationId、dramaProjectId、canvasId，可只读恢复已有对话；跨绑定不返回恢复信息，不自动换键重发。画布已有另一轮 Agent 占用时 reason 为 canvas_agent_busy，details 包含 canvasId 和 agent（runId、status、cleanupPending），用于立即更新占用状态；未创建任务或预留积分，不自动重试。
   /agent/runs/{id}:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
@@ -2758,7 +2758,7 @@ paths:
     post:
       tags: [agent]
       summary: 从服务端父轮历史创建新轮次
-      description: 短剧续轮保留显式 dramaProjectId，并要求 contextScope=[drama]、permissionMode=read_only；不能混入画布、焦点节点或固定技能。短剧身份参与上下文与幂等比较。
+      description: 短剧续轮保留显式 dramaProjectId，并要求 contextScope=[drama]、permissionMode=read_only；不能混入画布、焦点节点或固定技能。短剧身份参与上下文与幂等比较。同键判断先于新请求的偏好版本校验，携带冻结 profileRevision 的原请求在偏好更新后仍返回原轮次，异内容仍返回结构化幂等冲突；新键携带过期版本拒绝创建。
       requestBody:
         required: true
         content:
@@ -2769,7 +2769,7 @@ paths:
         "200":
           description: 信封 data.run（新的 ID）；显式短剧轮次包含 dramaProjectId
         "409":
-          description: 父轮仍在执行、幂等键冲突，或画布已有另一轮 Agent 占用。旧父轮已有后续轮次时 reason 为 agent_conversation_stale_parent，客户端应同步最新历史，不能自动重发。原请求幂等回放优先于旧父轮检查。占用拒绝的 reason 为 canvas_agent_busy，details 包含 canvasId 和 agent（runId、status、cleanupPending），用于立即更新占用状态；不自动重试。
+          description: 父轮仍在执行、幂等键冲突，或画布已有另一轮 Agent 占用。幂等键冲突 reason 为 agent_idempotency_conflict，明确表示本次请求未接收；已有请求属于当前用户且 dramaProjectId、canvasId、父轮均一致时，details 包含 runId、conversationId、dramaProjectId、canvasId，可只读恢复已有对话；跨绑定不返回恢复信息，不自动换键重发。旧父轮已有后续轮次时 reason 为 agent_conversation_stale_parent，客户端应同步最新历史，不能自动重发。原请求幂等回放优先于旧父轮检查。占用拒绝的 reason 为 canvas_agent_busy，details 包含 canvasId 和 agent（runId、status、cleanupPending），用于立即更新占用状态；不自动重试。
   /agent/runs/{id}/interjections:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"

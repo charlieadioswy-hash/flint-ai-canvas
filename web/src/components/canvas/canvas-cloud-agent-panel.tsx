@@ -183,6 +183,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const nodeCount = useGlobalAgentStore((state) => state.canvas?.nodeCount ?? 0);
     const references = useGlobalAgentStore((state) => state.canvas?.references ?? EMPTY_REFERENCES);
     const prefillRequest = useGlobalAgentStore((state) => (state.drama ? (state.drama.prefillRequest ?? null) : (state.canvas?.prefillRequest ?? null)));
+    const startupRequest = drama?.startupRequest;
     const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
     const open = useGlobalAgentStore((state) => state.open || Boolean(state.drama));
     const onOpen = useGlobalAgentStore((state) => state.openAgent);
@@ -211,6 +212,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     // 异步流程读写都走 outboxStoreRef，避免拿到旧闭包里的队列。
     const [outboxStore, setOutboxStore] = useState<{ conversationId: string; outbox: AgentOutbox } | null>(null);
     const outboxStoreRef = useRef(outboxStore);
+    const outboxRestoreFailuresRef = useRef(new Set<string>());
     // 队列还没读出时到达的「发送到 Agent」，读出后按顺序补进队列。
     const pendingEnqueueRef = useRef<{ conversationId: string; item: AgentOutboxItem }[]>([]);
     const [outboxEdit, setOutboxEdit] = useState<{ itemId: string; stash: string } | null>(null);
@@ -629,6 +631,61 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     }, [prefillRequest, dramaProjectId, guideReadyProject, accountScope]);
 
     useEffect(() => {
+        if (!dramaProjectId || guideReadyProject !== dramaProjectId || !startupRequest?.text.trim() || !historyHydrated || !pendingHydrated || !outboxReady) return;
+        const scope = conversationScope;
+        const sameGuide = () => {
+            const live = cloudLiveState.current;
+            const liveDrama = useGlobalAgentStore.getState().drama;
+            return (
+                accountIsCurrent() &&
+                liveDrama?.projectId === dramaProjectId &&
+                liveDrama.startupRequest?.id === startupRequest.id &&
+                liveDrama.startupRequest.text === startupRequest.text &&
+                currentScope.current === scope &&
+                live.activeConversationId === scope &&
+                live.pendingHydrated &&
+                outboxStoreRef.current?.conversationId === scope
+            );
+        };
+        const emptyGuide = () => {
+            const live = cloudLiveState.current;
+            return (
+                sameGuide() &&
+                !useGlobalAgentStore.getState().drama?.prefillRequest &&
+                !live.run &&
+                !live.busy &&
+                !live.prompt.trim() &&
+                !live.messages.some((item) => item.role === "user" || item.role === "assistant" || item.role === "tool") &&
+                !pendingSubmission.current &&
+                !submissionRequestRef.current &&
+                !outboxRestoreFailuresRef.current.has(JSON.stringify([accountScope, scope])) &&
+                !outboxStoreRef.current?.outbox.paused &&
+                !outboxStoreRef.current?.outbox.items.length &&
+                !pendingEnqueueRef.current.some((entry) => entry.conversationId === scope)
+            );
+        };
+        const conversation = conversationSnapshots.current.find((item) => item.id === scope);
+        if (!conversation || conversation.localDramaStartupRequested || !sameGuide()) return;
+        if (!claimDramaAgentPrefill(dramaPrefillReceiptsRef.current, accountScope, dramaProjectId, startupRequest.id)) return;
+        const shouldStart = emptyGuide();
+        const next = conversationSnapshots.current.map((item) => (item.id === scope ? { ...item, localDramaStartupRequested: true } : item));
+        conversationSnapshots.current = next;
+        setConversations(next);
+        cancelConversationAutosave();
+        // 首次恢复已有内容也消耗启动机会，之后清空草稿或队列不会自动另开一轮。
+        void saveCloudAgentConversations(scope, next, accountScope)
+            .then(() => {
+                if (!shouldStart || !emptyGuide()) return;
+                setView("chat");
+                enqueueOutboxItem({ ...outboxItemFromDraft(startupRequest.text, startupRequest), id: `drama-start-${dramaProjectId}` });
+            })
+            .catch((cause) => {
+                if (!accountIsCurrent() || currentScope.current !== scope || useGlobalAgentStore.getState().drama?.projectId !== dramaProjectId) return;
+                void appMessage.error(`${shouldStart ? "自动启动记录保存失败，Agent 尚未开始，请手动重新推荐" : "首次引导记录保存失败"}：${cause instanceof Error ? cause.message : String(cause)}`);
+            });
+    }, [startupRequest?.id, startupRequest?.text, startupRequest?.displayText, dramaProjectId, guideReadyProject, accountScope, conversationScope, historyHydrated, pendingHydrated, outboxReady, prefillRequest, run, messages, prompt, busy, outbox]);
+
+    useEffect(() => {
         if (!open || view !== "chat") setSkillsOpen(false);
     }, [open, view]);
 
@@ -808,6 +865,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         approvalRequestRef.current = null;
         // 队列按账号隔离：换账号时丢掉内存里的旧队列，重新从新账号的本机存储读。
         outboxStoreRef.current = null;
+        outboxRestoreFailuresRef.current.clear();
         setOutboxStore(null);
         setOutboxEdit(null);
         setForceDispatchId(null);
@@ -1061,9 +1119,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         if (outboxStoreRef.current?.conversationId === conversationId) return;
         let active = true;
         void loadCloudAgentOutbox(conversationId, accountScope)
-            .then((stored) => restoreAgentOutbox(stored))
+            .then((stored) => {
+                outboxRestoreFailuresRef.current.delete(JSON.stringify([accountScope, conversationId]));
+                return restoreAgentOutbox(stored);
+            })
             .catch((cause) => {
-                if (active && accountIsCurrent()) void appMessage.error(`本机排队记录无法读取，其中的消息不能恢复：${cause instanceof Error ? cause.message : String(cause)}`);
+                if (active && accountIsCurrent()) {
+                    outboxRestoreFailuresRef.current.add(JSON.stringify([accountScope, conversationId]));
+                    void appMessage.error(`本机排队记录无法读取，其中的消息不能恢复：${cause instanceof Error ? cause.message : String(cause)}`);
+                }
                 return EMPTY_AGENT_OUTBOX;
             })
             .then((restored) => {
@@ -1573,6 +1637,41 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             if (canvasId) canvasEditLeases.agentRejected(canvasId, cause);
             const status = (cause as { status?: number }).status;
             const reason = (cause as { reason?: string }).reason;
+            const submission = pendingSubmission.current;
+            const startupConflict = !accepted && reason === "agent_idempotency_conflict" && Boolean(dramaProjectId) && submission?.key === `drama-start-${dramaProjectId}` && submission.request?.dramaProjectId === dramaProjectId && !submission.parentRunId;
+            if (startupConflict) {
+                const details = (cause as { details?: Record<string, unknown> }).details;
+                // 固定首轮键已被另一端使用：只接回同一短剧的已存在会话，不能换键重发首轮。
+                if (typeof details?.runId !== "string" || !details.runId || typeof details.conversationId !== "string" || !details.conversationId || details.dramaProjectId !== dramaProjectId || details.canvasId !== "") {
+                    setMessages((current) => appendAgentError(current, `submit-error-${activeConversationId}`, cause, "首次引导已存在，但会话归属尚未确认，请重新同步后重试"));
+                    return "failed";
+                }
+                if (useGlobalAgentStore.getState().drama?.projectId !== dramaProjectId) return "failed";
+                const correctedMessages = cloudLiveState.current.messages.filter((item) => item.id !== bubbleId);
+                const corrected = conversationSnapshots.current.map((item) =>
+                    item.id === activeConversationId ? { ...item, serverConversationId: details.conversationId as string, localDramaStartupRequested: true, messages: correctedMessages, draft: cloudLiveState.current.prompt || undefined } : item,
+                );
+                conversationSnapshots.current = corrected;
+                setConversations(corrected);
+                setMessages(correctedMessages);
+                cancelConversationAutosave();
+                try {
+                    // 先保存恢复身份，再清理已被明确拒绝的提交；刷新也能继续读取原会话。
+                    await waitForCanvasSync(saveCloudAgentConversations(activeConversationId, corrected, accountScope));
+                    if (!accountIsCurrent() || currentScope.current !== scope || useGlobalAgentStore.getState().drama?.projectId !== dramaProjectId) return "failed";
+                    await waitForCanvasSync(clearCloudAgentPendingSubmission(activeConversationId, accountScope));
+                    if (!accountIsCurrent() || currentScope.current !== scope || useGlobalAgentStore.getState().drama?.projectId !== dramaProjectId) return "failed";
+                    pendingSubmission.current = null;
+                    setGuideReadyProject("");
+                    setCloudRefreshEpoch((value) => value + 1);
+                } catch (storageError) {
+                    if (accountIsCurrent() && currentScope.current === scope && useGlobalAgentStore.getState().drama?.projectId === dramaProjectId) {
+                        if (!cloudLiveState.current.prompt.trim()) setPrompt(submission.displayText || value);
+                        setMessages((current) => appendAgentError(current, `pending-storage-${activeConversationId}`, storageError, "已有引导会话的恢复记录保存失败，请原样重试"));
+                    }
+                }
+                return "failed";
+            }
             // These admission responses explicitly rejected the write.
             // stale_parent is checked after same-key replay, so even an
             // original retry has now been confirmed unaccepted. Other
@@ -1892,7 +1991,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                 createdAt: now,
                 updatedAt: now,
             },
-            ...current.filter((conversation) => conversation.messages.length > 0 || conversation.run || conversation.draft?.trim()),
+            ...current.filter((conversation) => conversation.messages.length > 0 || conversation.run || conversation.draft?.trim() || conversation.localDramaStartupRequested),
         ]);
         setView("chat");
     };
@@ -2030,10 +2129,13 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         setSkillsOpen(false);
         setSkillRecommendationsOpen(false);
         const controller = new AbortController();
-        const id = drama?.guideConversationId || (sameConversation ? run?.conversationId : undefined);
+        const localId = `drama-guide-${dramaProjectId}`;
+        const existing = conversationSnapshots.current.find((item) => item.id === localId || item.localNewCanvasId === `drama:${dramaProjectId}`);
+        const id = drama?.guideConversationId || (sameConversation ? run?.conversationId : undefined) || (existing ? cloudAgentConversationServerId(existing) : undefined);
         const install = (conversation: CloudAgentConversation) => {
             if (controller.signal.aborted || !accountIsCurrent() || useGlobalAgentStore.getState().drama?.projectId !== dramaProjectId) return;
-            if ((conversation.runs || (conversation.run ? [conversation.run] : [])).some((item) => item.dramaProjectId !== dramaProjectId)) throw new Error("引导会话不属于当前短剧，已停止恢复");
+            if ((id && (!conversation.run || conversation.run.dramaProjectId !== dramaProjectId || cloudAgentConversationServerId(conversation) !== id)) || (conversation.runs || []).some((item) => item.dramaProjectId !== dramaProjectId))
+                throw new Error("引导会话不属于当前短剧，已停止恢复");
             const merged = mergeCloudAgentConversations(conversationSnapshots.current, [conversation]);
             const selected = merged.find((item) => item.id === conversation.id || (id && cloudAgentConversationServerId(item) === id)) || conversation;
             // 同一会话只更新云端轮次，保留本机身份及加载期间继续输入的草稿。
@@ -2044,7 +2146,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             setSelectedSkillIds([]);
             setGuideReadyProject(dramaProjectId);
             setCloudHistoryError(undefined);
-            if (!id && conversation.run?.conversationId) useGlobalAgentStore.getState().drama?.onConversationBound?.(conversation.run.conversationId);
+            if (conversation.run?.conversationId && useGlobalAgentStore.getState().drama?.guideConversationId !== conversation.run.conversationId) useGlobalAgentStore.getState().drama?.onConversationBound?.(conversation.run.conversationId);
         };
         if (id) {
             void loadCloudAgentConversation(id, { signal: controller.signal, scope: accountScope })
@@ -2053,8 +2155,6 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                     if (!controller.signal.aborted && accountIsCurrent()) setCloudHistoryError(cause instanceof Error ? cause.message : "引导会话恢复失败");
                 });
         } else {
-            const localId = `drama-guide-${dramaProjectId}`;
-            const existing = conversationSnapshots.current.find((item) => item.id === localId || item.localNewCanvasId === `drama:${dramaProjectId}`);
             const now = new Date().toISOString();
             install(
                 existing || {

@@ -11,6 +11,7 @@ export type AgentDramaContext = {
     guideConversationId?: string;
     host: HTMLElement;
     prefillRequest?: AgentPrefillRequest | null;
+    startupRequest?: AgentPrefillRequest | null;
     onConversationBound?: (id: string) => void;
     onProposal?: (proposal: DramaAgentProposal) => void;
     onActionsHost?: (host: HTMLDivElement | null) => void;

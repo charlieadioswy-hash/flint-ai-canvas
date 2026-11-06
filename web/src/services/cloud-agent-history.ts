@@ -202,6 +202,7 @@ export function mergeCloudAgentConversation(local: CloudAgentConversation, remot
         draft: local.draft,
         localNewCanvasId: local.localNewCanvasId,
         localSelectedCanvasId: local.localSelectedCanvasId,
+        localDramaStartupRequested: local.localDramaStartupRequested,
         permissionMode: local.permissionMode,
         model: local.model || remote.model,
         skillIds: local.skillIds || remote.skillIds,

@@ -2,6 +2,8 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { AgentEvent, AgentRun } from "@/services/api/agent";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
+import type { AgentOutbox } from "@/lib/canvas/agent-outbox";
+import type { AgentPrefillRequest } from "@/stores/use-global-agent-store";
 
 const dom = new Window({ url: "http://localhost/" });
 for (const [key, value] of Object.entries({
@@ -45,9 +47,14 @@ const conversationLoads: Array<{ id: string; scope: string }> = [];
 const subscriptions: Array<{ id: string; after: number; event: (event: AgentEvent) => void; connection: (status: string) => void; closed: boolean }> = [];
 const sent: string[] = [];
 const sendInputs: Array<Record<string, any>> = [];
+const createInputs: Array<Record<string, any>> = [];
 let sendFailure: Error | undefined;
 let capabilitiesOverride: (() => Promise<unknown>) | undefined;
 let sendOverride: (() => Promise<{ run: AgentRun }>) | undefined;
+let createOverride: ((input: any) => Promise<{ run: AgentRun }>) | undefined;
+const outboxes = new Map<string, AgentOutbox>();
+let outboxLoadOverride: ((id: string) => Promise<AgentOutbox | null>) | undefined;
+let startupSaveOverride: (() => Promise<void>) | undefined;
 const refreshRequests: Array<{ observedConversationIds?: string[]; canvasId?: string }> = [];
 let generated = 0;
 let composer: Record<string, any>;
@@ -55,6 +62,7 @@ let header: Record<string, any>;
 let conversationUI: Record<string, any>;
 let historyUI: Record<string, any>;
 let controls: Record<string, any>;
+let outboxUI: Record<string, any>;
 const silent = () => {};
 mock.module("file-saver", () => ({ saveAs: silent }));
 const MotionBox = ({ children, className, style }: any) => (
@@ -92,8 +100,10 @@ mock.module("@/services/api/agent", () => ({
         if (sendOverride) return sendOverride();
         return { run: { ...makeRun("submitted-child"), parentId: id, userPrompt: input.prompt, idempotencyKey: input.idempotencyKey } };
     },
-    createAgentRun: async () => {
+    createAgentRun: async (input: any) => {
         generated++;
+        createInputs.push(input);
+        if (createOverride) return createOverride(input);
         throw new Error("不应新建独立轮次");
     },
     decideAgentApproval: async () => {
@@ -106,6 +116,7 @@ mock.module("@/services/cloud-agent-conversations", () => ({
     loadCloudAgentConversations: async (scope: string) => (scope === "sync-user" ? { version: 1, activeId, conversations: local } : { version: 1, activeId: null, conversations: [] }),
     saveCloudAgentConversations: async (id: string, conversations: CloudAgentConversation[], scope: string) => {
         if (scope !== "sync-user") return;
+        if (startupSaveOverride && conversations.some((item) => item.localDramaStartupRequested)) await startupSaveOverride();
         activeId = id;
         local = conversations;
     },
@@ -128,6 +139,7 @@ mock.module("@/services/cloud-agent-history", () => ({
     },
     loadCloudAgentConversation: async (id: string, options: { scope: string }) => {
         conversationLoads.push({ id, scope: options.scope });
+        if (options.scope !== "sync-user") throw new ApiError("对话不存在", { status: 404 });
         return loadOverride ? loadOverride(id) : remote.find((item) => item.serverConversationId === id)!;
     },
 }));
@@ -151,6 +163,7 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
         return (
             <>
                 {props.left}
+                {props.tray}
                 <textarea aria-label="草稿" value={props.prompt} readOnly />
             </>
         );
@@ -189,7 +202,19 @@ mock.module("@/components/canvas/canvas-agent-skill-library-modal", () => ({ Can
 mock.module("@/components/skills/skill-recommendations-modal", () => ({ SkillRecommendationsModal: () => null }));
 mock.module("@/components/canvas/canvas-cloud-agent-settings", () => ({ CanvasCloudAgentSettings: () => null, agentPermissionLabel: (mode: string) => mode }));
 mock.module("@/components/canvas/canvas-cloud-agent-composer", () => ({ AgentContextChip: () => null }));
-mock.module("@/services/cloud-agent-outbox", () => ({ loadCloudAgentOutbox: async () => null, saveCloudAgentOutbox: async () => {}, clearCloudAgentOutbox: async () => {} }));
+mock.module("@/services/cloud-agent-outbox", () => ({
+    loadCloudAgentOutbox: async (id: string) => (outboxLoadOverride ? outboxLoadOverride(id) : outboxes.get(id) || null),
+    saveCloudAgentOutbox: async (id: string, value: AgentOutbox) => {
+        outboxes.set(id, structuredClone(value));
+    },
+    clearCloudAgentOutbox: async (id: string) => outboxes.delete(id),
+}));
+mock.module("@/components/canvas/canvas-cloud-agent-outbox", () => ({
+    AgentOutboxTray: (props: any) => {
+        outboxUI = props;
+        return <div data-testid="outbox">{props.outbox.items.map((item: any) => item.text).join("\n")}</div>;
+    },
+}));
 mock.module("@/components/canvas/canvas-cloud-agent-connectors", () => ({ AgentConnectorsBar: () => null }));
 mock.module("@/components/canvas/use-agent-panel-layout", () => ({ useAgentPanelLayout: () => ({ style: {}, pointerHandlers: {}, reset: silent, onResizeKeyDown: silent }) }));
 
@@ -231,19 +256,42 @@ const persist = async () => {
         window.dispatchEvent(new Event("pagehide"));
     });
 };
-async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string) {
-    local = [initial];
+type MountOptions = {
+    startupRequest?: AgentPrefillRequest;
+    localConversations?: CloudAgentConversation[];
+    initialOutbox?: AgentOutbox;
+    outboxLoad?: (id: string) => Promise<AgentOutbox | null>;
+    startupSave?: () => Promise<void>;
+    createRun?: (input: any) => Promise<{ run: AgentRun }>;
+    loadConversation?: (id: string) => Promise<CloudAgentConversation>;
+    onConversationBound?: (id: string) => void;
+    guideConversationId?: string | null;
+    offline?: boolean;
+    strictMode?: boolean;
+};
+async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string, options: MountOptions = {}) {
+    local = options.localConversations || [initial];
     activeId = initial.id;
     remote = cloud;
     pending = initialPending;
     refreshOverride = undefined;
-    loadOverride = undefined;
+    loadOverride = options.loadConversation;
     conversationLoads.length = 0;
     sent.length = 0;
     sendInputs.length = 0;
+    createInputs.length = 0;
     sendFailure = undefined;
     capabilitiesOverride = guideProjectId ? async () => ({ permissionModes: ["read_only", "request_approval"], skills: true }) : undefined;
     sendOverride = undefined;
+    createOverride =
+        options.createRun ||
+        (options.startupRequest ? async (input) => ({ run: { ...makeRun(`guide-startup-${generated}`, "running"), canvasId: undefined, dramaProjectId: input.dramaProjectId, permissionMode: "read_only", userPrompt: input.prompt } }) : undefined);
+    outboxes.clear();
+    if (options.initialOutbox) outboxes.set(initial.id, options.initialOutbox);
+    outboxLoadOverride = options.outboxLoad;
+    startupSaveOverride = options.startupSave;
+    outboxUI = undefined!;
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: !options.offline });
     generated = 0;
     subscriptions.length = 0;
     refreshRequests.length = 0;
@@ -255,11 +303,27 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     useGlobalAgentStore.setState({
         open: true,
         canvas: guideProjectId ? null : { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
-        drama: guideProjectId ? { projectId: guideProjectId, guideConversationId: initial.serverConversationId, host } : null,
+        drama: guideProjectId
+            ? {
+                  projectId: guideProjectId,
+                  guideConversationId: options.guideConversationId === undefined ? initial.serverConversationId : options.guideConversationId || undefined,
+                  host,
+                  startupRequest: options.startupRequest,
+                  onConversationBound: options.onConversationBound,
+              }
+            : null,
     });
     const root = createRoot(host);
     await act(async () => {
-        root.render(<CanvasCloudAgentPanel />);
+        root.render(
+            options.strictMode ? (
+                <React.StrictMode>
+                    <CanvasCloudAgentPanel />
+                </React.StrictMode>
+            ) : (
+                <CanvasCloudAgentPanel />
+            ),
+        );
         await settle();
     });
     return {
@@ -549,6 +613,496 @@ test("另一端已推进parent的明确拒绝只同步上下文，保留草稿�
 function guideChat(id: string, runId: string, projectId = "guide-project"): CloudAgentConversation {
     return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
 }
+
+const guideStartup: AgentPrefillRequest = { id: 1, text: "请读取当前短剧，按预设流程起草正文并推荐配置，等待我确认后再提取资产。", displayText: "请根据创作想法开始引导", autoSubmit: true };
+function emptyGuide(projectId = "guide-project"): CloudAgentConversation {
+    return { ...chat(`drama-guide-${projectId}`, null), localNewCanvasId: `drama:${projectId}`, permissionMode: "read_only", model: "local-test::local-agent-test" };
+}
+function queuedGuideMessage(): AgentOutbox {
+    return {
+        version: 1,
+        items: [
+            {
+                id: "queued-guide-request",
+                text: "之前排队的正文",
+                canvasId: "",
+                focusNodeIds: [],
+                focusNodeOmittedCount: 0,
+                status: "queued",
+                createdAt: "2026-10-23T01:00:00Z",
+                settings: { model: "local-test::local-agent-test", permissionMode: "read_only", reasoningMode: "off", skillIds: [], contextScope: ["drama"], maxCredits: "200", maxGenerationTasks: "0", maxVideoSeconds: "0" },
+            },
+        ],
+    };
+}
+
+test("空白短剧首次进入无需手点推荐，StrictMode及上下文重注册不重复启动", async () => {
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, strictMode: true });
+    try {
+        expect(createInputs).toHaveLength(1);
+        expect(createInputs[0]).toMatchObject({
+            prompt: guideStartup.text,
+            dramaProjectId: "guide-project",
+            permissionMode: "read_only",
+            contextScope: ["drama"],
+            model: "local-agent-test",
+            channelId: "local-test",
+            budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 },
+        });
+        expect(conversationUI.messages.some((item: any) => item.role === "user" && item.text === guideStartup.displayText)).toBe(true);
+        await persist();
+        expect(local.find((item) => item.id === activeId)?.localDramaStartupRequested).toBe(true);
+        await act(async () => {
+            const context = useGlobalAgentStore.getState().drama!;
+            useGlobalAgentStore.setState({ drama: { ...context, startupRequest: { ...guideStartup } } });
+            await settle();
+        });
+        await focus();
+        expect(createInputs).toHaveLength(1);
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("已有完成或运行中的引导只恢复对话，不自动发起新轮", async () => {
+    for (const status of ["completed", "running"] as const) {
+        const existing = guideChat("guide-local", `existing-${status}`);
+        existing.run!.status = status;
+        const mounted = await mount(existing, [existing], null, "guide-project", { startupRequest: guideStartup });
+        try {
+            expect(conversationUI.messages.some((item: any) => item.text === `结果-existing-${status}`)).toBe(true);
+            expect(createInputs).toHaveLength(0);
+            expect(sent).toHaveLength(0);
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("首次准备时尊重已保存草稿和结果未知的原请求，不追加自动消息", async () => {
+    const original: CloudAgentPendingSubmission = {
+        key: "startup-pending-original",
+        fingerprint: "startup-frozen",
+        messageId: "user-startup-pending-original",
+        request: { prompt: "结果未知的首次请求", canvasId: "", dramaProjectId: "guide-project", permissionMode: "read_only", idempotencyKey: "startup-pending-original" },
+    };
+    for (const [initial, waiting] of [
+        [{ ...emptyGuide(), draft: "保留用户正在写的内容" }, null],
+        [emptyGuide(), original],
+    ] as const) {
+        const mounted = await mount(initial, [], waiting, "guide-project", { startupRequest: guideStartup });
+        try {
+            expect(composer.prompt).toBe(waiting ? original.request!.prompt : initial.draft);
+            expect(createInputs).toHaveLength(0);
+            expect(sent).toHaveLength(0);
+            expect(pending).toBe(waiting);
+            if (!waiting) {
+                await act(async () => {
+                    composer.onPromptChange("");
+                    await settle();
+                });
+                expect(createInputs).toHaveLength(0);
+            }
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("等队列恢复完成再判定首次启动，已有排队消息不被自动推荐挤入", async () => {
+    let resolveOutbox!: (value: AgentOutbox | null) => void;
+    const restored = new Promise<AgentOutbox | null>((resolve) => (resolveOutbox = resolve));
+    const initial = emptyGuide();
+    const mounted = await mount(initial, [], null, "guide-project", { startupRequest: guideStartup, outboxLoad: (id) => (id === initial.id ? restored : Promise.resolve(null)) });
+    try {
+        expect(createInputs).toHaveLength(0);
+        await act(async () => {
+            resolveOutbox(queuedGuideMessage());
+            await settle();
+        });
+        expect(outboxUI.outbox.items.map((item: any) => item.text)).toEqual(["之前排队的正文"]);
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+        await act(async () => {
+            outboxUI.onRemove(outboxUI.outbox.items[0]);
+            await settle();
+        });
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("恢复队列失败时不能把未知内容当作空白并自动发起推荐", async () => {
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
+        startupRequest: guideStartup,
+        outboxLoad: async () => {
+            throw new Error("本机队列读取失败");
+        },
+    });
+    try {
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("首次启动标记写入期间离开配置阶段，迟到完成不能再启动旧流程", async () => {
+    let finishSave!: () => void;
+    const saving = new Promise<void>((resolve) => (finishSave = resolve));
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, startupSave: () => saving });
+    try {
+        expect(createInputs).toHaveLength(0);
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, startupRequest: null } });
+            finishSave();
+            await settle();
+        });
+        expect(createInputs).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+    } finally {
+        finishSave();
+        await mounted.close();
+    }
+});
+
+test("首次自动消息被移除后，阶段变化及重挂载仍不重新自动开始", async () => {
+    let saved!: CloudAgentConversation;
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, offline: true });
+    try {
+        expect(outboxUI.outbox.items).toHaveLength(1);
+        expect(outboxUI.outbox.items[0].text).toBe(guideStartup.text);
+        await act(async () => {
+            outboxUI.onRemove(outboxUI.outbox.items[0]);
+            await settle();
+        });
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, startupRequest: { ...guideStartup, text: "请检查下一阶段的角色与场景" } } });
+            await settle();
+        });
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        await persist();
+        saved = structuredClone(local.find((item) => item.id === activeId)!);
+        expect(saved.localDramaStartupRequested).toBe(true);
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+    const reloaded = await mount(saved, [], null, "guide-project", { startupRequest: guideStartup });
+    try {
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+    } finally {
+        await reloaded.close();
+    }
+});
+
+test("取消首次自动消息后新建全局对话，空引导记录在刷新后仍保留启动标记", async () => {
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, offline: true });
+    let saved!: CloudAgentConversation[];
+    let savedActive!: CloudAgentConversation;
+    try {
+        expect(outboxUI.outbox.items).toHaveLength(1);
+        await act(async () => {
+            outboxUI.onRemove(outboxUI.outbox.items[0]);
+            await settle();
+            useGlobalAgentStore.setState({ drama: null });
+            await settle();
+        });
+        await act(async () => {
+            header.onNew();
+            await settle();
+        });
+        await persist();
+        saved = structuredClone(local);
+        savedActive = saved.find((item) => item.id === activeId)!;
+        expect(saved.find((item) => item.id === emptyGuide().id)).toMatchObject({ localDramaStartupRequested: true, messages: [], run: null });
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+    const reloaded = await mount(savedActive, [], null, "guide-project", { startupRequest: guideStartup, localConversations: saved });
+    try {
+        await focus();
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+    } finally {
+        await reloaded.close();
+    }
+});
+
+function startupConflict(projectId = "guide-project") {
+    return new ApiError("幂等键已用于不同请求", {
+        status: 409,
+        reason: "agent_idempotency_conflict",
+        details: { runId: "other-device-startup", conversationId: "shared-session", dramaProjectId: projectId, canvasId: "" },
+    });
+}
+
+test("不同模型争用首次启动身份时恢复已存在的会话，不重排首轮且允许用户继续", async () => {
+    const existing = guideChat("other-device", "other-device-startup");
+    const bound: string[] = [];
+    let resolveLoad!: (value: CloudAgentConversation) => void;
+    const mounted = await mount(emptyGuide(), [existing], null, "guide-project", {
+        startupRequest: guideStartup,
+        createRun: async () => {
+            throw startupConflict();
+        },
+        loadConversation: () => new Promise((resolve) => (resolveLoad = resolve)),
+        onConversationBound: (id) => bound.push(id),
+    });
+    try {
+        expect(createInputs).toHaveLength(1);
+        expect(createInputs[0].idempotencyKey).toBe("drama-start-guide-project");
+        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
+        expect(pending).toBeNull();
+        await act(async () => {
+            composer.onPromptChange("加载期间继续写的新草稿");
+            resolveLoad(existing);
+            await settle();
+        });
+        expect(composer.prompt).toBe("加载期间继续写的新草稿");
+        expect(bound).toContain("shared-session");
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
+        expect(conversationUI.messages.some((item: any) => item.role === "user" && item.text === guideStartup.displayText)).toBe(false);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        await focus();
+        expect(createInputs).toHaveLength(1);
+        await act(async () => composer.onPromptChange("把视频语言改为中文"));
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toEqual(["other-device-startup"]);
+        expect(sendInputs[0]).toMatchObject({ prompt: "把视频语言改为中文", dramaProjectId: "guide-project", permissionMode: "read_only" });
+        expect(createInputs).toHaveLength(1);
+    } finally {
+        resolveLoad?.(existing);
+        await mounted.close();
+    }
+});
+
+test("首轮冲突后的会话读取失败可重新同步，刷新仍恢复原会话且不重建任务", async () => {
+    const existing = guideChat("other-device", "other-device-startup");
+    let saved!: CloudAgentConversation;
+    const mounted = await mount(emptyGuide(), [existing], null, "guide-project", {
+        startupRequest: guideStartup,
+        createRun: async () => {
+            throw startupConflict();
+        },
+        loadConversation: async () => {
+            throw new Error("暂时不能读取已有对话");
+        },
+    });
+    try {
+        expect(createInputs).toHaveLength(1);
+        expect(conversationLoads).toHaveLength(1);
+        expect(pending).toBeNull();
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        await persist();
+        saved = structuredClone(local.find((item) => item.id === activeId)!);
+        expect(saved).toMatchObject({ serverConversationId: "shared-session", localDramaStartupRequested: true });
+        const retry = Array.from(mounted.host.querySelectorAll("button")).find((button) => button.textContent?.includes("重新同步"));
+        expect(retry).toBeDefined();
+        loadOverride = async () => existing;
+        await act(async () => {
+            retry!.click();
+            await settle();
+        });
+        expect(conversationLoads).toHaveLength(2);
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
+        expect(createInputs).toHaveLength(1);
+    } finally {
+        await mounted.close();
+    }
+    const reloaded = await mount(saved, [existing], null, "guide-project", { startupRequest: guideStartup, guideConversationId: null });
+    try {
+        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+        expect(pending).toBeNull();
+    } finally {
+        await reloaded.close();
+    }
+});
+
+test("首轮冲突恢复期间切换项目或账号，迟到的原会话不会覆盖新上下文", async () => {
+    for (const switchTarget of ["project", "account"] as const) {
+        const existing = guideChat("other-device", "other-device-startup");
+        const next = guideChat("next-guide", "next-guide-run", "next-project");
+        next.serverConversationId = "next-session";
+        next.run!.conversationId = "next-session";
+        let resolveLoad!: (value: CloudAgentConversation) => void;
+        const bound: string[] = [];
+        const mounted = await mount(emptyGuide(), [existing, next], null, "guide-project", {
+            startupRequest: guideStartup,
+            createRun: async () => {
+                throw startupConflict();
+            },
+            loadConversation: (id) => (id === "next-session" ? Promise.resolve(next) : new Promise((resolve) => (resolveLoad = resolve))),
+            onConversationBound: (id) => bound.push(id),
+        });
+        try {
+            expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
+            expect(pending).toBeNull();
+            await act(async () => {
+                if (switchTarget === "project") {
+                    useGlobalAgentStore.setState({ drama: { projectId: "next-project", guideConversationId: "next-session", host: mounted.host } });
+                } else {
+                    setActiveUserScope("other-user");
+                    useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
+                }
+                await settle();
+            });
+            await act(async () => {
+                composer.onPromptChange("新上下文中的草稿");
+                resolveLoad(existing);
+                await settle();
+            });
+            expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(false);
+            if (switchTarget === "project") expect(conversationUI.messages.some((item: any) => item.text === "结果-next-guide-run")).toBe(true);
+            expect(composer.prompt).toBe("新上下文中的草稿");
+            expect(bound).not.toContain("shared-session");
+            expect(createInputs).toHaveLength(1);
+            expect(sent).toHaveLength(0);
+        } finally {
+            resolveLoad?.(existing);
+            await mounted.close();
+        }
+    }
+});
+
+test("首轮冲突返回不匹配的恢复信息或会话时拒绝绑定，不重新发起任务", async () => {
+    for (const mismatch of ["details-project", "loaded-project", "loaded-empty"] as const) {
+        const existing = mismatch === "loaded-empty" ? { ...emptyGuide(), serverConversationId: "shared-session" } : guideChat("wrong-project", "other-device-startup", "different-project");
+        const bound: string[] = [];
+        const mounted = await mount(emptyGuide(), [], null, "guide-project", {
+            startupRequest: guideStartup,
+            createRun: async () => {
+                throw startupConflict(mismatch === "details-project" ? "different-project" : "guide-project");
+            },
+            loadConversation: async () => existing,
+            onConversationBound: (id) => bound.push(id),
+        });
+        try {
+            expect(createInputs).toHaveLength(1);
+            expect(conversationLoads).toHaveLength(mismatch === "details-project" ? 0 : 1);
+            expect(bound).toHaveLength(0);
+            expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(false);
+            expect(sent).toHaveLength(0);
+            if (mismatch !== "details-project") expect(pending).toBeNull();
+            await focus();
+            expect(createInputs).toHaveLength(1);
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("缺少明确原因的首次409保留未知请求，重试仍使用原请求与幂等键", async () => {
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
+        startupRequest: guideStartup,
+        createRun: async () => {
+            throw new ApiError("提交结果暂时不能确认", { status: 409 });
+        },
+    });
+    try {
+        expect(createInputs).toHaveLength(1);
+        expect(pending?.key).toBe("drama-start-guide-project");
+        const original = structuredClone(pending!);
+        await focus();
+        expect(createInputs).toHaveLength(1);
+        expect(conversationLoads).toHaveLength(0);
+        await act(async () => composer.onPromptChange(original.displayText || original.request!.prompt));
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(createInputs).toHaveLength(2);
+        expect(createInputs[1]).toEqual(original.request);
+        expect(pending?.key).toBe(original.key);
+        expect(sent).toHaveLength(0);
+        expect(conversationLoads).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("刷新后的未知首轮原样重试被明确拒绝时，也能解除待确认并恢复已有会话", async () => {
+    const existing = guideChat("other-device", "other-device-startup");
+    const original: CloudAgentPendingSubmission = {
+        key: "drama-start-guide-project",
+        fingerprint: "startup-frozen",
+        messageId: "user-drama-start-guide-project",
+        displayText: guideStartup.displayText,
+        request: { prompt: guideStartup.text, idempotencyKey: "drama-start-guide-project", dramaProjectId: "guide-project", permissionMode: "read_only" },
+    };
+    const mounted = await mount({ ...emptyGuide(), localDramaStartupRequested: true }, [existing], original, "guide-project", {
+        startupRequest: guideStartup,
+        createRun: async () => {
+            throw startupConflict();
+        },
+    });
+    try {
+        expect(createInputs).toHaveLength(0);
+        expect(pending?.key).toBe(original.key);
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(createInputs).toHaveLength(1);
+        expect(createInputs[0]).toEqual(original.request);
+        expect(pending).toBeNull();
+        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("新作品可首次自动开始，返回旧作品不再自动推荐", async () => {
+    const mounted = await mount(emptyGuide("first-guide"), [], null, "first-guide", { startupRequest: guideStartup });
+    try {
+        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide"]);
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { projectId: "second-guide", host: mounted.host, startupRequest: { ...guideStartup } } });
+            await settle();
+        });
+        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide", "second-guide"]);
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { projectId: "first-guide", host: mounted.host, startupRequest: { ...guideStartup } } });
+            await settle();
+        });
+        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide", "second-guide"]);
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("已启动引导仍可显式请求再次推荐，自动启动标记不吞掉手动预填", async () => {
+    const existing = guideChat("guide-local", "manual-parent");
+    const mounted = await mount(existing, [existing], null, "guide-project", { startupRequest: guideStartup });
+    try {
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, prefillRequest: { id: 2, text: "请根据新要求重新推荐方案", autoSubmit: true } } });
+            await settle();
+        });
+        expect(sent).toEqual(["manual-parent"]);
+        expect(sendInputs[0]).toMatchObject({ prompt: "请根据新要求重新推荐方案", dramaProjectId: "guide-project", permissionMode: "read_only" });
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
 
 test("引导会话冲突重新加载最新轮次，保留本机身份与加载期间的新草稿，明确发送才续接", async () => {
     const first = guideChat("guide-local", "guide-first");

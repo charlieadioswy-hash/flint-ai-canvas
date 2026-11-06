@@ -286,6 +286,25 @@ func cloudAgentFingerprint(req CloudAgentRequest, parent string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func (s *Service) cloudAgentIdempotencyConflict(userID string, task *model.Task, stored cloudAgentState, req CloudAgentRequest, parentID string) *AppError {
+	conflict := &AppError{Status: 409, Code: 409, Reason: "agent_idempotency_conflict", Message: "幂等键已用于不同请求，请恢复已有对话或使用新的幂等键"}
+	if stored.Request.IdempotencyKey == "" || stored.Request.DramaProjectID != req.DramaProjectID || stored.Request.CanvasID != req.CanvasID || stored.ParentID != parentID {
+		return conflict
+	}
+	// Root identity is available before its execution checkpoint is created.
+	// Continuations inherit the existing parent's conversation identity.
+	conversationID := task.ID
+	if parentID != "" {
+		parent, err := s.repo.CloudAgent(userID, parentID)
+		if err != nil {
+			return conflict
+		}
+		conversationID = firstNonEmpty(parent.ConversationID, parent.ID)
+	}
+	conflict.Details = map[string]any{"runId": task.ID, "conversationId": conversationID, "dramaProjectId": stored.Request.DramaProjectID, "canvasId": stored.Request.CanvasID}
+	return conflict
+}
+
 func agentRunOutput(task *model.Task, state cloudAgentState) *CloudAgentRun {
 	status := string(task.Status)
 	if task.Status == model.TaskStatusSucceeded {
@@ -418,17 +437,16 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	if req.ProfileRevision != "" && req.ProfileRevision != profile.Revision {
-		return nil, creationConflict("Agent 偏好已变化，请重新读取后提交")
+	if req.ProfileRevision == "" {
+		req.ProfileRevision = profile.Revision
 	}
-	req.ProfileRevision = profile.Revision
 	// 下面这些字段由服务端推导，客户端传入值不参与幂等指纹。
 	req.VisionEnabled, req.DramaLinked, req.SkillsEnabled, req.MemoryMode = false, false, false, ""
 	id := cloudAgentID(userID, req.IdempotencyKey)
 	fingerprint := cloudAgentFingerprint(req, parentID)
 	if existing, state, lookupErr := s.cloudAgentTask(userID, id); lookupErr == nil {
 		if state.Fingerprint == "" || state.Fingerprint != fingerprint {
-			return nil, kernel.NewAppError(409, "幂等键已用于不同请求，请使用新的幂等键")
+			return nil, s.cloudAgentIdempotencyConflict(userID, existing, state, req, parentID)
 		}
 		run, runErr := s.CloudAgentRun(userID, existing.ID)
 		if runErr == nil && !cloudAgentRunTerminal(run.Status) {
@@ -440,6 +458,11 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if !errors.As(lookupErr, &appErr) || appErr.Status != 404 {
 			return nil, lookupErr
 		}
+	}
+	// A same-key replay belongs to its frozen profile, even after preferences
+	// change. Only a genuinely new request must match the current revision.
+	if req.ProfileRevision != profile.Revision {
+		return nil, creationConflict("Agent 偏好已变化，请重新读取后提交")
 	}
 	var history []providerTextMessage
 	var creativeAnchor cloudAgentCreativeAnchor
@@ -605,7 +628,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		// replace its result or reserve credits a second time.
 		if existing, stored, readErr := s.cloudAgentTask(userID, id); readErr == nil {
 			if stored.Fingerprint == "" || stored.Fingerprint != fingerprint {
-				return nil, kernel.NewAppError(409, "幂等键已用于不同请求")
+				return nil, s.cloudAgentIdempotencyConflict(userID, existing, stored, req, parentID)
 			}
 			run, runErr := s.CloudAgentRun(userID, existing.ID)
 			if runErr == nil && !cloudAgentRunTerminal(run.Status) {

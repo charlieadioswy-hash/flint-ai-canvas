@@ -56,11 +56,11 @@ export function GuideConfiguration({
                 <div className="drama-guide-section-head">
                     <div>
                         <h2>先把创作方向聊清楚</h2>
-                        <p>可以直接调整，也可以请左侧 Agent 给出建议，确认后开始制作。</p>
+                        <p>首次进入时 Agent 会自动梳理正文与创作方案，你可以在对话中选择或调整，确认后开始制作。</p>
                     </div>
                     {editable ? (
                         <Button disabled={busy} onClick={onAskAgent}>
-                            {summary.production.chapterCount ? "请 Agent 推荐方案" : "请 Agent 起草正文与方案"}
+                            {summary.production.chapterCount ? "重新推荐方案" : "重新起草正文与方案"}
                         </Button>
                     ) : (
                         <span className="drama-chip">先做文字</span>

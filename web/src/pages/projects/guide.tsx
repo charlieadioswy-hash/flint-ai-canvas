@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
@@ -85,6 +85,17 @@ export default function DramaGuidePage() {
     const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
     const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
     const [prefillRequest, setPrefillRequest] = useState<{ projectId: string; request: AgentPrefillRequest } | null>(null);
+    const creativeBrief = summary?.production.creativeBrief || "";
+    const chapterCount = summary?.production.chapterCount || 0;
+    const startupRequest = useMemo<AgentPrefillRequest | null>(() => {
+        if (summary?.project.id !== projectId || summary.production.guideStep !== "configuring" || summaryQuery.isError) return null;
+        return {
+            id: 1,
+            text: `请开始这个短剧的创作引导，先读取当前阶段、现有正文和配置。${creativeBrief ? `我的创作想法是：\n${creativeBrief}\n` : ""}请根据故事内容推荐视频画幅、风格、语言、时长和分辨率，用创作配置建议供我确认。${chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : creativeBrief ? "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。" : "请先询问我的创作想法或需要改编的正文。"}本轮先讨论与提供文字建议，在对话中引导我选择或调整。等我明确确认后再沿用现有流程提取资产、改编剧本和分镜，每个阶段都等待我确认，不自动生成图片或视频。`,
+            autoSubmit: true,
+            displayText: chapterCount ? "请根据已保存的正文推荐创作方案" : creativeBrief ? "请根据我的创作想法起草正文，并推荐创作方案" : "请引导我开始创作短剧",
+        };
+    }, [projectId, summary?.project.id, summary?.production.guideStep, summaryQuery.isError, creativeBrief, chapterCount]);
     const busyRef = useRef(false);
     const jobsActive = Boolean((summary?.jobCounts.queued || 0) + (summary?.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary?.production.revision);
@@ -157,12 +168,13 @@ export default function DramaGuidePage() {
             onConversationBound: boundConversation,
             onProposal: receiveProposal,
             onActionsHost: setChatActionsHost,
+            startupRequest,
             prefillRequest: prefillRequest?.projectId === projectId ? prefillRequest.request : null,
         });
         return () => {
             if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
         };
-    }, [host, projectId, summary?.production.guideStep, summary?.production.guideConversationId, boundConversation, receiveProposal, prefillRequest]);
+    }, [host, projectId, summary?.production.guideStep, summary?.production.guideConversationId, boundConversation, receiveProposal, startupRequest, prefillRequest]);
     useEffect(() => {
         if (!pendingConversationId || !summary || operation.isPending || busyRef.current) return;
         setPendingConversationId(null);
@@ -313,9 +325,8 @@ export default function DramaGuidePage() {
     const stale = Boolean(settingsDraft && settingsDraft.revision !== revision);
     const settings = settingsDraft?.value || summary.production.settings;
     const askAgent = () => {
-        const brief = summary.production.creativeBrief;
-        const text = `请读取这个短剧项目的当前阶段、现有正文和配置。${brief ? `我的创作想法是：\n${brief}\n` : ""}请根据故事内容推荐视频画幅、风格、语言、时长和分辨率，用创作配置建议供我确认。${summary.production.chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。"}本轮先讨论与提供文字建议，等我确认后再开始资产提取、剧本和分镜。`;
-        setPrefillRequest({ projectId, request: { id: Date.now(), text, autoSubmit: true, displayText: summary.production.chapterCount ? "请根据已保存的正文推荐创作方案" : "请根据我的创作想法起草正文，并推荐创作方案" } });
+        if (!startupRequest) return;
+        setPrefillRequest({ projectId, request: { ...startupRequest, id: Date.now() } });
         setMobilePane("chat");
     };
     const currentStep = STEPS[stepIndex] || STEPS[0];

@@ -139,10 +139,13 @@ function persistedSetup(baseRevision = 7): DramaAgentProposal {
     };
 }
 
-async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDivElement; receive: (value: DramaAgentProposal) => Promise<void>; button: (label: string) => HTMLButtonElement; click: (label: string) => Promise<void> }) => Promise<void>) {
+async function withGuide(
+    check: (ui: { container: HTMLElement; chatHost: HTMLDivElement; receive: (value: DramaAgentProposal) => Promise<void>; button: (label: string) => HTMLButtonElement; click: (label: string) => Promise<void> }) => Promise<void>,
+    production: Partial<DramaSummary["production"]> = {},
+) {
     summary = {
         project: { id: "project", name: "持久化配置建议测试" },
-        production: { guideStep: "configuring", revision: 7, status: "draft", stage: "bible", settings: structuredClone(originalSettings), chapterCount: 0, wordCount: 0 },
+        production: { guideStep: "configuring", revision: 7, status: "draft", stage: "bible", settings: structuredClone(originalSettings), chapterCount: 0, wordCount: 0, ...production },
         episodes: [],
         jobCounts: {},
         inbox: [],
@@ -208,6 +211,43 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
         container.remove();
     }
 }
+
+test("进入真实引导页即提供首次工作请求，已有正文与创作想法走不同预设且手动重推荐独立", async () => {
+    for (const production of [{ creativeBrief: "虚构的雨夜侦探故事" }, { chapterCount: 1 }]) {
+        await withGuide(async ({ click }) => {
+            const request = dramaContext?.startupRequest;
+            expect(request?.autoSubmit).toBe(true);
+            expect(request?.text).toContain("先读取当前阶段、现有正文和配置");
+            expect(request?.text).toContain("每个阶段都等待我确认，不自动生成图片或视频");
+            expect(request?.text).toContain(production.chapterCount ? "直接读取已保存的正文" : "虚构的雨夜侦探故事");
+            expect(dramaContext?.prefillRequest ?? null).toBeNull();
+            expect(settingsWrites).toEqual([]);
+            expect(otherWrites).toBe(0);
+            await click("横屏 16:9");
+            await click("保存调整");
+            expect(dramaContext?.startupRequest).toBe(request);
+            expect(dramaContext?.prefillRequest ?? null).toBeNull();
+            await click(production.chapterCount ? "重新推荐方案" : "重新起草正文与方案");
+            expect(dramaContext?.prefillRequest?.text).toBe(request?.text);
+            expect(dramaContext?.prefillRequest?.id).not.toBe(request?.id);
+            expect(otherWrites).toBe(0);
+        }, production);
+    }
+});
+
+test("资产、分镜和完成阶段不提供自动开始请求", async () => {
+    for (const guideStep of ["assets", "story", "completed"] as const) {
+        await withGuide(
+            async () => {
+                expect(dramaContext?.startupRequest ?? null).toBeNull();
+                expect(dramaContext?.prefillRequest ?? null).toBeNull();
+                expect(settingsWrites).toEqual([]);
+                expect(otherWrites).toBe(0);
+            },
+            { guideStep, chapterCount: 1 },
+        );
+    }
+});
 
 test("旧像素尺寸建议可进入真实配置草稿，选1080P后仅保存白名单修改并携带CAS", async () => {
     await withGuide(async ({ container, chatHost, receive, button, click }) => {
