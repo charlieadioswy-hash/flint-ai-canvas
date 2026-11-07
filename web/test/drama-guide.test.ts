@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { activeDramaGuide, dramaGuideChange, dramaGuideChangesConflict, dramaGuideProposal, dramaGuideSetupChange, dramaProjectPath, dramaProposalKey, type DramaGuideChange, type DramaGuideProposalBatch } from "../src/pages/projects/guide-state";
+import {
+    activeDramaGuide,
+    dramaGuideChange,
+    dramaGuideChangesConflict,
+    dramaGuideProposal,
+    dramaGuideSetupChange,
+    dramaProjectPath,
+    dramaProposalKey,
+    rebaseDramaGuideSettingsDraft,
+    type DramaGuideChange,
+    type DramaGuideProposalBatch,
+} from "../src/pages/projects/guide-state";
 import type { DramaAgentProposal } from "../src/services/api/agent";
 import type { DramaSettings } from "../src/services/api/drama";
 
@@ -70,6 +81,53 @@ describe("same-run drama proposal continuation", () => {
         expect(dramaGuideSetupChange(before, { ...before, language: "粤语" })).toEqual(setup({ language: "粤语" }));
         expect(dramaGuideSetupChange(before, before)).toEqual(setup({}));
         expect(dramaGuideSetupChange(before, { ...before, models: { video: { modelKey: "other" } } })).toBeNull();
+    });
+});
+
+describe("rebasing manual drama settings after a direct choice", () => {
+    const baseline = {
+        aspectRatio: "9:16",
+        videoResolution: "720p",
+        styleName: "写实",
+        stylePrompt: "自然光",
+        language: "中文普通话",
+        episodeSeconds: 90,
+        mediaMode: "manual",
+        models: { video: { modelKey: "original-video" } },
+        assets: { characterPrompt: "原有角色描述" },
+        concurrency: 2,
+    } as DramaSettings;
+
+    test("keeps unrelated manual and nested edits while accepting the saved choice and fresh server fields", () => {
+        const draft = { ...baseline, aspectRatio: "16:9", assets: { ...baseline.assets, characterPrompt: "手动角色描述" }, models: { video: { modelKey: "manual-video" } } };
+        const saved = { ...baseline, language: "粤语", concurrency: 4 };
+        expect(rebaseDramaGuideSettingsDraft(baseline, draft, saved, { language: "粤语" })).toEqual({ ...saved, aspectRatio: "16:9", assets: draft.assets, models: draft.models });
+        expect(saved.assets.characterPrompt).toBe("原有角色描述");
+        expect(draft.language).toBe("中文普通话");
+    });
+
+    test("choosing either style field replaces both style drafts but preserves an unrelated language draft", () => {
+        const draft = { ...baseline, styleName: "手动风格", stylePrompt: "手动光影", language: "英语" };
+        const saved = { ...baseline, styleName: "电影风格" };
+        expect(rebaseDramaGuideSettingsDraft(baseline, draft, saved, { styleName: "电影风格" })).toEqual({ ...saved, language: "英语" });
+        const savedPrompt = { ...baseline, stylePrompt: "水墨线条" };
+        expect(rebaseDramaGuideSettingsDraft(baseline, draft, savedPrompt, { stylePrompt: "水墨线条" })).toEqual({ ...savedPrompt, language: "英语" });
+    });
+
+    test("choosing either frame field replaces both ratio and resolution drafts", () => {
+        const draft = { ...baseline, aspectRatio: "16:9", videoResolution: "1080p", episodeSeconds: 120 };
+        for (const chosen of [{ videoResolution: "480p" }, { aspectRatio: "1:1" }]) {
+            const saved = { ...baseline, ...chosen };
+            expect(rebaseDramaGuideSettingsDraft(baseline, draft, saved, chosen)).toEqual({ ...saved, episodeSeconds: 120 });
+        }
+    });
+
+    test("clears drafts when no remaining differences exist, including selected fields already matching the server", () => {
+        const chosen = { language: "粤语" };
+        const saved = { ...baseline, ...chosen };
+        expect(rebaseDramaGuideSettingsDraft(baseline, baseline, saved, chosen)).toBeNull();
+        expect(rebaseDramaGuideSettingsDraft(baseline, { ...baseline, ...chosen }, saved, chosen)).toBeNull();
+        expect(rebaseDramaGuideSettingsDraft(baseline, { ...baseline, episodeSeconds: 120 }, { ...saved, episodeSeconds: 120 }, chosen)).toBeNull();
     });
 });
 

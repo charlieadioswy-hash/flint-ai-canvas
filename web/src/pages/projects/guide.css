@@ -426,6 +426,51 @@
     border-top: 1px solid var(--drama-line);
 }
 
+.drama-guide-cast-looks {
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--drama-line);
+}
+
+.drama-guide-cast-looks > summary {
+    color: var(--drama-muted);
+    font-size: var(--fs-label);
+}
+
+.drama-guide-cast-looks[open] > summary {
+    margin-bottom: var(--space-3);
+}
+
+.drama-guide-look {
+    min-width: 0;
+    padding: var(--space-3);
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+
+.drama-guide-look-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.drama-guide-look-head > div:last-child {
+    min-width: 0;
+}
+
+.drama-guide-look-head h4 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.drama-guide-look-head small {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
 .drama-guide-empty {
     display: flex;
     flex-direction: column;

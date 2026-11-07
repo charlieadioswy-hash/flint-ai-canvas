@@ -615,6 +615,34 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             lastPrefillIdRef.current = 0;
             return;
         }
+        // 保存后的自动续问只能在对话空闲时发送，不能替用户回答问题或越过草稿和待确认请求。
+        if (
+            prefillRequest.autoSubmit &&
+            prefillRequest.requireIdle &&
+            (!accountIsCurrent() ||
+                hydratedAccount.current !== `${userId}:${accountScope}` ||
+                currentScope.current !== conversationScope ||
+                !historyHydrated ||
+                !pendingHydrated ||
+                !outboxReady ||
+                Boolean(cloudOpeningId) ||
+                busy ||
+                running ||
+                Boolean(pendingQuestion) ||
+                Boolean(prompt.trim()) ||
+                Boolean(draftAttachments.length) ||
+                Boolean(pendingSubmission.current) ||
+                submissionRequestRef.current ||
+                outboxRestoreFailuresRef.current.has(JSON.stringify([accountScope, conversationScope])) ||
+                outbox.paused ||
+                outbox.items.length > 0 ||
+                pendingEnqueueRef.current.some((entry) => entry.conversationId === conversationScope) ||
+                !online ||
+                Boolean(dramaProjectId && run && run.dramaProjectId !== dramaProjectId) ||
+                Boolean(run && connectionStatus !== "connected") ||
+                otherAgentRunning)
+        )
+            return;
         if (dramaProjectId) {
             if (!claimDramaAgentPrefill(dramaPrefillReceiptsRef.current, accountScope, dramaProjectId, prefillRequest.id)) return;
         } else if (prefillRequest.id === lastPrefillIdRef.current) return;
@@ -624,11 +652,33 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         // 自动发送的预填直接进入队列：空闲时立即发出，运行中排在队尾，可见、可删，只发一次。
         if (prefillRequest.autoSubmit) {
             if (enqueueOutboxItem(outboxItemFromDraft(prefillRequest.text, prefillRequest))) return;
+            if (prefillRequest.requireIdle) return;
             void appMessage.warning(`排队消息已满 ${AGENT_OUTBOX_MAX_ITEMS} 条，这条已放进输入框`);
         }
         setPrompt((current) => appendAgentPromptPrefill(current, prefillRequest.displayText || prefillRequest.text));
         prefilledSubmissionRef.current = prefillRequest;
-    }, [prefillRequest, dramaProjectId, guideReadyProject, accountScope]);
+    }, [
+        prefillRequest,
+        dramaProjectId,
+        guideReadyProject,
+        accountScope,
+        userId,
+        conversationScope,
+        historyHydrated,
+        pendingHydrated,
+        outboxReady,
+        cloudOpeningId,
+        busy,
+        running,
+        pendingQuestion,
+        prompt,
+        draftAttachments.length,
+        outbox,
+        online,
+        run,
+        connectionStatus,
+        otherAgentRunning,
+    ]);
 
     useEffect(() => {
         if (!dramaProjectId || guideReadyProject !== dramaProjectId || !startupRequest?.text.trim() || !historyHydrated || !pendingHydrated || !outboxReady) return;
@@ -2886,7 +2936,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                             onPickSkill={(skill) => void applySingleSkill(skill)}
                                         />
                                     ) : null}
-                                    {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={otherAgentRunning || approvalSubmitting || connectionStatus !== "connected"} onAnswer={(label) => void submit(label)} /> : null}
+                                    {pendingQuestion ? (
+                                        <AgentQuestionBar
+                                            question={pendingQuestion}
+                                            theme={theme}
+                                            inlineFreeform={Boolean(dramaProjectId)}
+                                            disabled={otherAgentRunning || approvalSubmitting || connectionStatus !== "connected"}
+                                            onAnswer={(label) => void submit(label)}
+                                        />
+                                    ) : null}
                                     {historyHydrated && !pendingHydrated ? (
                                         <div className="flex items-center gap-2 px-5 py-2 text-xs" role="status">
                                             <span>提交记录尚未确认，输入保留；画布可继续编辑。</span>

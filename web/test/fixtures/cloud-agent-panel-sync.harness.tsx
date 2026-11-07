@@ -63,6 +63,7 @@ let conversationUI: Record<string, any>;
 let historyUI: Record<string, any>;
 let controls: Record<string, any>;
 let outboxUI: Record<string, any>;
+let questionUI: Record<string, any> | undefined;
 const silent = () => {};
 mock.module("file-saver", () => ({ saveAs: silent }));
 const MotionBox = ({ children, className, style }: any) => (
@@ -169,7 +170,10 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
         );
     },
     AgentPlanBar: () => null,
-    AgentQuestionBar: () => null,
+    AgentQuestionBar: (props: any) => {
+        questionUI = props;
+        return null;
+    },
     AgentSceneCapsules: () => null,
 }));
 mock.module("@/components/canvas/canvas-cloud-agent-panel-parts", () => ({
@@ -258,6 +262,7 @@ const persist = async () => {
 };
 type MountOptions = {
     startupRequest?: AgentPrefillRequest;
+    prefillRequest?: AgentPrefillRequest;
     localConversations?: CloudAgentConversation[];
     initialOutbox?: AgentOutbox;
     outboxLoad?: (id: string) => Promise<AgentOutbox | null>;
@@ -291,6 +296,7 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     outboxLoadOverride = options.outboxLoad;
     startupSaveOverride = options.startupSave;
     outboxUI = undefined!;
+    questionUI = undefined;
     Object.defineProperty(navigator, "onLine", { configurable: true, value: !options.offline });
     generated = 0;
     subscriptions.length = 0;
@@ -309,6 +315,7 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
                   guideConversationId: options.guideConversationId === undefined ? initial.serverConversationId : options.guideConversationId || undefined,
                   host,
                   startupRequest: options.startupRequest,
+                  prefillRequest: options.prefillRequest,
                   onConversationBound: options.onConversationBound,
               }
             : null,
@@ -1099,6 +1106,154 @@ test("已启动引导仍可显式请求再次推荐，自动启动标记不吞�
         expect(sent).toEqual(["manual-parent"]);
         expect(sendInputs[0]).toMatchObject({ prompt: "请根据新要求重新推荐方案", dramaProjectId: "guide-project", permissionMode: "read_only" });
         expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+const savedGuideFeedback: AgentPrefillRequest = { id: 20, text: "配置已保存，请检查剩余事项并继续引导。", displayText: "配置已保存，继续引导", autoSubmit: true, requireIdle: true };
+
+test("保存反馈在空闲时自动续接一次，StrictMode和上下文重注册不重复", async () => {
+    const existing = guideChat("guide-local", "feedback-parent");
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback, strictMode: true });
+    try {
+        expect(sent).toEqual(["feedback-parent"]);
+        expect(sendInputs[0]).toMatchObject({ prompt: savedGuideFeedback.text, dramaProjectId: "guide-project", permissionMode: "read_only" });
+        expect(composer.prompt).toBe("");
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, prefillRequest: { ...savedGuideFeedback } } });
+            await settle();
+        });
+        await focus();
+        expect(sent).toHaveLength(1);
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("保存反馈保留未发送草稿，清空草稿后再自动续接", async () => {
+    const existing = { ...guideChat("guide-local", "draft-feedback-parent"), draft: "我正在补充的要求" };
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
+    try {
+        expect(sent).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        expect(composer.prompt).toBe(existing.draft);
+        await act(async () => {
+            composer.onPromptChange("");
+            await settle();
+        });
+        expect(sent).toEqual(["draft-feedback-parent"]);
+        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("保存反馈不能回答已有问题，用户明确回答后才继续", async () => {
+    const existing = guideChat("guide-local", "question-feedback-parent");
+    existing.messages.push({ id: "pending-question", role: "assistant", text: "", question: { questionId: "direction", question: "选择创作方向", options: [{ label: "悬疑" }, { label: "喜剧" }] } });
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
+    try {
+        expect(sent).toHaveLength(0);
+        expect(composer.prompt).toBe("");
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        expect(questionUI?.inlineFreeform).toBe(true);
+        sendOverride = async () => ({ run: { ...makeRun("submitted-child"), canvasId: undefined, dramaProjectId: "guide-project", permissionMode: "read_only" } });
+        await act(async () => {
+            questionUI!.onAnswer("悬疑");
+            await settle();
+        });
+        expect(sendInputs.map((input) => input.prompt)).toEqual(["悬疑", savedGuideFeedback.text]);
+        expect(sent).toEqual(["question-feedback-parent", "submitted-child"]);
+        expect(composer.prompt).toBe("");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("保存反馈等待现有轮次结束，不提前进入发送队列", async () => {
+    const existing = guideChat("guide-local", "running-feedback-parent");
+    existing.run!.status = "running";
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
+    try {
+        expect(sent).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        await act(async () => {
+            subscriptions.at(-1)!.event({ eventId: "feedback-completed", runId: existing.run!.id, seq: 5, type: "run_status", payload: { status: "completed", revision: 2 }, createdAt: existing.updatedAt });
+            await settle();
+        });
+        expect(sent).toEqual(["running-feedback-parent"]);
+        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("保存反馈不能越过结果未知请求，即使手动清空输入框也不发送", async () => {
+    const existing = guideChat("guide-local", "pending-feedback-parent");
+    const original: CloudAgentPendingSubmission = { key: "feedback-original", fingerprint: "frozen", parentRunId: existing.run!.id, request: { prompt: "原结果未知请求", dramaProjectId: "guide-project", idempotencyKey: "feedback-original" } };
+    const mounted = await mount(existing, [existing], original, "guide-project", { prefillRequest: savedGuideFeedback });
+    try {
+        await act(async () => {
+            composer.onPromptChange("");
+            await settle();
+        });
+        expect(pending).toBe(original);
+        expect(sent).toHaveLength(0);
+        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
+        expect(composer.prompt).toBe("");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("保存反馈等待队列恢复，已有满队列时不回填输入框，移空后才发送", async () => {
+    const existing = guideChat("guide-local", "outbox-feedback-parent");
+    let resolveOutbox!: (value: AgentOutbox | null) => void;
+    const restored = new Promise<AgentOutbox | null>((resolve) => (resolveOutbox = resolve));
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback, outboxLoad: (id) => (id === existing.id ? restored : Promise.resolve(null)) });
+    try {
+        expect(sent).toHaveLength(0);
+        const item = queuedGuideMessage().items[0];
+        await act(async () => {
+            resolveOutbox({ version: 1, items: Array.from({ length: 5 }, (_, index) => ({ ...item, id: `existing-${index}` })) });
+            await settle();
+        });
+        expect(sent).toHaveLength(0);
+        expect(outboxUI.outbox.items).toHaveLength(5);
+        expect(composer.prompt).toBe("");
+        await act(async () => {
+            for (const entry of outboxUI.outbox.items) outboxUI.onRemove(entry);
+            await settle();
+        });
+        expect(sent).toEqual(["outbox-feedback-parent"]);
+        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("等待中的保存反馈不泄漏到新项目或新账号", async () => {
+    const existing = { ...guideChat("guide-local", "old-feedback-parent"), draft: "旧项目草稿" };
+    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
+    try {
+        const next = emptyGuide("next-project");
+        await act(async () => {
+            useGlobalAgentStore.setState({ drama: { projectId: "next-project", host: mounted.host } });
+            await settle();
+        });
+        expect(sent).toHaveLength(0);
+        expect(createInputs).toHaveLength(0);
+        expect(composer.prompt).not.toContain(savedGuideFeedback.text);
+        await act(async () => {
+            setActiveUserScope("other-user");
+            useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
+            await settle();
+        });
+        expect(sent).toHaveLength(0);
+        expect(createInputs).toHaveLength(0);
+        expect(outboxes.get(next.id)?.items || []).toHaveLength(0);
     } finally {
         await mounted.close();
     }

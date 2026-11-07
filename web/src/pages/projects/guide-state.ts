@@ -45,6 +45,17 @@ function setupFields(change: Extract<DramaGuideChange, { kind: "setup" }>) {
     return new Set(Object.keys(change.patch).map((key) => (key === "styleName" || key === "stylePrompt" ? "style" : key === "aspectRatio" || key === "videoResolution" ? "frame" : key)));
 }
 
+/** 选择只保存对应配置；未保存的其他手动修改在确认新版本后继续作为草稿保留。 */
+export function rebaseDramaGuideSettingsDraft(baseline: DramaSettings, draft: DramaSettings, saved: DramaSettings, chosen: Partial<DramaSettings>): DramaSettings | null {
+    const result = { ...saved } as DramaSettings & Record<string, unknown>;
+    const fields = setupFields({ kind: "setup", patch: chosen });
+    for (const key of Object.keys(draft) as Array<keyof DramaSettings>) {
+        const group = key === "styleName" || key === "stylePrompt" ? "style" : key === "aspectRatio" || key === "videoResolution" ? "frame" : key;
+        if (!fields.has(group) && JSON.stringify(draft[key]) !== JSON.stringify(baseline[key])) (result as Record<string, unknown>)[key] = draft[key];
+    }
+    return JSON.stringify(result) === JSON.stringify(saved) ? null : result;
+}
+
 function assetName(value: string) {
     return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }

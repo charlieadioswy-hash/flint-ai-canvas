@@ -165,7 +165,8 @@ async function withGuide(
     const button = (label: string) => {
         const found =
             Array.from(container.querySelector('[aria-label="创作对话操作"]')?.querySelectorAll("button") || []).find((item) => item.textContent?.trim() === label) ||
-            Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
+            Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label) ||
+            Array.from(container.querySelectorAll<HTMLButtonElement>(".drama-guide-setup-choice")).find((item) => item.querySelector("strong")?.textContent?.trim() === label);
         expect(found, `未找到按钮：${label}`).toBeDefined();
         return found!;
     };
@@ -249,68 +250,139 @@ test("资产、分镜和完成阶段不提供自动开始请求", async () => {
     }
 });
 
-test("旧像素尺寸建议可进入真实配置草稿，选1080P后仅保存白名单修改并携带CAS", async () => {
-    await withGuide(async ({ container, chatHost, receive, button, click }) => {
+test("旧像素尺寸选项显示不支持原因和重新推荐，不能误写配置", async () => {
+    await withGuide(async ({ container, chatHost, receive, click }) => {
         await receive(persistedSetup());
         expect(settingsWrites).toEqual([]);
-        expect(chatHost.querySelectorAll(".drama-guide-proposal")).toHaveLength(1);
-        expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
-        expect(button("应用此建议").disabled).toBe(true);
-        expect(button("调整建议").disabled).toBe(false);
-        await click("应用此建议");
-        expect(settingsWrites).toEqual([]);
-        await click("调整建议");
+        expect(chatHost.querySelectorAll(".drama-guide-setup-choice")).toHaveLength(1);
+        expect(container.querySelector('[aria-label="创作产物"] .drama-guide-setup-choice')).toBeNull();
+        expect(chatHost.textContent).not.toContain("应用此建议");
+        expect(chatHost.textContent).not.toContain("调整建议");
+        const choice = chatHost.querySelector<HTMLButtonElement>(".drama-guide-setup-choice")!;
+        expect(choice.disabled).toBe(true);
+        expect(choice.getAttribute("aria-describedby")).toBeTruthy();
+        expect(chatHost.querySelector(".drama-guide-setup-choice-problem")?.textContent).toContain("不支持");
+        await act(async () => choice.click());
         expect(settingsWrites).toEqual([]);
         expect(otherWrites).toBe(0);
         expect(dramaContext?.prefillRequest ?? null).toBeNull();
         expect(summary.production.settings).toEqual(originalSettings);
-        expect(chatHost.querySelector(".drama-guide-style-description")?.textContent).toBe("冷色雨幕与高反差电影照明");
-        expect(chatHost.querySelector<HTMLSelectElement>('select[aria-label="对白语言"]')?.value).toBe("粤语");
-        expect(chatHost.querySelector('output[aria-label="单集时长"]')?.textContent).toBe("120");
-        expect(chatHost.querySelector('[role="radiogroup"][aria-label="视频分辨率"]')).not.toBeNull();
-        expect(button("1080P").getAttribute("aria-checked")).toBe("false");
-        await click("1080P");
-        expect(button("1080P").getAttribute("aria-checked")).toBe("true");
+        expect(container.textContent).not.toContain("有尚未保存的调整");
+        await click("重新推荐创作方案");
+        expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
+        expect(dramaContext?.prefillRequest?.text).toContain("读取当前真实配置与版本");
         expect(settingsWrites).toEqual([]);
-        await click("保存调整");
+        expect(otherWrites).toBe(0);
+    });
+});
+
+test("点选可用方案立即携带CAS保存白名单配置并通知Agent继续", async () => {
+    await withGuide(async ({ container, chatHost, receive, click }) => {
+        const proposal = persistedSetup();
+        proposal.changes.videoResolution = "1080p";
+        await receive(proposal);
+        expect(settingsWrites).toEqual([]);
+        expect(chatHost.querySelectorAll(".drama-guide-setup-choice")).toHaveLength(1);
+        await click("雨夜电影风格 · 9:16 · 1080p · 粤语 · 120 秒");
         expect(settingsWrites).toEqual([
             {
                 projectId: "project",
                 input: { expectedRevision: 7, settings: { ...originalSettings, aspectRatio: "9:16", videoResolution: "1080p", styleName: "雨夜电影风格", stylePrompt: "冷色雨幕与高反差电影照明", language: "粤语", episodeSeconds: 120 } },
             },
         ]);
+        expect(chatHost.querySelectorAll(".drama-guide-setup-choice")).toHaveLength(0);
+        expect(container.textContent).not.toContain("有尚未保存的调整");
         expect(otherWrites).toBe(0);
-        expect(dramaContext?.prefillRequest ?? null).toBeNull();
+        expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
+        expect(dramaContext?.prefillRequest?.requireIdle).toBe(true);
+        expect(dramaContext?.prefillRequest?.text).toContain("当前制作版本：8");
+        expect(dramaContext?.prefillRequest?.text).toContain("继续下一项尚未确认的配置选择");
+        expect(dramaContext?.prefillRequest?.text).not.toContain("untrusted");
         expect(notices).toEqual([]);
     });
 });
 
-test("已有未保存配置时禁止用建议覆盖，保留用户手动草稿", async () => {
+test("有无关手动草稿时仍可直接选风格，保留草稿并以新版本继续保存", async () => {
+    await withGuide(async ({ container, chatHost, receive, button, click }) => {
+        await click("横屏 16:9");
+        await receive({ ...persistedSetup(), changes: { styleName: "雨夜电影风格", stylePrompt: "冷色雨幕与高反差电影照明" } });
+        await receive({ ...persistedSetup(), toolCallId: "other-style", changes: { styleName: "国风动画", stylePrompt: "水墨线条" } });
+        expect(button("雨夜电影风格").disabled).toBe(false);
+        await click("雨夜电影风格");
+        const chosen = { ...originalSettings, styleName: "雨夜电影风格", stylePrompt: "冷色雨幕与高反差电影照明" };
+        expect(settingsWrites).toEqual([{ projectId: "project", input: { expectedRevision: 7, settings: chosen } }]);
+        expect(button("横屏 16:9").getAttribute("aria-checked")).toBe("true");
+        expect(container.querySelector(".drama-guide-style-description")?.textContent).toBe(chosen.stylePrompt);
+        expect(container.querySelector<HTMLSelectElement>('select[aria-label="对白语言"]')?.value).toBe(originalSettings.language);
+        expect(container.textContent).toContain("有尚未保存的调整");
+        expect(container.textContent).not.toContain("配置已有更新");
+        expect(chatHost.querySelectorAll(".drama-guide-setup-choice")).toHaveLength(0);
+        await click("保存调整");
+        expect(settingsWrites).toEqual([
+            { projectId: "project", input: { expectedRevision: 7, settings: chosen } },
+            { projectId: "project", input: { expectedRevision: 8, settings: { ...chosen, aspectRatio: "16:9" } } },
+        ]);
+        expect(container.textContent).not.toContain("有尚未保存的调整");
+        expect(otherWrites).toBe(0);
+        expect(notices).toEqual([]);
+    });
+});
+
+test("选择同组视频配置覆盖画幅和清晰度草稿，不遗留待保存状态", async () => {
     await withGuide(async ({ container, receive, button, click }) => {
         await click("横屏 16:9");
-        await receive(persistedSetup());
-        expect(button("调整建议").disabled).toBe(true);
-        await click("调整建议");
-        expect(settingsWrites).toEqual([]);
-        expect(button("横屏 16:9").getAttribute("aria-checked")).toBe("true");
-        expect(container.querySelector(".drama-guide-style-description")?.textContent).toBe(originalSettings.stylePrompt);
-        expect(container.querySelector<HTMLSelectElement>('select[aria-label="对白语言"]')?.value).toBe(originalSettings.language);
-        await click("保存调整");
-        expect(settingsWrites).toEqual([{ projectId: "project", input: { expectedRevision: 7, settings: { ...originalSettings, aspectRatio: "16:9" } } }]);
+        await click("1080P");
+        await receive({ ...persistedSetup(), changes: { videoResolution: "480p" } });
+        expect(button("480p").disabled).toBe(false);
+        await click("480p");
+        expect(settingsWrites).toEqual([{ projectId: "project", input: { expectedRevision: 7, settings: { ...originalSettings, videoResolution: "480p" } } }]);
+        expect(button("竖屏 9:16").getAttribute("aria-checked")).toBe("true");
+        expect(button("480P").getAttribute("aria-checked")).toBe("true");
+        expect(container.textContent).not.toContain("有尚未保存的调整");
+        expect(notices).toEqual([]);
         expect(otherWrites).toBe(0);
     });
 });
 
-test("旧版本配置建议禁用调整与直接应用，不改草稿也不写后端", async () => {
-    await withGuide(async ({ container, receive, button, click }) => {
+test("旧版本选项显示过期原因和重新推荐，不改草稿也不写后端", async () => {
+    await withGuide(async ({ container, chatHost, receive, click }) => {
         await receive(persistedSetup(6));
-        expect(button("调整建议").disabled).toBe(true);
-        expect(button("应用此建议").disabled).toBe(true);
-        await click("调整建议");
-        await click("应用此建议");
+        const choice = chatHost.querySelector<HTMLButtonElement>(".drama-guide-setup-choice")!;
+        expect(choice.disabled).toBe(true);
+        expect(chatHost.querySelector(".drama-guide-setup-choice-problem")?.textContent).toContain("此选项已过期");
+        await act(async () => choice.click());
         expect(settingsWrites).toEqual([]);
         expect(otherWrites).toBe(0);
         expect(container.querySelector(".drama-guide-style-description")?.textContent).toBe(originalSettings.stylePrompt);
         expect(container.textContent).not.toContain("有尚未保存的调整");
+        await click("重新推荐创作方案");
+        expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
+        expect(settingsWrites).toEqual([]);
+    });
+});
+
+test("每组可填写其他内容，发送真实偏好给Agent后由它返回可保存选项", async () => {
+    await withGuide(async ({ chatHost, receive }) => {
+        await receive({ ...persistedSetup(), changes: { styleName: "电影写实", stylePrompt: "自然光与真实材质" } });
+        const input = chatHost.querySelector<HTMLInputElement>('input[aria-label="自定义视觉风格"]')!;
+        expect(input.value).toBe("");
+        const form = input.closest("form")!;
+        expect(form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "  怀旧港片，暖色胶片  ");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+        });
+        expect(form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(false);
+        await act(async () => {
+            form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+            await settle();
+        });
+        expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
+        expect(dramaContext?.prefillRequest?.displayText).toBe("怀旧港片，暖色胶片");
+        expect(dramaContext?.prefillRequest?.text).toContain("当前讨论项：风格名称、视觉风格");
+        expect(dramaContext?.prefillRequest?.text).toContain("怀旧港片，暖色胶片");
+        expect(dramaContext?.prefillRequest?.text).toContain("不声称已保存");
+        expect(settingsWrites).toEqual([]);
+        expect(otherWrites).toBe(0);
     });
 });

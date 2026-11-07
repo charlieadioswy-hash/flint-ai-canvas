@@ -86,8 +86,19 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		if err := json.Unmarshal(definition.Parameters, &parameters); err != nil {
 			panic(err)
 		}
+		description := definition.Description
+		if req.DramaProjectID != "" {
+			switch definition.Name {
+			case agenttool.AskUser:
+				description += " 短剧引导中仅用于尚不能形成具体设置的创作澄清；已能保存的风格等决策用 drama_propose_changes 展示直接选择，不能再要求用户确认应用。必须保留空白自定义输入，allowFreeform 只能为 true；选择字段使用 allowCustom。不要询问用户是否看到了卡片、是否点选或要求重新提交。"
+				properties := parameters["properties"].(map[string]any)
+				properties["allowFreeform"].(map[string]any)["enum"] = []any{true}
+			case agenttool.DramaProposeChanges:
+				description += " 短剧配置每轮仅一个决策，给 2–4 个具体选项，多个备选分别调用本工具后结束本轮。setup 的 changes 只填当前决策字段（styleName/stylePrompt 属同一项），不要一次提交整套配置。用户点选即保存，无需再次应用；每组保留空白自定义输入。收到已保存反馈后重新读取版本，继续下一项；不得通过 ask_user 再问是否点选、是否看到卡片或要求重新提交。"
+			}
+		}
 		tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-			"name": definition.Name, "description": definition.Description, "parameters": parameters,
+			"name": definition.Name, "description": description, "parameters": parameters,
 		}})
 	}
 	return tools

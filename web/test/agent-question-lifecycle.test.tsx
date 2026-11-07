@@ -31,14 +31,16 @@ afterAll(() => {
     }
 });
 
-async function questionFixture(initial: CloudAgentUserQuestion) {
+async function questionFixture(initial: CloudAgentUserQuestion, initialOptions: { inlineFreeform?: boolean; disabled?: boolean } = {}) {
     const host = document.createElement("div");
     document.body.append(host);
     const errors: unknown[] = [];
     const answers: string[] = [];
     const root = createRoot(host, { onUncaughtError: (error) => errors.push(error) });
     let commits = 0;
-    const render = async (question: CloudAgentUserQuestion) => {
+    let options = initialOptions;
+    const render = async (question: CloudAgentUserQuestion, nextOptions = options) => {
+        options = nextOptions;
         commits = 0;
         await act(async () =>
             root.render(
@@ -50,7 +52,7 @@ async function questionFixture(initial: CloudAgentUserQuestion) {
                             if (++commits > 12) throw new Error("提问组件持续重复更新");
                         }}
                     >
-                        <AgentQuestionBar question={question} theme={canvasThemes.light} onAnswer={(answer) => answers.push(answer)} />
+                        <AgentQuestionBar question={question} theme={canvasThemes.light} onAnswer={(answer) => answers.push(answer)} {...options} />
                     </Profiler>
                 </StrictMode>,
             ),
@@ -67,6 +69,17 @@ async function questionFixture(initial: CloudAgentUserQuestion) {
         await dispose();
         throw error;
     }
+}
+
+async function enterText(input: HTMLInputElement, value: string) {
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new dom.Event("input", { bubbles: true }) as unknown as Event);
+    });
+}
+
+async function pressEnter(input: HTMLInputElement, isComposing = false) {
+    await act(async () => input.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, key: "Enter", isComposing }) as unknown as Event));
 }
 
 for (const kind of ["choice", "form"] as const) {
@@ -90,10 +103,78 @@ test("选择题正常提交选项和默认方案", async () => {
     const fixture = await questionFixture({ question: "创作方向", options: [{ label: "制作短片" }] });
     try {
         expect(fixture.errors).toEqual([]);
+        expect(fixture.host.querySelector("input")).toBeNull();
         const buttons = Array.from(fixture.host.querySelectorAll("button"));
         await act(async () => buttons.find((button) => button.textContent?.includes("制作短片"))!.click());
         await act(async () => buttons.find((button) => button.textContent?.includes("按默认方案开始"))!.click());
         expect(fixture.answers).toEqual(["制作短片", "直接开始"]);
+    } finally {
+        await fixture.dispose();
+    }
+});
+
+test("短剧选择题常驻其他想法，空白不可发送，具体选项和自定义均可直接提交", async () => {
+    const fixture = await questionFixture({ questionId: "drama-direction", question: "创作方向", options: [{ label: "制作短片" }] }, { inlineFreeform: true });
+    const button = (label: string) => Array.from(fixture.host.querySelectorAll("button")).find((item) => item.textContent === label)!;
+    try {
+        const input = fixture.host.querySelector<HTMLInputElement>("input")!;
+        expect(fixture.host.querySelector("label")?.textContent).toBe("其他想法");
+        expect(input.value).toBe("");
+        expect(button("发送").disabled).toBe(true);
+        expect(button("按默认方案开始")).toBeUndefined();
+        await enterText(input, "   ");
+        await pressEnter(input);
+        expect(fixture.answers).toEqual([]);
+        expect(button("发送").disabled).toBe(true);
+        await act(async () =>
+            Array.from(fixture.host.querySelectorAll("button"))
+                .find((item) => item.textContent?.includes("制作短片"))!
+                .click(),
+        );
+        await enterText(input, "  改成悬疑喜剧  ");
+        expect(button("发送").disabled).toBe(false);
+        await act(async () => button("发送").click());
+        expect(fixture.answers).toEqual(["制作短片", "改成悬疑喜剧"]);
+        expect(fixture.errors).toEqual([]);
+    } finally {
+        await fixture.dispose();
+    }
+});
+
+test("短剧其他想法支持 Enter，输入法确认和禁用状态不发送", async () => {
+    const question: CloudAgentUserQuestion = { questionId: "drama-style", question: "选择风格", options: [{ label: "写实" }] };
+    const fixture = await questionFixture(question, { inlineFreeform: true });
+    try {
+        const input = fixture.host.querySelector<HTMLInputElement>("input")!;
+        await enterText(input, "水墨动画");
+        await pressEnter(input, true);
+        expect(fixture.answers).toEqual([]);
+        await pressEnter(input);
+        expect(fixture.answers).toEqual(["水墨动画"]);
+        await fixture.render(question, { inlineFreeform: true, disabled: true });
+        expect(input.disabled).toBe(true);
+        expect(Array.from(fixture.host.querySelectorAll("button")).every((item) => item.disabled)).toBe(true);
+        await pressEnter(input);
+        expect(fixture.answers).toEqual(["水墨动画"]);
+    } finally {
+        await fixture.dispose();
+    }
+});
+
+test("短剧其他想法同一问题重渲染保留，切换问题清空", async () => {
+    const question: CloudAgentUserQuestion = { questionId: "drama-one", question: "选择风格", options: [{ label: "写实" }] };
+    const fixture = await questionFixture(question, { inlineFreeform: true });
+    try {
+        const input = fixture.host.querySelector<HTMLInputElement>("input")!;
+        await enterText(input, "保留我的调整");
+        await fixture.render({ ...question });
+        expect(input.value).toBe("保留我的调整");
+        await fixture.render({ ...question, questionId: "drama-two" });
+        expect(input.value).toBe("");
+        await enterText(input, "新问题的想法");
+        await fixture.render({ question: "改用其他语言吗？", options: [] });
+        expect(input.value).toBe("");
+        expect(fixture.errors).toEqual([]);
     } finally {
         await fixture.dispose();
     }

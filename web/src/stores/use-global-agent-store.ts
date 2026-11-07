@@ -17,7 +17,7 @@ export type AgentDramaContext = {
     onActionsHost?: (host: HTMLDivElement | null) => void;
 };
 
-export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean };
+export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };
 /** 画布为 Agent 输入框新建的节点，输入框据此显示附件卡片。 */
 export type AgentInsertedNode = { nodeId: string; title: string; kind: "image" | "text" | "video" | "audio"; previewUrl?: string };
 

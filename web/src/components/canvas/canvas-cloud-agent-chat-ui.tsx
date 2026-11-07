@@ -1242,7 +1242,19 @@ export function AgentPlanBar({
 
 const EMPTY_QUESTION_FIELDS: CloudAgentFormField[] = [];
 
-export function AgentQuestionBar({ question, theme, onAnswer, disabled = false }: { question: CloudAgentUserQuestion; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onAnswer: (answer: string) => void; disabled?: boolean }) {
+export function AgentQuestionBar({
+    question,
+    theme,
+    onAnswer,
+    disabled = false,
+    inlineFreeform = false,
+}: {
+    question: CloudAgentUserQuestion;
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    onAnswer: (answer: string) => void;
+    disabled?: boolean;
+    inlineFreeform?: boolean;
+}) {
     const fields = question.fields || EMPTY_QUESTION_FIELDS;
     const isForm = question.kind === "form" || fields.length > 0;
     const fieldDefaultValue = (field: CloudAgentFormField): string | string[] => {
@@ -1258,6 +1270,12 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false }
     const [customFields, setCustomFields] = useState<Record<string, boolean>>({});
     const [additionalNotes, setAdditionalNotes] = useState("");
     const [validation, setValidation] = useState("");
+    const [freeform, setFreeform] = useState("");
+    const freeformId = useId();
+
+    useEffect(() => {
+        setFreeform("");
+    }, [question.questionId, question.question]);
 
     useEffect(() => {
         setValues(Object.fromEntries(fields.map((field) => [field.id, fieldDefaultValue(field)])));
@@ -1310,6 +1328,9 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false }
 
     const stop = (event: SyntheticEvent) => {
         event.stopPropagation();
+    };
+    const submitFreeform = () => {
+        if (!disabled && freeform.trim()) onAnswer(freeform.trim());
     };
     const updateValue = (field: CloudAgentFormField, value: string) => {
         setValues((current) => {
@@ -1476,24 +1497,64 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false }
                     onSelect={(option) => onAnswer(option.text)}
                 />
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2">
-                <span className="text-[var(--fs-label)] opacity-50">{question.allowFreeform === false ? "请从上面选一项。" : "也可以在下方输入框里补充说明。"}</span>
-                <button
-                    type="button"
-                    disabled={disabled}
-                    title="使用安全默认方案继续"
-                    className="agent-question-default max-w-full rounded-md border-0 px-3 py-2 text-left text-xs font-medium transition focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
-                    onMouseDown={stop}
-                    onPointerDown={stop}
-                    onClick={(event) => {
-                        stop(event);
-                        onAnswer("直接开始");
-                    }}
-                >
-                    按默认方案开始
-                </button>
-            </div>
+            {inlineFreeform ? (
+                <div className="px-3 pb-2">
+                    <label className="mb-1 block text-[var(--fs-label)] opacity-55" htmlFor={freeformId}>
+                        其他想法
+                    </label>
+                    <div className="flex min-w-0 gap-2">
+                        <input
+                            id={freeformId}
+                            value={freeform}
+                            placeholder="输入你的想法或调整要求"
+                            disabled={disabled}
+                            className="agent-question-input min-w-0 flex-1"
+                            onChange={(event) => setFreeform(event.target.value)}
+                            onMouseDown={stop}
+                            onPointerDown={stop}
+                            onKeyDown={(event) => {
+                                stop(event);
+                                if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                                event.preventDefault();
+                                submitFreeform();
+                            }}
+                        />
+                        <button
+                            type="button"
+                            disabled={disabled || !freeform.trim()}
+                            className="agent-question-submit shrink-0 focus-visible:outline focus-visible:outline-2"
+                            style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
+                            onMouseDown={stop}
+                            onPointerDown={stop}
+                            onClick={(event) => {
+                                stop(event);
+                                submitFreeform();
+                            }}
+                        >
+                            发送
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2">
+                    <span className="text-[var(--fs-label)] opacity-50">{question.allowFreeform === false ? "请从上面选一项。" : "也可以在下方输入框里补充说明。"}</span>
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        title="使用安全默认方案继续"
+                        className="agent-question-default max-w-full rounded-md border-0 px-3 py-2 text-left text-xs font-medium transition focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ background: theme.accent.primary, color: theme.accent.onPrimary }}
+                        onMouseDown={stop}
+                        onPointerDown={stop}
+                        onClick={(event) => {
+                            stop(event);
+                            onAnswer("直接开始");
+                        }}
+                    >
+                        按默认方案开始
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

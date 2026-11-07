@@ -262,22 +262,25 @@ async function withGuide(
             chatHost,
             receive: async (...items) => {
                 for (const item of items) {
-                    const previous = new Set(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal"));
+                    const previous = new Set(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal, .drama-guide-setup-choice"));
                     await act(async () => {
                         dramaContext!.onProposal!(item);
                         await settle();
                     });
-                    const card = Array.from(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal")).find((entry) => !previous.has(entry));
+                    const card = Array.from(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal, .drama-guide-setup-choice")).find((entry) => !previous.has(entry));
                     expect(card).toBeDefined();
                     expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
                     cards.set(item.toolCallId, card!);
                 }
             },
-            apply: (call, label = "应用此建议") => click(button(cards.get(call)!, label)),
+            apply: (call, label = "应用此建议") => click(cards.get(call)!.matches("button.drama-guide-setup-choice") ? (cards.get(call)! as HTMLButtonElement) : button(cards.get(call)!, label)),
             disabled: (call) =>
-                Array.from(cards.get(call)!.querySelectorAll("button"))
-                    .filter((item) => ["应用此建议", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
-                    .every((item) => item.disabled),
+                !chatHost.contains(cards.get(call)!) ||
+                (cards.get(call)!.matches("button.drama-guide-setup-choice")
+                    ? (cards.get(call)! as HTMLButtonElement).disabled
+                    : Array.from(cards.get(call)!.querySelectorAll("button"))
+                          .filter((item) => ["应用此建议", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
+                          .every((item) => item.disabled)),
             click: (label) => click(button(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === label) ? chatHost : container, label)),
             refresh: async () => {
                 await act(async () => {
@@ -441,6 +444,15 @@ test("保存失败不伪造接续；成功写入但强刷新失败保留阻断�
         expect(disabled("setup")).toBe(false);
         expect(errors).toContain("模拟保存失败");
     });
+    await withGuide("configuring", async ({ receive, apply, disabled }) => {
+        await receive(setup(), source());
+        failWrite = true;
+        await apply("setup");
+        expect(summary.production.revision).toBe(7);
+        expect(disabled("setup")).toBe(false);
+        expect(dramaContext?.prefillRequest).toBeNull();
+        expect(errors).toContain("模拟保存失败");
+    });
     await withGuide("configuring", async ({ receive, apply, disabled, refresh }) => {
         await receive(source(), setup());
         failRefresh = true;
@@ -452,15 +464,27 @@ test("保存失败不伪造接续；成功写入但强刷新失败保留阻断�
         await refresh();
         expect(disabled("setup")).toBe(true);
     });
+    await withGuide("configuring", async ({ receive, apply, disabled, refresh }) => {
+        await receive(setup(), source());
+        failRefresh = true;
+        await apply("setup");
+        expect(summary.production.revision).toBe(8);
+        expect(dramaContext?.prefillRequest).toBeNull();
+        expect(disabled("source")).toBe(true);
+        readsFail = false;
+        await refresh();
+        expect(disabled("setup")).toBe(true);
+        expect(dramaContext?.prefillRequest).toBeNull();
+    });
 });
 
-test("调整建议保留来源和最终字段足迹；普通手工或高级设置不接续", async () => {
+test("点选只保存当前配置，手动或高级草稿保留且保存后仍执行版本保护", async () => {
     await withGuide("configuring", async ({ receive, apply, disabled, click }) => {
-        await receive(setup("setup", { videoResolution: "1080x1920" }), source(), setup("language", { language: "日语" }));
-        await apply("setup", "调整建议");
         await click("改为1080P");
-        await click("手动更改语言");
-        await click("保存调整");
+        await receive(setup("setup", { language: "粤语" }), source(), setup("language", { language: "日语" }));
+        await apply("setup");
+        expect(summary.production.settings.videoResolution).toBe("720p");
+        expect(summary.production.settings.language).toBe("粤语");
         expect(disabled("source")).toBe(false);
         expect(disabled("language")).toBe(true);
         await apply("source");
@@ -473,21 +497,15 @@ test("调整建议保留来源和最终字段足迹；普通手工或高级设�
         expect(disabled("source")).toBe(true);
         expect(writes).toHaveLength(1);
     });
-    await withGuide("configuring", async ({ receive, apply, disabled, click }) => {
-        await receive(setup(), source());
-        await apply("setup", "调整建议");
-        await click("修改高级模型");
-        await click("保存调整");
-        expect(disabled("source")).toBe(true);
-        expect(writes).toHaveLength(1);
-    });
     await withGuide("configuring", async ({ receive, apply, disabled, click, container }) => {
         await receive(setup(), source());
-        await apply("setup", "调整建议");
-        await click("恢复原配置");
+        await click("修改高级模型");
+        await apply("setup");
+        expect(summary.production.settings.models).toEqual(originalSettings.models);
+        expect(JSON.parse(container.querySelector('[aria-label="当前配置"]')!.textContent!).models.video.modelKey).toBe("other");
         await click("保存调整");
-        expect(disabled("source")).toBe(false);
-        expect(container.querySelectorAll(".drama-guide-proposal")).toHaveLength(1);
+        expect(disabled("source")).toBe(true);
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
     });
 });
 
@@ -546,6 +564,9 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         expect(guideConfirms).toEqual([]);
         await apply("setup");
         expect(writes.map((item) => item.kind)).toEqual(["setup"]);
+        expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
+        expect(dramaContext?.prefillRequest?.requireIdle).toBe(true);
+        expect(dramaContext?.prefillRequest?.text).toContain("当前制作版本：8");
         expect(summary.production.settings.language).toBe("粤语");
         expect(guideConfirms).toEqual([]);
         expect(summary.production.guideStep).toBe("configuring");
@@ -560,6 +581,7 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         await click("确认配置，开始提取资产");
         expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "configuring", expectedRevision: 8, settings: { ...originalSettings, language: "粤语", mediaMode: "manual" } } }]);
         expect(summary.production.guideStep).toBe("assets");
+        expect(dramaContext?.prefillRequest).toBeNull();
         expect(chatHost.textContent).toContain("确认资产，开始改编剧本与分镜");
         expect(unexpectedWrites).toBe(0);
         expect(errors).toEqual([]);

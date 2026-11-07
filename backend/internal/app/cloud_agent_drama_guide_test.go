@@ -60,8 +60,16 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 	for _, instruction := range []string{
 		"由用户在对话中选择应用",
 		"多个备选方案分别提交建议",
+		"配置阶段每轮只讨论一个决策",
+		"给出 2–4 个可直接点选的具体选项",
+		"styleName 与 stylePrompt 合为同一项",
+		"用户已经明确或已选择保存的项目不重复询问",
+		"提供选项后本轮收尾，等待用户选择",
+		"点击选项即通过既有业务接口保存",
+		"每组选项都提供空白的自定义输入",
+		"不把自然语言回答当作已保存",
 		"ask_user 仅用于澄清尚不能形成具体修改的创作意图",
-		"保存成功后先用 drama_get_context 重新读取最新上下文",
+		"收到客户端的已保存反馈后，先用 drama_get_context 重新读取最新上下文与 guide.baseRevision",
 		"对话中的明确阶段确认按钮触发现有制作流程",
 		"选择建议本身不推进阶段",
 		"不因选择方案自动生成图片或视频",
@@ -80,7 +88,7 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 			description = function["description"].(string)
 		}
 	}
-	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频"} {
+	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频", "用户点选即保存，无需再次应用", "每组保留空白自定义输入", "setup 的 changes 只填当前决策字段"} {
 		if !strings.Contains(description, instruction) {
 			t.Fatalf("proposal tool lost confirmation boundary: %s", instruction)
 		}
@@ -91,6 +99,49 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 	}
 	if strings.Contains(canvasPolicy, "由用户在对话中选择应用") {
 		t.Fatal("short-drama confirmation policy leaked into ordinary canvas sessions")
+	}
+}
+
+func TestCloudAgentDramaGuideChoicesKeepCustomInputWithoutChangingCanvasQuestions(t *testing.T) {
+	request := agentTestRequest()
+	request.CanvasID = ""
+	request.DramaProjectID = "drama-project"
+	request.ContextScope = []string{"drama"}
+	for _, test := range []struct {
+		name    string
+		request CloudAgentRequest
+		guided  bool
+	}{{"short drama", request, true}, {"canvas", agentTestRequest(), false}} {
+		t.Run(test.name, func(t *testing.T) {
+			var question map[string]any
+			for _, tool := range compileCloudAgentTools(test.request, true) {
+				function := tool["function"].(map[string]any)
+				if function["name"] == agenttool.AskUser {
+					question = function
+					break
+				}
+			}
+			if question == nil {
+				t.Fatal("missing clarification tool")
+			}
+			params := question["parameters"].(map[string]any)
+			properties := params["properties"].(map[string]any)
+			freeform := properties["allowFreeform"].(map[string]any)
+			description := question["description"].(string)
+			if test.guided {
+				allowed, ok := freeform["enum"].([]any)
+				if !ok || len(allowed) != 1 || allowed[0] != true {
+					t.Fatalf("short-drama questions must permit custom answers: %+v", freeform)
+				}
+				for _, required := range []string{"已能保存的风格等决策用 drama_propose_changes", "必须保留空白自定义输入", "不要询问用户是否看到了卡片、是否点选或要求重新提交"} {
+					if !strings.Contains(description, required) {
+						t.Fatalf("missing direct-choice question boundary: %s", required)
+					}
+				}
+			} else if _, changed := freeform["enum"]; changed || strings.Contains(description, "短剧引导") {
+				t.Fatalf("short-drama choice policy changed ordinary canvas questions: %+v", question)
+			}
+		})
 	}
 }
 
