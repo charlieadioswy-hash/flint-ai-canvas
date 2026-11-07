@@ -218,6 +218,7 @@ func TestWangsuSystemProxyURLs(t *testing.T) {
 
 func TestWangsuTextAndAgentStreaming(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
 	for _, tc := range []struct{ id, path, wire, event string }{
 		{"wangsu-chat", "/chat/completions", "chat-completion", "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"},
 		{"wangsu-openai-chat", "/openai/chat/completions", "chat-completion", "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"},
@@ -227,10 +228,11 @@ func TestWangsuTextAndAgentStreaming(t *testing.T) {
 	} {
 		for _, agent := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/agent=%v", tc.id, agent), func(t *testing.T) {
-				auth := protocol.ManifestAuth{Type: "bearer"}
+				if declaredTextWire(ctx, tc.id) != tc.wire || declaredAgentWire(ctx, tc.id) != tc.wire {
+					t.Fatalf("official plugin does not declare the expected text and agent wire: %s", tc.id)
+				}
 				header, credential := "Authorization", "Bearer test-key"
 				if tc.wire == "claude-api" {
-					auth.Type = "anthropic"
 					header, credential = "x-api-key", "test-key"
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -265,29 +267,32 @@ func TestWangsuTextAndAgentStreaming(t *testing.T) {
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
 					fmt.Fprint(w, tc.event)
+					switch tc.wire {
+					case protocol.TextWireChatCompletion:
+						fmt.Fprint(w, "data: [DONE]\n\n")
+					case protocol.TextWireResponses:
+						fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n")
+					case protocol.TextWireClaude:
+						fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+					}
 				}))
 				defer server.Close()
 				var deltas strings.Builder
 				input := canvasGenerationInput{Mode: "text", StreamText: true, Config: providerConfig{InterfaceType: tc.id, BaseURL: server.URL + "/v2/gws/route", APIKey: "test-key", Model: "model"}, OnTextDelta: func(delta string) { deltas.WriteString(delta) }}
 				if agent {
-					manifest := fmt.Sprintf(`{"apiVersion":"yingce.plugin/v1","id":%q,"version":"1.0.0","name":"Test","author":"Test","documentation":"# Test","contributes":{"providers":[{"id":%q,"label":"Test","auth":{"type":%q},"capabilities":["text"],"scopes":["agent"],"create":{"method":"POST","path":%q,"basePath":true},"agent":{"method":"POST","path":%q,"basePath":true,"body":{"model":"model","tool_choice":"auto"}},"agentResponse":{"textPaths":["text"]},"response":{}}]}}`, tc.id, tc.id, auth.Type, tc.path, tc.path)
-					adapter, err := protocol.LoadManifest([]byte(manifest))
-					if err != nil {
-						t.Fatal(err)
+					input.AgentRequests = &agentToolRequests{
+						ChatCompletion: map[string]interface{}{"tool_choice": "auto"},
+						Responses:      map[string]interface{}{},
+						Claude:         map[string]interface{}{},
 					}
-					registry, err := protocol.NewRegistry(adapter)
-					if err != nil {
-						t.Fatal(err)
-					}
-					input.AgentRequests = &agentToolRequests{}
-					input.TextOptions.Thinking = true
-					result, err := runAgentToolTask(withProtocolRegistry(context.Background(), registry), input)
+					input.TextOptions.ThinkingLevel = ThinkingLevelMedium
+					result, err := runAgentToolTask(ctx, input)
 					if err != nil || result["text"] != "hello" {
 						t.Fatalf("result = %#v, err = %v", result, err)
 					}
 				} else {
-					_, result, err := executeProtocolCreateRequest(context.Background(), input, protocol.RequestSpec{Method: "POST", Path: tc.path, BasePath: true, Auth: auth, ContentType: "application/json", Body: map[string]any{"model": "model"}})
-					if err != nil || result == nil || result.Text != "hello" {
+					result, err := runTextTask(ctx, input)
+					if err != nil || result["text"] != "hello" {
 						t.Fatalf("result = %#v, err = %v", result, err)
 					}
 				}
@@ -328,6 +333,8 @@ func TestWangsuChannelWireFormat(t *testing.T) {
 
 func TestWangsuTextAndAgentJSON(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	registry := loadOfficialFallbackRegistry()
+	ctx := withProtocolRegistry(context.Background(), registry)
 	for _, tc := range []struct{ id, response string }{
 		{"wangsu-chat", `{"choices":[{"message":{"content":"hello","reasoning_content":"thought","tool_calls":[{"id":"call-1","function":{"name":"lookup","arguments":"{}"}}]}}]}`},
 		{"wangsu-openai-chat", `{"choices":[{"message":{"content":"hello","reasoning_content":"thought","tool_calls":[{"id":"call-1","function":{"name":"lookup","arguments":"{}"}}]}}]}`},
@@ -338,30 +345,27 @@ func TestWangsuTextAndAgentJSON(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			for _, agent := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/stream=%v/agent=%v", tc.id, stream, agent), func(t *testing.T) {
+					adapter, ok := registry.Resolve(tc.id)
+					if !ok {
+						t.Fatalf("official adapter %s missing", tc.id)
+					}
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if r.URL.Path != "/base/text" {
+						if r.URL.Path != "/base"+protocol.OperationPath(adapter.Metadata().Create) {
 							t.Errorf("path = %q", r.URL.Path)
 						}
 						w.Header().Set("Content-Type", "application/json")
 						fmt.Fprint(w, tc.response)
 					}))
 					defer server.Close()
-					// Deliberately narrow manifest mappings ensure the shared wire parser
-					// handles nested text, reasoning and Responses item IDs in both modes.
-					manifest := fmt.Sprintf(`{"apiVersion":"yingce.plugin/v1","id":%q,"version":"1.0.0","name":"Test","author":"Test","documentation":"# Test","contributes":{"providers":[{"id":%q,"label":"Test","capabilities":["text"],"scopes":["canvas","agent"],"create":{"method":"POST","path":"/text","basePath":true,"body":{"model":"model"}},"agent":{"method":"POST","path":"/text","basePath":true,"body":{"model":"model"}},"agentResponse":{"textPaths":["output_text"]},"response":{"textPaths":["output_text"]}}]}}`, tc.id, tc.id)
-					adapter, err := protocol.LoadManifest([]byte(manifest))
-					if err != nil {
-						t.Fatal(err)
-					}
-					registry, err := protocol.NewRegistry(adapter)
-					if err != nil {
-						t.Fatal(err)
-					}
-					ctx := withProtocolRegistry(context.Background(), registry)
 					input := canvasGenerationInput{Mode: "text", Prompt: "hello", StreamText: stream, Config: providerConfig{InterfaceType: tc.id, BaseURL: server.URL + "/base", APIKey: "test-key", Model: "model"}}
 					var result map[string]interface{}
+					var err error
 					if agent {
-						input.AgentRequests = &agentToolRequests{}
+						input.AgentRequests = &agentToolRequests{
+							ChatCompletion: map[string]interface{}{},
+							Responses:      map[string]interface{}{},
+							Claude:         map[string]interface{}{},
+						}
 						result, err = runAgentToolTask(ctx, input)
 					} else {
 						result, err = runTextTask(ctx, input)

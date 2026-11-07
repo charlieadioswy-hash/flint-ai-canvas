@@ -4,7 +4,7 @@ import type { ModelTag } from "@/lib/model-tags";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { nanoid } from "nanoid";
-import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol } from "@/lib/model-protocols";
+import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol, type TextWire } from "@/lib/model-protocols";
 import { wangsuBaseProtocol } from "@/lib/wangsu-protocols";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { type ModelCapabilityConfig } from "@/lib/model-capabilities";
@@ -72,6 +72,7 @@ export type WorkflowGraphPreview = {
 export const PUBLIC_MODEL_CATALOG_ID = "managed";
 
 export type ModelChannel = {
+    mediaTransport?: import("@/lib/media-transport").ReferenceMediaTransport;
     id: string;
     name: string;
     sortOrder?: number;
@@ -101,12 +102,15 @@ export type ModelChannel = {
         icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        /** 仅系统渠道：模型目录按插件 create 路径识别的文本请求格式。 */
+        textWire?: TextWire;
         pricePolicy?: "channel" | "unified";
         billingMode: "fixed_request" | "per_second" | "token";
         unitPriceMicrocredits: number;
         inputTokenPriceMicrocredits?: number;
         outputTokenPriceMicrocredits?: number;
         cachedTokenPriceMicrocredits?: number;
+        cacheWriteTokenPriceMicrocredits?: number;
         capabilityConfig?: ModelCapabilityConfig;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;
@@ -115,6 +119,12 @@ export type ModelChannel = {
         defaultOptions?: Record<string, unknown>;
         availability?: PublicChannelModelAvailability;
         available?: boolean;
+        /** 仅视频模型：挂参考视频的请求是否另计费；用户侧据此标注“参考视频另计费 / 不计费”。 */
+        referenceVideoBilling?: boolean;
+        /** 系统目录里的渠道模型行 ID 与路由键：后台按行 ID 保存配置，前台据此找回对应的可选模型。 */
+        channelModelId?: string;
+        channelId?: string;
+        modelKey?: string;
     }>;
 };
 
@@ -542,7 +552,8 @@ export function channelConnectionSignature(channel: ModelChannel) {
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
     const model = modelOptionName(value || config.model);
-    const modelProtocol = channel.modelCosts?.find((item) => item.model === model)?.protocol;
+    const modelCost = channel.modelCosts?.find((item) => item.model === model);
+    const modelProtocol = modelCost?.protocol;
     const interfaceType = modelProtocol || channel.interfaceType;
     const wireProtocol = wangsuBaseProtocol(interfaceType);
     return {
@@ -554,6 +565,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         headers: channel.headers,
         apiFormat: wireProtocol ? (wireProtocol === "gemini-veo" || wireProtocol === "gemini-image" ? ("gemini" as const) : wireProtocol === "claude-api" ? ("claude" as const) : ("openai" as const)) : channel.apiFormat,
         interfaceType,
+        textWire: modelCost?.textWire,
         channelId: channel.scope === "system" ? channel.id : "",
     };
 }

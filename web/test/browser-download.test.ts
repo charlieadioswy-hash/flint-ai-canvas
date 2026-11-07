@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { resolve } from "node:path";
 
 import { apiClient } from "@/services/api/request";
 import { downloadBrowserMedia } from "@/services/browser-download";
@@ -88,22 +89,10 @@ test("cancelling while a resource URL is pending never creates or clicks a downl
     }
 });
 
-test("an already cancelled download rejects before resolving a URL or creating an anchor", async () => {
-    const originalRequest = apiClient.request;
-    let requests = 0;
-    apiClient.request = (async () => {
-        requests++;
-        throw new Error("An aborted download must not request a resource URL");
-    }) as typeof apiClient.request;
-    const controller = new AbortController();
-    // Bun 1.3.9 may lose the default abort reason during GC; keep an explicit reason alive.
-    const reason = new DOMException("Download cancelled", "AbortError");
-    controller.abort(reason);
-    try {
-        Bun.gc(true);
-        await expect(downloadBrowserMedia({ storageKey: "resource:must-not-be-requested", fileName: "model.glb" }, controller.signal)).rejects.toBe(reason);
-        expect(requests).toBe(0);
-    } finally {
-        apiClient.request = originalRequest;
-    }
-});
+test("an already cancelled download rejects before resolving a URL or creating an anchor", () => {
+    // Bun 1.3.9 的完整 GC 会干扰同进程后续 Worker 的包解析；在独立进程保留 GC 回归检查。
+    const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/browser-download-abort.harness.ts"], { cwd: resolve(import.meta.dir, ".."), timeout: 20_000 });
+    const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
+    expect(result.exitCode, output).toBe(0);
+    expect(output).toContain("0 fail");
+}, 25_000);

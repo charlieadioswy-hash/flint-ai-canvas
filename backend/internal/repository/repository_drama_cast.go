@@ -31,7 +31,7 @@ func (r *Repository) DramaCastDeleteReferences(userID, projectID, castID string)
 		Count(&refs.Shots).Error; err != nil {
 		return refs, err
 	}
-	if err := r.db.Model(&model.DramaSegment{}).Where("project_id = ? AND reference_cast_ids_json LIKE ?", projectID, pattern).Count(&refs.Segments).Error; err != nil {
+	if err := r.db.Model(&model.DramaSegment{}).Where("project_id = ? AND (reference_cast_ids_json LIKE ? OR audio_cast_ids_json LIKE ?)", projectID, pattern, pattern).Count(&refs.Segments).Error; err != nil {
 		return refs, err
 	}
 	var canvases []model.CanvasProject

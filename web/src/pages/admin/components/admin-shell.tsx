@@ -23,6 +23,7 @@ import {
     KeyRound,
     Layers3,
     LogIn,
+    MailSearch,
     Mail,
     Megaphone,
     MessageSquareText,
@@ -31,6 +32,7 @@ import {
     Palette,
     PanelLeftClose,
     PanelLeftOpen,
+    PersonStanding,
     PlugZap,
     RadioTower,
     RefreshCw,
@@ -44,6 +46,7 @@ import {
     TicketCheck,
     ToggleLeft,
     UsersRound,
+    Wand2,
 } from "lucide-react";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
@@ -84,6 +87,7 @@ const adminNavigation: AdminNavigationGroup[] = [
             { path: "/admin", label: "运行总览", shortLabel: "总览", icon: <BarChart3 className="size-4" /> },
             { path: "/admin/logs", label: "请求明细", shortLabel: "请求", icon: <FileClock className="size-4" /> },
             { path: "/admin/login-logs", label: "登录日志", shortLabel: "登录", icon: <LogIn className="size-4" /> },
+            { path: "/admin/email-logs", label: "邮件记录", shortLabel: "邮件", icon: <MailSearch className="size-4" /> },
             { path: "/admin/settings/system-performance", label: "系统性能", shortLabel: "性能", icon: <Activity className="size-4" /> },
         ],
     },
@@ -117,9 +121,11 @@ const adminNavigation: AdminNavigationGroup[] = [
         items: [
             { path: "/admin/workbench-tools", label: "工作台工具", shortLabel: "工具", icon: <Shapes className="size-4" /> },
             { path: "/admin/prompt-templates", label: "提示词模板", shortLabel: "模板", icon: <MessageSquareText className="size-4" /> },
+            { path: "/admin/pose-library", label: "姿势库", shortLabel: "姿势", icon: <PersonStanding className="size-4" /> },
             { path: "/admin/settings/drawing-engine", label: "绘图工具", shortLabel: "绘图", icon: <Paintbrush className="size-4" /> },
             { path: "/admin/plugins", label: "插件管理", shortLabel: "插件", icon: <PlugZap className="size-4" /> },
-            { path: "/admin/skill-curation", label: "技能分类", shortLabel: "技能", icon: <Sparkles className="size-4" /> },
+            { path: "/admin/skills", label: "技能管理", shortLabel: "技能", icon: <Wand2 className="size-4" /> },
+            { path: "/admin/skill-curation", label: "技能分类", shortLabel: "分类", icon: <Sparkles className="size-4" /> },
             { path: "/admin/resources", label: "存储资源", shortLabel: "资源", icon: <Database className="size-4" /> },
         ],
     },

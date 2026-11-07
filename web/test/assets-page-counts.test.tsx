@@ -3,15 +3,19 @@ import { runInNewContext } from "node:vm";
 import * as assetFormat from "../src/pages/assets/asset-library-format";
 import * as gridDensity from "../src/pages/assets/asset-grid-density";
 import * as assetCategory from "../src/lib/asset-category";
+import * as arkAssets from "../src/lib/ark-assets";
+import * as translations from "../src/i18n";
 import type { Asset } from "../src/stores/use-asset-store";
 
 // Execute the real page, empty-state component and count helpers; replace only the hooks, query,
 // store and UI boundaries. VM isolation avoids changing other tests' modules.
-const [source, stateSource] = await Promise.all(["pages/assets/index.tsx", "components/layout/workspace-state.tsx"].map(async (path) => {
-    const build = await Bun.build({ entrypoints: [new URL(`../src/${path}`, import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
-    if (!build.success) throw new Error(build.logs.map(String).join("\n"));
-    return build.outputs[0].text();
-}));
+const [source, stateSource] = await Promise.all(
+    ["pages/assets/index.tsx", "components/layout/workspace-state.tsx"].map(async (path) => {
+        const build = await Bun.build({ entrypoints: [new URL(`../src/${path}`, import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
+        if (!build.success) throw new Error(build.logs.map(String).join("\n"));
+        return build.outputs[0].text();
+    }),
+);
 
 type Element = { type: string | ((props: any) => Element); props: Record<string, any> };
 type PageData = { assets: Asset[]; total: number; kindCounts: Record<string, number>; categoryCounts: Record<string, number>; folderCounts: Record<string, number> };
@@ -81,7 +85,7 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         useEffect() {},
     };
     const stateModule = { exports: {} as typeof import("../src/components/layout/workspace-state") };
-    const jsx = (type: Element["type"], props: Record<string, any>): Element => type === stateModule.exports.WorkspaceNoResultsState ? type(props) : { type, props };
+    const jsx = (type: Element["type"], props: Record<string, any>): Element => (type === stateModule.exports.WorkspaceNoResultsState ? type(props) : { type, props });
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const noop = () => {};
     const store = () => ({ assets: localAssets, addAsset: noop, updateAsset: noop });
@@ -90,10 +94,13 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         react: { ...hooks, createElement: (type: Element["type"], props: any, ...children: any[]) => jsx(type, { ...props, children }), Fragment: "Fragment" },
         "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
         "react/jsx-dev-runtime": { jsxDEV: jsx, Fragment: "Fragment" },
+        "react-i18next": { useTranslation: () => ({ t: translations.translate }) },
+        "@/i18n": translations,
         "@tanstack/react-query": {
             keepPreviousData: (value: unknown) => value,
             useQueryClient: () => ({ invalidateQueries: noop }),
             useQuery: (options: { queryKey: unknown[]; queryFn: (context: { signal: AbortSignal }) => unknown }) => {
+                if (options.queryKey[0] === "ark-portraits") return { data: undefined };
                 if (options.queryKey[0] === "asset-folders") return { data: { folders: [{ id: "folder-a", name: "场景" }] } };
                 if (options.queryKey[2] === "archived-total") {
                     options.queryFn({ signal: new AbortController().signal });
@@ -114,8 +121,11 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         "react-router": { useNavigate: () => noop },
         "@/hooks/use-copy-text": { useCopyText: () => noop },
         "@/hooks/use-debounced-value": { useDebouncedValue: (value: unknown) => value },
+        "@/hooks/use-ark-library-reconcile": { useArkLibraryReconcile: noop },
         "@/lib/utils": { cn: (...values: unknown[]) => values.filter(Boolean).join(" ") },
         "@/lib/asset-category": assetCategory,
+        "@/lib/ark-assets": arkAssets,
+        "@/services/api/ark-portraits": { arkPortraitOverviewQueryKey: ["ark-portraits"], getArkPortraitOverview: async () => undefined },
         "@/components/layout/workspace-state": stateModule.exports,
         "@/stores/use-asset-store": { useAssetStore: Object.assign((selector: (value: ReturnType<typeof store>) => unknown) => selector(store()), { getState: store }) },
         "@/stores/use-user-store": { useUserStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, runtimeLimits: { recycleBinRetentionDays: 30 } }) },
@@ -154,7 +164,9 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
     }
     return {
         requests,
-        get emptyTrashCalls() { return emptyTrashCalls; },
+        get emptyTrashCalls() {
+            return emptyTrashCalls;
+        },
         trashCount() {
             const button = find((element) => element.type === "button" && descendants(element).some((child) => child.type === "span" && text(child) === "回收站"));
             return Number(text(find((element) => element.props.className === "assets-filter-count", button)));

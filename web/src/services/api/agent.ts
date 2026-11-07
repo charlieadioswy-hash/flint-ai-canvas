@@ -3,7 +3,7 @@ import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/ap
 import { getActiveUserScope } from "@/lib/user-scope";
 
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
-export type AgentReasoningMode = "off" | "auto" | "deep";
+export type AgentReasoningMode = import("@/lib/text-thinking").ThinkingRequest;
 export type AgentMediaSettings = {
     logicalModelId?: string;
     channelId?: string;
@@ -34,7 +34,8 @@ export type AgentProfileView = {
     layers: AgentProfileLayer[];
 };
 
-export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "connect_nodes" | "arrange_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "create_character" | "plan_step" | "adopt_drama_media";
+export type AgentApprovalPreviewOperation =
+    "add_node" | "update_node" | "connect_nodes" | "arrange_nodes" | "generate_media" | "generate_media_item" | "build_board" | "create_storyboard" | "edit_storyboard" | "create_character" | "plan_step" | "adopt_drama_media";
 
 export type AgentApprovalPreviewItem = {
     operation: AgentApprovalPreviewOperation;

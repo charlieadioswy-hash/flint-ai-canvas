@@ -36,6 +36,10 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/wangsu-resolution-audit.mdx
 !docs/content/docs/backend/model-capabilities-progress.mdx
 !docs/content/docs/backend/model3d-workflow.mdx
+# Keep the pose library operator guide versioned without unignoring generated docs.
+!docs/content/docs/canvas/
+docs/content/docs/canvas/*
+!docs/content/docs/canvas/pose-library.mdx
 # Keep the creative Agent design versioned without unignoring generated docs.
 !docs/content/docs/overview/
 docs/content/docs/overview/*

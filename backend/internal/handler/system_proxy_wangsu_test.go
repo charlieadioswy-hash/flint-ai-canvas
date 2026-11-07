@@ -137,9 +137,28 @@ func TestWangsuSystemProxyHTTP(t *testing.T) {
 
 func TestWangsuSystemProxyAuthorization(t *testing.T) {
 	channel := &model.ModelChannel{ModelsJSON: `["model"]`}
+	svc := &service.Service{}
 	for _, id := range []string{"wangsu-chat", "wangsu-openai-chat", "wangsu-responses", "wangsu-openai-responses", "wangsu-anthropic", "wangsu-gemini", "wangsu-gemini-image", "wangsu-images", "wangsu-openai-images", "wangsu-chat-image", "wangsu-audio", "wangsu-openai-audio", "wangsu-videos", "wangsu-openai-videos"} {
-		if err := authorizeSystemProxy(channel, model.ChannelInterfaceType(id), http.MethodPost, "/unsupported", "application/json", []byte(`{"model":"model"}`)); err == nil {
+		protocol := model.ChannelInterfaceType(id)
+		if err := authorizeSystemProxy(channel, protocol, svc.SystemProxyDeclaredPostPaths(protocol), http.MethodPost, "/unsupported", "application/json", []byte(`{"model":"model"}`)); err == nil {
 			t.Errorf("%s accepted unsupported path", id)
+		}
+	}
+	for _, tc := range []struct{ id, path string }{
+		{"wangsu-chat", "/chat/completions"},
+		{"wangsu-openai-chat", "/chat/completions"},
+		{"wangsu-responses", "/responses"},
+		{"wangsu-openai-responses", "/responses"},
+		{"wangsu-anthropic", "/messages"},
+		{"wangsu-gemini", "/models/model:generateContent"},
+	} {
+		protocol := model.ChannelInterfaceType(tc.id)
+		declared := svc.SystemProxyDeclaredPostPaths(protocol)
+		if err := authorizeSystemProxy(channel, protocol, declared, http.MethodPost, tc.path, "application/json", []byte(`{"model":"model"}`)); err != nil {
+			t.Errorf("%s rejected its supported path: %v", tc.id, err)
+		}
+		if err := authorizeSystemProxy(channel, protocol, declared, http.MethodDelete, tc.path, "application/json", []byte(`{"model":"model"}`)); err == nil {
+			t.Errorf("%s accepted an unsupported method", tc.id)
 		}
 	}
 	for _, tc := range []struct{ id, path string }{
@@ -148,7 +167,8 @@ func TestWangsuSystemProxyAuthorization(t *testing.T) {
 		{"wangsu-videos", "/videos"},
 		{"wangsu-openai-videos", "/videos"},
 	} {
-		if err := authorizeSystemProxy(channel, model.ChannelInterfaceType(tc.id), http.MethodPost, tc.path, "application/json", []byte(`{"model":"unauthorized"}`)); err == nil {
+		protocol := model.ChannelInterfaceType(tc.id)
+		if err := authorizeSystemProxy(channel, protocol, svc.SystemProxyDeclaredPostPaths(protocol), http.MethodPost, tc.path, "application/json", []byte(`{"model":"unauthorized"}`)); err == nil {
 			t.Errorf("%s accepted unauthorized request", tc.id)
 		}
 	}

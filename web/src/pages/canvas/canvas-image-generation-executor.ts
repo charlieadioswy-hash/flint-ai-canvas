@@ -1,9 +1,10 @@
+import { translate } from "@/i18n";
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGenerationChildPosition, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { cancelIncompleteImageBatch, hasImageBatchResult, reconcileImageBatchRoot, retireImageBatchChildren } from "@/lib/canvas/canvas-image-batch-retry";
-import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { buildImageGenerationNodeTitle, manualNodeTitle } from "@/lib/canvas/canvas-generation-title";
 import { fitImageNodeSize, imageNodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { canvasImageReferenceLimitError, buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { imageGenerationReferenceConnections } from "@/lib/canvas/canvas-resource-references";
@@ -59,8 +60,12 @@ export async function executeImageGeneration(
     runTask?: Parameters<typeof runCanvasGenerationTaskToConsumer>[1]["runTask"],
 ) {
     let structureInputs: ReturnType<typeof resolveCanvasControlNetInputs>;
-    try { structureInputs = resolveCanvasControlNetInputs(sourceNode, canvasNodes); }
-    catch (error) { showError(error instanceof Error ? error.message : "结构控制配置无效"); return; }
+    try {
+        structureInputs = resolveCanvasControlNetInputs(sourceNode, canvasNodes);
+    } catch (error) {
+        showError(error instanceof Error ? error.message : "结构控制配置无效");
+        return;
+    }
     const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
     if (referenceLimitError) {
         showError(referenceLimitError);
@@ -81,9 +86,13 @@ export async function executeImageGeneration(
     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
     const sourceSpec = sourceNode ? readNodeGenerationSpec(sourceNode) : undefined;
     const outputSpec = specFromConfig("image", prompt, generationConfig);
-    const structureMetadata = sourceSpec && (structureInputs.controlNet.length || structureInputs.outputMask || structureInputs.mask)
-        ? { ...generationSpecMetadata({ ...outputSpec, options: { ...outputSpec.options, controlNet: nodeControlNet(sourceNode), outputMask: nodeOutputMask(sourceNode) }, referenceBindings: sourceSpec.referenceBindings }), structureControl: isStructureControlNode(sourceNode) }
-        : {};
+    const structureMetadata =
+        sourceSpec && (structureInputs.controlNet.length || structureInputs.outputMask || structureInputs.mask)
+            ? {
+                  ...generationSpecMetadata({ ...outputSpec, options: { ...outputSpec.options, controlNet: nodeControlNet(sourceNode), outputMask: nodeOutputMask(sourceNode) }, referenceBindings: sourceSpec.referenceBindings }),
+                  structureControl: isStructureControlNode(sourceNode),
+              }
+            : {};
     // 生成会把实际尺寸写回节点；来源尺寸不是用户所选时保留跟随标记，换参考图后重新生成仍取新参考图比例。
     const sizeSourceMetadata = followsReferenceImageSize(sourceNode) ? { imageSizeSource: "reference" as const } : {};
     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
@@ -117,11 +126,13 @@ export async function executeImageGeneration(
         y: parentPosition.y + parentHeight / 2 - rootHeight / 2,
     };
     const rootPosition = reuseSourceNode ? parentPosition : findAvailableGenerationGroupPosition(workingNodes, preferredPosition, imageGenerationGroupSize({ width: rootWidth, height: rootHeight }, outputNodeSize, childIds.length));
+    // 原位重新生成沿用用户起的名称，同批子图按「名称 · 序号」命名；新建的结果组仍按提示词命名。
+    const keptTitle = reuseSourceNode ? manualNodeTitle(sourceNode) : undefined;
 
     const rootNode: CanvasNodeData = {
         id: rootId,
         type: CanvasNodeType.Image,
-        title: buildImageGenerationNodeTitle(effectivePrompt, sourceNode),
+        title: keptTitle ?? buildImageGenerationNodeTitle(effectivePrompt, sourceNode),
         position: rootPosition,
         width: rootWidth,
         height: rootHeight,
@@ -160,7 +171,7 @@ export async function executeImageGeneration(
     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
         id,
         type: CanvasNodeType.Image,
-        title: buildImageGenerationNodeTitle(effectivePrompt, sourceNode, index, count),
+        title: keptTitle ? `${keptTitle} · ${index + 1}` : buildImageGenerationNodeTitle(effectivePrompt, sourceNode, index, count),
         position: imageGenerationChildPosition(rootNode.position, rootNode.width, outputNodeSize, index),
         width: outputNodeSize.width,
         height: outputNodeSize.height,
@@ -196,7 +207,7 @@ export async function executeImageGeneration(
             return {
                 ...node,
                 type: CanvasNodeType.Text,
-                title: prompt.slice(0, 32) || "Prompt",
+                title: manualNodeTitle(node) ?? (prompt.slice(0, 32) || "Prompt"),
                 width: parentConfig.width,
                 height: parentConfig.height,
                 metadata: { ...node.metadata, content: prompt, richText: undefined, prompt, composerContent: prompt, status: NODE_STATUS_SUCCESS, fontSize: 14, errorDetails: undefined },
@@ -311,9 +322,7 @@ export async function executeImageGeneration(
                 if (latestTask && (waitingForTask || waitingForDelivery)) {
                     pendingCount += 1;
                     const taskId = latestTask.id;
-                    const detail = waitingForTask
-                        ? `任务已提交，状态同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}`
-                        : `结果已生成，结果同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}`;
+                    const detail = waitingForTask ? `任务已提交，状态同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}` : `结果已生成，结果同步中断，请刷新画布恢复原任务，勿重复生成。${failure.errorDetails}`;
                     setNodes((current) => {
                         const next = current.map((node) => {
                             if (node.id !== targetId || node.metadata?.taskId !== taskId) return node;
@@ -359,12 +368,14 @@ export async function executeImageGeneration(
                 const removed = new Set(cancelled.removedIds);
                 setConnections((connections) => connections.filter((connection) => !removed.has(connection.fromNodeId) && !removed.has(connection.toNodeId)));
             }
-            return cancelled.nodes.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.imageGenerationRootId === rootId && node.metadata.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node));
+            return cancelled.nodes.map((node) =>
+                node.id === nodeId && isConfigNode && node.metadata?.imageGenerationRootId === rootId && node.metadata.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node,
+            );
         });
         return;
     }
     const pendingMessage = pendingCount ? `${pendingCount} 张图片的任务状态或结果待同步，请刷新画布恢复原任务；已有图片已保留，请勿重复生成` : "";
-    if (hasFailure) showError(`${hasSuccess || pendingCount ? "部分图片生成失败" : "全部图片生成失败"}${pendingMessage ? `；${pendingMessage}` : ""}`);
+    if (hasFailure) showError(`${hasSuccess || pendingCount ? translate("canvasPage.generation.someImagesFailed") : translate("canvasPage.generation.allImagesFailed")}${pendingMessage ? `；${pendingMessage}` : ""}`);
     else if (pendingMessage) showError(pendingMessage);
     setNodes((current) => {
         const next = current.map((node) => {
@@ -374,7 +385,11 @@ export async function executeImageGeneration(
                     metadata: {
                         ...node.metadata,
                         status: pendingCount ? NODE_STATUS_LOADING : hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
-                        ...(pendingCount ? { errorDetails: pendingMessage } : hasSuccess ? { errorDetails: hasFailure ? "部分图片生成失败" : undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } : representativeFailure || { errorDetails: "全部图片生成失败" }),
+                        ...(pendingCount
+                            ? { errorDetails: pendingMessage }
+                            : hasSuccess
+                              ? { errorDetails: hasFailure ? translate("canvasPage.generation.someImagesFailed") : undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined }
+                              : representativeFailure || { errorDetails: translate("canvasPage.generation.allImagesFailed") }),
                     },
                 };
             }
@@ -387,7 +402,7 @@ export async function executeImageGeneration(
                         ...node.metadata,
                         status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
                         batchFailedCount: count > 1 ? failureCount : undefined,
-                        ...(hasSuccess ? { errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } : representativeFailure || { errorDetails: "全部图片生成失败" }),
+                        ...(hasSuccess ? { errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } : representativeFailure || { errorDetails: translate("canvasPage.generation.allImagesFailed") }),
                     },
                 };
             }

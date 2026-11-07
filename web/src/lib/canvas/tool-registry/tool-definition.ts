@@ -54,6 +54,8 @@ export type ToolbarHandlers = {
     onOpenWorkspace?: () => void;
     onOpenMyAssets: () => void;
     onOpenProjectCharacters: () => void;
+    /** 站点姿势库；只读分享页等不提供时入口自动隐藏。 */
+    onOpenPoseLibrary?: () => void;
     // 主工具栏——外观
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
@@ -168,6 +170,7 @@ export type AddNodeMenuContext = {
         | "onUpload"
         | "onOpenMyAssets"
         | "onOpenProjectCharacters"
+        | "onOpenPoseLibrary"
     >;
 };
 

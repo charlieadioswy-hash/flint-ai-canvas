@@ -12,6 +12,7 @@ import { type ChannelHeader, type ModelChannel } from "@/stores/use-config-store
 import { useAdminContext } from "../admin-context";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminRowActions, AdminStatusBadge, AdminTableEmpty, configuredSecretText } from "../components/admin-ui";
+import { MediaTransportFields } from "../components/media-transport-fields";
 import { ChannelModelManager } from "../components/channel-model-manager";
 import { formatRate, healthTone, useChannelModelHealth } from "../components/channel-model-health";
 import { AllChannelModelsPanel } from "./all-channel-models-panel";
@@ -22,6 +23,7 @@ import "./channels-page.css";
 import { Select } from "@/components/ui/base/select";
 
 type ChannelFormValues = {
+    mediaTransport?: ModelChannel["mediaTransport"];
     name: string;
     baseUrl: string;
     apiKey?: string;
@@ -36,6 +38,7 @@ type ChannelFormValues = {
 export function adminChannelSavePayload(values: ChannelFormValues) {
     return {
         name: values.name.trim(),
+        mediaTransport: values.mediaTransport || {},
         baseUrl: values.baseUrl.trim(),
         apiKey: values.apiKey?.trim() || "",
         secretKey: values.secretKey?.trim() || "",
@@ -141,6 +144,7 @@ export default function ChannelsPage() {
             channel
                 ? {
                       name: channel.name,
+                      mediaTransport: channel.mediaTransport || {},
                       baseUrl: channel.baseUrl,
                       apiKey: "",
                       secretKey: "",
@@ -258,7 +262,10 @@ export default function ChannelsPage() {
             title: `导入 ${names.length} 个系统渠道？`,
             content: (
                 <div className="space-y-2 text-sm">
-                    <p>{names.slice(0, 8).join("、")}{names.length > 8 ? ` 等 ${names.length} 个` : ""}</p>
+                    <p>
+                        {names.slice(0, 8).join("、")}
+                        {names.length > 8 ? ` 等 ${names.length} 个` : ""}
+                    </p>
                     <p className="text-foreground/60">按渠道名称合并：同名渠道保留现有密钥和启停状态，只更新地址、并发和文件中的模型；新渠道创建为停用状态，填写 API Key 后再启用。文件中没有的模型保持不变。</p>
                 </div>
             ),
@@ -278,7 +285,9 @@ export default function ChannelsPage() {
                                 <div className="space-y-2 text-sm">
                                     <p>{summary}</p>
                                     <ul className="max-h-64 list-disc space-y-1 overflow-auto pl-5 text-destructive">
-                                        {result.errors.map((item) => <li key={item}>{item}</li>)}
+                                        {result.errors.map((item) => (
+                                            <li key={item}>{item}</li>
+                                        ))}
                                     </ul>
                                 </div>
                             ),
@@ -351,13 +360,7 @@ export default function ChannelsPage() {
                 ]}
             />
             {view === "models" ? (
-                <AllChannelModelsPanel
-                    channels={channels}
-                    health={health}
-                    healthLoading={healthLoading}
-                    onChanged={syncChannels}
-                    onOpenChannel={(channelId) => updateUrl({ view: "", channel: channelId, filter: "", status: "all" })}
-                />
+                <AllChannelModelsPanel channels={channels} health={health} healthLoading={healthLoading} onChanged={syncChannels} onOpenChannel={(channelId) => updateUrl({ view: "", channel: channelId, filter: "", status: "all" })} />
             ) : (
             <div className="admin-channel-workspace">
                 <aside className="admin-channel-sidebar" aria-label="系统渠道">
@@ -500,6 +503,7 @@ export default function ChannelsPage() {
                 title={editingChannel ? "编辑系统渠道" : "新增系统渠道"}
                 open={drawerOpen}
                 width={760}
+                centered
                 onCancel={closeDrawer}
                 mask={{ closable: !saving }}
                 destroyOnHidden
@@ -537,6 +541,9 @@ export default function ChannelsPage() {
                     </div>
                     <Form.Item name="proxyUrl" label="代理地址" extra="为该渠道单独配置出站代理，支持 socks5://、socks5h://、http://、https://。留空则使用全局环境变量代理。">
                         <Input placeholder="例如：socks5://127.0.0.1:1080 或 http://127.0.0.1:7890" />
+                    </Form.Item>
+                    <Form.Item name="mediaTransport" label="参考素材发送方式" extra="作为本渠道默认值；渠道内模型可单独覆盖。未设置时保持现有协议行为。">
+                        <MediaTransportFields />
                     </Form.Item>
                     <Form.Item name="useGlobalConcurrency" label="跟随系统并发配置" valuePropName="checked">
                         <Switch />

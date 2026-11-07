@@ -161,6 +161,8 @@ export function GuideConfiguration({
                             <DramaTextSteps
                                 models={settings.models}
                                 onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })}
+                                textThinking={settings.textThinking || {}}
+                                onThinkingChange={(step, level) => patch({ textThinking: { ...settings.textThinking, [step]: level === "auto" ? undefined : level } })}
                                 skills={{ bible: settings.bibleSkill, script: settings.scriptSkill, prompt: settings.promptSkill }}
                                 onSkillChange={(step, value) => patch({ [step === "bible" ? "bibleSkill" : step === "script" ? "scriptSkill" : "promptSkill"]: value })}
                             />

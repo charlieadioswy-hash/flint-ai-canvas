@@ -228,7 +228,7 @@ function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => vo
     const progress = item.episodeCount ? Math.round((item.doneCount / item.episodeCount) * 100) : 0;
     const needsAction = item.status === "paused" && Boolean(item.pauseReason);
     const guided = activeDramaGuide(item.guideStep);
-    const path = dramaProjectPath(item.project.id, item.guideStep);
+    const path = item.hasDraftForm ? `/projects/new?draft=${encodeURIComponent(item.project.id)}` : dramaProjectPath(item.project.id, item.guideStep);
     const stage = guided ? "创作引导中 · 点击继续" : item.episodeCount ? `${item.doneCount}/${item.episodeCount} 集成片` : item.status === "running" ? "正在改编小说" : item.status === "draft" ? "尚未开始" : "等待分集";
     return (
         <article className={`drama-library-card is-${item.status}`}>
@@ -267,7 +267,7 @@ function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => vo
                     placement="bottomRight"
                     menu={{
                         items: [
-                            { key: "open", icon: <ExternalLink className="size-3.5" />, label: <Link to={path}>{guided ? "继续创作引导" : "打开制作台"}</Link> },
+                            { key: "open", icon: <ExternalLink className="size-3.5" />, label: <Link to={path}>{item.hasDraftForm ? "编辑草稿" : guided ? "继续创作引导" : "打开制作台"}</Link> },
                             { type: "divider" },
                             { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除作品", onClick: onDelete },
                         ],

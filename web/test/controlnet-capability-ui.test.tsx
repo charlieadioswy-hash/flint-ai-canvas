@@ -42,10 +42,18 @@ test("plugin image schemas preserve structural controls in personal and admin ed
 });
 
 test("personal Liblib channel configuration requires both signing credentials", () => {
-    const channel = createModelChannel({ id: "liblib", name: "Liblib", baseUrl: "https://openapi.liblibai.cloud", apiKey: "test-access-key", models: ["model"], modelCosts: [{ model: "model", capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 1 }] });
-    expect(channelValidationError(channel)).toContain("Secret Key");
-    expect(channelValidationError({ ...channel, secretKey: "test-secret-key" })).toBe("");
+    const channel = createModelChannel({
+        id: "liblib",
+        name: "Liblib",
+        baseUrl: "https://openapi.liblibai.cloud",
+        apiKey: "test-access-key",
+        models: ["model"],
+        modelCosts: [{ model: "model", capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 1 }],
+    });
+    const secretKeyProtocols = new Set(["liblib-image"]);
+    expect(channelValidationError(channel, secretKeyProtocols)).toContain("Secret Key");
+    expect(channelValidationError({ ...channel, secretKey: "test-secret-key" }, secretKeyProtocols)).toBe("");
     const inherited = { ...channel, interfaceType: "liblib-image", modelCosts: channel.modelCosts?.map((cost) => ({ ...cost, protocol: undefined })) };
-    expect(channelValidationError(inherited)).toContain("Secret Key");
-    expect(channelValidationError({ ...inherited, secretKey: "test-secret-key" })).toBe("");
+    expect(channelValidationError(inherited, secretKeyProtocols)).toContain("Secret Key");
+    expect(channelValidationError({ ...inherited, secretKey: "test-secret-key" }, secretKeyProtocols)).toBe("");
 });

@@ -50,6 +50,9 @@ func mockEcommerceAgentService(t *testing.T) (*Service, *gorm.DB) {
 func startEcommerceTextTestWorker(t *testing.T, svc *Service, db *gorm.DB) {
 	t.Helper()
 	t.Setenv("REDIS_URL", "")
+	if svc.activeCancels == nil {
+		svc.activeCancels = make(map[string]context.CancelFunc)
+	}
 	svc.coordinator, _ = platform.NewCoordinator("sqlite")
 	svc.platform = platform.New(svc.repo, svc.coordinator, platformHost{svc: svc})
 	if err := db.AutoMigrate(database.Models()...); err != nil {

@@ -30,6 +30,7 @@ type ecommerceProviderConfig struct {
 	MaxConcurrent                      int
 	TextProvider                       *providerConfig
 	ImageProvider                      *providerConfig
+	TextThinkingLevel                  string
 }
 
 func ecommerceDuration(name string, fallback int) time.Duration {
@@ -106,7 +107,11 @@ func (s *Service) ecommerceConfiguredText(userID string, cfg ecommerceProviderCo
 	if err != nil {
 		return cfg, err
 	}
-	return s.ecommerceConfiguredTextFor(userID, cfg, setting.planningRef(), "策划")
+	cfg, err = s.ecommerceConfiguredTextFor(userID, cfg, setting.planningRef(), "策划")
+	if err == nil {
+		cfg.TextThinkingLevel = setting.ThinkingLevel
+	}
+	return cfg, err
 }
 
 // ecommerceVisionText resolves the administrator's recognition model, which
@@ -120,7 +125,11 @@ func (s *Service) ecommerceVisionText(userID string, cfg ecommerceProviderConfig
 	if err != nil {
 		return cfg, err
 	}
-	return s.ecommerceConfiguredTextFor(userID, cfg, setting.visionRef(), "识图")
+	cfg, err = s.ecommerceConfiguredTextFor(userID, cfg, setting.visionRef(), "识图")
+	if err == nil {
+		cfg.TextThinkingLevel = setting.VisionThinkingLevel
+	}
+	return cfg, err
 }
 
 func (s *Service) ecommerceConfiguredTextFor(userID string, cfg ecommerceProviderConfig, ref EcommerceAgentModelRef, stage string) (ecommerceProviderConfig, error) {
@@ -167,6 +176,28 @@ func (s *Service) ecommerceConfiguredTextFor(userID string, cfg ecommerceProvide
 	cfg.TextProvider = &resolved
 	cfg.TextModel = resolved.Model
 	return cfg, nil
+}
+
+// ecommerceVisionImages 按识别模型声明的单张图片上限处理识图副本：没超过就原样传，
+// 超过才压回上限以内。没配模型能力（旧的内置文本渠道）或上限为 0 时不压缩。
+// 只改这份发送副本，商品原图字节仍归出图流程使用。
+func ecommerceVisionImages(cfg ecommerceProviderConfig, images []string) []string {
+	limit := ecommerceVisionImageLimit(cfg)
+	if limit <= 0 || len(images) == 0 {
+		return images
+	}
+	prepared := make([]string, 0, len(images))
+	for _, image := range images {
+		prepared = append(prepared, compressTextModelImageDataURL(image, limit))
+	}
+	return prepared
+}
+
+func ecommerceVisionImageLimit(cfg ecommerceProviderConfig) int64 {
+	if cfg.TextProvider == nil || cfg.TextProvider.CapabilityConfig == nil || cfg.TextProvider.CapabilityConfig.Text == nil {
+		return 0
+	}
+	return cfg.TextProvider.CapabilityConfig.Text.References.MaxImageBytes
 }
 
 func ecommerceRequest(ctx context.Context, endpoint, key string, timeout time.Duration, body []byte, contentType string, attempts int) ([]byte, int, error) {
@@ -237,8 +268,9 @@ func (s *Service) ecommerceChatJSON(ctx context.Context, userID string, cfg ecom
 	task, err := s.CreateTask(userID, CreateTaskRequest{
 		Type: "canvas_text", Operation: "ecommerce_agent_text", Model: provider.ChannelModelKey, Prompt: prompt,
 		Input: map[string]any{"mode": "text", "prompt": prompt, "referenceImages": refs,
-			"config":   map[string]any{"channelId": provider.ChannelID, "channelModelKey": provider.ChannelModelKey, "model": provider.ChannelModelKey, "systemPrompt": system},
-			"metadata": map[string]any{"source": "ecommerce-direct", "stage": stage}},
+			"textOptions": map[string]any{"thinkingLevel": cfg.TextThinkingLevel},
+			"config":      map[string]any{"channelId": provider.ChannelID, "channelModelKey": provider.ChannelModelKey, "model": provider.ChannelModelKey, "systemPrompt": system},
+			"metadata":    map[string]any{"source": "ecommerce-direct", "stage": stage}},
 	})
 	if err != nil {
 		return err

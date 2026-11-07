@@ -64,12 +64,14 @@
 
 | 映射位置 | 上游路径或转换表达式 |
 | --- | --- |
-| `response.taskId` | `{"$coalesce":[{"$ref":"response.id"},{"$ref":"response.task_id"},{"$ref":"response.taskId"},{"$ref":"response.data.id"},{"$ref":"taskId"}]}` |
-| `response.status` | `{"$coalesce":[{"$ref":"response.status"},{"$ref":"response.state"},{"$ref":"response.data.status"},"pending"]}` |
-| `response.message` | `{"$coalesce":[{"$ref":"response.error.message"},{"$ref":"response.message"},{"$ref":"response.fail_reason"}]}` |
-| `response.videos` | `{"$coalesce":[{"$ref":"response.video_url"},{"$ref":"response.videoUrl"},{"$ref":"response.result_url"},{"$ref":"response.url"},{"$ref":"response.data.video_url"},{"$ref":"response.output.url"}]}` |
+| `response.taskId` | `{"$coalesce":[{"$ref":"response.task.task_id"},{"$ref":"response.id"},{"$ref":"response.task_id"},{"$ref":"response.taskId"},{"$ref":"response.data.id"},{"$ref":"taskId"}]}` |
+| `response.status` | `{"$coalesce":[{"$ref":"response.task.status"},{"$ref":"response.status"},{"$ref":"response.state"},{"$ref":"response.data.status"},"pending"]}` |
+| `response.message` | `{"$coalesce":[{"$ref":"response.task.reason"},{"$ref":"response.error.message"},{"$ref":"response.message"},{"$ref":"response.fail_reason"}]}` |
+| `response.videos` | `{"$coalesce":[{"$ref":"response.videos"},{"$ref":"response.video_url"},{"$ref":"response.videoUrl"},{"$ref":"response.result_url"},{"$ref":"response.url"},{"$ref":"response.data.video_url"},{"$ref":"response.output.url"}]}` |
 | `response.errorPaths[0]` | `"error.code"` |
 | `response.resultEphemeral` | `true` |
+| `response.progress.path` | `"task.progress_percent"` |
+| `response.progress.scale` | `100` |
 
 ## 响应与错误
 
@@ -325,12 +327,11 @@
           }
         },
         "response": {
-          "progress": {
-            "path": "task.progress_percent",
-            "scale": 100
-          },
           "taskId": {
             "$coalesce": [
+              {
+                "$ref": "response.task.task_id"
+              },
               {
                 "$ref": "response.id"
               },
@@ -409,7 +410,11 @@
           "errorPaths": [
             "error.code"
           ],
-          "resultEphemeral": true
+          "resultEphemeral": true,
+          "progress": {
+            "path": "task.progress_percent",
+            "scale": 100
+          }
         }
       }
     ]

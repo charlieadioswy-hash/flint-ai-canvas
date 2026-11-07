@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +47,22 @@ func (s *Service) wakeDramaScheduler() {
 	select {
 	case dramaWakeChannel() <- struct{}{}:
 	default:
+	}
+}
+
+// wakeDramaAfterTask 在短剧任务进入终态后立即唤醒调度，回写结果和派发下一步不用等下一个轮询周期。
+// 只看短剧提交的任务；分离式回查中的任务每 15 秒执行一次但仍未结束，不唤醒。
+func (s *Service) wakeDramaAfterTask(taskID string, inputJSON string) {
+	if !strings.Contains(inputJSON, `"drama_production"`) {
+		return
+	}
+	task, err := s.repo.Task(taskID)
+	if err != nil {
+		return
+	}
+	switch task.Status {
+	case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+		s.wakeDramaScheduler()
 	}
 }
 
@@ -101,8 +116,9 @@ type dramaRun struct {
 	casts      []model.DramaCast
 	castByID   map[string]*model.DramaCast
 	active     map[string]bool
-	running    int
-	newJobs    []model.DramaJob
+	// running 是各并发池（见 dramaDispatchPool）正在运行的作业数。
+	running map[string]int
+	newJobs []model.DramaJob
 	// imageSizes 缓存本轮调度中“期望画幅 → 模型尺寸参数”的换算，避免每张参考图重复读取能力合同。
 	imageSizes map[string]dramaImageRequest
 }
@@ -208,6 +224,7 @@ func (r *dramaRun) syncJobs() error {
 		return err
 	}
 	r.active = map[string]bool{}
+	r.running = map[string]int{}
 	for i := range jobs {
 		job := &jobs[i]
 		if job.Status == model.DramaJobRunning {
@@ -217,9 +234,10 @@ func (r *dramaRun) syncJobs() error {
 					return err
 				}
 				// 任务或账单暂时读不到、或订单还没结算：本作业保持运行、下一轮再读，不按失败或 0 花费落账。
-				// 不中断本轮，前面已回写的作业花费随本轮进度一起保存。等待结算是正常过程，不记告警。
+				// 不中断本轮，前面已回写的作业花费随本轮进度一起保存。等待结算与后台抽尾帧是正常过程，不记告警。
 				var pending *dramaPendingBilling
-				if !errors.As(deferred.err, &pending) {
+				var tail *dramaPendingTail
+				if !errors.As(deferred.err, &pending) && !errors.As(deferred.err, &tail) {
 					slog.Warn("drama job sync deferred", "project", r.project.ID, "job", job.ID, "error", deferred.err)
 				}
 			}
@@ -227,7 +245,7 @@ func (r *dramaRun) syncJobs() error {
 		if job.Status == model.DramaJobQueued || job.Status == model.DramaJobRunning {
 			r.active[dramaJobKey(job.Kind, job.EpisodeID, job.ShotID, job.CastID)] = true
 			if job.Status == model.DramaJobRunning {
-				r.running++
+				r.running[dramaDispatchPool(job.Kind)]++
 			}
 		}
 	}
@@ -426,10 +444,6 @@ func (r *dramaRun) enqueue(kind, episodeID, shotID, castID string, priority int,
 	return true
 }
 
-func episodePriority(base int, number int) int {
-	return base*10000 - min(number, 9999)
-}
-
 type dramaPlanPayload struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
@@ -442,14 +456,14 @@ func (r *dramaRun) plan() error {
 		return nil
 	}
 	if p.Stage == model.DramaStageBible {
-		r.enqueue(model.DramaJobBible, "", "", "", 100*10000, "建立作品圣经：角色、场景与风格", nil)
+		r.enqueue(model.DramaJobBible, "", "", "", dramaPriorityBible, "建立作品圣经：角色、场景与风格", nil)
 		return nil
 	}
 	for i := range r.casts {
 		cast := &r.casts[i]
 		requested := cast.ImageStatus == model.DramaMediaQueued || (cast.ImageStatus == "" && r.assetsReleased() && !dramaGuideActive(p))
 		if requested && !cast.Locked {
-			r.enqueue(model.DramaJobCastImage, "", "", cast.ID, 80*10000-cast.Position, "参考图："+cast.Name, nil)
+			r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil)
 		}
 	}
 	if p.GuideStep == model.DramaGuideAssets {
@@ -473,7 +487,7 @@ func (r *dramaRun) plan() error {
 				runes += chapters[end].WordCount
 				end++
 			}
-			r.enqueue(model.DramaJobPlan, "", "", "", 90*10000, fmt.Sprintf("分集规划：第 %d-%d 章", p.PlanCursor+1, end), dramaPlanPayload{Start: p.PlanCursor, End: end})
+			r.enqueue(model.DramaJobPlan, "", "", "", dramaPriorityPlan, fmt.Sprintf("分集规划：第 %d-%d 章", p.PlanCursor+1, end), dramaPlanPayload{Start: p.PlanCursor, End: end})
 		}
 	}
 	episodes, err := r.s.repo.DramaEpisodes(r.project.ID)
@@ -517,7 +531,7 @@ func (r *dramaRun) plan() error {
 	}
 	for _, segment := range segments {
 		number := numberByEpisode[segment.EpisodeID]
-		r.enqueue(model.DramaJobSegmentPrompt, segment.EpisodeID, segment.ID, "", episodePriority(55, number)-segment.SegmentIndex, fmt.Sprintf("第 %d 集第 %d 段 视频提示词", number, segment.SegmentIndex+1), nil)
+		r.enqueue(model.DramaJobSegmentPrompt, segment.EpisodeID, segment.ID, "", segmentPriority(dramaRankPrompt, number, segment.SegmentIndex), fmt.Sprintf("第 %d 集第 %d 段 视频提示词", number, segment.SegmentIndex+1), nil)
 		allDone = false
 	}
 	if allDone {
@@ -554,18 +568,26 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 	if err != nil {
 		return err
 	}
-	// 从画布采用的视频可能只写入了视频（Agent 在事务内采用不做存储 IO），尾帧在这里补抽；每集每轮最多一段。
+	// 从画布采用的视频可能只写入了视频（Agent 在事务内采用不做存储 IO），尾帧在后台补抽，不阻塞调度循环；
+	// 补抽结果按段版本写回，完成后唤醒调度，下一段在下一轮拿到首帧。
+	started := false
 	for _, segment := range segments {
 		if segment.VideoStatus != model.DramaMediaReady || segment.VideoResourceID == "" || segment.TailFrameResourceID != "" {
 			continue
 		}
-		if err := r.s.backfillDramaSegmentTail(r.project.UserID, segment); err != nil {
-			return err
-		}
+		s, userID, segment := r.s, r.project.UserID, segment
+		started = s.startDramaTail(segment.VideoResourceID, func() error {
+			if err := s.backfillDramaSegmentTail(userID, segment); err != nil {
+				slog.Warn("drama tail backfill failed", "project", segment.ProjectID, "segment", segment.ID, "error", err)
+			}
+			return nil
+		}) || started
+	}
+	if started {
+		// 后台执行器可能已同步跑完（测试），按最新状态推进本集。
 		if segments, err = r.s.repo.DramaSegments(e.ID); err != nil {
 			return err
 		}
-		break
 	}
 	switch e.Stage {
 	case model.DramaEpisodeScript:
@@ -580,7 +602,7 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 			// 分镜已直接写入（阶段与版本由 ApplyDramaScript 更新）或已记录错误，本轮不再回写阶段。
 			return nil
 		}
-		r.enqueue(model.DramaJobScript, e.ID, "", "", episodePriority(60, e.Number), label+" 剧本与分镜", nil)
+		r.enqueue(model.DramaJobScript, e.ID, "", "", episodePriority(dramaRankScript, e.Number), label+" 剧本与分镜", nil)
 	case model.DramaEpisodePrompts:
 		ready := len(segments) > 0
 		for _, seg := range segments {
@@ -610,7 +632,7 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 		}
 	case model.DramaEpisodeRender:
 		if e.Error == "" {
-			r.enqueue(model.DramaJobRender, e.ID, "", "", episodePriority(70, e.Number), label+" 合成成片", nil)
+			r.enqueue(model.DramaJobRender, e.ID, "", "", episodePriority(dramaRankRender, e.Number), label+" 合成成片", nil)
 		}
 	case model.DramaEpisodeDone:
 		if e.FinalStale {
@@ -652,7 +674,7 @@ func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.
 			shots = loaded
 		}
 		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
-			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", episodePriority(40, e.Number), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
+			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
 		}
 		return false, nil
 	}
@@ -681,7 +703,7 @@ func (r *dramaRun) enqueueParallelSegmentVideos(e *model.DramaEpisode, segments 
 			shots = loaded
 		}
 		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
-			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", episodePriority(40, e.Number), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
+			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
 		}
 	}
 	return ready, nil
@@ -724,14 +746,14 @@ func (r *dramaRun) queuedJobsForGuide() ([]model.DramaJob, error) {
 	return allowed, err
 }
 
-// dispatch 按优先级把排队工作提交为生成任务，受项目并发、账号并发与预算约束。
+// dispatch 按优先级把排队工作提交为生成任务，受各并发池的同时生成数、账号并发与预算约束。
+// 挡住提交的条件与 dramaDispatchWaits 同源，详情页和队列显示的等待原因就是这里的判断。
 func (r *dramaRun) dispatch() error {
 	queued, err := r.queuedJobsForGuide()
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(queued, func(i, j int) bool { return queued[i].Priority > queued[j].Priority })
-	capacity := r.settings.Concurrency - r.running
+	sortDramaJobsForDispatch(queued)
 	// 预算按订单口径保守判断：流水线与画布精修的实收加上所有未结算订单的冻结额。每轮只汇总一次，
 	// 本轮新提交任务的冻结额逐项累加；同时把流水线实收回写到 spent_microcredits 缓存。
 	var committed int64
@@ -746,8 +768,9 @@ func (r *dramaRun) dispatch() error {
 	}
 	for i := range queued {
 		job := &queued[i]
-		if capacity <= 0 {
-			return nil
+		pool := dramaDispatchPool(job.Kind)
+		if r.running[pool] >= r.settings.Concurrency {
+			continue
 		}
 		if budgeted && committed >= r.production.BudgetMicrocredits {
 			r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaBudgetPauseReason
@@ -791,7 +814,7 @@ func (r *dramaRun) dispatch() error {
 		if err := r.markRunning(job); err != nil {
 			return err
 		}
-		capacity--
+		r.running[pool]++
 		if budgeted && task.BillingOrderID != "" {
 			order, err := r.s.repo.BillingOrder(task.BillingOrderID)
 			if err != nil {
@@ -1111,6 +1134,15 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 		if !ok || strings.TrimSpace(hint.Appearance) == "" {
 			return ""
 		}
+		appearanceKey := production.NormalizeName(hint.Appearance)
+		for _, cast := range append(append([]model.DramaCast{}, casts...), created...) {
+			if cast.ID == characterID && production.NormalizeName(cast.Appearance) == appearanceKey {
+				return ""
+			}
+			if cast.ParentID == characterID && production.NormalizeName(cast.Appearance) == appearanceKey {
+				return cast.ID
+			}
+		}
 		look := model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: characterID, Name: dramaCastName(casts, created, characterID), LookName: truncateRunes(name, 60), Appearance: truncateRunes(hint.Appearance, 1000), Position: position, CreatedAt: now, UpdatedAt: now}
 		position++
 		created = append(created, look)
@@ -1392,7 +1424,7 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 			return nil, false, err
 		}
 		prompt := production.SegmentWriterPrompt(draft.input, production.SegmentVideoPrompt(draft.input), previous, skill)
-		task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", prompt, r.textInput(job, production.SegmentWriterSystemPrompt()))
+		task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", prompt, r.textInput(job, production.SegmentWriterSystemPrompt(), DramaStepPrompt))
 		return task, false, err
 	}
 	return nil, true, nil
@@ -1481,7 +1513,7 @@ func (r *dramaRun) condenseSegmentPrompt(job *model.DramaJob, payload dramaRevis
 	payload.Condensed++
 	encoded, _ := json.Marshal(payload)
 	job.PayloadJSON = string(encoded)
-	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", production.SegmentCondensePrompt(prompt, payload.MaxChars), r.textInput(job, production.SegmentCondenseSystemPrompt()))
+	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", production.SegmentCondensePrompt(prompt, payload.MaxChars), r.textInput(job, production.SegmentCondenseSystemPrompt(), DramaStepPrompt))
 	if err != nil {
 		job.PayloadJSON = previousPayload
 		if errors.Is(err, repository.ErrDramaJobChanged) {
@@ -1514,7 +1546,11 @@ func (r *dramaRun) createTaskWith(job *model.DramaJob, choice DramaModelChoice, 
 	input["config"], input["mode"], input["prompt"] = config, capability, prompt
 	req := CreateTaskRequest{ProjectID: r.project.ID, Type: "canvas_" + capability, Operation: operation, Prompt: prompt, LogicalModelID: choice.LogicalModelID, Model: choice.ModelKey, Input: input}
 	task, err := r.s.submitDramaTask(r.project.UserID, req, job)
-
+	// 准入只说“指定的模型不存在”；作品里可能选了多个模型，点名是哪一个、去哪里改。
+	var modelErr *ModelError
+	if errors.As(err, &modelErr) && modelErr.ErrorCode == ErrCodeInvalidModelSelection {
+		return nil, dramaModelUnavailable(capability, choice, "不可用（"+modelErr.Error()+"）")
+	}
 	return task, err
 }
 
@@ -1551,8 +1587,12 @@ func (r *dramaRun) castImageRatio(kind string) string {
 // textInput 让上游以流式返回：剧本与分镜这类长输出在非流式下要等全部写完才回第一个字节，
 // 中转站前的网关（如 Cloudflare 约 100 秒无响应）会先断开并报 524；流式边写边回，连接一直有数据。
 // 结果仍在流结束后整段写入任务结果，模型声明不支持流式时由执行层改走非流式。
-func (r *dramaRun) textInput(job *model.DramaJob, systemPrompt string) map[string]any {
-	return map[string]any{"config": map[string]any{"systemPrompt": systemPrompt}, "textOptions": map[string]any{"stream": true}, "metadata": r.metadata(job)}
+func (r *dramaRun) textInput(job *model.DramaJob, systemPrompt string, step string) map[string]any {
+	return map[string]any{
+		"config":      map[string]any{"systemPrompt": systemPrompt},
+		"textOptions": map[string]any{"stream": true, "thinkingLevel": r.settings.TextThinking.levelFor(step)},
+		"metadata":    r.metadata(job),
+	}
 }
 
 func (r *dramaRun) loadChapters(ids []string) ([]production.Chapter, error) {
@@ -1583,7 +1623,11 @@ func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
 		return nil, false, err
 	}
 	prompt := production.BiblePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill)
-	input := map[string]any{"config": map[string]any{"systemPrompt": production.BibleSystemPrompt()}, "textOptions": map[string]any{"stream": true}, "metadata": map[string]any{"source": "drama_production", "domainProjectId": r.project.ID}}
+	input := map[string]any{
+		"config":      map[string]any{"systemPrompt": production.BibleSystemPrompt()},
+		"textOptions": map[string]any{"stream": true, "thinkingLevel": r.settings.TextThinking.levelFor(DramaStepBible)},
+		"metadata":    map[string]any{"source": "drama_production", "domainProjectId": r.project.ID},
+	}
 	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepBible), "text", "text", prompt, input)
 	return task, false, err
 }
@@ -1661,7 +1705,7 @@ func (r *dramaRun) submitPlan(job *model.DramaJob) (*model.Task, bool, error) {
 		previous = last.Cliffhanger
 	}
 	prompt := production.PlanPrompt(r.project.Name, r.settings.Settings, r.bibleSummary(), chapters[payload.Start:payload.End], next+1, previous)
-	task, err := r.createTask(job, "text", "text", prompt, r.textInput(job, production.PlanSystemPrompt()))
+	task, err := r.createTask(job, "text", "text", prompt, r.textInput(job, production.PlanSystemPrompt(), DramaStepPlan))
 	return task, false, err
 }
 
@@ -1692,14 +1736,14 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 		CastSummary: r.castSummary("character", 30), PropSummary: r.castSummary("prop", 20), SceneSummary: r.castSummary("scene", 20), SourceChapters: chapters,
 		SourceFormat: episode.SourceFormat, Skill: skill,
 	})
-	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepScript), "text", "text", prompt, r.textInput(job, production.ScriptSystemPrompt()))
+	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepScript), "text", "text", prompt, r.textInput(job, production.ScriptSystemPrompt(), DramaStepScript))
 	return task, false, err
 }
 
 func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, error) {
 	cast, err := r.s.repo.DramaCast(r.project.ID, job.CastID)
 	// 槽位处于 running 可能是本工作的上一轮尝试，只有已就绪或锁定时才不再需要。
-	if err != nil || cast.Locked || cast.ImageStatus == model.DramaMediaReady {
+	if err != nil || cast.Locked || cast.ImageStatus == model.DramaMediaReady || cast.ImageStatus == model.DramaMediaDraft {
 		return nil, true, nil
 	}
 	appearance := firstNonEmpty(cast.Appearance, cast.Description, cast.Role)
@@ -1719,14 +1763,19 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 		baseImage = base
 		operation = "image_to_image"
 	}
-	prompt := production.CastImagePrompt(assets, cast.Kind, cast.Name, appearance, r.settings.StylePrompt, r.meta.VisualRules)
+	// 画风与画面规则写的是成片画幅，设定图有自己的画幅：带入前去掉其中的画幅与横竖构图要求，
+	// 设定和方案模板的文字不动。
+	stylePrompt := production.StripFrameDirectives(r.settings.StylePrompt)
+	visualRules := production.StripFrameDirectives(r.meta.VisualRules)
+	prompt := production.CastImagePrompt(assets, cast.Kind, cast.Name, appearance, stylePrompt, visualRules)
 	if baseImage != nil {
-		prompt = "参考图1是角色" + cast.Name + "的既有形象。保持五官、脸型、体态与参考图1完全一致，只把造型改为：" + appearance + "。" + r.settings.StylePrompt
+		prompt = "参考图1是角色" + cast.Name + "的既有形象。保持五官、脸型、体态与参考图1完全一致。" + firstNonEmpty(strings.TrimSpace(cast.ImagePrompt), "只把造型改为："+appearance+"。"+stylePrompt)
 	}
 	// 资产参考图统一横版 16:9，与作品画幅无关：场景要容纳完整空间，道具要留足展示余量。
 	// 角色按参考图方案的画幅（内置方案均为 16:9，自定义方案可改）。画幅通过尺寸参数约束，
 	// 不只靠提示词；模型给不出接近的尺寸时直接失败并说明原因，不退回模型默认的方图。
 	ratio := r.castImageRatio(cast.Kind)
+	prompt = production.WithAssetRatio(prompt, ratio)
 	request := r.imageRequest(cast.Kind)
 	if request.Issue != "" {
 		return nil, false, errors.New(request.Issue)
