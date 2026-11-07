@@ -446,13 +446,6 @@ export default function DramaGuidePage() {
                 </div>
                 <div className={`drama-guide-layout is-${mobilePane}`}>
                     <aside className="drama-guide-chat" aria-label="短剧创作 Agent">
-                        <div className="drama-guide-chat-caption">
-                            <Sparkles className="size-4" />
-                            <div>
-                                <strong>你的创作搭档</strong>
-                                <p>聊清楚创作方向，再逐步确认产物。</p>
-                            </div>
-                        </div>
                         <div className="drama-guide-agent-host" ref={setHost} />
                     </aside>
                     <section className="drama-guide-results thin-scrollbar" aria-label="创作产物">

@@ -60,7 +60,6 @@
 .drama-guide-progress button,
 .drama-guide-footer,
 .drama-guide-segment-meta,
-.drama-guide-chat-caption,
 .drama-guide-complete {
     display: flex;
     align-items: center;
@@ -193,27 +192,6 @@
     min-width: 0;
     border-right: 1px solid var(--drama-line);
     background: var(--surface);
-}
-
-.drama-guide-chat-caption {
-    flex: none;
-    align-items: flex-start;
-    padding: var(--space-4);
-    border-bottom: 1px solid var(--drama-line);
-    color: var(--workspace-accent);
-}
-
-.drama-guide-chat-caption strong {
-    color: var(--foreground);
-    font-size: var(--fs-label);
-    font-weight: 600;
-}
-
-.drama-guide-chat-caption p {
-    margin-top: var(--space-1);
-    color: var(--drama-muted);
-    font-size: var(--fs-tiny);
-    line-height: 1.6;
 }
 
 .drama-guide-agent-host {
