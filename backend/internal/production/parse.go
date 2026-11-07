@@ -16,6 +16,9 @@ type BibleCharacter struct {
 	Description string   `json:"description"`
 	Appearance  string   `json:"appearance"`
 	Voice       string   `json:"voice"`
+	// 明确的人物说明引用原章节，由服务端核对后恢复原文，不依赖文档排版格式。
+	SourceDefinition   string  `json:"sourceDefinition"`
+	SourceChapterIndex FlexInt `json:"sourceChapterIndex"`
 	// Looks 是角色在不同时期、身份或场合明显不同的其他造型（Appearance 是第一次登场时的造型）。
 	Looks BibleLooks `json:"looks"`
 }
@@ -183,7 +186,7 @@ func ExtractJSONObject(raw string) (string, error) {
 	return candidate, nil
 }
 
-func ParseBible(raw string) (Bible, error) {
+func ParseBible(raw string, chapters ...Chapter) (Bible, error) {
 	var bible Bible
 	text, err := ExtractJSONObject(raw)
 	if err != nil {
@@ -191,6 +194,17 @@ func ParseBible(raw string) (Bible, error) {
 	}
 	if err := json.Unmarshal([]byte(text), &bible); err != nil {
 		return bible, err
+	}
+	bible.Characters, err = RestoreCharacterDefinitions(bible.Characters, chapters)
+	if err != nil {
+		return bible, err
+	}
+	definitions := map[string]BibleCharacter{}
+	for _, character := range bible.Characters {
+		key := NormalizeName(character.Name)
+		if character.SourceDefinition != "" && definitions[key].SourceDefinition == "" {
+			definitions[key] = character
+		}
 	}
 	seen := map[string]bool{}
 	characters := bible.Characters[:0]
@@ -201,6 +215,10 @@ func ParseBible(raw string) (Bible, error) {
 			continue
 		}
 		seen[key] = true
+		if defined, ok := definitions[key]; ok {
+			character = defined
+			character.Name = strings.TrimSpace(character.Name)
+		}
 		character.Looks = normalizeBibleLooks(character.Looks)
 		characters = append(characters, character)
 		if len(characters) >= 24 {

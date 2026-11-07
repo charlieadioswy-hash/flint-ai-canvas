@@ -862,7 +862,11 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	bible, err := production.ParseBible(text)
+	chapters, err := r.loadChapters(nil)
+	if err != nil {
+		return err
+	}
+	bible, err := production.ParseBible(text, chapters...)
 	if err != nil {
 		return fmt.Errorf("作品圣经解析失败：%w", err)
 	}
@@ -875,8 +879,16 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 		casts := make([]model.DramaCast, 0, len(bible.Characters)+len(bible.Props)+len(bible.Scenes))
 		for index, character := range bible.Characters {
 			instructions := strings.TrimSpace(strings.Join(nonEmpty(character.Gender, character.Age, character.Voice), "，"))
+			description := truncateRunes(character.Description, 1000)
+			appearance := truncateRunes(strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，"), 1000)
+			if character.SourceDefinition != "" {
+				description = character.SourceDefinition
+				appearance = strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，")
+			} else {
+				instructions = truncateRunes(instructions, 500)
+			}
 			characterID := newID()
-			casts = append(casts, model.DramaCast{ID: characterID, ProjectID: r.project.ID, Kind: "character", Name: truncateRunes(character.Name, 60), AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: truncateRunes(character.Description, 1000), Appearance: truncateRunes(strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，"), 1000), VoiceInstructions: truncateRunes(instructions, 500), Importance: len(bible.Characters) - index, Position: index, CreatedAt: now, UpdatedAt: now})
+			casts = append(casts, model.DramaCast{ID: characterID, ProjectID: r.project.ID, Kind: "character", Name: truncateRunes(character.Name, 60), AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: description, Appearance: appearance, VoiceInstructions: instructions, Importance: len(bible.Characters) - index, Position: index, CreatedAt: now, UpdatedAt: now})
 			// 造型是角色的子行：承载这套造型的名称、外观与默认适用章节，名称/别名/声音沿用所属角色。
 			for lookIndex, look := range character.Looks {
 				casts = append(casts, model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: characterID, Name: truncateRunes(character.Name, 60), LookName: truncateRunes(look.Name, 60), Appearance: truncateRunes(look.Appearance, 1000), LookFromChapter: int(look.FromChapter), LookToChapter: int(look.ToChapter), Position: index*100 + lookIndex + 1, CreatedAt: now, UpdatedAt: now})
@@ -1600,6 +1612,22 @@ func (r *dramaRun) castSummary(kind string, limit int) string {
 		line := "- " + cast.Name
 		if len(aliases) > 0 {
 			line += "（又称 " + strings.Join(aliases, "、") + "）"
+		}
+		if kind == "character" {
+			b.WriteString(line + "\n")
+			if cast.Role != "" {
+				b.WriteString("定位：" + cast.Role + "\n")
+			}
+			if cast.Description != "" {
+				b.WriteString("角色说明：\n" + cast.Description + "\n")
+			}
+			if cast.Appearance != "" {
+				b.WriteString("外观：" + cast.Appearance + "\n")
+			}
+			if cast.VoiceInstructions != "" {
+				b.WriteString("声音：" + cast.VoiceInstructions + "\n")
+			}
+			continue
 		}
 		if detail := firstNonEmpty(cast.Role, cast.Description); detail != "" {
 			line += "：" + truncateRunes(detail, 60)

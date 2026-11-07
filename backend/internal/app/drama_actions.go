@@ -436,11 +436,12 @@ func (s *Service) UpdateDramaCast(userID string, projectID string, castID string
 		fields["aliases_json"] = string(encoded)
 	}
 	for _, field := range []struct {
-		column string
-		value  *string
-		limit  int
-	}{{"appearance", req.Appearance, 1000}, {"description", req.Description, 1000}, {"voice_instructions", req.VoiceInstructions, 500}} {
-		if field.value != nil {
+		column  string
+		value   *string
+		current string
+		limit   int
+	}{{"appearance", req.Appearance, cast.Appearance, 1000}, {"description", req.Description, cast.Description, 1000}, {"voice_instructions", req.VoiceInstructions, cast.VoiceInstructions, 500}} {
+		if field.value != nil && *field.value != field.current {
 			fields[field.column] = truncateRunes(strings.TrimSpace(*field.value), field.limit)
 		}
 	}
