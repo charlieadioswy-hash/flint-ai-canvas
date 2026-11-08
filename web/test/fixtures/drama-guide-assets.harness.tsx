@@ -37,6 +37,7 @@ mock.module("antd", () => ({
 }));
 mock.module("@/components/cached-resource-image", () => ({ CachedResourceImage: ({ storageKey, alt }: { storageKey: string; alt: string }) => <img data-resource={storageKey} alt={alt} /> }));
 mock.module("@/pages/projects/asset-scheme", () => ({ AssetSchemePicker: empty }));
+mock.module("@/components/ui/product/app-modal", () => ({ AppModal: empty }));
 mock.module("@/pages/projects/drama-model-picker", () => ({ DramaModelPicker: empty, useDramaModelCatalog: empty }));
 mock.module("@/pages/projects/step-settings", () => ({ DramaAssetImageModels: empty, DramaTextSteps: empty, VideoResolutionField: empty }));
 mock.module("@/pages/projects/storyboard-rules", () => ({ EpisodeDurationInput: empty, StoryboardRules: empty }));
