@@ -896,8 +896,8 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 		request, _, _, prepareErr := s.prepareDramaSegment(settings, draft, rows[i], previous, castByID)
 		if prepareErr != nil {
 			request.Warning = prepareErr.Error()
-			// 视频模型下线、时长超限等会让预演在列参考图前返回。镜头里的设定引用仍在，照常列出并标为未发送；
-			// 否则制作台看起来像资产引用丢了，在参考面板勾选候选还会把本段存成只含该项的手动列表。
+			// 视频模型下线、时长超限等会让预演在列参考素材前返回。完整的图片和音色选择仍须列出并标为未发送；
+			// 否则参考面板会把隐藏的选择当作空列表，添加其他素材时覆盖原选择。
 			if len(request.References) < len(draft.view.Request.References) {
 				request.References = make([]DramaSegmentReference, 0, len(draft.view.Request.References))
 				for _, reference := range draft.view.Request.References {
@@ -906,6 +906,15 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 					}
 					reference.Sent = false
 					request.References = append(request.References, reference)
+				}
+			}
+			if speakers, err := dramaSegmentAudioSelection(draft.shots, castByID, rows[i].AudioCastIDsJSON); err == nil {
+				request.AudioReferences = make([]DramaSegmentAudioReference, 0, len(speakers))
+				for _, cast := range speakers {
+					request.AudioReferences = append(request.AudioReferences, DramaSegmentAudioReference{
+						CastID: cast.ID, Name: cast.Name, ResourceID: cast.VoiceSampleResourceID,
+						Note: "视频请求尚未就绪，参考音色未发送：" + prepareErr.Error(),
+					})
 				}
 			}
 		}

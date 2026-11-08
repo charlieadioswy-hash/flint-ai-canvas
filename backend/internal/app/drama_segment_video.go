@@ -274,10 +274,8 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 	return request, refs, audios, nil
 }
 
-// dramaSegmentAudioReferences 按对白或段级指定选择角色声音（造型归到所属角色），
-// 能发送的写成“参考音频N”并返回任务输入的媒体项。只在参考图生视频时发送：上游要求参考音频与至少一张参考图同时提供，
-// 以上一段尾帧作首帧的段不混用参考素材。没能发送的写明原因，该角色的对白按声线描述生成。
-func (s *Service) dramaSegmentAudioReferences(request *DramaSegmentRequest, profile dramaVideoProfile, shots []model.DramaShot, casts map[string]model.DramaCast, hasImages bool, audioIDsJSON string) ([]any, error) {
+// 选择与模型发送能力无关；请求预演失败时仍须展示完整选择，不能把未发送误作未选中。
+func dramaSegmentAudioSelection(shots []model.DramaShot, casts map[string]model.DramaCast, audioIDsJSON string) ([]model.DramaCast, error) {
 	speakers := dramaSegmentVoicedSpeakers(shots, casts)
 	if strings.TrimSpace(audioIDsJSON) != "" {
 		speakers = []model.DramaCast{}
@@ -288,6 +286,17 @@ func (s *Service) dramaSegmentAudioReferences(request *DramaSegmentRequest, prof
 			}
 			speakers = append(speakers, cast)
 		}
+	}
+	return speakers, nil
+}
+
+// dramaSegmentAudioReferences 按对白或段级指定选择角色声音（造型归到所属角色），
+// 能发送的写成“参考音频N”并返回任务输入的媒体项。只在参考图生视频时发送：上游要求参考音频与至少一张参考图同时提供，
+// 以上一段尾帧作首帧的段不混用参考素材。没能发送的写明原因，该角色的对白按声线描述生成。
+func (s *Service) dramaSegmentAudioReferences(request *DramaSegmentRequest, profile dramaVideoProfile, shots []model.DramaShot, casts map[string]model.DramaCast, hasImages bool, audioIDsJSON string) ([]any, error) {
+	speakers, err := dramaSegmentAudioSelection(shots, casts, audioIDsJSON)
+	if err != nil {
+		return nil, err
 	}
 	media := []any{}
 	for _, cast := range speakers {

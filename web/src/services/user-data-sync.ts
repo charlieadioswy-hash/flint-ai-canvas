@@ -3,7 +3,7 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import { deleteRemoteAssets, deleteRemoteCanvasProject, applyRemoteCanvasOperations, getRemoteAsset, getRemoteAssetsByIds, getRemoteCanvasProject, getRemoteUserDataSnapshot, listRemoteAssetsPage, upsertRemoteAsset } from "@/services/api/user-data";
 import type { CanvasOperation, CanvasOperationsRequest } from "@/services/api/user-data";
 import { ApiError } from "@/services/api/request";
-import { canvasContentHash, sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { canvasContentHash, sameCanvasContent, verifiedCanvasContentHash } from "@/lib/canvas/canvas-content";
 import { rebaseCanvasLocalEdits } from "@/lib/canvas/canvas-sync-rebase";
 import { fenceRejectedTaskTimestampMutation, repairLegacyTaskIdFence } from "@/lib/canvas/canvas-task-mutation";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -247,21 +247,25 @@ async function loadConfirmedCanvasBaselines() {
     const scope = getActiveUserScope();
     const epoch = sessionEpoch;
     const raw = await localForageStorageForScope(scope).getItem(confirmedCanvasBaselineKey);
-    if (!raw || scope !== getActiveUserScope() || epoch !== sessionEpoch) return;
+    if (!raw || scope !== getActiveUserScope() || epoch !== sessionEpoch) return false;
     let projects: CanvasProject[];
     try {
         const parsed: unknown = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
+        if (!Array.isArray(parsed)) return false;
         projects = parsed;
     } catch {
-        return;
+        return false;
     }
+    let migrated = false;
     for (const project of projects) {
         if (!project?.id || !Array.isArray(project.nodes) || !Array.isArray(project.connections) || !project.remoteContentHash) continue;
-        const hash = await canvasContentHash(project);
-        if (scope !== getActiveUserScope() || epoch !== sessionEpoch) return;
-        if (project.remoteContentHash === hash) acknowledgedProjects.set(project.id, project);
+        const hash = await verifiedCanvasContentHash(project);
+        if (scope !== getActiveUserScope() || epoch !== sessionEpoch) return false;
+        if (!hash) continue;
+        migrated ||= project.remoteContentHash !== hash;
+        acknowledgedProjects.set(project.id, project.remoteContentHash === hash ? project : { ...project, remoteContentHash: hash });
     }
+    return migrated;
 }
 
 async function persistConfirmedCanvasBaselines() {
@@ -272,11 +276,35 @@ export async function initializeRemoteUserDataSession(userId: string) {
     await withRemoteUserDataSyncExclusive(async () => {
         resetRemoteUserDataSync();
         activeRemoteUserId = userId;
+        const epoch = sessionEpoch;
+        const scope = getActiveUserScope();
+        const ensureSession = () => {
+            if (epoch !== sessionEpoch || scope !== getActiveUserScope()) throw new Error("账号已切换，已保留本地内容");
+        };
         await loadPendingCanvasMutationJournal();
+        ensureSession();
         incrementalSession = true;
-        await loadConfirmedCanvasBaselines();
+        const migratedBaselines = await loadConfirmedCanvasBaselines();
+        ensureSession();
+        const migratedProjects = new Map<CanvasProject, CanvasProject>();
         for (const project of useCanvasStore.getState().projects) {
-            if (!acknowledgedProjects.has(project.id) && project.remoteContentHash === (await canvasContentHash(project))) acknowledgedProjects.set(project.id, project);
+            const hash = await verifiedCanvasContentHash(project);
+            ensureSession();
+            if (!hash) continue;
+            const confirmed = project.remoteContentHash === hash ? project : { ...project, remoteContentHash: hash };
+            if (confirmed !== project) migratedProjects.set(project, confirmed);
+            if (!acknowledgedProjects.has(project.id)) acknowledgedProjects.set(project.id, confirmed);
+        }
+        if (migratedProjects.size) {
+            // A user may edit while hashing. Only update the exact cache snapshot
+            // that was verified; its baseline remains valid for rebasing new edits.
+            useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => migratedProjects.get(project) || project) }));
+            await flushCanvasStorePersistence();
+            ensureSession();
+        }
+        if (migratedBaselines || migratedProjects.size) {
+            await persistConfirmedCanvasBaselines();
+            ensureSession();
         }
         for (const pending of pendingCanvasMutations.values()) {
             if (pending.baseline) acknowledgedProjects.set(pending.projectId, pending.baseline);

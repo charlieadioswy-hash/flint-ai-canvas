@@ -105,6 +105,40 @@ func TestDramaBibleRejectsRewrittenDefinitionBeforeSaving(t *testing.T) {
 	}
 }
 
+func TestDramaBiblePreservesImportedTitleDefinitionWithoutHostMarkers(t *testing.T) {
+	svc, _ := newDramaTestService(t)
+	// TXT/Markdown 导入“附录：秦子文”后，前端拆章将姓名移入 Title，正文仍保持原样。
+	chapter := DramaChapterInput{Title: "附录：秦子文", Text: "年龄：26岁\n性格：冷静谨慎，务实有主见\n背景：承担照顾弟弟的责任。"}
+	draft := createGuidedDrama(t, svc, chapter)
+	assets := confirmGuide(t, svc, draft)
+	row, err := svc.repo.DramaProduction(draft.Project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := &dramaRun{s: svc, project: &draft.Project, production: row, settings: assets.Production.Settings}
+	definition := chapter.Title + "\n" + chapter.Text
+	if err := run.applyBible(dramaCharacterDefinitionTask(t, "## [1] "+definition, 1)); err != nil {
+		t.Fatal(err)
+	}
+	casts, err := svc.repo.DramaCasts(draft.Project.ID)
+	if err != nil || len(casts) != 2 {
+		t.Fatalf("expected source-defined and extracted characters: %+v, %v", casts, err)
+	}
+	for _, cast := range casts {
+		if cast.Name == "秦子文" {
+			if cast.Description != definition || cast.Appearance != "26岁" || strings.Contains(cast.VoiceInstructions, "磁性") {
+				t.Fatalf("saved definition must retain the original title and reject invented fields: %+v", cast)
+			}
+			run.casts = casts
+			if summary := run.castSummary("character", 30); !strings.Contains(summary, definition) || strings.Contains(summary, "## [1]") {
+				t.Fatalf("later script context must receive the original definition without host markers: %s", summary)
+			}
+			return
+		}
+	}
+	t.Fatal("source-defined character was not saved")
+}
+
 func TestParseBibleSourceDefinitionRequiresChapterEvidence(t *testing.T) {
 	text := `{"characters":[{"name":"秦子文","sourceDefinition":"秦子文：26岁，冷静谨慎。","sourceChapterIndex":"2"}]}`
 	definition := "秦子文：26岁，冷静谨慎。"

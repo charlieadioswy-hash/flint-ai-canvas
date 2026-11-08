@@ -94,6 +94,7 @@ func BiblePrompt(title string, settings Settings, chapters []Chapter, maxChars i
 	fmt.Fprintf(&b, "作品：%s\n画幅：%s\n视觉风格：%s\n对白语言：%s\n章节总数：%d\n\n", title, settings.AspectRatio, firstNonEmpty(settings.StylePrompt, "写实电影感"), settings.Language, len(chapters))
 	b.WriteString(structuredSkillBlock("提取角色、道具与场景", skill))
 	b.WriteString("【角色说明复用规则】\n先判断文档是否直接定义了该角色。角色说明不限定格式，可能是编号人物卡、Markdown 标题段落、姓名后的冒号说明、表格行、人物小传或其他明确的人物介绍。不能仅因缺少固定标题或字段而忽略已有说明，也不能把普通剧情描写当成直接定义。\n文档已有明确角色说明的角色，sourceDefinition 逐字引用输入中实际可见、直接定义该角色的一段连续原文，必须包含对应的角色姓名标题、表格姓名列或文内姓名，保留原有字段、标点、换行和表格内容；sourceChapterIndex 填该原文所属方括号章节序号。description 逐字复用这段说明，不改写、概括、润色或纠正原文；年龄、性格、背景、身份、外貌和声音均以原始说明为准，不从正文重新推测或补充。role、gender、age、appearance、voice 和 aliases 中的每个值只能逐字摘取 sourceDefinition 内的连续原文片段，不拼接、不推断；说明中没有的字段留空，looks 给空数组，不为满足外观字数要求编造内容。不得拼接不同段落、虚构引文或引用未出现在本次输入中的内容。\n只有没有明确角色说明的角色，才根据文档正文抽取有明确依据的信息，此时 sourceDefinition 留空、sourceChapterIndex 为 0；未写明的信息留空，不按身份或风格猜想。角色说明复用规则优先于写作技能、画风与后面的造型建议；技能不得要求重新设计已定义的人物。\n\n")
+	b.WriteString("抽样章节标题中的“## [章节序号] ”和末尾“（节选）”是宿主标记，不属于原始角色说明。姓名仅在章节标题时，连续引用原始标题及紧随其后的说明正文；sourceDefinition 和 description 保留原始标题，但不要写入这些宿主标记。\n\n")
 	b.WriteString("请输出：\n")
 	b.WriteString(`{"logline":"一句话卖点","tone":"整体基调","visualRules":"统一的画面规则（色调/光线/服化道年代）",` +
 		`"characters":[{"name":"标准名","aliases":["原文明示的别名/称呼"],"role":"剧情定位（未明确留空）","gender":"性别（未明确留空）","age":"原文年龄（未明确留空）",` +

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -6,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { createCanvasEditLeaseClient } from "../src/services/canvas-edit-leases";
 import type { changeCanvasEditLease } from "../src/services/api/user-data";
+import { canonicalize } from "json-canonicalize";
 
 // Isolate transport/storage without leaking module mocks into other test suites.
 // Sync, resource conversion, content comparison and progress use production code.
@@ -175,6 +177,15 @@ function edit(patch: Partial<CanvasProject>) {
 }
 const journalKey = "yingce:canvas-mutation-journal";
 const journal = () => JSON.parse(fixture.data.get(journalKey) ?? "[]");
+const confirmedBaselineKey = "yingce:canvas-confirmed-baselines";
+
+function legacyConfirmedProject(algorithm: "sha256" | "json"): CanvasProject {
+    const project = base();
+    delete project.nodes[0]!.metadata!.assetId;
+    const { viewport: _viewport, updatedAt: _updatedAt, revision: _revision, remoteContentHash: _hash, ...content } = project;
+    const serialized = canonicalize({ ...content, projectId: content.projectId || undefined });
+    return { ...project, remoteContentHash: algorithm === "json" ? `json:${serialized}` : createHash("sha256").update(serialized).digest("hex") };
+}
 
 async function twoDevices() {
     sync.resetRemoteUserDataSync();
@@ -450,6 +461,153 @@ afterAll(() => {
     if (!resolve(dir).startsWith(resolve(tmpdir()) + sep)) throw new Error("unexpected fixture directory");
     rmSync(dir, { recursive: true, force: true });
 });
+
+for (const algorithm of ["sha256", "json"] as const) {
+    describe(`旧 ${algorithm} 画布基线迁移`, () => {
+        test.each([true, false])("已同步缓存遇到云端新编辑不产生冲突，存在独立基线：%s", async (withBaseline) => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const cached = legacyConfirmedProject(algorithm);
+            const currentHash = await canvasContentHash(cached);
+            expect(currentHash).not.toBe(cached.remoteContentHash);
+            useCanvasStore.setState({ projects: [cached] });
+            fixture.remote = { ...structuredClone(cached), title: "Cloud updated on another device", revision: 8 };
+            if (withBaseline) fixture.data.set(confirmedBaselineKey, JSON.stringify([cached]));
+
+            await sync.initializeRemoteUserDataSession("sync-test-user");
+            expect(live().remoteContentHash).toBe(currentHash);
+            expect(JSON.parse(fixture.data.get(confirmedBaselineKey))[0].remoteContentHash).toBe(currentHash);
+            await sync.loadCanvasProjectForEditing("canvas");
+            expect(live().title).toBe("Cloud updated on another device");
+            expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(false);
+            expect(journal()).toEqual([]);
+            await sync.saveRemoteUserDataNow("canvas");
+            expect(fixture.writes).toHaveLength(0);
+
+            sync.resetRemoteUserDataSync();
+            await sync.initializeRemoteUserDataSession("sync-test-user");
+            await sync.loadCanvasProjectForEditing("canvas");
+            expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(false);
+            expect(journal()).toEqual([]);
+        });
+
+        test("可信旧基线保留本地编辑并合并云端独立编辑", async () => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const baseline = legacyConfirmedProject(algorithm);
+            const local = { ...baseline, title: "Local title" };
+            useCanvasStore.setState({ projects: [local] });
+            fixture.data.set(confirmedBaselineKey, JSON.stringify([baseline]));
+            fixture.remote = { ...structuredClone(baseline), revision: 8, nodes: baseline.nodes.map((node) => ({ ...node, metadata: { ...node.metadata, prompt: "Cloud prompt" } })) };
+
+            await sync.initializeRemoteUserDataSession("sync-test-user");
+            expect(live()).toBe(local);
+            expect(live().remoteContentHash).toBe(baseline.remoteContentHash);
+            expect(JSON.parse(fixture.data.get(confirmedBaselineKey))[0].remoteContentHash).toBe(await canvasContentHash(baseline));
+            await sync.loadCanvasProjectForEditing("canvas");
+            expect(live().title).toBe("Local title");
+            expect(live().nodes[0].metadata?.prompt).toBe("Cloud prompt");
+            expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(false);
+            await sync.saveRemoteUserDataNow("canvas");
+            expect(fixture.writes).toHaveLength(1);
+            expect(fixture.writes[0].operations).toEqual([{ type: "set_field", field: "title", beforeValue: "Canvas", value: "Local title" }]);
+            expect(fixture.remote.title).toBe("Local title");
+            expect(fixture.remote.nodes[0].metadata?.prompt).toBe("Cloud prompt");
+            expect(journal()).toEqual([]);
+        });
+
+        test("没有可信基线的真实本地编辑仍保留为冲突草稿", async () => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const baseline = legacyConfirmedProject(algorithm);
+            const local = { ...baseline, title: "Unsaved local title" };
+            useCanvasStore.setState({ projects: [local] });
+            fixture.remote = { ...structuredClone(baseline), title: "Cloud title", revision: 8 };
+
+            await sync.initializeRemoteUserDataSession("sync-test-user");
+            expect(live()).toBe(local);
+            expect(fixture.data.has(confirmedBaselineKey)).toBe(false);
+            await sync.loadCanvasProjectForEditing("canvas");
+            expect(live().title).toBe("Cloud title");
+            expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(true);
+            expect(journal()[0].conflict.draft).toEqual(local);
+            await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("自动保存已暂停");
+            expect(fixture.writes).toHaveLength(0);
+        });
+
+        test("迁移不清除已有冲突或改写有效待同步请求", async () => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const baseline = legacyConfirmedProject(algorithm);
+            const prepared = { ...baseline, title: "Unsent local title" };
+            const entry = {
+                projectId: "canvas",
+                baseline,
+                prepared,
+                createdAt: "2026-01-01",
+                request: { mutationId: "legacy-request", baseRevision: 7, operations: [{ type: "set_field", field: "title", beforeValue: "Canvas", value: prepared.title }] },
+                conflict: { message: "自动保存已暂停", draft: prepared },
+            };
+            const rawJournal = JSON.stringify([entry]);
+            fixture.data.set(journalKey, rawJournal);
+            fixture.data.set(confirmedBaselineKey, JSON.stringify([baseline]));
+            useCanvasStore.setState({ projects: [baseline] });
+
+            await sync.initializeRemoteUserDataSession("sync-test-user");
+            expect(live().remoteContentHash).toBe(await canvasContentHash(baseline));
+            expect(sync.hasCanvasSyncConflictDraft("canvas")).toBe(true);
+            expect(fixture.data.get(journalKey)).toBe(rawJournal);
+            await expect(sync.saveRemoteUserDataNow("canvas")).rejects.toThrow("自动保存已暂停");
+            expect(fixture.data.get(journalKey)).toBe(rawJournal);
+            expect(fixture.writes).toHaveLength(0);
+        });
+
+        test("旧基线落盘失败不会把初始化报告为同步就绪", async () => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const baseline = legacyConfirmedProject(algorithm);
+            const rawBaselines = JSON.stringify([baseline]);
+            fixture.data.set(confirmedBaselineKey, rawBaselines);
+            useCanvasStore.setState({ projects: [baseline] });
+            fixture.setError = new Error("baseline storage unavailable");
+
+            await expect(sync.initializeRemoteUserDataSession("sync-test-user")).rejects.toThrow("baseline storage unavailable");
+            expect(sync.hasRemoteUserDataSyncSession()).toBe(false);
+            expect(fixture.data.get(confirmedBaselineKey)).toBe(rawBaselines);
+            expect(journal()).toEqual([]);
+            expect(fixture.writes).toHaveLength(0);
+        });
+
+        test.each(["flush", "persist"])("迁移在 %s 期间切换账号不覆盖新账号缓存", async (stage) => {
+            sync.resetRemoteUserDataSync();
+            fixture.data.clear();
+            fixture.manualTimers = true;
+            const baseline = legacyConfirmedProject(algorithm);
+            fixture.data.set(confirmedBaselineKey, JSON.stringify([baseline]));
+            useCanvasStore.setState({ projects: [baseline] });
+            let switchedProjects: unknown;
+            const switchScope = () => {
+                fixture.scope = "other-user";
+                sync.resetRemoteUserDataSync();
+                useCanvasStore.setState({ projects: [{ ...base(), title: "Other account canvas" }] });
+                switchedProjects = useCanvasStore.getState().projects;
+            };
+            if (stage === "flush") fixture.beforeFlush = switchScope;
+            else fixture.saveHook = switchScope;
+
+            await expect(sync.initializeRemoteUserDataSession("sync-test-user")).rejects.toThrow("账号已切换");
+            expect(useCanvasStore.getState().projects).toBe(switchedProjects);
+            expect(sync.hasRemoteUserDataSyncSession()).toBe(false);
+            expect(journal()).toEqual([]);
+            expect(fixture.writes).toHaveLength(0);
+        });
+    });
+}
 
 describe("定向保存与旧 journal 的真实同步集成", () => {
     test("素材上传失败只暂停引用它的画布，其他画布仍保存完成", async () => {

@@ -59,12 +59,31 @@ export function canvasContentHash(project: CanvasProject): Promise<string> {
     return hash;
 }
 
+// Upgrade only a stamp whose exact snapshot can still be verified. Older clients
+// included empty optional fields; rehashing an arbitrary cached draft as clean
+// would discard unsaved edits when the cloud has changed.
+export async function verifiedCanvasContentHash(project: CanvasProject): Promise<string | undefined> {
+    const stored = project.remoteContentHash;
+    if (typeof stored !== "string" || !stored) return undefined;
+    const current = await canvasContentHash(project);
+    if (stored === current) return current;
+    const { viewport: _viewport, updatedAt: _updatedAt, revision: _revision, remoteContentHash: _hash, ...content } = project;
+    const legacy = { ...content, projectId: content.projectId || undefined };
+    if (stored.startsWith("json:")) {
+        // A LAN baseline may be reopened on HTTPS, where the current hash is SHA.
+        const serialized = stored.slice(5);
+        return serialized === canonicalize(canvasContentSnapshot(project)) || serialized === canonicalize(legacy) ? current : undefined;
+    }
+    if (!globalThis.crypto?.subtle) return undefined;
+    return stored === (await hashContent(legacy)) ? current : undefined;
+}
+
 function sameContentReferences(a: ContentSnapshot, b: ContentSnapshot) {
     const keys = Object.keys(a) as (keyof ContentSnapshot)[];
     return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
 
-async function hashContent(content: ContentSnapshot) {
+async function hashContent(content: object) {
     const serialized = canonicalize(content);
     // LAN HTTP deployments may lack Web Crypto. Keep an exact baseline there;
     // a lossy checksum could incorrectly discard an unsaved draft during login.

@@ -21,8 +21,7 @@ func RestoreCharacterDefinitions(characters []BibleCharacter, chapters []Chapter
 			if chapter.Index != int(character.SourceChapterIndex) {
 				continue
 			}
-			if offset := strings.Index(chapter.Text, character.SourceDefinition); offset >= 0 {
-				source = chapter.Text[offset : offset+len(character.SourceDefinition)]
+			if source = characterDefinitionSource(chapter, character.SourceDefinition); source != "" {
 				break
 			}
 		}
@@ -54,6 +53,27 @@ func RestoreCharacterDefinitions(characters []BibleCharacter, chapters []Chapter
 		result[index] = character
 	}
 	return result, nil
+}
+
+func characterDefinitionSource(chapter Chapter, quote string) string {
+	if strings.Contains(chapter.Text, quote) {
+		return quote
+	}
+	// 导入将标题与正文分开保存；还原跨过两者边界的原文，宿主章节标记不属于人设。
+	for _, suffix := range []string{"", "（节选）"} {
+		if heading := chapterHeading(chapter, suffix); strings.HasPrefix(quote, heading) {
+			body := strings.TrimPrefix(quote, heading)
+			if body != "" && strings.HasPrefix(chapter.Text, body) {
+				return chapter.Title + "\n" + body
+			}
+			return ""
+		}
+	}
+	title, body, ok := strings.Cut(quote, "\n")
+	if ok && title != "" && body != "" && strings.HasSuffix(chapter.Title, title) && strings.HasPrefix(chapter.Text, body) {
+		return quote
+	}
+	return ""
 }
 
 func characterDefinitionValue(source, value string) string {

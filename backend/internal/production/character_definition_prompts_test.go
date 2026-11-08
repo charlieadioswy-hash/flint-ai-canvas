@@ -24,6 +24,8 @@ func TestBiblePromptReusesExplicitDefinitionWithVerifiableSource(t *testing.T) {
 		"角色说明复用规则优先于写作技能",
 		"每个值只能逐字摘取 sourceDefinition 内的连续原文片段，不拼接、不推断",
 		"不得拼接不同段落、虚构引文或引用未出现在本次输入中的内容",
+		"连续引用原始标题及紧随其后的说明正文",
+		"sourceDefinition 和 description 保留原始标题，但不要写入这些宿主标记",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("bible prompt missing %q", want)

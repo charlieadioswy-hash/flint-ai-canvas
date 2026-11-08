@@ -66,6 +66,75 @@ func TestRestoreCharacterDefinitionsSupportsArbitrarySourceFormats(t *testing.T)
 	}
 }
 
+func TestRestoreCharacterDefinitionsSupportsImportedTitle(t *testing.T) {
+	// analyzeNovel("附录：秦子文\n年龄：26岁…", { perEpisode: true }) 将姓名留在标题，正文只含说明。
+	chapter := Chapter{Index: 7, Title: "附录：秦子文", Text: "年龄：26岁\n性格：冷静谨慎，务实有主见\n背景：承担照顾弟弟的责任。"}
+	want := chapter.Title + "\n" + chapter.Text
+	for name, quote := range map[string]string{
+		"original title": want,
+		"visible title":  chapterHeading(chapter, "") + chapter.Text,
+		"sampled title":  chapterHeading(chapter, "（节选）") + chapter.Text,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "sampled title" {
+				chapters := []Chapter{{Index: 1, Text: strings.Repeat("文", 8000)}, chapter}
+				if !strings.Contains(SampleNovel(chapters, 10000), quote) {
+					t.Fatal("fixture must match the actual sampled heading")
+				}
+			} else if !strings.Contains(SampleNovel([]Chapter{chapter}, 40000), quote) {
+				t.Fatal("fixture must match the actual chapter input")
+			}
+			body, err := json.Marshal(Bible{Characters: []BibleCharacter{{
+				Name: "秦子文", SourceDefinition: quote, SourceChapterIndex: 7,
+				Description: "模型改写", Age: "26岁", Gender: "男", Appearance: "银发", Voice: "低沉",
+				Looks: BibleLooks{{Name: "日常", Appearance: "黑色夹克"}},
+			}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			bible, err := ParseBible(string(body), chapter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			character := bible.Characters[0]
+			if character.Description != want || character.SourceDefinition != want || character.Age != "26岁" {
+				t.Fatalf("original title and definition must be restored without host markers: %#v", character)
+			}
+			if character.Gender != "" || character.Appearance != "" || character.Voice != "" || len(character.Looks) != 0 {
+				t.Fatalf("title-backed definition must not retain inferred fields: %#v", character)
+			}
+		})
+	}
+}
+
+func TestRestoreCharacterDefinitionsRejectsUnverifiedTitle(t *testing.T) {
+	chapter := Chapter{Index: 1, Title: "附录：秦子文", Text: "年龄：26岁\n性格：冷静"}
+	original := chapter.Title + "\n" + chapter.Text
+	tests := []struct {
+		name      string
+		character BibleCharacter
+		chapters  []Chapter
+	}{
+		{"other character with visible title", BibleCharacter{Name: "林晓", SourceDefinition: chapterHeading(chapter, "") + chapter.Text, SourceChapterIndex: 1}, []Chapter{chapter}},
+		{"unrelated body under matching title", BibleCharacter{Name: "秦子文", SourceDefinition: "林晓：18岁，活泼。", SourceChapterIndex: 1}, []Chapter{{Index: 1, Title: chapter.Title, Text: "林晓：18岁，活泼。"}}},
+		{"forged title", BibleCharacter{Name: "秦子文", SourceDefinition: original, SourceChapterIndex: 1}, []Chapter{{Index: 1, Title: "附录：林晓", Text: chapter.Text}}},
+		{"rewritten body", BibleCharacter{Name: "秦子文", SourceDefinition: strings.ReplaceAll(original, "26岁", "30岁"), SourceChapterIndex: 1}, []Chapter{chapter}},
+		{"forged host index", BibleCharacter{Name: "秦子文", SourceDefinition: "## [2] " + original, SourceChapterIndex: 1}, []Chapter{chapter}},
+		{"wrong chapter", BibleCharacter{Name: "秦子文", SourceDefinition: original, SourceChapterIndex: 2}, []Chapter{chapter, {Index: 2, Title: chapter.Title, Text: "年龄：30岁\n性格：开朗"}}},
+		{"skipped body prefix", BibleCharacter{Name: "秦子文", SourceDefinition: original, SourceChapterIndex: 1}, []Chapter{{Index: 1, Title: chapter.Title, Text: "不能跳过的原文\n" + chapter.Text}}},
+		{"original title only", BibleCharacter{Name: "秦子文", SourceDefinition: chapter.Title, SourceChapterIndex: 1}, []Chapter{chapter}},
+		{"visible title only", BibleCharacter{Name: "秦子文", SourceDefinition: chapterHeading(chapter, ""), SourceChapterIndex: 1}, []Chapter{chapter}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := RestoreCharacterDefinitions([]BibleCharacter{test.character}, test.chapters)
+			if err == nil || got != nil {
+				t.Fatalf("unverified title-backed definition accepted: %#v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestRestoreCharacterDefinitionsRejectsUnverifiedSource(t *testing.T) {
 	source := "秦子文\n年龄：26岁\n性格：冷静"
 	tests := []struct {

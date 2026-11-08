@@ -191,6 +191,41 @@ test("over-limit automatic voices can be adjusted before saving and restored to 
     expect(save).toHaveBeenLastCalledWith({ autoAudioReferences: true });
 });
 
+test("a failed preview retains the selected voice when another voice is enabled", async () => {
+    const save = mock(async () => {});
+    const warning = "剧情段超过所选视频模型的时长上限，请调整分镜时长或重新改编";
+    await renderReferences(save, {
+        ...segment,
+        audioReferenceMode: "custom",
+        request: {
+            ...segment.request,
+            warning,
+            references: [...segment.request.references, { castId: "second", name: "配角", kind: "character", label: "参考图3", sent: false }],
+            audioReferences: [{ castId: "hero", name: "主角", resourceId: "voice-1", sent: false, note: `视频请求尚未就绪，参考音色未发送：${warning}` }],
+            modelMaxAudios: 2,
+        },
+    });
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="关闭主角的音色"]')?.disabled).toBe(false);
+    expect(host.textContent).toContain("视频请求尚未就绪，参考音色未发送");
+    await click("开启配角的音色");
+    expect(save).not.toHaveBeenCalled();
+    await click("保存音色选择");
+    expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero", "second"] });
+});
+
+test("a model without audio support still allows closing and saving the existing voice", async () => {
+    const save = mock(async () => {});
+    await renderReferences(save, {
+        ...segment,
+        audioReferenceMode: "custom",
+        request: { ...segment.request, audioReferences: segment.request.audioReferences?.slice(0, 1), modelMaxAudios: 0 },
+    });
+    expect(host.querySelector<HTMLButtonElement>('[aria-label="关闭主角的音色"]')?.disabled).toBe(false);
+    await click("关闭主角的音色");
+    await click("保存音色选择");
+    expect(save).toHaveBeenLastCalledWith({ audioCastIds: [] });
+});
+
 test("reference groups and assets can both reorder without changing the custom image list", async () => {
     const save = mock(async () => {});
     const references = [
