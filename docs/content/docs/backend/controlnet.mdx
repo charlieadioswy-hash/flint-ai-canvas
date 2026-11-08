@@ -139,6 +139,15 @@ Liblib 项目画风在入队选路与 LoRA 合并前，按当前用户的项目�
 
 F.1-dev-fp8 同时支持普通画布和异形屏入口。开发配置开放 Canny、SoftEdge、Scribble、Lineart、Depth、Normal、OpenPose、Tile、IP-Adapter、Inpaint、puLID 共 **11 类 Control Type、13 个控制模型和 40 个预处理器**，按 F.1 基础算法和白名单筛选。文生图默认使用 `inpaint_global_harmonious` + `F.1-dev-Controlnet-Inpainting-Beta`，切换类型重新匹配 F.1 控制模型与参数。IP-Adapter 使用 `ip-adapter-siglip`，不接受 SD 1.5 / SDXL 的 CLIP 或 FaceID 预处理器。Redux 尚缺少已核实的预处理映射，主体参考需要独立模板流程，本配置不开放这两项。
 
+F.1 的输出尺寸与屏幕蒙版原始尺寸分别设置。[官方自定义模型文生图参数](https://resonate.feishu.cn/wiki/UAMVw67NcifQHukf8fpccgS5n6d#FCbudAMnComRQQx8XyscpVhAnhj)声明宽高为 128–1536，F.1 推荐 768–1536；图生图缩放和 `hiResFixInfo` 高清修复的宽高上限为 2048。当前文生图、图生图共用尺寸白名单，且适配器未接入高清修复，因此不能仅将 2K / 4K 加入直接输出规格。`scripts/sql/configure-liblib-f1-sizes.sql` 只补齐 10 种 1K 比例的像素预设，包括横屏 `1280x720`、竖屏 `720x1280` 和宽屏 `1344x576`，保留默认尺寸、关闭自定义的设置、其他能力与价格。执行前备份目标配置并读取 `capability_version`，先演练，再用同一基线正式执行；已有同档同比例的不同像素规格、模板变化或并发更新时停止，不覆盖管理员配置。
+
+```bash
+psql -X -v expected_capability_version=<读取的版本> -v dry_run=true -f scripts/sql/configure-liblib-f1-sizes.sql
+psql -X -v expected_capability_version=<读取的版本> -f scripts/sql/configure-liblib-f1-sizes.sql
+```
+
+提交后递增 Redis 的 `canvas:logical-model-route-catalog:version`，刷新页面重新读取尺寸目录。异形屏仍按蒙版比例匹配输出，保留原始蒙版及其坐标。
+
 F.1 LoRA 包含海报运营启动页、Pure Flux 情绪插画、Filmfotos 日系胶片写真、极氪白白酱人像 V6MAX、UNIT 曼德拉效应、嘉嘉国潮插画及风月无边插画。目录只登记本次版本 API 返回公开且允许商用的 F.1 版本；岩彩材质绘画的商用标志未开放，未纳入。F.1 完整文生图与图生图模板均支持 `controlNet` 和 `additionalNetwork`；ControlNet Inpaint 的独立区域蒙版不等于顶层图生图局部重绘，后者仍仅对已启用该能力的 SD / SDXL 模型开放。
 
 配置脚本为 `scripts/sql/configure-liblib-lora.sql`，执行前备份；使用 `-v dry_run=true` 做事务演练，不传该变量才提交。脚本保留已有 Dream Tech XL 的生成设置，新底模开放常用 1K 尺寸；F.1 仅自动升级本脚本旧版留下的关闭配置，已启用的管理员白名单保留，其他自定义关闭配置会中止而非覆盖。脚本可重复执行，不覆盖已有价格冲突，也不修改凭据或其他渠道。执行后递增 Redis 的 `canvas:logical-model-route-catalog:version`，刷新页面重新读取目录。
