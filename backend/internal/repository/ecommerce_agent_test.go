@@ -132,15 +132,23 @@ func TestEcommerceAgentUncertainBillRequiresManualReview(t *testing.T) {
 	if err := repo.db.AutoMigrate(&model.Task{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.db.Create(&model.BillingOrder{ID: "uncertain-ecommerce", UserID: "owner", IdempotencyKey: "uncertain-ecommerce", Scene: "ecommerce_agent", Status: model.BillingStatusUncertain}).Error; err != nil {
-		t.Fatal(err)
+	for _, order := range []model.BillingOrder{
+		{ID: "uncertain-ecommerce", UserID: "owner", TaskID: "failed-ecommerce", IdempotencyKey: "uncertain-ecommerce", Scene: "ecommerce_agent", Status: model.BillingStatusUncertain},
+		{ID: "uncertain-canvas", UserID: "owner", TaskID: "failed-canvas", IdempotencyKey: "uncertain-canvas", Scene: "canvas", Status: model.BillingStatusUncertain},
+	} {
+		if err := repo.db.Create(&order).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.db.Create(&model.Task{ID: order.TaskID, UserID: order.UserID, BillingOrderID: order.ID, Status: model.TaskStatusFailed}).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
-	orders, err := repo.AutoRefundableBillingOrders(10)
+	orders, err := repo.AutoRefundableBillingOrders(10, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(orders) != 0 {
-		t.Fatalf("unknown image submission may be automatically refunded: %+v", orders)
+	if len(orders) != 1 || orders[0].ID != "uncertain-canvas" {
+		t.Fatalf("only the failed canvas order may be automatically refunded: %+v", orders)
 	}
 }
 
