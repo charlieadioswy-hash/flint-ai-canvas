@@ -13,6 +13,14 @@ description: 生产安装默认方案与固定开发机源码发布约定
 
 后端镜像内置无 GUI 的 Blender，用于按需执行 FBX／ABC 模型导出，不增加独立服务。构建时检查 FBX、glTF 和 Alembic 操作符；升级到包含该依赖的新镜像后，登录查询 `/api/model3d/exports/capabilities` 确认运行时能力，并用真实模型完成导出验收。`CANVAS_BLENDER_BIN` 默认留空，使用镜像内的 `blender`；覆盖时填写容器内可执行文件路径。导出每次最长 10 分钟，集群租约控制转换并发为 1，原始模型保留。镜像健康检查不替代转换与资源下载验证。
 
+### 指定远端源码构建
+
+现有生产节点已明确选择远端源码构建。每次收到“发布到生产”后，同步本次源码与锁文件，再在生产节点使用仓库 Dockerfile 和 `docker-compose.deploy.yml`、`docker-compose.build.yml` 构建 backend、web、yingce-agent。前端的依赖安装与 Vite 打包均在远端容器内执行；不上传本机预构建的 `dist`、`web-dist.tar.gz` 或替代静态产物镜像。该选择不改变未指定部署方式时的新服务器默认方案，也不代表已授权执行下一次发布。
+
+构建使用 `.env` 中显式配置的源，缺省为 `NPM_REGISTRY=https://registry.npmmirror.com`、`ALPINE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine` 和 `GOPROXY=https://goproxy.cn,direct`。发布脚本不得再硬编码 `registry.npmjs.org` 覆盖这些配置。Docker 基础镜像加速由 Docker 引擎或 BuildKit 单独配置，软件包源不代理镜像拉取。
+
+保留并复用 Docker 层缓存、Bun／npm 下载缓存和 Go 编译缓存。构建日志分别记录依赖安装、Vite 打包和镜像封装耗时，发布日志单独记录备份、迁移、验证与切换；排查构建慢时先依据对应步骤日志。已有节点升级继续保留实际运行的挂载和配置，执行备份、迁移演练、升级验证及失败回退。
+
 ## 固定开发机发布
 
 开发机发布使用下列永久约定：
