@@ -17,6 +17,7 @@ environmentManager.setIsServer(() => false);
 let summary: DramaSummary;
 let cast: DramaCast[];
 let dramaContext: AgentDramaContext | null = null;
+let renderChoices: (() => void) | null = null;
 let creates: Array<{ projectId: string; input: Record<string, unknown> }> = [];
 let deletes: Array<{ projectId: string; castId: string; expectedRevision: number }> = [];
 let confirmations: Array<{ onOk: () => unknown; onCancel?: () => unknown; title?: string }> = [];
@@ -32,6 +33,7 @@ const agentStore = {
     },
     setDrama(value: AgentDramaContext | null) {
         dramaContext = value;
+        renderChoices?.();
     },
 };
 mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: { getState: () => agentStore } }));
@@ -143,6 +145,7 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
+    let choicesRoot: ReturnType<typeof createRoot> | undefined;
     try {
         await act(async () => {
             root.render(
@@ -157,9 +160,18 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
         expect(dramaContext?.onActionsHost).toBeFunction();
         const chatHost = document.createElement("div");
         chatHost.setAttribute("aria-label", "创作对话操作");
+        const choicesHost = document.createElement("div");
+        const actionsHost = document.createElement("div");
+        chatHost.append(choicesHost, actionsHost);
         container.querySelector(".drama-guide-agent-host")!.append(chatHost);
+        choicesRoot = createRoot(choicesHost);
+        renderChoices = () => {
+            const choices = dramaContext?.proposalChoices;
+            choicesRoot?.render(choices ? choices.render(choices.proposals) : null);
+        };
         await act(async () => {
-            dramaContext!.onActionsHost!(chatHost);
+            dramaContext!.onActionsHost!(actionsHost);
+            renderChoices?.();
             await settle();
         });
         invalidations = [];
@@ -183,7 +195,9 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
             },
         });
     } finally {
+        renderChoices = null;
         await act(async () => root.unmount());
+        choicesRoot?.unmount();
         client.clear();
         container.remove();
     }

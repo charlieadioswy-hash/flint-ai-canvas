@@ -237,7 +237,15 @@ async function withGuide(
     const choicesRoot = createRoot(choicesHost);
     renderSetupChoices = () => {
         const choices = dramaContext?.setupChoices;
-        choicesRoot.render(choices ? choices.render(choices.proposals) : null);
+        const proposals = dramaContext?.proposalChoices;
+        const stage = dramaContext?.stageChoices;
+        choicesRoot.render(
+            <>
+                {choices ? choices.render(choices.proposals) : null}
+                {proposals ? proposals.render(proposals.proposals) : null}
+                {stage?.content || null}
+            </>,
+        );
     };
     const cards = new Map<string, HTMLElement>();
     const button = (scope: HTMLElement, label: string) => {
@@ -284,13 +292,20 @@ async function withGuide(
                     cards.set(item.toolCallId, card!);
                 }
             },
-            apply: (call, label = "应用此建议") => click(cards.get(call)!.matches("button.drama-guide-setup-choice") ? (cards.get(call)! as HTMLButtonElement) : button(cards.get(call)!, label)),
+            apply: (call, label) =>
+                click(
+                    cards.get(call)!.matches("button.drama-guide-setup-choice")
+                        ? (cards.get(call)! as HTMLButtonElement)
+                        : label
+                          ? button(cards.get(call)!, label)
+                          : Array.from(cards.get(call)!.querySelectorAll<HTMLButtonElement>("button")).find((item) => !item.disabled && !item.getAttribute("aria-label"))!,
+                ),
             disabled: (call) =>
                 !chatHost.contains(cards.get(call)!) ||
                 (cards.get(call)!.matches("button.drama-guide-setup-choice")
                     ? (cards.get(call)! as HTMLButtonElement).disabled
                     : Array.from(cards.get(call)!.querySelectorAll("button"))
-                          .filter((item) => ["应用此建议", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
+                          .filter((item) => ["采用这份正文", "保存资产设定", "保存分镜修改", "保存段提示词", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
                           .every((item) => item.disabled)),
             click: (label) => click(button(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === label) ? chatHost : container, label)),
             refresh: async () => {
@@ -614,5 +629,38 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         expect(errors).toContain("模拟阶段确认失败");
         expect(writes).toEqual([]);
         expect(unexpectedWrites).toBe(0);
+    });
+});
+
+test("剧本与分镜阶段在对话内提供确认选项，确认后进入制作台", async () => {
+    await withGuide("story", async ({ refresh, click, chatHost, container }) => {
+        allowGuideConfirm = true;
+        summary.guide!.canConfirm = true;
+        await refresh();
+
+        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => /确认剧本与分镜.*进入制作台|确认并进入制作台/.test(item.textContent?.trim() || ""));
+        expect(confirm).toBeDefined();
+        expect(confirm?.disabled).toBe(false);
+        expect(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === "继续调整")).toBe(true);
+        expect(container.querySelector('[aria-label="创作产物"]')?.textContent).not.toMatch(/确认剧本与分镜.*进入制作台|确认并进入制作台/);
+
+        await click(confirm!.textContent!.trim());
+        expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "story", expectedRevision: 7 } }]);
+        expect(summary.production.guideStep).toBe("completed");
+        expect(unexpectedWrites).toBe(0);
+        expect(errors).toEqual([]);
+    });
+});
+
+test("刷新失败时阶段确认选项保持禁用", async () => {
+    await withGuide("configuring", async ({ refresh, chatHost }) => {
+        summary.guide!.canConfirm = true;
+        readsFail = true;
+        await refresh();
+
+        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => item.textContent?.trim() === "确认配置，开始提取资产");
+        expect(confirm).toBeDefined();
+        expect(confirm?.disabled).toBe(true);
+        expect(guideConfirms).toEqual([]);
     });
 });

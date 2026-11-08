@@ -122,3 +122,31 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
 export function GuideSetupChoices({ proposals, ...props }: ChoiceProps) {
     return choiceGroups(proposals).map((group) => <SetupChoiceGroup key={group.key} group={group} {...props} />);
 }
+
+export type GuideStageChoice = { key: string; title: string; detail: string };
+
+/** 将阶段确认放进 Agent 回复，点击后直接推进已有引导状态机。 */
+export function GuideStageChoices({ title, choices, busy, onChoose }: { title: string; choices: GuideStageChoice[]; busy: boolean; onChoose: (choice: GuideStageChoice) => void }) {
+    const headingId = useId();
+    return (
+        <section className="drama-guide-setup-choices" aria-labelledby={headingId}>
+            <div className="drama-guide-setup-choice-heading">
+                <h3 id={headingId}>{title}</h3>
+                <p>选择后继续当前创作流程</p>
+            </div>
+            <div className="drama-guide-setup-choice-list" role="group" aria-label={title}>
+                {choices.map((choice, index) => (
+                    <button type="button" className="drama-guide-setup-choice" key={choice.key} disabled={busy} onClick={() => onChoose(choice)}>
+                        <span className="drama-guide-setup-choice-number" aria-hidden="true">
+                            {index + 1}
+                        </span>
+                        <span className="drama-guide-setup-choice-copy">
+                            <strong>{choice.title}</strong>
+                            <span>{choice.detail}</span>
+                        </span>
+                    </button>
+                ))}
+            </div>
+        </section>
+    );
+}

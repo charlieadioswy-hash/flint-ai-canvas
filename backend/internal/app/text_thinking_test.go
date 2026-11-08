@@ -259,6 +259,29 @@ func TestApplyTextThinkingLegacyFallback(t *testing.T) {
 	}
 }
 
+func TestApplyTextThinkingInfersDeepSeekDisableForLegacyCapability(t *testing.T) {
+	input := canvasGenerationInput{
+		Config:      providerConfig{Model: "deepseek-v4-1-flash-260910"},
+		TextOptions: canvasTextOptions{ThinkingLevel: ThinkingLevelOff},
+	}
+	body := map[string]interface{}{}
+	if applyTextThinking(body, input, protocolcontract.TextWireChatCompletion) {
+		t.Fatalf("disabled DeepSeek thinking reported as enabled: %#v", body)
+	}
+	want := map[string]interface{}{"thinking": map[string]interface{}{"type": "disabled"}}
+	if !reflect.DeepEqual(body, want) {
+		t.Fatalf("legacy DeepSeek capability did not emit explicit disable: %#v, want %#v", body, want)
+	}
+
+	body = map[string]interface{}{}
+	if applyTextThinking(body, canvasGenerationInput{Config: providerConfig{Model: "deepseek-v4-1-flash-260910"}}, protocolcontract.TextWireChatCompletion) {
+		t.Fatalf("automatic DeepSeek thinking should preserve model default: %#v", body)
+	}
+	if len(body) != 0 {
+		t.Fatalf("automatic DeepSeek thinking changed request: %#v", body)
+	}
+}
+
 func TestCanonicalAgentReasoningPassback(t *testing.T) {
 	calls := []interface{}{map[string]interface{}{"id": "call-1", "function": map[string]interface{}{"name": "canvas_snapshot", "arguments": "{}"}}}
 	deepseek := map[string]any{"role": "assistant", "content": "", "tool_calls": calls}

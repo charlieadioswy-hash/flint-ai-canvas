@@ -250,7 +250,15 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 		if len(registries) > 0 {
 			registry = registries[0]
 		}
-		thinking, err := normalizeTextThinkingConfig(text.Thinking, thinkingWireForProtocol(protocol, registry), text.MaxOutputTokens)
+		wire := thinkingWireForProtocol(protocol, registry)
+		thinkingConfig := text.Thinking
+		// DeepSeek 的推理开关默认由上游开启。旧的渠道模型记录没有保存
+		// Text.Thinking 时，不能把它当成通用 chat 模型的“省略参数”，
+		// 否则短剧请求即使选择 off 也无法关闭推理，结构化 JSON 容易被截断。
+		if thinkingConfig == nil && wire == protocolcontract.TextWireChatCompletion && strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "deepseek") {
+			thinkingConfig = &TextThinkingConfig{Preset: "deepseek"}
+		}
+		thinking, err := normalizeTextThinkingConfig(thinkingConfig, wire, text.MaxOutputTokens)
 		if err != nil {
 			return nil, err
 		}

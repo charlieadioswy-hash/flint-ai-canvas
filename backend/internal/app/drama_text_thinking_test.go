@@ -45,3 +45,30 @@ func TestDramaTextThinkingFlowsPerOrchestrationStep(t *testing.T) {
 		t.Fatalf("phase settings round trip = %#v, %v", decoded, err)
 	}
 }
+
+func TestDramaTextThinkingDefaultsStructuredStepsToOff(t *testing.T) {
+	run := &dramaRun{settings: DramaSettings{}}
+	for _, step := range []string{DramaStepBible, DramaStepPlan, DramaStepScript, DramaStepPrompt} {
+		if got := run.settings.TextThinking.levelFor(step); got != ThinkingLevelOff {
+			t.Fatalf("step %s default thinking level = %q, want %q", step, got, ThinkingLevelOff)
+		}
+	}
+	run.settings.TextThinking.Bible = ThinkingIntentAuto
+	if got := run.settings.TextThinking.levelFor(DramaStepBible); got != ThinkingIntentAuto {
+		t.Fatalf("explicit auto thinking level = %q, want %q", got, ThinkingIntentAuto)
+	}
+	for _, test := range []struct {
+		request string
+		want    string
+	}{
+		{ThinkingLevelLow, ThinkingLevelLow},
+		{ThinkingLevelHigh, ThinkingLevelHigh},
+		{ThinkingLevelOff, ThinkingLevelOff},
+		{ThinkingIntentDeep, ThinkingIntentDeep},
+	} {
+		run.settings.TextThinking.Bible = test.request
+		if got := run.settings.TextThinking.levelFor(DramaStepBible); got != test.want {
+			t.Fatalf("explicit %q thinking level = %q, want %q", test.request, got, test.want)
+		}
+	}
+}

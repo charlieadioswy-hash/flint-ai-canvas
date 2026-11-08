@@ -92,3 +92,33 @@ export function prepareDramaSetupMessage(text: string, proposals: DramaAgentProp
     }
     return { body: text, proposals };
 }
+
+/**
+ * 非配置建议也可能被模型重复写成编号列表。候选内容已经由卡片展示，
+ * 这里只移除能够明确识别为候选列表的整段正文，保留前后的引导说明。
+ */
+export function prepareDramaProposalMessage(text: string, proposals: DramaAgentProposal[]): { body: string; proposals: DramaAgentProposal[] } {
+    if (!text.trim() || proposals.length < 2 || proposals.every((proposal) => proposal.kind === "setup")) return { body: text, proposals };
+    const lines = text.split(/\r?\n/);
+    let fence = "";
+    for (let start = 0; start < lines.length; start++) {
+        const marker = lines[start].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        if (marker) {
+            if (!fence) fence = marker[1];
+            else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = "";
+            continue;
+        }
+        if (fence || !orderedItem.test(lines[start])) continue;
+        const blockStart = start;
+        const { items, end } = readList(lines, start);
+        start = Math.max(start, end - 1);
+        if (items.length !== proposals.length) continue;
+        const preceding = lines.slice(Math.max(0, blockStart - 3), blockStart).join(" ");
+        const hasChoiceIntro = /(方案|建议|推荐|可选|选择|调整|修改|新增|删除|如下)/u.test(preceding);
+        const hasChoiceDetails = items.every((item) => /(?:\*\*|：|:\s|[—–-]\s)/u.test(item.heading));
+        if (!hasChoiceIntro && !hasChoiceDetails) continue;
+        const body = [lines.slice(0, blockStart).join("\n").trimEnd(), lines.slice(end).join("\n").trimStart()].filter(Boolean).join("\n\n");
+        return { body, proposals };
+    }
+    return { body: text, proposals };
+}

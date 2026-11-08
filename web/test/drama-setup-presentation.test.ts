@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
+import { prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { DramaAgentProposal } from "@/services/api/agent";
 
 const proposal = (changes: Record<string, unknown>, toolCallId = "call"): DramaAgentProposal => ({ kind: "setup", changes, baseRevision: 4, runId: "run", toolCallId });
@@ -95,4 +95,24 @@ test.each([
 
 test.each(["```markdown\n1. 粤语\n2. 英语\n```", "````markdown\n```示例\n1. 粤语\n2. 英语\n````", "~~~markdown\n1. 粤语\n2. 英语\n~~~"])("代码块中的编号示例保留：%s", (text) => {
     expect(prepareDramaSetupMessage(text, [proposal({ language: "粤语" }), proposal({ language: "英语" })]).body).toBe(text);
+});
+
+test("非配置建议移除重复的编号候选，保留前后引导", () => {
+    const proposals: DramaAgentProposal[] = [
+        { kind: "cast", targetId: "cast-1", baseRevision: 4, runId: "run", toolCallId: "appearance-1", changes: { appearance: "保留现有外观" } },
+        { kind: "cast", targetId: "cast-1", baseRevision: 4, runId: "run", toolCallId: "appearance-2", changes: { appearance: "改为冷色调服装" } },
+    ];
+    const text = ["我整理了两种角色外观调整方案：", "", "1. **保留现有外观**：维持当前设定。", "2. **改为冷色调服装**：强化夜戏氛围。", "", "请选择后我再继续处理。"].join("\n");
+    const result = prepareDramaProposalMessage(text, proposals);
+    expect(result.body).toBe("我整理了两种角色外观调整方案：\n\n请选择后我再继续处理。");
+    expect(result.proposals).toBe(proposals);
+});
+
+test("非候选编号内容不满足识别条件时保持原文", () => {
+    const proposals: DramaAgentProposal[] = [
+        { kind: "cast", targetId: "cast-1", baseRevision: 4, runId: "run", toolCallId: "one", changes: { appearance: "红衣" } },
+        { kind: "cast", targetId: "cast-1", baseRevision: 4, runId: "run", toolCallId: "two", changes: { appearance: "黑衣" } },
+    ];
+    const text = "执行步骤：\n1. 读取角色资料\n2. 检查现有引用";
+    expect(prepareDramaProposalMessage(text, proposals).body).toBe(text);
 });

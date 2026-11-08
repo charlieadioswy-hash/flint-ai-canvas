@@ -1281,6 +1281,14 @@ func (r *Repository) RequestDramaSegmentVideos(projectID, episodeID string, inde
 
 func (r *Repository) RetryDramaResultJobs(projectID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 结构化文本返回不完整时，成功任务里保存的结果本身不可用。
+		// 这类作业不能重放原任务，否则会再次解析同一份截断 JSON；保留原任务
+		// 作为历史记录，清空绑定后让调度器重新提交一次生成。
+		if err := tx.Model(&model.DramaJob{}).
+			Where("project_id = ? AND status = ? AND kind IN ? AND error LIKE ?", projectID, model.DramaJobFailed, []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt}, "%模型没有返回可解析的 JSON%").
+			Updates(map[string]any{"status": model.DramaJobQueued, "task_id": "", "error": "", "finished_at": nil, "started_at": nil, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
 		// A successful provider task is re-applied, never submitted a second time.
 		if err := tx.Model(&model.DramaJob{}).Where("project_id = ? AND status = ? AND task_id IN (?)", projectID, "failed", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
 			return err

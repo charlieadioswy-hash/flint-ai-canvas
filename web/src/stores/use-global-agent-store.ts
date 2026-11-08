@@ -17,6 +17,9 @@ export type AgentDramaContext = {
     onProposal?: (proposal: DramaAgentProposal) => void;
     onActionsHost?: (host: HTMLDivElement | null) => void;
     setupChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
+    proposalChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
+    /** 当前阶段的推进选择，直接显示在 Agent 最新回复中。 */
+    stageChoices?: { content: ReactNode };
 };
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"yingce/backend/internal/model"
+	protocolcontract "yingce/backend/internal/protocol"
 )
 
 func TestValidateImageTaskRejectsOversizedGrokPromptByUTF8Bytes(t *testing.T) {
@@ -22,6 +25,30 @@ func TestValidateImageTaskRejectsOversizedGrokPromptByUTF8Bytes(t *testing.T) {
 	wantBytes := fmt.Sprintf("%d UTF-8 字节", len(prompt))
 	if !strings.Contains(err.Error(), wantBytes) || !strings.Contains(err.Error(), "8000") || !strings.Contains(err.Error(), "连线文本") {
 		t.Fatalf("validateImageTask() error = %q", err)
+	}
+}
+
+func TestNormalizeDeepSeekCapabilityInfersThinkingContract(t *testing.T) {
+	config := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "deepseek-v4-1-flash-260910")
+	config.Text.Thinking = nil
+	normalized, err := NormalizeModelCapabilityConfigForModel("text", string(model.ChannelInterfaceChatCompletion), "deepseek-v4-1-flash-260910", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized == nil || normalized.Text == nil || normalized.Text.Thinking == nil {
+		t.Fatalf("deepseek thinking contract was not inferred: %#v", normalized)
+	}
+	thinking := normalized.Text.Thinking
+	if thinking.Preset != "deepseek" || thinking.Switch.Kind != ThinkingSwitchThinkingType || thinking.Default != "" {
+		t.Fatalf("unexpected deepseek thinking contract: %#v", thinking)
+	}
+	body := map[string]interface{}{"model": "deepseek-v4-1-flash-260910"}
+	input := canvasGenerationInput{Mode: "text", Config: providerConfig{Model: "deepseek-v4-1-flash-260910", CapabilityConfig: normalized}, TextOptions: canvasTextOptions{ThinkingLevel: ThinkingLevelOff}}
+	if applyTextThinking(body, input, protocolcontract.TextWireChatCompletion) {
+		t.Fatal("off must not enable deepseek reasoning")
+	}
+	if got := body["thinking"]; got == nil {
+		t.Fatalf("deepseek off must be explicit: %#v", body)
 	}
 }
 

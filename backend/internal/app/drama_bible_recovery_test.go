@@ -49,3 +49,38 @@ func TestDramaBibleRecoveryReusesOriginalTaskOnRetry(t *testing.T) {
 		t.Fatalf("all recovered characters must be persisted: %+v %v", casts, err)
 	}
 }
+
+func TestDramaBibleRecoveryRegeneratesMalformedJSONOnRetry(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	summary := createTestDramaWithMedia(t, svc, DramaReviewAuto, DramaMediaManual)
+	projectID := summary.Project.ID
+	raw, err := json.Marshal(map[string]string{"mode": "text", "text": `{"characters":[{"name":"甲","appearance":"截断`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: newID(), UserID: "usr-drama", ProjectID: projectID, Type: "canvas_text", Status: model.TaskStatusSucceeded, ResultJSON: string(raw)}
+	job := model.DramaJob{ID: newID(), ProjectID: projectID, Kind: model.DramaJobBible, Status: model.DramaJobFailed, TaskID: task.ID, Error: "结果处理失败（保留原任务，重试不重复生成）：作品圣经解析失败：模型没有返回可解析的 JSON"}
+	if err := fake.db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := fake.db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"status": model.DramaStatusPaused, "pause_reason": job.Error}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RetryFailedDrama("usr-drama", projectID); err != nil {
+		t.Fatal(err)
+	}
+	runDramaTicks(t, svc, projectID, 4)
+	var saved model.DramaJob
+	if err := fake.db.First(&saved, "id = ?", job.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fake.byKind["bible"] != 1 || saved.Status != model.DramaJobSucceeded || saved.TaskID == task.ID || saved.TaskID == "" {
+		t.Fatalf("malformed bible result must be regenerated: job=%+v calls=%v", saved, fake.byKind)
+	}
+	if stored, err := svc.repo.Task(task.ID); err != nil || stored.ResultJSON != string(raw) {
+		t.Fatalf("original malformed task must remain history: %v", err)
+	}
+}

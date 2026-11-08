@@ -75,6 +75,7 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 		"ask_user 仅用于澄清尚不能形成具体修改的创作意图",
 		"收到客户端的已保存反馈后，先用 drama_get_context 重新读取最新上下文与 guide.baseRevision",
 		"对话中的明确阶段确认按钮触发现有制作流程",
+		"按钮呈现为 Agent 回复内的直接选项",
 		"选择建议本身不推进阶段",
 		"不因选择方案自动生成图片或视频",
 	} {

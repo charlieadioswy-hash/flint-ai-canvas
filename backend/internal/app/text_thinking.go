@@ -421,6 +421,18 @@ func effectiveTextThinkingConfig(input canvasGenerationInput, wire string) *Text
 	if capability := input.Config.CapabilityConfig; capability != nil && capability.Text != nil && capability.Text.Thinking != nil {
 		return capability.Text.Thinking
 	}
+	// Some DeepSeek-compatible chat endpoints enable reasoning when the
+	// `thinking` field is omitted.  Older channel capability records predate
+	// the thinking contract and therefore have no explicit configuration.  Use
+	// the known DeepSeek wire contract as a runtime fallback so a structured
+	// task that explicitly requests `off` can actually disable reasoning and
+	// keep its JSON response within the output budget.  An empty/auto request
+	// still resolves to the model default because the preset has no default.
+	modelName := strings.ToLower(strings.TrimSpace(input.Config.Model))
+	if wire == protocolcontract.TextWireChatCompletion && strings.HasPrefix(strings.TrimPrefix(modelName, "models/"), "deepseek") {
+		config := textThinkingPresets["deepseek"]
+		return &config
+	}
 	return legacyTextThinkingConfig(wire)
 }
 

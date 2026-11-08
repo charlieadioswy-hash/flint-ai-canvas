@@ -44,7 +44,7 @@ import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
-import { prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
+import { prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
 
 // hidden 为 true 时入口保持挂载但不显示：Live2D 模型加载开销大，面板开合不能卸载它，
@@ -667,6 +667,8 @@ export function AgentConversation({
     guideMode = false,
     onActionsHost,
     setupChoices,
+    proposalChoices,
+    stageChoices,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -703,6 +705,8 @@ export function AgentConversation({
     guideMode?: boolean;
     onActionsHost?: (host: HTMLDivElement | null) => void;
     setupChoices?: AgentDramaContext["setupChoices"];
+    proposalChoices?: AgentDramaContext["proposalChoices"];
+    stageChoices?: AgentDramaContext["stageChoices"];
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -720,7 +724,9 @@ export function AgentConversation({
     const startIndex = Math.max(0, segments.length - visibleCount);
     const lastMessage = messages.at(-1);
     const dramaSetupChoices = guideMode ? setupChoices : undefined;
-    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices;
+    const dramaProposalChoices = guideMode ? proposalChoices : undefined;
+    const dramaStageChoices = guideMode ? stageChoices : undefined;
+    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices && !dramaProposalChoices && !dramaStageChoices;
     const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages) : null), [messages, replyOptionsEnabled]);
     const setupPresentation = useMemo(() => {
         const byMessage = new Map<string, ReturnType<typeof prepareDramaSetupMessage>>();
@@ -743,6 +749,39 @@ export function AgentConversation({
         }
         return { byMessage, fallback };
     }, [busy, dramaSetupChoices, segments]);
+    const proposalPresentation = useMemo(() => {
+        const byMessage = new Map<string, { body: string; proposals: DramaAgentProposal[] }>();
+        const fallback: DramaAgentProposal[] = [];
+        if (!dramaProposalChoices || busy) return { byMessage, fallback };
+        const assistantByRun = new Map<string, CloudAgentChatMessage>();
+        for (const segment of segments) {
+            if (segment.kind === "message" && segment.item.role === "assistant" && !segment.item.reasoning && segment.item.runId) assistantByRun.set(segment.item.runId, segment.item);
+        }
+        const proposalsByRun = new Map<string, DramaAgentProposal[]>();
+        for (const proposal of dramaProposalChoices.proposals) {
+            const proposals = proposalsByRun.get(proposal.runId);
+            if (proposals) proposals.push(proposal);
+            else proposalsByRun.set(proposal.runId, [proposal]);
+        }
+        for (const [runId, proposals] of proposalsByRun) {
+            const target = assistantByRun.get(runId);
+            if (!target) fallback.push(...proposals);
+            else if (!target.streaming) {
+                const prepared = prepareDramaProposalMessage(target.text, proposals);
+                byMessage.set(target.id, prepared);
+            }
+        }
+        return { byMessage, fallback };
+    }, [busy, dramaProposalChoices, segments]);
+    const stagePresentation = useMemo(() => {
+        if (!dramaStageChoices || busy || approval) return { targetId: null as string | null, fallback: false };
+        for (let index = segments.length - 1; index >= 0; index -= 1) {
+            const segment = segments[index];
+            if (segment.kind !== "message" || segment.item.role !== "assistant" || segment.item.reasoning || segment.item.streaming) continue;
+            return { targetId: segment.item.id, fallback: false };
+        }
+        return { targetId: null, fallback: true };
+    }, [approval, busy, dramaStageChoices, segments]);
     // 父组件每次渲染（例如输入框每敲一个字）都会传入新的回调和引用表。消息组件已 memo，
     // 这里换成稳定的回调和“只看链接字段”的引用表，消息才能跳过与它无关的重渲染。
     const handlersRef = useRef({ onUndo, onWithdrawInterjection, onRequeueInterjection, onReplyOption, onRetryRun });
@@ -821,6 +860,8 @@ export function AgentConversation({
                     {segments.slice(startIndex).map((segment, offset) => {
                         const index = startIndex + offset;
                         const setupMessage = segment.kind === "message" ? setupPresentation.byMessage.get(segment.item.id) : undefined;
+                        const proposalMessage = segment.kind === "message" ? proposalPresentation.byMessage.get(segment.item.id) : undefined;
+                        const stageMessage = segment.kind === "message" && stagePresentation.targetId === segment.item.id ? dramaStageChoices : undefined;
                         return segment.kind === "operations" ? (
                             // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
                             <AgentOperationFeed
@@ -852,6 +893,8 @@ export function AgentConversation({
                                 onReplyOption={replyTarget?.id === segment.item.id && onReplyOption ? stableReply : undefined}
                                 replyOptionsDisabled={replyOptionsDisabled}
                                 setupChoices={setupMessage && dramaSetupChoices ? { body: setupMessage.body, content: dramaSetupChoices.render(setupMessage.proposals) } : undefined}
+                                proposalChoices={proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: dramaProposalChoices.render(proposalMessage.proposals) } : undefined}
+                                stageChoices={stageMessage}
                                 onRetry={onRetryRun && retryableErrorId === segment.item.id ? stableRetry : undefined}
                                 retrying={retryingRun && retryableErrorId === segment.item.id}
                             />
@@ -860,6 +903,8 @@ export function AgentConversation({
                     {setupPresentation.fallback.length && dramaSetupChoices ? (
                         <AgentChatMessage item={{ id: "drama-setup-choices-fallback", role: "assistant", text: "" }} theme={theme} setupChoices={{ body: "", content: dramaSetupChoices.render(setupPresentation.fallback) }} />
                     ) : null}
+                    {stagePresentation.fallback && dramaStageChoices ? <AgentChatMessage item={{ id: "drama-stage-choices-fallback", role: "assistant", text: "" }} theme={theme} stageChoices={dramaStageChoices} /> : null}
+                    {proposalPresentation.fallback.length && dramaProposalChoices ? <AgentChatMessage item={{ id: "drama-proposal-choices-fallback", role: "assistant", text: "" }} theme={theme} proposalChoices={{ body: "", content: dramaProposalChoices.render(proposalPresentation.fallback) }} /> : null}
                     {approval ? (
                         <ApprovalCard
                             key={approval.approvalId}

@@ -429,6 +429,8 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     onReplyOption,
     replyOptionsDisabled = false,
     setupChoices,
+    proposalChoices,
+    stageChoices,
 }: {
     item: CloudAgentChatMessage;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
@@ -450,6 +452,8 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     onReplyOption?: (text: string) => void;
     replyOptionsDisabled?: boolean;
     setupChoices?: { body: string; content: ReactNode };
+    proposalChoices?: { body: string; content: ReactNode };
+    stageChoices?: { content: ReactNode };
 }) {
     const isUser = item.role === "user";
     const reducedMotion = useReducedMotion();
@@ -458,8 +462,19 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     const formAnswer = item.formAnswer ?? (isUser ? parseCloudAgentFormAnswer(item.text) : undefined);
     const markdownComponents = useMemo(() => createAgentMessageMarkdownComponents(references, onFocusNode), [onFocusNode, references]);
     const showSetupChoices = Boolean(setupChoices && item.role === "assistant" && !isStreaming && !item.streaming);
-    const showReplyOptions = Boolean(replyOptions && onReplyOption && item.role === "assistant" && !isStreaming && !showSetupChoices);
-    const agentMarkdownText = rewriteAgentNodeLinks(showSetupChoices && setupChoices ? setupChoices.body : showReplyOptions && replyOptions ? replyOptions.body : displayedText, references);
+    const showProposalChoices = Boolean(proposalChoices && item.role === "assistant" && !isStreaming && !item.streaming && !showSetupChoices);
+    const showStageChoices = Boolean(stageChoices && item.role === "assistant" && !isStreaming && !item.streaming);
+    const showReplyOptions = Boolean(replyOptions && onReplyOption && item.role === "assistant" && !isStreaming && !showSetupChoices && !showProposalChoices && !showStageChoices);
+    const agentMarkdownText = rewriteAgentNodeLinks(
+        showSetupChoices && setupChoices
+            ? setupChoices.body
+            : showProposalChoices && proposalChoices
+              ? proposalChoices.body
+              : showReplyOptions && replyOptions
+                ? replyOptions.body
+                : displayedText,
+        references,
+    );
     const canvasReference = item.canvasReferenceNodeId ? references.find((reference) => reference.nodeId === item.canvasReferenceNodeId) : undefined;
     const userCanvasMarkdown = canvasReference ? item.text.replace("此图", createAgentNodeLink(canvasReference.nodeId, canvasReference)) : item.text;
     const errorTone = item.errorSeverity === "warning" ? "warning" : "error";
@@ -609,6 +624,8 @@ export const AgentChatMessage = memo(function AgentChatMessage({
                                 </AIMessageMarkdown>
                             ) : null}
                             {showSetupChoices && setupChoices ? setupChoices.content : null}
+                            {showProposalChoices && proposalChoices ? proposalChoices.content : null}
+                            {showStageChoices && stageChoices ? stageChoices.content : null}
                             {showReplyOptions && replyOptions && onReplyOption ? <AgentReplyOptionCards options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} /> : null}
                         </>
                     ) : isUser && canvasReference ? (

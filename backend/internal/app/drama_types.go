@@ -65,10 +65,15 @@ func (t DramaTextThinking) levelFor(step string) string {
 	case DramaStepPrompt:
 		level = t.Prompt
 	}
-	if strings.TrimSpace(level) == "" {
-		return ThinkingIntentAuto
+	// 作品圣经、分集、分镜和视频提示词都必须返回完整的结构化正文。
+	// 未单独指定等级时关闭思考，避免推理内容占满模型的输出预算而截断 JSON；
+	// 用户明确选择的档位或 deep 意图仍原样交给模型能力归一。
+	switch strings.TrimSpace(level) {
+	case "":
+		return ThinkingLevelOff
+	default:
+		return strings.TrimSpace(level)
 	}
-	return strings.TrimSpace(level)
 }
 
 func (t DramaTextThinking) validate() error {
