@@ -73,7 +73,7 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
                     const valid = isValid(proposal);
                     const problem = valid ? issue(proposal) : "此选项已过期，请重新推荐";
                     const label = choiceLabel(proposal);
-                    const detail = typeof proposal.changes.stylePrompt === "string" ? proposal.changes.stylePrompt : "";
+                    const detail = proposal.explanation?.trim() || (typeof proposal.changes.stylePrompt === "string" ? proposal.changes.stylePrompt : "");
                     const problemId = `${headingId}-problem-${index}`;
                     return (
                         <div className="drama-guide-setup-choice-item" key={`${proposal.runId}:${proposal.toolCallId}`}>

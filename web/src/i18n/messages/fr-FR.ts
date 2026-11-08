@@ -259,6 +259,7 @@ export const frFR: Messages = {
             channels: { label: "Mes canaux", description: "Services de modèles et flux personnels" },
             runninghub: { label: "Flux RunningHub", description: "Flux cloud de vos canaux" },
             models: { label: "Modèles", description: "Modèles par défaut par catégorie" },
+            styles: { label: "Gestion des styles", description: "Créer, copier et gérer vos styles personnels" },
             preferences: { label: "Préférences", description: "Apparence, langue, alertes et valeurs par défaut" },
             prompts: { label: "Préférences de prompts", description: "Personnaliser les modèles par tâche" },
             "agent-memory": { label: "Mémoire de l'Agent", description: "Approuver, ajouter, exporter, importer, compacter" },

@@ -282,6 +282,111 @@
     margin-top: var(--space-5) !important;
 }
 
+.drama-guide-config-card {
+    container: drama-guide-config / inline-size;
+}
+
+.drama-guide-configuration {
+    display: grid;
+    grid-template-columns: minmax(200px, 30%) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4) var(--space-5);
+    margin-top: var(--space-4) !important;
+}
+
+.drama-guide-current-style {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-right: var(--space-5);
+    border-right: 1px solid var(--drama-line);
+}
+
+.drama-guide-config-label {
+    color: var(--drama-muted);
+    font-size: var(--fs-label);
+    font-weight: 500;
+}
+
+.drama-guide-style-cover {
+    display: flex;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: var(--space-2);
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background: var(--drama-sunken);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-guide-style-copy {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.drama-guide-style-copy > .drama-guide-style-description {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    color: var(--drama-muted);
+}
+
+.drama-guide-style-prompt > summary {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-guide-style-prompt[open] > summary {
+    margin-bottom: var(--space-2);
+}
+
+.drama-guide-config-controls {
+    align-content: start;
+    gap: var(--space-4);
+    min-width: 0;
+    margin-top: 0 !important;
+}
+
+.drama-guide-config-controls .drama-tabs {
+    flex-wrap: wrap;
+}
+
+.drama-guide-config-controls .drama-tab {
+    justify-content: center;
+    padding-inline: var(--space-2);
+    white-space: nowrap;
+}
+
+@container drama-guide-config (max-width: 640px) {
+    .drama-guide-configuration {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .drama-guide-current-style {
+        padding-right: 0;
+        padding-bottom: var(--space-4);
+        border-right: 0;
+        border-bottom: 1px solid var(--drama-line);
+    }
+
+    .drama-guide-style-cover {
+        max-width: 320px;
+    }
+}
+
+@container drama-guide-config (max-width: 360px) {
+    .drama-guide-config-controls {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 .drama-guide-field {
     display: flex;
     flex-direction: column;

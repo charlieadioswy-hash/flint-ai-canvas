@@ -5,6 +5,10 @@
     gap: var(--space-3);
 }
 
+.agent-message-body > .drama-guide-setup-choices {
+    margin-top: var(--space-3);
+}
+
 .drama-guide-setup-choice-heading h3 {
     font-size: var(--fs-label);
     font-weight: 600;

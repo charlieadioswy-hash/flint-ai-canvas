@@ -5,6 +5,7 @@
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
+import type { AgentDramaContext } from "@/stores/use-global-agent-store";
 import { agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, DEFAULT_CANVAS_APPEARANCE, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
 import { type CSSProperties, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePopoverAnchorAlign } from "@/hooks/use-popover-anchor-align";
@@ -27,7 +28,7 @@ import { AgentChatMessage, AgentOperationFeed, AgentReasoningFeed, AgentWorkingM
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { AgentCanvasUndoState, AgentCanvasUndoTarget } from "@/lib/canvas/agent-canvas-undo";
-import type { AgentMediaSettings, AgentPermissionMode, AgentReasoningMode } from "@/services/api/agent";
+import type { AgentMediaSettings, AgentPermissionMode, AgentReasoningMode, DramaAgentProposal } from "@/services/api/agent";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -43,6 +44,7 @@ import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
+import { prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
 
 // hidden 为 true 时入口保持挂载但不显示：Live2D 模型加载开销大，面板开合不能卸载它，
@@ -664,6 +666,7 @@ export function AgentConversation({
     retryingRun = false,
     guideMode = false,
     onActionsHost,
+    setupChoices,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -699,6 +702,7 @@ export function AgentConversation({
     retryingRun?: boolean;
     guideMode?: boolean;
     onActionsHost?: (host: HTMLDivElement | null) => void;
+    setupChoices?: AgentDramaContext["setupChoices"];
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -715,8 +719,30 @@ export function AgentConversation({
     const [visibleCount, setVisibleCount] = useState(80);
     const startIndex = Math.max(0, segments.length - visibleCount);
     const lastMessage = messages.at(-1);
-    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval;
+    const dramaSetupChoices = guideMode ? setupChoices : undefined;
+    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices;
     const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages) : null), [messages, replyOptionsEnabled]);
+    const setupPresentation = useMemo(() => {
+        const byMessage = new Map<string, ReturnType<typeof prepareDramaSetupMessage>>();
+        const fallback: DramaAgentProposal[] = [];
+        if (!dramaSetupChoices || busy) return { byMessage, fallback };
+        const assistantByRun = new Map<string, CloudAgentChatMessage>();
+        for (const segment of segments) {
+            if (segment.kind === "message" && segment.item.role === "assistant" && !segment.item.reasoning && segment.item.runId) assistantByRun.set(segment.item.runId, segment.item);
+        }
+        const proposalsByRun = new Map<string, DramaAgentProposal[]>();
+        for (const proposal of dramaSetupChoices.proposals) {
+            const proposals = proposalsByRun.get(proposal.runId);
+            if (proposals) proposals.push(proposal);
+            else proposalsByRun.set(proposal.runId, [proposal]);
+        }
+        for (const [runId, proposals] of proposalsByRun) {
+            const target = assistantByRun.get(runId);
+            if (!target) fallback.push(...proposals);
+            else if (!target.streaming) byMessage.set(target.id, prepareDramaSetupMessage(target.text, proposals));
+        }
+        return { byMessage, fallback };
+    }, [busy, dramaSetupChoices, segments]);
     // 父组件每次渲染（例如输入框每敲一个字）都会传入新的回调和引用表。消息组件已 memo，
     // 这里换成稳定的回调和“只看链接字段”的引用表，消息才能跳过与它无关的重渲染。
     const handlersRef = useRef({ onUndo, onWithdrawInterjection, onRequeueInterjection, onReplyOption, onRetryRun });
@@ -794,6 +820,7 @@ export function AgentConversation({
                     ) : null}
                     {segments.slice(startIndex).map((segment, offset) => {
                         const index = startIndex + offset;
+                        const setupMessage = segment.kind === "message" ? setupPresentation.byMessage.get(segment.item.id) : undefined;
                         return segment.kind === "operations" ? (
                             // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
                             <AgentOperationFeed
@@ -824,11 +851,15 @@ export function AgentConversation({
                                 replyOptions={replyTarget?.id === segment.item.id ? replyTarget.options : null}
                                 onReplyOption={replyTarget?.id === segment.item.id && onReplyOption ? stableReply : undefined}
                                 replyOptionsDisabled={replyOptionsDisabled}
+                                setupChoices={setupMessage && dramaSetupChoices ? { body: setupMessage.body, content: dramaSetupChoices.render(setupMessage.proposals) } : undefined}
                                 onRetry={onRetryRun && retryableErrorId === segment.item.id ? stableRetry : undefined}
                                 retrying={retryingRun && retryableErrorId === segment.item.id}
                             />
                         );
                     })}
+                    {setupPresentation.fallback.length && dramaSetupChoices ? (
+                        <AgentChatMessage item={{ id: "drama-setup-choices-fallback", role: "assistant", text: "" }} theme={theme} setupChoices={{ body: "", content: dramaSetupChoices.render(setupPresentation.fallback) }} />
+                    ) : null}
                     {approval ? (
                         <ApprovalCard
                             key={approval.approvalId}

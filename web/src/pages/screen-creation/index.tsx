@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ScreenCreationWorkspace } from "./screen-creation-workspace";
 import { useScreenCreation } from "./use-screen-creation";
-import { Navigate, useLocation, useParams, useSearchParams } from "react-router";
+import { Navigate, useParams, useSearchParams } from "react-router";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { useUserStore } from "@/stores/use-user-store";
@@ -10,10 +10,10 @@ import { useScreenCreationScenes } from "./use-screen-creation-scenes";
 
 export default function ScreenCreationPage() {
     const { canvasId } = useParams();
-    const location = useLocation();
     const [searchParams] = useSearchParams();
     const userId = useUserStore((state) => state.user?.id);
-    return <ScreenCreationEntry key={`${userId || "guest"}:${location.key}`} canvasId={canvasId} newScene={searchParams.get("new") === "1"} />;
+    const newScene = searchParams.get("new") === "1";
+    return <ScreenCreationEntry key={`${userId || "guest"}:${canvasId || "entry"}:${newScene}`} canvasId={canvasId} newScene={newScene} />;
 }
 
 function ScreenCreationEntry({ canvasId, newScene }: { canvasId?: string; newScene: boolean }) {
@@ -25,18 +25,36 @@ function ScreenCreationEntry({ canvasId, newScene }: { canvasId?: string; newSce
         if (entry || canvasId || !library.ready || library.query.isError || (!newScene && library.userId && library.query.isFetching)) return;
         const controller = new AbortController();
         setEntryError(undefined);
-        void loadScreenCreationEntry({ ...library, newScene }, controller.signal).then(async (resolved) => {
-            if (controller.signal.aborted || !resolved) return;
-            if (!resolved.canvasId && !newScene && library.query.hasNextPage) {
-                await library.query.fetchNextPage({ cancelRefetch: false });
-                return;
-            }
-            setEntry(resolved);
-        }).catch((failure) => {
-            if (!controller.signal.aborted) setEntryError(failure);
-        });
+        void loadScreenCreationEntry({ ...library, newScene }, controller.signal)
+            .then(async (resolved) => {
+                if (controller.signal.aborted || !resolved) return;
+                if (!resolved.canvasId && !newScene && library.query.hasNextPage) {
+                    await library.query.fetchNextPage({ cancelRefetch: false });
+                    return;
+                }
+                setEntry(resolved);
+            })
+            .catch((failure) => {
+                if (!controller.signal.aborted) setEntryError(failure);
+            });
         return () => controller.abort();
-    }, [canvasId, entry, newScene, attempt, library.ready, library.userId, library.userHydrated, library.canvasHydrated, library.activeScope, library.projects, library.remoteScenes, library.query.isError, library.query.isFetching, library.query.hasNextPage, library.query.fetchNextPage]);
+    }, [
+        canvasId,
+        entry,
+        newScene,
+        attempt,
+        library.ready,
+        library.userId,
+        library.userHydrated,
+        library.canvasHydrated,
+        library.activeScope,
+        library.projects,
+        library.remoteScenes,
+        library.query.isError,
+        library.query.isFetching,
+        library.query.hasNextPage,
+        library.query.fetchNextPage,
+    ]);
 
     if (library.ready && (canvasId || newScene || entry)) {
         if (!canvasId && !newScene && entry?.canvasId) return <Navigate to={`/screen-creation/${encodeURIComponent(entry.canvasId)}`} replace />;

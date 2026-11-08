@@ -71,7 +71,7 @@ async function fixture(proposals: DramaAgentProposal[], blocked: { invalid?: str
 }
 
 test("同轮风格备选成为直接选择按钮，不包含应用或确认步骤", async () => {
-    const choices = [option("real", { styleName: "电影写实", stylePrompt: "自然光与真实材质", models: { video: "不应展示" } }), option("anime", { styleName: "国风动画", stylePrompt: "细腻线条" })];
+    const choices = [option("real", { styleName: "电影写实", stylePrompt: "自然光与真实材质", models: { video: "不应展示" } }), { ...option("anime", { styleName: "国风动画", stylePrompt: "细腻线条" }), explanation: "适合东方奇幻故事" }];
     const ui = await fixture(choices);
     try {
         expect(ui.host.querySelectorAll("section")).toHaveLength(1);
@@ -79,6 +79,8 @@ test("同轮风格备选成为直接选择按钮，不包含应用或确认步�
         expect(ui.host.textContent).not.toContain("不应展示");
         const buttons = ui.host.querySelectorAll<HTMLButtonElement>(".drama-guide-setup-choice");
         expect(buttons).toHaveLength(2);
+        expect(buttons[0].textContent).toContain("自然光与真实材质");
+        expect(buttons[1].textContent).toContain("适合东方奇幻故事");
         await act(async () => buttons[1].click());
         expect(ui.chosen).toEqual([choices[1]]);
         expect(ui.custom).toEqual([]);

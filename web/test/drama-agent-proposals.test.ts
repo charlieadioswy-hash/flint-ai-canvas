@@ -27,6 +27,15 @@ describe("短剧 Agent 建议回放", () => {
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, kind: "generate_media" } })).toBeNull();
     });
 
+    test("选项说明从工具元数据恢复且不混入配置", () => {
+        const detail = { eventType: "tool_completed", toolName: "drama_propose_changes", runId: "run", callId: "choice", result: { kind: "setup", baseRevision: 7, changes: { language: "粤语" }, explanation: "  面向粤语观众  " } };
+        const proposal = dramaProposalFromToolDetail(detail)!;
+        expect(proposal.explanation).toBe("面向粤语观众");
+        expect(proposal.changes).toEqual({ language: "粤语" });
+        for (const explanation of [undefined, null, 123, "  "]) expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, explanation } })?.explanation).toBeUndefined();
+        expect([...dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, explanation: "🎬".repeat(1001) } })!.explanation!]).toHaveLength(1000);
+    });
+
     test("识别新增资产建议，删除建议必须具有目标与原因", () => {
         const detail = { eventType: "tool_completed", toolName: "drama_propose_changes", runId: "run", callId: "proposal", result: { kind: "cast_create", baseRevision: 3, changes: { kind: "scene", name: "小院" } } };
         expect(dramaProposalFromToolDetail(detail)?.kind).toBe("cast_create");

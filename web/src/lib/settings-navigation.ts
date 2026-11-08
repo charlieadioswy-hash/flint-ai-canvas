@@ -1,4 +1,4 @@
-export type SettingsSection = "profile" | "channels" | "models" | "preferences" | "prompts" | "storage";
+export type SettingsSection = "profile" | "channels" | "models" | "preferences" | "styles" | "prompts" | "storage";
 
 export function settingsPath(section?: SettingsSection, continueCreation = false) {
     const params = new URLSearchParams({ section: section ?? (continueCreation ? "channels" : "profile") });

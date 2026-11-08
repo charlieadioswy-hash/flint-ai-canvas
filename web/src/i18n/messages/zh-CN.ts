@@ -259,6 +259,7 @@ export const zhCN = {
             channels: { label: "个人渠道", description: "模型服务与个人工作流" },
             runninghub: { label: "RunningHub 工作流", description: "个人渠道的云端工作流配置" },
             models: { label: "模型选择", description: "按领域选择默认模型" },
+            styles: { label: "风格管理", description: "新建、复制与管理个人风格" },
             preferences: { label: "偏好设置", description: "外观、语言、通知与生成默认值" },
             prompts: { label: "提示词偏好", description: "按任务定制平台模板" },
             "agent-memory": { label: "Agent 记忆", description: "批准、添加、导出导入、压缩" },

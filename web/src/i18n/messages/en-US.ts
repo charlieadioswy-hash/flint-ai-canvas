@@ -258,6 +258,7 @@ export const enUS: Messages = {
             channels: { label: "My channels", description: "Model services and personal workflows" },
             runninghub: { label: "RunningHub workflows", description: "Cloud workflows for your channels" },
             models: { label: "Models", description: "Default models by category" },
+            styles: { label: "Style management", description: "Create, copy and manage personal styles" },
             preferences: { label: "Preferences", description: "Appearance, language, alerts and defaults" },
             prompts: { label: "Prompt preferences", description: "Customize platform templates per task" },
             "agent-memory": { label: "Agent memory", description: "Approve, add, export, import and compact" },

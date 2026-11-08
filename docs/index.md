@@ -12,6 +12,8 @@
 
 ## 设计沉淀
 
+- [个人风格管理与资产封面](design/personal-style-management.md)：账户设置复用画布风格管理，支持资产库选封面与 AI 填写配置；封面资产绑定、按风格生图与短剧联动保留为后续方案。
+
 - [短剧 Agent 引导创建](design/short-drama-guided-creation.md)：复用现有 Agent 会话与短剧流水线，仅 Agent 入口启用方案、资产文字、剧本分镜确认，保留传统创建入口与原流程，图片按需生成后进入原制作台（提案，未实施）。
 
 - [画布 3D 模型生成](design/model3d-generation.mdx)：文本、单图与多视图节点、后台配置、异步任务恢复与模型预览设计；[API 与行业调研](design/model3d-api-research.mdx) 记录官方协议、计费边界和 FBX / ABC 导出可行性。

@@ -74,6 +74,8 @@ export type DramaAgentProposal = {
     targetId?: string;
     baseRevision: number;
     changes: Record<string, unknown>;
+    /** 选项说明，仅用于展示，不参与配置写入。 */
+    explanation?: string;
     runId: string;
     toolCallId: string;
 };
@@ -103,6 +105,7 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
         targetId: typeof result.targetId === "string" ? result.targetId : undefined,
         baseRevision: Number(result.baseRevision),
         changes: result.changes as Record<string, unknown>,
+        ...(typeof result.explanation === "string" && result.explanation.trim() ? { explanation: [...result.explanation.trim()].slice(0, 1000).join("") } : {}),
         runId: detail.runId,
         toolCallId: detail.callId,
     };

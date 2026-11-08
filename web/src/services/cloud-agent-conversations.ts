@@ -10,6 +10,7 @@ export type CloudAgentMessagePresentation = {
 
 export type CloudAgentConversationMessage = {
     id: string;
+    runId?: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
     title?: string;
     text: string;

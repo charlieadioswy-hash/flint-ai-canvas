@@ -259,6 +259,7 @@ export const jaJP: Messages = {
             channels: { label: "個人チャネル", description: "モデルサービスと個人ワークフロー" },
             runninghub: { label: "RunningHub ワークフロー", description: "個人チャネルのクラウドワークフロー" },
             models: { label: "モデル選択", description: "分野ごとの既定モデル" },
+            styles: { label: "スタイル管理", description: "個人スタイルの作成、複製、管理" },
             preferences: { label: "環境設定", description: "外観、言語、通知と生成の既定値" },
             prompts: { label: "プロンプト設定", description: "タスクごとにテンプレートを調整" },
             "agent-memory": { label: "エージェントの記憶", description: "承認、追加、エクスポート、インポート、圧縮" },

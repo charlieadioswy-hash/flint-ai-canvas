@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Input, Select } from "antd";
-import { Check, ImagePlus, Pencil, RotateCcw, Shirt, UsersRound } from "lucide-react";
+import { Check, ImagePlus, ImageIcon, Pencil, RotateCcw, Shirt, UsersRound } from "lucide-react";
 
+import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
+import { DRAMA_STYLES, styleCoverBackground } from "@/lib/drama/drama-styles";
 import { getDramaChapter, listDramaChapters, type DramaCast, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaSegment, type DramaSettings, type DramaShot, type DramaShotPatch, type DramaSummary } from "@/services/api/drama";
 
 import { AssetSchemePicker } from "./asset-scheme";
@@ -43,6 +44,7 @@ export function GuideConfiguration({
     onAskAgent: () => void;
 }) {
     const catalog = useDramaModelCatalog();
+    const [stylePickerOpen, setStylePickerOpen] = useState(false);
     const patch = (change: Partial<DramaSettings>) => {
         if (editable && !busy) onChange({ ...settings, ...change, mediaMode: "manual" });
     };
@@ -52,7 +54,7 @@ export function GuideConfiguration({
     const videoOption = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings.models.video));
     return (
         <div className="drama-guide-stack">
-            <section className="drama-guide-card">
+            <section className="drama-guide-card drama-guide-config-card">
                 <div className="drama-guide-section-head">
                     <div>
                         <h2>先把创作方向聊清楚</h2>
@@ -72,61 +74,73 @@ export function GuideConfiguration({
                         <p>{summary.production.creativeBrief}</p>
                     </div>
                 ) : null}
-                <fieldset disabled={!editable || busy} inert={!editable || busy} className="drama-guide-fields">
-                    <label className="drama-guide-field">
-                        <span>视频画幅</span>
-                        <div className="drama-tabs" role="radiogroup" aria-label="视频画幅">
-                            {["9:16", "16:9", "1:1"].map((value) => (
-                                <button type="button" key={value} className="drama-tab" role="radio" aria-checked={settings.aspectRatio === value} onClick={() => patch({ aspectRatio: value })}>
-                                    {value === "9:16" ? "竖屏" : value === "16:9" ? "横屏" : "方形"} {value}
-                                </button>
-                            ))}
+                <fieldset disabled={!editable || busy} inert={!editable || busy} className="drama-guide-configuration">
+                    <div className="drama-guide-current-style" aria-label="当前视觉风格">
+                        <span className="drama-guide-config-label">视觉风格</span>
+                        <div className="drama-guide-style-cover" style={style ? { background: styleCoverBackground(style) } : undefined} role="img" aria-label={style?.cover ? `${style.name}风格样图` : "当前风格暂无样图"}>
+                            {!style?.cover ? (
+                                <>
+                                    <ImageIcon className="size-7" aria-hidden="true" />
+                                    <span>{style ? "风格主色示意" : "暂无风格样图"}</span>
+                                </>
+                            ) : null}
                         </div>
-                    </label>
-                    <label className="drama-guide-field">
-                        <span>单集时长</span>
-                        <EpisodeDurationInput value={settings.episodeSeconds} onChange={(episodeSeconds) => patch({ episodeSeconds })} />
-                    </label>
-                    <label className="drama-guide-field">
-                        <span>对白语言</span>
-                        <Select
-                            disabled={!editable || busy}
-                            value={settings.language}
-                            aria-label="对白语言"
-                            options={[...new Set(["中文普通话", "粤语", "英语", "日语", settings.language])].map((value) => ({ value, label: value }))}
-                            onChange={(language) => patch({ language })}
-                        />
-                    </label>
-                    <label className="drama-guide-field">
-                        <span>分集方式</span>
-                        <Select
-                            disabled={!editable || busy}
-                            aria-label="分集方式"
-                            value={settings.episodeMode || "chapter"}
-                            options={[
-                                { value: "chapter", label: "按章节分集" },
-                                { value: "auto", label: "模型自动规划分集" },
-                            ]}
-                            onChange={(episodeMode) => patch({ episodeMode })}
-                        />
-                    </label>
-                    <div className="drama-guide-field is-full">
-                        <span>视觉风格 · {settings.styleName || "自定义"}</span>
-                        <p className="drama-guide-style-description">{settings.stylePrompt || "请与 Agent 确认视觉风格"}</p>
-                        <details>
-                            <summary>选择其他风格</summary>
-                            <DramaStylePicker
-                                value={style?.id || ""}
-                                onChange={(id) => {
-                                    const selected = DRAMA_STYLES.find((item) => item.id === id);
-                                    if (selected) patch({ styleName: selected.name, stylePrompt: selected.prompt });
-                                }}
-                            />
-                        </details>
+                        <div className="drama-guide-style-copy">
+                            <h3>{settings.styleName || style?.name || "自定义风格"}</h3>
+                            <p className="drama-guide-style-description">{style?.description || settings.stylePrompt || "请与 Agent 确认视觉风格"}</p>
+                            {settings.stylePrompt ? (
+                                <details className="drama-guide-style-prompt">
+                                    <summary>查看完整风格说明</summary>
+                                    <p className="drama-guide-prompt">{settings.stylePrompt}</p>
+                                </details>
+                            ) : null}
+                        </div>
+                        <Button disabled={!editable || busy} onClick={() => setStylePickerOpen(true)}>
+                            选择其他风格
+                        </Button>
                     </div>
-                    <div className="drama-guide-field is-full">
-                        <span>视频分辨率</span>
-                        <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
+                    <div className="drama-guide-fields drama-guide-config-controls" aria-label="视频配置">
+                        <label className="drama-guide-field">
+                            <span>视频画幅</span>
+                            <div className="drama-tabs" role="radiogroup" aria-label="视频画幅">
+                                {["9:16", "16:9", "1:1"].map((value) => (
+                                    <button type="button" key={value} className="drama-tab" role="radio" aria-checked={settings.aspectRatio === value} onClick={() => patch({ aspectRatio: value })}>
+                                        {value === "9:16" ? "竖屏" : value === "16:9" ? "横屏" : "方形"} {value}
+                                    </button>
+                                ))}
+                            </div>
+                        </label>
+                        <label className="drama-guide-field">
+                            <span>单集时长</span>
+                            <EpisodeDurationInput value={settings.episodeSeconds} onChange={(episodeSeconds) => patch({ episodeSeconds })} />
+                        </label>
+                        <label className="drama-guide-field">
+                            <span>对白语言</span>
+                            <Select
+                                disabled={!editable || busy}
+                                value={settings.language}
+                                aria-label="对白语言"
+                                options={[...new Set(["中文普通话", "粤语", "英语", "日语", settings.language])].map((value) => ({ value, label: value }))}
+                                onChange={(language) => patch({ language })}
+                            />
+                        </label>
+                        <label className="drama-guide-field">
+                            <span>分集方式</span>
+                            <Select
+                                disabled={!editable || busy}
+                                aria-label="分集方式"
+                                value={settings.episodeMode || "chapter"}
+                                options={[
+                                    { value: "chapter", label: "按章节分集" },
+                                    { value: "auto", label: "模型自动规划分集" },
+                                ]}
+                                onChange={(episodeMode) => patch({ episodeMode })}
+                            />
+                        </label>
+                        <div className="drama-guide-field is-full">
+                            <span>视频分辨率</span>
+                            <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
+                        </div>
                     </div>
                     <details className="drama-guide-advanced is-full">
                         <summary>更多制作设置</summary>
@@ -172,6 +186,18 @@ export function GuideConfiguration({
                         </div>
                     </details>
                 </fieldset>
+                <AppModal open={stylePickerOpen && editable && !busy} title="选择视觉风格" onCancel={() => setStylePickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
+                    <DramaStylePicker
+                        value={style?.id || ""}
+                        onChange={(id) => {
+                            const selected = DRAMA_STYLES.find((item) => item.id === id);
+                            if (selected) {
+                                patch({ styleName: selected.name, stylePrompt: selected.prompt });
+                                setStylePickerOpen(false);
+                            }
+                        }}
+                    />
+                </AppModal>
                 {editable && dirty ? (
                     <div className="drama-guide-inline-actions">
                         {stale ? <span role="alert">配置已有更新，请重新载入后调整。</span> : <span>有尚未保存的调整</span>}

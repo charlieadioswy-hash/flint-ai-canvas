@@ -259,6 +259,7 @@ export const koKR: Messages = {
             channels: { label: "개인 채널", description: "모델 서비스와 개인 워크플로" },
             runninghub: { label: "RunningHub 워크플로", description: "개인 채널의 클라우드 워크플로" },
             models: { label: "모델 선택", description: "분야별 기본 모델" },
+            styles: { label: "스타일 관리", description: "개인 스타일 생성, 복사 및 관리" },
             preferences: { label: "환경설정", description: "외관, 언어, 알림과 생성 기본값" },
             prompts: { label: "프롬프트 설정", description: "작업별 템플릿 맞춤 설정" },
             "agent-memory": { label: "에이전트 기억", description: "승인, 추가, 내보내기, 가져오기, 압축" },

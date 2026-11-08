@@ -81,7 +81,14 @@ export function applyAgentEvent(
                 : current,
         );
         if (terminal) {
-            setMessages((current) => current.map((message) => (message.id === `plan-${event.runId}` && message.planItems?.length ? { ...message, planTerminal: true, streaming: false } : message)));
+            setMessages((current) =>
+                current.map((message) => {
+                    if (message.id === `plan-${event.runId}` && message.planItems?.length) return { ...message, planTerminal: true, streaming: false };
+                    // 输出中断时可能没有完整回复快照，终态负责收敛本轮的流式消息。
+                    if (message.role === "assistant" && message.runId === event.runId && message.streaming) return { ...message, streaming: false };
+                    return message;
+                }),
+            );
         }
         if (nextStatus === "failed") {
             setMessages((current) => upsertRunFailure(current, event, String(payload.failureMessage || "")));
@@ -121,12 +128,12 @@ export function applyAgentEvent(
         return;
     }
     if (event.type === "assistant_delta") {
-        setMessages((current) => upsertTextMessage(current, String(payload.messageId || "assistant"), text, true));
+        setMessages((current) => upsertTextMessage(current, String(payload.messageId || "assistant"), text, true, event.runId));
         return;
     }
     if (event.type === "reasoning_delta" || event.type === "reasoning_message") {
         const id = String(payload.messageId || `${event.runId}:reasoning`);
-        setMessages((current) => upsertTextMessage(current, id, text, event.type === "reasoning_delta").map((item) => (item.id === id ? { ...item, reasoning: true } : item)));
+        setMessages((current) => upsertTextMessage(current, id, text, event.type === "reasoning_delta", event.runId).map((item) => (item.id === id ? { ...item, reasoning: true } : item)));
         return;
     }
     if (event.type === "media_batch_progress") {
@@ -309,11 +316,11 @@ export function applyAgentEvent(
         return;
     }
     if (event.type === "assistant_message") {
-        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false));
+        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false, event.runId));
         return;
     }
     if (event.type === "assistant_snapshot") {
-        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false));
+        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false, event.runId));
         return;
     }
     if (event.type === "approval_requested") {
@@ -527,12 +534,12 @@ export function appendUniqueMessage(current: CloudAgentChatMessage[], message: C
     return current.some((item) => item.id === message.id) ? current : [...current, message];
 }
 
-export function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean): CloudAgentChatMessage[] {
+export function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean, runId?: string): CloudAgentChatMessage[] {
     const index = current.findIndex((item) => item.id === id);
-    if (index < 0) return [...current, { id, role: "assistant" as const, text, streaming: append }];
-    if (!append && current[index].text === text && !current[index].streaming) return current;
+    if (index < 0) return [...current, { id, role: "assistant" as const, text, streaming: append, ...(runId ? { runId } : {}) }];
+    if (!append && current[index].text === text && !current[index].streaming && (!runId || current[index].runId === runId)) return current;
     const next = [...current];
-    next[index] = { ...next[index], text: append ? `${next[index].text}${text}` : text, streaming: append };
+    next[index] = { ...next[index], text: append ? `${next[index].text}${text}` : text, streaming: append, ...(runId ? { runId } : {}) };
     return next;
 }
 

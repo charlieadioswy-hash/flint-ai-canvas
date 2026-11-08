@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Input, Segmented } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { Braces, Image, Layers3, Save, Check, Palette } from "lucide-react";
+import { Braces, FolderOpen, Image, Layers3, Save, Check, Palette, Sparkles } from "lucide-react";
 
+import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { StyleAssetBindingModal } from "@/components/canvas/style-asset-binding-modal";
+import { StyleProfileDraftModal } from "@/components/canvas/style-profile-draft-modal";
+import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-category";
 import { createStyleProfileSnapshot, styleProfileValidationMessage, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import { Select } from "@/components/ui/base/select";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { getImageBlob, uploadImage } from "@/services/image-storage";
+import { useAssetStore } from "@/stores/use-asset-store";
 
 type EditorSection = "identity" | "prompt" | "execution";
 
@@ -13,16 +19,19 @@ type StyleProfileEditorModalProps = {
     open: boolean;
     initialProfile: StyleProfileSnapshot | null;
     saving?: boolean;
+    allowApplyToProject?: boolean;
     onClose: () => void;
     onSave: (profile: StyleProfileSnapshot, applyToProject: boolean) => void;
 };
 
-export function StyleProfileEditorModal({ open, initialProfile, saving = false, onClose, onSave }: StyleProfileEditorModalProps) {
+export function StyleProfileEditorModal({ open, initialProfile, saving = false, allowApplyToProject = true, onClose, onSave }: StyleProfileEditorModalProps) {
     const { message, modal } = App.useApp();
     const [section, setSection] = useState<EditorSection>("identity");
     const [draft, setDraft] = useState<StyleProfileSnapshot | null>(initialProfile);
     const [baseline, setBaseline] = useState("");
     const [assetsOpen, setAssetsOpen] = useState(false);
+    const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+    const [aiDraftOpen, setAiDraftOpen] = useState(false);
 
     useEffect(() => {
         if (!open) return;
@@ -31,12 +40,14 @@ export function StyleProfileEditorModal({ open, initialProfile, saving = false, 
         setBaseline(next ? JSON.stringify(next) : "");
         setSection("identity");
         setAssetsOpen(false);
+        setCoverPickerOpen(false);
+        setAiDraftOpen(false);
     }, [initialProfile, open]);
 
-    const validationMessage = useMemo(() => draft ? styleProfileValidationMessage(draft) : "风格草稿不存在", [draft]);
+    const validationMessage = useMemo(() => (draft ? styleProfileValidationMessage(draft) : "风格草稿不存在"), [draft]);
     if (!draft) return null;
 
-    const update = (patch: Partial<StyleProfileSnapshot>) => setDraft((current) => current ? { ...current, ...patch } : current);
+    const update = (patch: Partial<StyleProfileSnapshot>) => setDraft((current) => (current ? { ...current, ...patch } : current));
     const requestClose = () => {
         if (JSON.stringify(draft) === baseline) {
             onClose();
@@ -49,26 +60,19 @@ export function StyleProfileEditorModal({ open, initialProfile, saving = false, 
             message.error(validationMessage);
             return;
         }
-        onSave(createStyleProfileSnapshot({ ...draft, source: "user" }), applyToProject);
+        onSave(createStyleProfileSnapshot({ ...draft, source: "user" }), allowApplyToProject && applyToProject);
     };
 
     return (
         <>
-            <AppModal
-                rootClassName="style-profile-editor-modal"
-                open={open}
-                title={null}
-                footer={null}
-                centered
-                width="min(1120px, calc(100vw - 24px))"
-                onCancel={requestClose}
-                flush
-            >
+            <AppModal rootClassName="style-profile-editor-modal" open={open} title={null} footer={null} centered width="min(1120px, calc(100vw - 24px))" onCancel={requestClose} flush>
                 <div className="flex max-h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
                     <header className="flex min-h-16 items-center border-b border-border px-4 pr-12 sm:px-5 sm:pr-14">
                         <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-foreground/5"><Palette className="size-3.5" /></span>
+                                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-foreground/5">
+                                    <Palette className="size-3.5" />
+                                </span>
                                 <div>
                                     <h2 className="text-sm font-semibold">风格编辑器</h2>
                                     <p className="mt-0.5 truncate text-[var(--fs-tiny)] text-foreground/45">{draft.title || "未命名风格"} · 我的风格</p>
@@ -86,22 +90,45 @@ export function StyleProfileEditorModal({ open, initialProfile, saving = false, 
                     <div className="style-profile-editor-workspace grid min-h-0 flex-1 lg:grid-cols-3">
                         <StylePreview profile={draft} />
                         <main id={`style-profile-panel-${section}`} className="thin-scrollbar min-h-0 overflow-y-auto p-4 sm:p-5 lg:col-span-2" role="tabpanel" aria-labelledby={`style-profile-tab-${section}`}>
-                            {section === "identity" ? <IdentityFields profile={draft} onChange={update} /> : null}
+                            {section === "identity" ? <IdentityFields profile={draft} onChange={update} onChooseCover={() => setCoverPickerOpen(true)} /> : null}
                             {section === "prompt" ? <PromptFields profile={draft} onChange={update} /> : null}
                             {section === "execution" ? <ExecutionFields profile={draft} onChange={update} onEditAssets={() => setAssetsOpen(true)} /> : null}
                         </main>
                     </div>
 
                     <footer className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                        <p className={`text-[var(--fs-tiny)] ${validationMessage ? "text-red-500" : "text-foreground/45"}`}>{validationMessage || "保存后进入“我的风格”；应用时会把当前版本复制为项目快照"}</p>
+                        <p className={`text-[var(--fs-tiny)] ${validationMessage ? "text-red-500" : "text-foreground/45"}`}>
+                            {validationMessage || (allowApplyToProject ? "保存后进入“我的风格”；应用时会把当前版本复制为项目快照" : "保存后进入“我的风格”，已有项目继续使用原有风格快照")}
+                        </p>
                         <div className="flex shrink-0 flex-wrap justify-end gap-2">
                             <Button onClick={requestClose}>取消</Button>
-                            <Button icon={<Save className="size-3.5" />} disabled={Boolean(validationMessage)} loading={saving} onClick={() => submit(false)}>保存到我的风格</Button>
-                            <Button type="primary" icon={<Check className="size-3.5" />} disabled={Boolean(validationMessage)} loading={saving} onClick={() => submit(true)}>保存并应用</Button>
+                            <Button icon={<Sparkles className="size-3.5" />} disabled={saving} onClick={() => setAiDraftOpen(true)}>
+                                AI 帮我填写
+                            </Button>
+                            <Button type={allowApplyToProject ? "default" : "primary"} icon={<Save className="size-3.5" />} disabled={Boolean(validationMessage)} loading={saving} onClick={() => submit(false)}>
+                                保存到我的风格
+                            </Button>
+                            {allowApplyToProject ? (
+                                <Button type="primary" icon={<Check className="size-3.5" />} disabled={Boolean(validationMessage)} loading={saving} onClick={() => submit(true)}>
+                                    保存并应用
+                                </Button>
+                            ) : null}
                         </div>
                     </footer>
                 </div>
             </AppModal>
+            {open && aiDraftOpen ? (
+                <StyleProfileDraftModal
+                    profile={draft}
+                    onClose={() => setAiDraftOpen(false)}
+                    onFill={(profile) => {
+                        setDraft(profile);
+                        setSection("identity");
+                        message.success("风格配置已填入，请检查后保存");
+                    }}
+                />
+            ) : null}
+            {open && coverPickerOpen ? <StyleCoverPicker onClose={() => setCoverPickerOpen(false)} onPick={(coverUrl) => update({ coverUrl })} /> : null}
             <StyleAssetBindingModal
                 open={assetsOpen}
                 profile={draft}
@@ -119,14 +146,28 @@ function StylePreview({ profile }: { profile: StyleProfileSnapshot }) {
     return (
         <aside className="style-profile-editor-preview thin-scrollbar min-h-0 overflow-y-auto border-b border-border bg-foreground/5 lg:border-b-0 lg:border-r">
             <div className="relative aspect-video overflow-hidden border-b border-border bg-foreground/5">
-                {profile.coverUrl ? <img src={profile.coverUrl} alt={`${profile.title || "未命名风格"}封面`} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-foreground/25"><Image className="size-7" /></div>}
+                {profile.coverUrl ? (
+                    <img src={profile.coverUrl} alt={`${profile.title || "未命名风格"}封面`} className="h-full w-full object-cover" />
+                ) : (
+                    <div className="grid h-full place-items-center text-foreground/25">
+                        <Image className="size-7" />
+                    </div>
+                )}
                 <span className="absolute bottom-3 left-3 rounded bg-background/85 px-2 py-1 text-[var(--fs-tiny)] font-medium backdrop-blur">我的风格</span>
             </div>
             <div className="p-4 sm:p-5">
                 <h3 className="text-base font-semibold">{profile.title || "未命名风格"}</h3>
                 <p className="mt-2 text-xs leading-5 text-foreground/48">{profile.description || "填写简介，让风格库中更容易判断它适合什么项目。"}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                    {profile.tags.length ? profile.tags.map((tag) => <span key={tag} className="rounded bg-foreground/10 px-2 py-1 text-[var(--fs-tiny)] text-foreground/58">{tag}</span>) : <span className="text-[var(--fs-tiny)] text-foreground/35">暂无标签</span>}
+                    {profile.tags.length ? (
+                        profile.tags.map((tag) => (
+                            <span key={tag} className="rounded bg-foreground/10 px-2 py-1 text-[var(--fs-tiny)] text-foreground/58">
+                                {tag}
+                            </span>
+                        ))
+                    ) : (
+                        <span className="text-[var(--fs-tiny)] text-foreground/35">暂无标签</span>
+                    )}
                 </div>
                 <dl className="mt-5 grid grid-cols-2 border-y border-border py-3 text-[var(--fs-tiny)]">
                     <Metric label="Prompt" value={`${profile.prompt.length} 字`} />
@@ -139,26 +180,113 @@ function StylePreview({ profile }: { profile: StyleProfileSnapshot }) {
     );
 }
 
-function IdentityFields({ profile, onChange }: EditorFieldsProps) {
+function IdentityFields({ profile, onChange, onChooseCover }: EditorFieldsProps & { onChooseCover: () => void }) {
     const selection = profile.selection || {};
     const setSelection = (key: string, value: string) => onChange({ selection: { ...selection, [key]: value } });
     return (
         <div className="space-y-5">
             <SectionHeading title="风格身份" description="名称、封面和标签会出现在“我的风格”中" />
             <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="风格名称" className="sm:col-span-2"><Input maxLength={80} showCount value={profile.title} placeholder="例如：东方志怪 · 工笔暗彩" onChange={(event) => onChange({ title: event.target.value })} /></Field>
-                <Field label="风格简介" className="sm:col-span-2"><Input.TextArea maxLength={500} showCount autoSize={{ minRows: 3, maxRows: 6 }} value={profile.description} placeholder="说明适用题材、画面气质和核心辨识度" onChange={(event) => onChange({ description: event.target.value })} /></Field>
-                <Field label="封面图 URL" className="sm:col-span-2"><Input value={profile.coverUrl} placeholder="可填写项目资源 URL 或可访问的图片地址" onChange={(event) => onChange({ coverUrl: event.target.value })} /></Field>
-                <Field label="标签" className="sm:col-span-2"><Select mode="tags" maxCount={20} tokenSeparators={[",", "，"]} value={profile.tags} placeholder="输入题材、媒介、色彩或质感后回车" onChange={(tags) => onChange({ tags })} /></Field>
+                <Field label="风格名称" className="sm:col-span-2">
+                    <Input maxLength={80} showCount value={profile.title} placeholder="例如：东方志怪 · 工笔暗彩" onChange={(event) => onChange({ title: event.target.value })} />
+                </Field>
+                <Field label="风格简介" className="sm:col-span-2">
+                    <Input.TextArea maxLength={500} showCount autoSize={{ minRows: 3, maxRows: 6 }} value={profile.description} placeholder="说明适用题材、画面气质和核心辨识度" onChange={(event) => onChange({ description: event.target.value })} />
+                </Field>
+                <div className="grid gap-2 text-xs sm:col-span-2">
+                    <label htmlFor="style-profile-cover-url" className="font-medium text-foreground/62">
+                        封面图 URL
+                    </label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                        <Input id="style-profile-cover-url" className="min-w-0 flex-1" value={profile.coverUrl} placeholder="选择资产库图片，或填写图片地址" onChange={(event) => onChange({ coverUrl: event.target.value })} />
+                        <Button className="shrink-0" icon={<FolderOpen className="size-3.5" />} onClick={onChooseCover}>
+                            从资产库选择
+                        </Button>
+                    </div>
+                </div>
+                <Field label="标签" className="sm:col-span-2">
+                    <Select mode="tags" maxCount={20} tokenSeparators={[",", "，"]} value={profile.tags} placeholder="输入题材、媒介、色彩或质感后回车" onChange={(tags) => onChange({ tags })} />
+                </Field>
             </div>
             <SectionHeading title="辅助标注" description="这些字段用于检索和理解，不会限制你自由编写 Prompt" />
             <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="题材世界"><Input value={selection.world || ""} placeholder="仙侠、都市、悬疑……" onChange={(event) => setSelection("world", event.target.value)} /></Field>
-                <Field label="视觉媒介"><Input value={selection.medium || ""} placeholder="真人实拍、二维、水墨……" onChange={(event) => setSelection("medium", event.target.value)} /></Field>
-                <Field label="叙事气质"><Input value={selection.tone || ""} placeholder="史诗、克制、轻喜剧……" onChange={(event) => setSelection("tone", event.target.value)} /></Field>
-                <Field label="角色造型"><Input value={selection.character || ""} placeholder="写实、半写实、风格化……" onChange={(event) => setSelection("character", event.target.value)} /></Field>
+                <Field label="题材世界">
+                    <Input value={selection.world || ""} placeholder="仙侠、都市、悬疑……" onChange={(event) => setSelection("world", event.target.value)} />
+                </Field>
+                <Field label="视觉媒介">
+                    <Input value={selection.medium || ""} placeholder="真人实拍、二维、水墨……" onChange={(event) => setSelection("medium", event.target.value)} />
+                </Field>
+                <Field label="叙事气质">
+                    <Input value={selection.tone || ""} placeholder="史诗、克制、轻喜剧……" onChange={(event) => setSelection("tone", event.target.value)} />
+                </Field>
+                <Field label="角色造型">
+                    <Input value={selection.character || ""} placeholder="写实、半写实、风格化……" onChange={(event) => setSelection("character", event.target.value)} />
+                </Field>
             </div>
         </div>
+    );
+}
+
+function StyleCoverPicker({ onClose, onPick }: { onClose: () => void; onPick: (coverUrl: string) => void }) {
+    const assets = useAssetStore((state) => state.assets);
+    const active = useRef(true);
+    useEffect(() => {
+        active.current = true;
+        return () => {
+            active.current = false;
+        };
+    }, []);
+    const items = useMemo<AssetLibraryPickerItem[]>(
+        () =>
+            assets
+                .filter((asset) => asset.kind === "image")
+                .map((asset) => ({
+                    id: asset.id,
+                    title: asset.title,
+                    category: normalizeAssetCategory(asset.category),
+                    archived: asset.status === "archived",
+                    kindLabel: "图片",
+                    mediaKind: "image",
+                    asset,
+                    searchText: (asset.tags || []).join(" "),
+                })),
+        [assets],
+    );
+
+    return (
+        <AssetLibraryPickerModal
+            open
+            remoteLibrary
+            acceptRemoteItems
+            remoteKind="image"
+            mediaKinds={["image"]}
+            multiple={false}
+            items={items}
+            categoryLabels={{ all: "全部图片", ...ASSET_CATEGORY_LABELS }}
+            title="选择风格封面"
+            eyebrow="我的风格"
+            confirmLabel={() => "用作封面"}
+            emptyDescription="请先在资产库添加图片，再选择作为风格封面。"
+            footerNote="选中后预览，保存风格后生效"
+            onClose={onClose}
+            onConfirm={async (ids, pickedItems) => {
+                const pool = new Map([...items, ...(pickedItems || [])].map((item) => [item.id, item]));
+                const asset = pool.get(ids[0])?.asset;
+                if (asset?.kind !== "image" || asset.status === "archived") throw new Error("请选择一张可用的图片");
+                let resourceId = resourceIdFromStorageKey(asset.data.storageKey);
+                if (!resourceId) {
+                    const blob = asset.data.storageKey ? await getImageBlob(asset.data.storageKey) : null;
+                    const source = blob || asset.data.dataUrl || asset.coverUrl;
+                    if (!source) throw new Error("图片文件已不存在，请重新选择");
+                    const uploaded = await uploadImage(source);
+                    resourceId = resourceIdFromStorageKey(uploaded.storageKey);
+                    if (uploaded.pendingRemoteUpload || !resourceId) throw new Error(uploaded.remoteUploadError || "图片未能保存到服务器，请稍后重试");
+                }
+                if (!active.current) return;
+                onPick(resourceFileUrl(resourceId));
+                onClose();
+            }}
+        />
     );
 }
 
@@ -185,18 +313,39 @@ function ExecutionFields({ profile, onChange, onEditAssets }: EditorFieldsProps 
                 <Segmented
                     block
                     value={profile.executionPolicy || "compatible-fallback"}
-                    options={[{ value: "compatible-fallback", label: "兼容降级" }, { value: "strict-assets", label: "严格阻止" }]}
+                    options={[
+                        { value: "compatible-fallback", label: "兼容降级" },
+                        { value: "strict-assets", label: "严格阻止" },
+                    ]}
                     onChange={(executionPolicy) => onChange({ executionPolicy: executionPolicy as StyleProfileSnapshot["executionPolicy"] })}
                 />
             </Field>
             <div className="flex flex-col gap-3 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h4 className="text-sm font-medium">执行资产</h4>
-                    <p className="mt-1 text-[var(--fs-label)] text-foreground/45">{profile.assets.length} 个已绑定，{enabled.length} 个已启用</p>
+                    <p className="mt-1 text-[var(--fs-label)] text-foreground/45">
+                        {profile.assets.length} 个已绑定，{enabled.length} 个已启用
+                    </p>
                 </div>
-                <Button icon={<Layers3 className="size-3.5" />} onClick={onEditAssets}>配置 LoRA、模板与参考图</Button>
+                <Button icon={<Layers3 className="size-3.5" />} onClick={onEditAssets}>
+                    配置 LoRA、模板与参考图
+                </Button>
             </div>
-            {profile.assets.length ? <div className="divide-y divide-border border-b border-border">{profile.assets.map((asset) => <div key={asset.id} className="flex items-center gap-3 py-3 text-xs"><span className={`size-1.5 shrink-0 rounded-full ${asset.enabled !== false && asset.status === "validated" ? "bg-emerald-500" : asset.status === "unavailable" ? "bg-red-500" : "bg-amber-500"}`} /><span className="min-w-0 flex-1 truncate font-medium">{asset.title}</span><span className="shrink-0 text-foreground/40">{asset.kind.toUpperCase()} · {asset.status === "validated" ? "已验证" : asset.status === "unavailable" ? "不可用" : "待验证"}</span></div>)}</div> : <div className="grid min-h-36 place-items-center border-b border-border text-center text-xs text-foreground/38">尚未绑定执行资产，当前风格将只通过 Prompt 执行</div>}
+            {profile.assets.length ? (
+                <div className="divide-y divide-border border-b border-border">
+                    {profile.assets.map((asset) => (
+                        <div key={asset.id} className="flex items-center gap-3 py-3 text-xs">
+                            <span className={`size-1.5 shrink-0 rounded-full ${asset.enabled !== false && asset.status === "validated" ? "bg-emerald-500" : asset.status === "unavailable" ? "bg-red-500" : "bg-amber-500"}`} />
+                            <span className="min-w-0 flex-1 truncate font-medium">{asset.title}</span>
+                            <span className="shrink-0 text-foreground/40">
+                                {asset.kind.toUpperCase()} · {asset.status === "validated" ? "已验证" : asset.status === "unavailable" ? "不可用" : "待验证"}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="grid min-h-36 place-items-center border-b border-border text-center text-xs text-foreground/38">尚未绑定执行资产，当前风格将只通过 Prompt 执行</div>
+            )}
             <p className="text-[var(--fs-tiny)] leading-5 text-foreground/42">LoRA 与参考图已支持绑定、验证和兼容判断；具体生成渠道没有原生适配器时，兼容策略会降级到 Prompt，严格策略会阻止生成。</p>
         </div>
     );
@@ -205,15 +354,30 @@ function ExecutionFields({ profile, onChange, onEditAssets }: EditorFieldsProps 
 type EditorFieldsProps = { profile: StyleProfileSnapshot; onChange: (patch: Partial<StyleProfileSnapshot>) => void };
 
 function SectionHeading({ title, description }: { title: string; description: string }) {
-    return <div className="border-b border-border pb-3"><h3 className="text-sm font-semibold">{title}</h3><p className="mt-1 text-[var(--fs-label)] text-foreground/45">{description}</p></div>;
+    return (
+        <div className="border-b border-border pb-3">
+            <h3 className="text-sm font-semibold">{title}</h3>
+            <p className="mt-1 text-[var(--fs-label)] text-foreground/45">{description}</p>
+        </div>
+    );
 }
 
 function Field({ label, className = "", children }: { label: string; className?: string; children: ReactNode }) {
-    return <label className={`grid gap-2 text-xs ${className}`}><span className="font-medium text-foreground/62">{label}</span>{children}</label>;
+    return (
+        <label className={`grid gap-2 text-xs ${className}`}>
+            <span className="font-medium text-foreground/62">{label}</span>
+            {children}
+        </label>
+    );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-    return <div className="min-w-0 py-1"><dt className="text-foreground/38">{label}</dt><dd className="mt-0.5 truncate font-medium text-foreground/65">{value}</dd></div>;
+    return (
+        <div className="min-w-0 py-1">
+            <dt className="text-foreground/38">{label}</dt>
+            <dd className="mt-0.5 truncate font-medium text-foreground/65">{value}</dd>
+        </div>
+    );
 }
 
 function EditorTab({ id, panelId, active, icon, label, onClick }: { id: string; panelId: string; active: boolean; icon: ReactNode; label: string; onClick: () => void }) {

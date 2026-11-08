@@ -259,6 +259,7 @@ export const deDE: Messages = {
             channels: { label: "Meine Kanäle", description: "Modelldienste und persönliche Workflows" },
             runninghub: { label: "RunningHub-Workflows", description: "Cloud-Workflows deiner Kanäle" },
             models: { label: "Modelle", description: "Standardmodelle nach Kategorie" },
+            styles: { label: "Stilverwaltung", description: "Persönliche Stile erstellen, kopieren und verwalten" },
             preferences: { label: "Präferenzen", description: "Darstellung, Sprache, Hinweise und Standards" },
             prompts: { label: "Prompt-Präferenzen", description: "Plattformvorlagen pro Aufgabe anpassen" },
             "agent-memory": { label: "Agent-Gedächtnis", description: "Freigeben, hinzufügen, exportieren, importieren, verdichten" },

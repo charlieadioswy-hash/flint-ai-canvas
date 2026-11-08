@@ -99,7 +99,7 @@ export default function DramaGuidePage() {
         if (summary?.project.id !== projectId || summary.production.guideStep !== "configuring" || summaryQuery.isError) return null;
         return {
             id: 1,
-            text: `请开始这个短剧的创作引导，先读取当前阶段、现有正文和配置。${creativeBrief ? `我的创作想法是：\n${creativeBrief}\n` : ""}请根据故事内容逐项引导我选择风格、视频画幅与清晰度、语言和时长，一轮只选择一项，用 drama_propose_changes 给出同一项的 2–4 个可直接保存的选项，不要一次给整套配置，也不要让我先回复选项再去应用建议。界面会提供自定义输入。${chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : creativeBrief ? "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。" : "请先询问我的创作想法或需要改编的正文。"}点选后界面会直接保存并反馈结果，再读取最新配置继续下一项，已明确的选择不重复问。等我明确确认后再沿用现有流程提取资产、改编剧本和分镜，每个阶段都等待我确认，不自动生成图片或视频。`,
+            text: `请开始这个短剧的创作引导，先读取当前阶段、现有正文和配置。${creativeBrief ? `我的创作想法是：\n${creativeBrief}\n` : ""}请根据故事内容逐项引导我选择风格、视频画幅与清晰度、语言和时长，一轮只选择一项，用 drama_propose_changes 给出同一项的 2–4 个可直接保存的选项，不要一次给整套配置，也不要让我先回复选项再去应用建议。每项说明放顶层 explanation，正文只简短引导，不重复列举选项或提示去下方卡片。界面会提供自定义输入。${chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : creativeBrief ? "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。" : "请先询问我的创作想法或需要改编的正文。"}点选后界面会直接保存并反馈结果，再读取最新配置继续下一项，已明确的选择不重复问。等我明确确认后再沿用现有流程提取资产、改编剧本和分镜，每个阶段都等待我确认，不自动生成图片或视频。`,
             autoSubmit: true,
             displayText: chapterCount ? "请根据已保存的正文推荐创作方案" : creativeBrief ? "请根据我的创作想法起草正文，并推荐创作方案" : "请引导我开始创作短剧",
         };
@@ -169,22 +169,6 @@ export default function DramaGuidePage() {
         setPrefillRequest(null);
     }, [projectId]);
     useEffect(() => {
-        if (!host || !summary?.production.guideStep) return;
-        useGlobalAgentStore.getState().setDrama({
-            projectId,
-            guideConversationId: summary.production.guideConversationId,
-            host,
-            onConversationBound: boundConversation,
-            onProposal: receiveProposal,
-            onActionsHost: setChatActionsHost,
-            startupRequest,
-            prefillRequest: prefillRequest?.projectId === projectId ? prefillRequest.request : null,
-        });
-        return () => {
-            if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
-        };
-    }, [host, projectId, summary?.production.guideStep, summary?.production.guideConversationId, boundConversation, receiveProposal, startupRequest, prefillRequest]);
-    useEffect(() => {
         if (!pendingConversationId || !summary || operation.isPending || busyRef.current) return;
         setPendingConversationId(null);
         if (summary.production.guideConversationId === pendingConversationId) return;
@@ -221,13 +205,16 @@ export default function DramaGuidePage() {
         }
         throw new Error("建议对应的内容已不存在，请让 Agent 重新读取并提出建议");
     };
-    const setupProposalIssue = (proposal: DramaAgentProposal) => {
-        if (proposal.kind !== "setup") return "";
-        const settings = summaryRef.current?.production.settings;
-        const option = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings?.models.video));
-        const resolution = typeof proposal.changes.videoResolution === "string" ? proposal.changes.videoResolution : settings?.videoResolution;
-        return dramaVideoResolutionIssue(option, resolution);
-    };
+    const setupProposalIssue = useCallback(
+        (proposal: DramaAgentProposal) => {
+            if (proposal.kind !== "setup") return "";
+            const settings = summaryRef.current?.production.settings;
+            const option = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings?.models.video));
+            const resolution = typeof proposal.changes.videoResolution === "string" ? proposal.changes.videoResolution : settings?.videoResolution;
+            return dramaVideoResolutionIssue(option, resolution);
+        },
+        [catalog.data],
+    );
     const saveProposal = (proposal: DramaAgentProposal) => {
         let application: ProposalApplication | undefined;
         let savedDraft: SettingsDraft | null = null;
@@ -318,6 +305,71 @@ export default function DramaGuidePage() {
         });
     };
 
+    const busy = operation.isPending;
+    const dirty = Boolean(settingsDraft);
+    const stale = Boolean(settingsDraft && settingsDraft.revision !== revision);
+    const askAgent = () => {
+        if (!startupRequest) return;
+        sendGuideMessage(startupRequest.text, startupRequest.displayText || "请重新推荐创作选项");
+    };
+    const currentStep = STEPS[stepIndex] || STEPS[0];
+    const visibleProposals = useMemo(() => proposals.filter((proposal) => !dismissed.has(dramaProposalKey(proposal))), [proposals, dismissed]);
+    const validProposal = useCallback(
+        (proposal: DramaAgentProposal) => !summaryQuery.isError && Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast)),
+        [summaryQuery.isError, step, revision, proposalBatches, castQuery.cast],
+    );
+    const refreshChoices = (proposal: DramaAgentProposal) =>
+        sendGuideMessage(`请先用 drama_get_context 读取当前真实配置与版本，重新提供${setupChoiceFields(proposal)}的 2–4 个可直接保存选项。不要让我回答‘是否点了/是否看到卡片’，不要重复已确认的配置，不自动推进阶段。`, "请重新提供当前可选项");
+    const customChoice = (text: string, proposal: DramaAgentProposal) => {
+        if (busy || !text.trim()) return;
+        sendGuideMessage(
+            `我想为当前讨论的配置填写其他内容。当前讨论项：${setupChoiceFields(proposal)}。我的输入是：\n${text.trim()}\n请先用 drama_get_context 读取最新状态，再只针对这一项提供符合我输入的可保存选项；不替我编造其他设置，不声称已保存，不让我再去右侧应用。`,
+            text.trim(),
+        );
+    };
+    const setupActions = useRef({ applyProposal, customChoice, refreshChoices });
+    setupActions.current = { applyProposal, customChoice, refreshChoices };
+    const setupChoices = useMemo(
+        () => ({
+            proposals: visibleProposals.filter((proposal) => proposal.kind === "setup"),
+            render: (items: DramaAgentProposal[]) => (
+                <GuideSetupChoices
+                    proposals={items}
+                    busy={busy || stale}
+                    isValid={validProposal}
+                    issue={setupProposalIssue}
+                    onChoose={(proposal) => setupActions.current.applyProposal(proposal)}
+                    onCustom={(text, proposal) => setupActions.current.customChoice(text, proposal)}
+                    onRefresh={(proposal) => setupActions.current.refreshChoices(proposal)}
+                />
+            ),
+        }),
+        [visibleProposals, busy, stale, validProposal, setupProposalIssue],
+    );
+    useEffect(() => {
+        if (!host || summary?.project.id !== projectId || !summary.production.guideStep) {
+            if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
+            return;
+        }
+        useGlobalAgentStore.getState().setDrama({
+            projectId,
+            guideConversationId: summary.production.guideConversationId,
+            host,
+            onConversationBound: boundConversation,
+            onProposal: receiveProposal,
+            onActionsHost: setChatActionsHost,
+            setupChoices,
+            startupRequest,
+            prefillRequest: prefillRequest?.projectId === projectId ? prefillRequest.request : null,
+        });
+    }, [host, projectId, summary?.production.guideStep, summary?.production.guideConversationId, boundConversation, receiveProposal, startupRequest, prefillRequest, setupChoices]);
+    useEffect(
+        () => () => {
+            if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
+        },
+        [projectId],
+    );
+
     if (summaryQuery.isLoading)
         return (
             <WorkspacePage>
@@ -331,27 +383,7 @@ export default function DramaGuidePage() {
             </WorkspacePage>
         );
     if (!summary.production.guideStep) return <Navigate to={`/projects/${projectId}`} replace />;
-
-    const busy = operation.isPending;
-    const dirty = Boolean(settingsDraft);
-    const stale = Boolean(settingsDraft && settingsDraft.revision !== revision);
     const settings = settingsDraft?.value || summary.production.settings;
-    const askAgent = () => {
-        if (!startupRequest) return;
-        sendGuideMessage(startupRequest.text, startupRequest.displayText || "请重新推荐创作选项");
-    };
-    const currentStep = STEPS[stepIndex] || STEPS[0];
-    const visibleProposals = proposals.filter((proposal) => !dismissed.has(dramaProposalKey(proposal)));
-    const validProposal = (proposal: DramaAgentProposal) => !summaryQuery.isError && Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast));
-    const refreshChoices = (proposal: DramaAgentProposal) =>
-        sendGuideMessage(`请先用 drama_get_context 读取当前真实配置与版本，重新提供${setupChoiceFields(proposal)}的 2–4 个可直接保存选项。不要让我回答‘是否点了/是否看到卡片’，不要重复已确认的配置，不自动推进阶段。`, "请重新提供当前可选项");
-    const customChoice = (text: string, proposal: DramaAgentProposal) => {
-        if (busy || !text.trim()) return;
-        sendGuideMessage(
-            `我想为当前讨论的配置填写其他内容。当前讨论项：${setupChoiceFields(proposal)}。我的输入是：\n${text.trim()}\n请先用 drama_get_context 读取最新状态，再只针对这一项提供符合我输入的可保存选项；不替我编造其他设置，不声称已保存，不让我再去右侧应用。`,
-            text.trim(),
-        );
-    };
     const confirm = () => {
         if (step === "completed") {
             navigate(`/projects/${projectId}`);
@@ -541,17 +573,8 @@ export default function DramaGuidePage() {
                 {chatActionsHost
                     ? createPortal(
                           <section className="drama-guide-chat-actions" aria-label="短剧对话中的选项与确认">
-                              {visibleProposals.length ? (
+                              {visibleProposals.some((proposal) => proposal.kind !== "setup") ? (
                                   <section className="drama-guide-proposals" aria-label="待确认的 Agent 建议">
-                                      <GuideSetupChoices
-                                          proposals={visibleProposals.filter((proposal) => proposal.kind === "setup")}
-                                          busy={busy || stale}
-                                          isValid={validProposal}
-                                          issue={setupProposalIssue}
-                                          onChoose={applyProposal}
-                                          onCustom={customChoice}
-                                          onRefresh={refreshChoices}
-                                      />
                                       {visibleProposals
                                           .filter((proposal) => proposal.kind !== "setup")
                                           .map((proposal) => (

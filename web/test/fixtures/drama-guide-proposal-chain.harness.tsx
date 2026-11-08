@@ -17,6 +17,7 @@ const originalSettings = { language: "中文", aspectRatio: "9:16", videoResolut
 let summary: DramaSummary;
 let cast: DramaCast[];
 let dramaContext: AgentDramaContext | null = null;
+let renderSetupChoices: (() => void) | null = null;
 let writes: Array<{ kind: string; expectedRevision: number; targetId?: string; input?: unknown }>;
 let confirmations: Array<{ onOk: () => unknown }>;
 let errors: string[];
@@ -41,6 +42,7 @@ const agentStore = {
     },
     setDrama(value: AgentDramaContext | null) {
         dramaContext = value;
+        renderSetupChoices?.();
     },
 };
 mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: { getState: () => agentStore } }));
@@ -227,8 +229,16 @@ async function withGuide(
     const container = document.createElement("div");
     const chatHost = document.createElement("div");
     chatHost.setAttribute("aria-label", "创作对话操作");
+    const choicesHost = document.createElement("div");
+    const actionsHost = document.createElement("div");
+    chatHost.append(choicesHost, actionsHost);
     document.body.append(container);
     const root = createRoot(container);
+    const choicesRoot = createRoot(choicesHost);
+    renderSetupChoices = () => {
+        const choices = dramaContext?.setupChoices;
+        choicesRoot.render(choices ? choices.render(choices.proposals) : null);
+    };
     const cards = new Map<string, HTMLElement>();
     const button = (scope: HTMLElement, label: string) => {
         const found = Array.from(scope.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
@@ -254,7 +264,7 @@ async function withGuide(
         expect(dramaContext?.onActionsHost).toBeFunction();
         container.querySelector(".drama-guide-agent-host")!.append(chatHost);
         await act(async () => {
-            dramaContext!.onActionsHost!(chatHost);
+            dramaContext!.onActionsHost!(actionsHost);
             await settle();
         });
         await check({
@@ -267,6 +277,7 @@ async function withGuide(
                         dramaContext!.onProposal!(item);
                         await settle();
                     });
+                    expect(actionsHost.querySelector(".drama-guide-setup-choice")).toBeNull();
                     const card = Array.from(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal, .drama-guide-setup-choice")).find((entry) => !previous.has(entry));
                     expect(card).toBeDefined();
                     expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
@@ -304,7 +315,7 @@ async function withGuide(
                 await act(settle);
                 expect(dramaContext?.projectId).toBe(routeProject);
                 await act(async () => {
-                    dramaContext!.onActionsHost!(chatHost);
+                    dramaContext!.onActionsHost!(actionsHost);
                     await settle();
                 });
             },
@@ -329,7 +340,11 @@ async function withGuide(
         });
     } finally {
         pendingRead?.resolve();
-        await act(async () => root.unmount());
+        renderSetupChoices = null;
+        await act(async () => {
+            root.unmount();
+            choicesRoot.unmount();
+        });
         client.clear();
         container.remove();
     }

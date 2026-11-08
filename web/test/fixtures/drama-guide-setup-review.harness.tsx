@@ -38,6 +38,7 @@ const originalSettings = {
 } as DramaSettings;
 let summary: DramaSummary;
 let dramaContext: AgentDramaContext | null = null;
+let renderSetupChoices: (() => void) | null = null;
 let settingsWrites: Array<{ projectId: string; input: { settings: DramaSettings; expectedRevision: number } }> = [];
 let notices: string[] = [];
 let otherWrites = 0;
@@ -52,6 +53,7 @@ const agentStore = {
     },
     setDrama(value: AgentDramaContext | null) {
         dramaContext = value;
+        renderSetupChoices?.();
     },
 };
 mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: { getState: () => agentStore } }));
@@ -162,6 +164,16 @@ async function withGuide(
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
+    const chatHost = document.createElement("div");
+    chatHost.setAttribute("aria-label", "创作对话操作");
+    const choicesHost = document.createElement("div");
+    const actionsHost = document.createElement("div");
+    chatHost.append(choicesHost, actionsHost);
+    const choicesRoot = createRoot(choicesHost);
+    renderSetupChoices = () => {
+        const choices = dramaContext?.setupChoices;
+        choicesRoot.render(choices ? choices.render(choices.proposals) : null);
+    };
     const button = (label: string) => {
         const found =
             Array.from(container.querySelector('[aria-label="创作对话操作"]')?.querySelectorAll("button") || []).find((item) => item.textContent?.trim() === label) ||
@@ -182,11 +194,9 @@ async function withGuide(
         await act(settle);
         expect(dramaContext?.onProposal).toBeFunction();
         expect(dramaContext?.onActionsHost).toBeFunction();
-        const chatHost = document.createElement("div");
-        chatHost.setAttribute("aria-label", "创作对话操作");
         container.querySelector(".drama-guide-agent-host")!.append(chatHost);
         await act(async () => {
-            dramaContext!.onActionsHost!(chatHost);
+            dramaContext!.onActionsHost!(actionsHost);
             await settle();
         });
         await check({
@@ -198,6 +208,7 @@ async function withGuide(
                     dramaContext!.onProposal!(value);
                     await settle();
                 });
+                expect(actionsHost.querySelector(".drama-guide-setup-choice")).toBeNull();
             },
             click: async (label) => {
                 await act(async () => {
@@ -207,7 +218,11 @@ async function withGuide(
             },
         });
     } finally {
-        await act(async () => root.unmount());
+        renderSetupChoices = null;
+        await act(async () => {
+            root.unmount();
+            choicesRoot.unmount();
+        });
         client.clear();
         container.remove();
     }

@@ -65,6 +65,10 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 		"styleName 与 stylePrompt 合为同一项",
 		"用户已经明确或已选择保存的项目不重复询问",
 		"提供选项后本轮收尾，等待用户选择",
+		"候选名称与每项说明只通过结构化选项展示",
+		"写入对应建议的顶层 explanation，不混入 changes",
+		"聊天正文只用一句话引导当前决策，不重复列举、编号或解释同一组选项",
+		"不提示去下方卡片寻找、点击或另点应用",
 		"点击选项即通过既有业务接口保存",
 		"每组选项都提供空白的自定义输入",
 		"不把自然语言回答当作已保存",
@@ -86,9 +90,20 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 		function := tool["function"].(map[string]any)
 		if function["name"] == agenttool.DramaProposeChanges {
 			description = function["description"].(string)
+			parameters := function["parameters"].(map[string]any)
+			properties := parameters["properties"].(map[string]any)
+			explanation := properties["explanation"].(map[string]any)
+			if explanation["type"] != "string" || explanation["maxLength"] != float64(1000) {
+				t.Fatalf("option explanation must be bounded display metadata: %+v", explanation)
+			}
+			for _, required := range parameters["required"].([]any) {
+				if required == "explanation" {
+					t.Fatal("legacy proposals must not require explanation")
+				}
+			}
 		}
 	}
-	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频", "用户点选即保存，无需再次应用", "每组保留空白自定义输入", "setup 的 changes 只填当前决策字段"} {
+	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频", "用户点选即保存，无需再次应用", "每组保留空白自定义输入", "setup 的 changes 只填当前决策字段", "每项推荐理由或适用情境放顶层 explanation，不放入 changes", "不重复候选列表，不提示去下方卡片或另点应用"} {
 		if !strings.Contains(description, instruction) {
 			t.Fatalf("proposal tool lost confirmation boundary: %s", instruction)
 		}
@@ -99,6 +114,9 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 	}
 	if strings.Contains(canvasPolicy, "由用户在对话中选择应用") {
 		t.Fatal("short-drama confirmation policy leaked into ordinary canvas sessions")
+	}
+	if strings.Contains(canvasPolicy, "候选名称与每项说明只通过结构化选项展示") {
+		t.Fatal("guide-only presentation policy leaked into ordinary canvas sessions")
 	}
 }
 
@@ -133,7 +151,7 @@ func TestCloudAgentDramaGuideChoicesKeepCustomInputWithoutChangingCanvasQuestion
 				if !ok || len(allowed) != 1 || allowed[0] != true {
 					t.Fatalf("short-drama questions must permit custom answers: %+v", freeform)
 				}
-				for _, required := range []string{"已能保存的风格等决策用 drama_propose_changes", "必须保留空白自定义输入", "不要询问用户是否看到了卡片、是否点选或要求重新提交"} {
+				for _, required := range []string{"已能保存的风格等决策用 drama_propose_changes", "必须保留空白自定义输入", "不要询问用户是否看到了卡片、是否点选或要求重新提交", "具体候选与说明只放工具参数，正文只简短引导，不重复候选列表或提示去下方卡片"} {
 					if !strings.Contains(description, required) {
 						t.Fatalf("missing direct-choice question boundary: %s", required)
 					}
@@ -300,6 +318,71 @@ func TestCloudAgentDramaGuideReadsAndProposesWithoutWriting(t *testing.T) {
 	}
 	if fresh.(map[string]any)["guide"].(map[string]any)["baseRevision"] != before.Revision+1 {
 		t.Fatal("same-run context read reused a stale production revision")
+	}
+}
+
+func TestCloudAgentDramaGuideProposalExplanationStaysDisplayOnly(t *testing.T) {
+	svc, _ := newDramaTestService(t)
+	draft := createGuidedDrama(t, svc)
+	_, before, err := svc.dramaForUser("usr-drama", draft.Project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{DramaProjectID: draft.Project.ID}}
+	for _, tc := range []struct {
+		name        string
+		explanation string
+		invalid     bool
+	}{
+		{"legacy without explanation", "", false},
+		{"blank omitted", " \n\t ", false},
+		{"trimmed explanation", "  适合国内观众，便于理解对白。 \n", false},
+		{"unicode limit", strings.Repeat("字", 1000), false},
+		{"over unicode limit", strings.Repeat("字", 1001), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := cloudAgentDramaProposal{Kind: "setup", BaseRevision: before.Revision, Changes: map[string]any{"language": "中文"}, Explanation: tc.explanation}
+			encoded, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := cloudAgentCall{ID: "language-option"}
+			call.Function.Arguments = string(encoded)
+			result, err := cloudAgentHandleDramaProposeChanges(svc.repo, "usr-drama", state, call, svc)
+			if tc.invalid {
+				if _, ok := err.(*cloudAgentArgumentError); !ok {
+					t.Fatalf("unbounded explanation accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			proposal := result.(cloudAgentDramaProposal)
+			if proposal.Explanation != strings.TrimSpace(tc.explanation) || len(proposal.Changes) != 1 || proposal.Changes["language"] != "中文" {
+				t.Fatalf("explanation changed the save payload: %+v", proposal)
+			}
+			encoded, err = json.Marshal(proposal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event map[string]any
+			if err := json.Unmarshal(encoded, &event); err != nil {
+				t.Fatal(err)
+			}
+			if _, included := event["explanation"]; included != (proposal.Explanation != "") {
+				t.Fatalf("empty explanation must preserve legacy event shape: %s", encoded)
+			}
+		})
+	}
+	call := cloudAgentCall{ID: "invalid-language-option"}
+	call.Function.Arguments = fmt.Sprintf(`{"kind":"setup","baseRevision":%d,"changes":{"language":"中文","explanation":"不允许写入设置"}}`, before.Revision)
+	if _, err := cloudAgentHandleDramaProposeChanges(svc.repo, "usr-drama", state, call, svc); err == nil {
+		t.Fatal("explanation accepted inside business changes")
+	}
+	_, after, err := svc.dramaForUser("usr-drama", draft.Project.ID)
+	if err != nil || after.Revision != before.Revision || after.SettingsJSON != before.SettingsJSON {
+		t.Fatalf("display metadata wrote production: %v", err)
 	}
 }
 

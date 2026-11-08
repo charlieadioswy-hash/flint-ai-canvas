@@ -94,11 +94,11 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		if req.DramaProjectID != "" {
 			switch definition.Name {
 			case agenttool.AskUser:
-				description += " 短剧引导中仅用于尚不能形成具体设置的创作澄清；已能保存的风格等决策用 drama_propose_changes 展示直接选择，不能再要求用户确认应用。必须保留空白自定义输入，allowFreeform 只能为 true；选择字段使用 allowCustom。不要询问用户是否看到了卡片、是否点选或要求重新提交。"
+				description += " 短剧引导中仅用于尚不能形成具体设置的创作澄清；已能保存的风格等决策用 drama_propose_changes 展示直接选择，不能再要求用户确认应用。必须保留空白自定义输入，allowFreeform 只能为 true；选择字段使用 allowCustom。不要询问用户是否看到了卡片、是否点选或要求重新提交。具体候选与说明只放工具参数，正文只简短引导，不重复候选列表或提示去下方卡片。"
 				properties := parameters["properties"].(map[string]any)
 				properties["allowFreeform"].(map[string]any)["enum"] = []any{true}
 			case agenttool.DramaProposeChanges:
-				description += " 短剧配置每轮仅一个决策，给 2–4 个具体选项，多个备选分别调用本工具后结束本轮。setup 的 changes 只填当前决策字段（styleName/stylePrompt 属同一项），不要一次提交整套配置。用户点选即保存，无需再次应用；每组保留空白自定义输入。收到已保存反馈后重新读取版本，继续下一项；不得通过 ask_user 再问是否点选、是否看到卡片或要求重新提交。"
+				description += " 短剧配置每轮仅一个决策，给 2–4 个具体选项，多个备选分别调用本工具后结束本轮。setup 的 changes 只填当前决策字段（styleName/stylePrompt 属同一项），不要一次提交整套配置。每项推荐理由或适用情境放顶层 explanation，不放入 changes；候选与说明只通过结构化选项展示，正文只用一句话引导当前决策，不重复候选列表，不提示去下方卡片或另点应用。用户点选即保存，无需再次应用；每组保留空白自定义输入。收到已保存反馈后重新读取版本，继续下一项；不得通过 ask_user 再问是否点选、是否看到卡片或要求重新提交。"
 			}
 		}
 		tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
@@ -367,6 +367,7 @@ func cloudAgentAllToolSchemas() []map[string]any {
 		"targetId":     str("cast/cast_delete/shot/segment_prompt 必填真实对象 ID；setup/source/cast_create 省略"),
 		"baseRevision": map[string]any{"type": "integer", "minimum": 1, "description": "本次读取到的制作版本 guide.baseRevision"},
 		"changes":      map[string]any{"type": "object", "minProperties": 1, "description": "仅填本建议类型允许的字段"},
+		"explanation":  map[string]any{"type": "string", "maxLength": 1000, "description": "可选：此选项的推荐理由或适用情境，最多1000字；仅展示，不写入配置或资产"},
 	}, "kind", "baseRevision", "changes")
 	add("drama_adopt_canvas_media", "把画布上已就绪的图片或视频节点采用到关联短剧：图片设为某个设定（角色/道具/场景）的参考图并锁定；视频设为某集某剧情段的当前视频，默认只换本段。节点带短剧绑定时可省略目标；否则先用 drama_get_context 取 castId 或 episodeId+segmentIndex。总是先经用户审批，不提交收费任务。", map[string]any{
 		"nodeId":          str("画布图片或视频节点 ID"),

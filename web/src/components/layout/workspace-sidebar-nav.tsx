@@ -2,7 +2,7 @@ import { Popover } from "antd";
 import { Box, Scan, ShoppingBag } from "lucide-react";
 import { ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, Plus, Video } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -230,7 +230,7 @@ function NavItem({
     );
     const activePill = isActive ? <motion.span layoutId="workspace-nav-active-pill" className="app-workspace-nav-active-pill" aria-hidden transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock} /> : null;
 
-    const handleClick = () => {
+    const handleClick = (event: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
         if (item.action === "search") {
             onOpenSearch();
             return;
@@ -242,6 +242,10 @@ function NavItem({
         if (hasChildren) {
             setIsOpen((open) => !open);
             return;
+        }
+        if (item.id === "screen-creation" && isActive && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+            // 当前场景可能有未保存的输入，重复点击入口不应重新恢复最近场景。
+            event.preventDefault();
         }
         onSelect(item.id);
     };

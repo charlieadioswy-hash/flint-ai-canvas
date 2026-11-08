@@ -250,6 +250,7 @@ type cloudAgentDramaProposal struct {
 	TargetID     string         `json:"targetId,omitempty"`
 	BaseRevision int64          `json:"baseRevision"`
 	Changes      map[string]any `json:"changes"`
+	Explanation  string         `json:"explanation,omitempty"`
 }
 
 // 建议沿用持久工具事件回放；这里只读取并校验，不写短剧，也不提交生成任务。
@@ -260,6 +261,10 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 	var args cloudAgentDramaProposal
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 		return nil, cloudAgentJSONArgumentError(err)
+	}
+	args.Explanation = strings.TrimSpace(args.Explanation)
+	if len([]rune(args.Explanation)) > 1000 {
+		return nil, &cloudAgentArgumentError{BadAuthRequest("选项说明不能超过 1000 字")}
 	}
 	allowed := map[string][]string{
 		"setup":          {"aspectRatio", "styleName", "stylePrompt", "language", "episodeSeconds", "videoResolution"},

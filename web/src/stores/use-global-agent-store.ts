@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ReactNode } from "react";
 import { AGENT_PANEL_DOCK_KEY, restoreAgentPanelDock, type AgentPanelDockPreference } from "@/lib/canvas/agent-panel-dock";
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -15,6 +16,7 @@ export type AgentDramaContext = {
     onConversationBound?: (id: string) => void;
     onProposal?: (proposal: DramaAgentProposal) => void;
     onActionsHost?: (host: HTMLDivElement | null) => void;
+    setupChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
 };
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };
