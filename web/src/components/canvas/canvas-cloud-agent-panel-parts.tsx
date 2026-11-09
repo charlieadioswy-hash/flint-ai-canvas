@@ -904,7 +904,9 @@ export function AgentConversation({
                         <AgentChatMessage item={{ id: "drama-setup-choices-fallback", role: "assistant", text: "" }} theme={theme} setupChoices={{ body: "", content: dramaSetupChoices.render(setupPresentation.fallback) }} />
                     ) : null}
                     {stagePresentation.fallback && dramaStageChoices ? <AgentChatMessage item={{ id: "drama-stage-choices-fallback", role: "assistant", text: "" }} theme={theme} stageChoices={dramaStageChoices} /> : null}
-                    {proposalPresentation.fallback.length && dramaProposalChoices ? <AgentChatMessage item={{ id: "drama-proposal-choices-fallback", role: "assistant", text: "" }} theme={theme} proposalChoices={{ body: "", content: dramaProposalChoices.render(proposalPresentation.fallback) }} /> : null}
+                    {proposalPresentation.fallback.length && dramaProposalChoices ? (
+                        <AgentChatMessage item={{ id: "drama-proposal-choices-fallback", role: "assistant", text: "" }} theme={theme} proposalChoices={{ body: "", content: dramaProposalChoices.render(proposalPresentation.fallback) }} />
+                    ) : null}
                     {approval ? (
                         <ApprovalCard
                             key={approval.approvalId}

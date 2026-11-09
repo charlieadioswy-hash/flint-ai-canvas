@@ -65,9 +65,14 @@ func TestDeclarativeChatPluginStreamsByDeclaredPath(t *testing.T) {
 	if len(bodies) != 2 {
 		t.Fatalf("upstream calls = %d, want the rejected attempt plus one retry", len(bodies))
 	}
+	// DeepSeek 无 medium 档，按就近且等距取低的规则回退为 low。
 	for index, body := range bodies {
-		if body["stream"] != true || body["reasoning_effort"] != "medium" || body["model"] != "deepseek-reasoner" {
+		if body["stream"] != true || body["reasoning_effort"] != "low" || body["model"] != "deepseek-reasoner" {
 			t.Fatalf("request %d did not use the chat wire contract: %#v", index, body)
+		}
+		thinking, _ := body["thinking"].(map[string]any)
+		if thinking["type"] != "enabled" {
+			t.Fatalf("request %d did not enable DeepSeek thinking: %#v", index, body)
 		}
 	}
 	options, _ := bodies[0]["stream_options"].(map[string]any)

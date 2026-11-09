@@ -465,16 +465,7 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     const showProposalChoices = Boolean(proposalChoices && item.role === "assistant" && !isStreaming && !item.streaming && !showSetupChoices);
     const showStageChoices = Boolean(stageChoices && item.role === "assistant" && !isStreaming && !item.streaming);
     const showReplyOptions = Boolean(replyOptions && onReplyOption && item.role === "assistant" && !isStreaming && !showSetupChoices && !showProposalChoices && !showStageChoices);
-    const agentMarkdownText = rewriteAgentNodeLinks(
-        showSetupChoices && setupChoices
-            ? setupChoices.body
-            : showProposalChoices && proposalChoices
-              ? proposalChoices.body
-              : showReplyOptions && replyOptions
-                ? replyOptions.body
-                : displayedText,
-        references,
-    );
+    const agentMarkdownText = rewriteAgentNodeLinks(showSetupChoices && setupChoices ? setupChoices.body : showProposalChoices && proposalChoices ? proposalChoices.body : showReplyOptions && replyOptions ? replyOptions.body : displayedText, references);
     const canvasReference = item.canvasReferenceNodeId ? references.find((reference) => reference.nodeId === item.canvasReferenceNodeId) : undefined;
     const userCanvasMarkdown = canvasReference ? item.text.replace("此图", createAgentNodeLink(canvasReference.nodeId, canvasReference)) : item.text;
     const errorTone = item.errorSeverity === "warning" ? "warning" : "error";

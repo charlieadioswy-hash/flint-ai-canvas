@@ -175,6 +175,7 @@ const { default: DramaGuidePage } = await import("@/pages/projects/guide");
 const settle = async () => {
     for (let index = 0; index < 6; index++) await Bun.sleep(10);
 };
+const findButton = (scope: HTMLElement, label: string) => Array.from(scope.querySelectorAll("button")).find((item) => item.textContent?.trim() === label || item.querySelector("strong")?.textContent?.trim() === label);
 afterAll(() => browser.happyDOM.abort());
 function proposal(kind: DramaAgentProposal["kind"], call: string, changes: Record<string, unknown>, targetId?: string, overrides: Partial<DramaAgentProposal> = {}): DramaAgentProposal {
     return { kind, toolCallId: call, runId: "run", baseRevision: 7, changes, targetId, ...overrides };
@@ -249,7 +250,7 @@ async function withGuide(
     };
     const cards = new Map<string, HTMLElement>();
     const button = (scope: HTMLElement, label: string) => {
-        const found = Array.from(scope.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
+        const found = findButton(scope, label);
         expect(found, `未找到按钮：${label}`).toBeDefined();
         return found!;
     };
@@ -307,7 +308,7 @@ async function withGuide(
                     : Array.from(cards.get(call)!.querySelectorAll("button"))
                           .filter((item) => ["采用这份正文", "保存资产设定", "保存分镜修改", "保存段提示词", "新增此资产", "删除此资产"].includes(item.textContent?.trim() || ""))
                           .every((item) => item.disabled)),
-            click: (label) => click(button(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === label) ? chatHost : container, label)),
+            click: (label) => click(button(findButton(chatHost, label) ? chatHost : container, label)),
             refresh: async () => {
                 await act(async () => {
                     await client.invalidateQueries({ queryKey: dramaKeys.summary("project"), exact: true });
@@ -604,7 +605,7 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         allowGuideConfirm = true;
         summary.guide!.canConfirm = true;
         await refresh();
-        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => item.textContent?.trim() === "确认配置，开始提取资产");
+        const confirm = findButton(chatHost, "确认配置，开始提取资产");
         expect(confirm).toBeDefined();
         expect(confirm?.disabled).toBe(false);
         expect(container.querySelector('[aria-label="创作产物"]')?.textContent).not.toContain("确认配置，开始提取资产");
@@ -638,13 +639,13 @@ test("剧本与分镜阶段在对话内提供确认选项，确认后进入制�
         summary.guide!.canConfirm = true;
         await refresh();
 
-        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => /确认剧本与分镜.*进入制作台|确认并进入制作台/.test(item.textContent?.trim() || ""));
+        const confirm = findButton(chatHost, "确认剧本与分镜，进入制作台");
         expect(confirm).toBeDefined();
         expect(confirm?.disabled).toBe(false);
-        expect(Array.from(chatHost.querySelectorAll("button")).some((item) => item.textContent?.trim() === "继续调整")).toBe(true);
+        expect(findButton(chatHost, "继续调整")).toBeDefined();
         expect(container.querySelector('[aria-label="创作产物"]')?.textContent).not.toMatch(/确认剧本与分镜.*进入制作台|确认并进入制作台/);
 
-        await click(confirm!.textContent!.trim());
+        await click("确认剧本与分镜，进入制作台");
         expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "story", expectedRevision: 7 } }]);
         expect(summary.production.guideStep).toBe("completed");
         expect(unexpectedWrites).toBe(0);
@@ -658,7 +659,7 @@ test("刷新失败时阶段确认选项保持禁用", async () => {
         readsFail = true;
         await refresh();
 
-        const confirm = Array.from(chatHost.querySelectorAll("button")).find((item) => item.textContent?.trim() === "确认配置，开始提取资产");
+        const confirm = findButton(chatHost, "确认配置，开始提取资产");
         expect(confirm).toBeDefined();
         expect(confirm?.disabled).toBe(true);
         expect(guideConfirms).toEqual([]);
