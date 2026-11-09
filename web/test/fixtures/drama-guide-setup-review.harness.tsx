@@ -87,7 +87,7 @@ mock.module("@/pages/projects/asset-scheme", () => ({ AssetSchemePicker: () => n
 mock.module("@/pages/projects/style-picker", () => ({ DramaStylePicker: () => null }));
 mock.module("@/pages/projects/prompt-skill", () => ({ PromptSkillField: () => null }));
 mock.module("@/pages/projects/storyboard-rules", () => ({ EpisodeDurationInput: ({ value }: { value: number }) => <output aria-label="单集时长">{value}</output>, StoryboardRules: () => null }));
-mock.module("@/pages/projects/studio/segment-parts", () => ({ secondsLabel: (value: number) => `${value} 秒`, SegmentStatus: () => null }));
+mock.module("@/pages/projects/studio/segment-parts", () => ({ secondsLabel: (value: number) => `${value} 秒`, segmentState: () => ({ tone: "idle", label: "" }), SegmentStatus: () => null }));
 mock.module("@/pages/projects/studio/segment-dialog", () => ({ ShotEditor: () => null }));
 mock.module("@/services/api/drama", () => ({
     getDrama: async () => structuredClone(summary),

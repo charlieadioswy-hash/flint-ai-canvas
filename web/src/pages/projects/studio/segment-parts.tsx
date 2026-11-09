@@ -20,11 +20,12 @@ export function videoWaitLabel(wait: string) {
 }
 
 /** 剧情段当前处于哪一步，以及用户下一步该做什么。detail 是需要悬停查看的完整原因。 */
-export function segmentState(segment: DramaSegment): { tone: SegmentTone; label: string; detail?: string } {
+export function segmentState(segment: DramaSegment, phase: "video" | "prompt" = "video"): { tone: SegmentTone; label: string; detail?: string } {
     const writing = segment.promptStatus === "queued" || segment.promptStatus === "running";
     if (segment.promptStatus === "failed") return { tone: "failed", label: "提示词撰写失败" };
     // 视频已入库但尾帧等后处理失败：视频本身可看，重试只重新处理已有视频。
     if (segment.videoStatus === "failed") return segment.videoReprocessable ? { tone: "failed", label: "视频后处理失败" } : { tone: "failed", label: "视频生成失败" };
+    if (phase === "prompt" && promptReady(segment)) return { tone: "ready", label: "提示词已完成" };
     // 撰写作业已排队但还没提交（同时生成数或账号上限已满）：显示真实原因，不冒充“撰写中”。
     if (writing && segment.promptJob?.status === "queued" && segment.promptJob.wait) return { tone: "blocked", label: videoWaitLabel(segment.promptJob.wait), detail: segment.promptJob.wait };
     if (writing) return { tone: "busy", label: "撰写提示词中" };
@@ -48,8 +49,8 @@ export function promptReady(segment: DramaSegment) {
     return segment.custom || segment.promptStatus === "ready";
 }
 
-export function SegmentStatus({ segment }: { segment: DramaSegment }) {
-    const state = segmentState(segment);
+export function SegmentStatus({ segment, phase = "video" }: { segment: DramaSegment; phase?: "video" | "prompt" }) {
+    const state = segmentState(segment, phase);
     return (
         <span className={`drama-sg-status is-${state.tone}`} title={state.detail}>
             {state.tone === "busy" ? (

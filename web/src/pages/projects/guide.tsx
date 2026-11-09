@@ -115,13 +115,14 @@ export default function DramaGuidePage() {
     const episodeQuery = useDramaEpisode(projectId, storyActive ? episodeId : "", jobsActive);
     const detail = episodeQuery.data?.episode.id === episodeId ? episodeQuery.data : undefined;
     const allEpisodeQueries = useQueries({
-        queries: allEpisodesSelected && storyActive
-            ? episodes.map((episode) => ({
-                  queryKey: dramaKeys.episode(projectId, episode.id),
-                  queryFn: ({ signal }: { signal: AbortSignal }) => getDramaEpisode(projectId, episode.id, signal),
-                  refetchInterval: jobsActive ? 2_500 : false,
-              }))
-            : [],
+        queries:
+            allEpisodesSelected && storyActive
+                ? episodes.map((episode) => ({
+                      queryKey: dramaKeys.episode(projectId, episode.id),
+                      queryFn: ({ signal }: { signal: AbortSignal }) => getDramaEpisode(projectId, episode.id, signal),
+                      refetchInterval: jobsActive ? 2_500 : false,
+                  }))
+                : [],
     });
     const allEpisodeDetails = allEpisodeQueries.flatMap((query) => (query.data ? [query.data] : []));
     const allEpisodesLoading = allEpisodeQueries.some((query) => query.isLoading || query.isFetching);
@@ -836,18 +837,7 @@ function setupChoiceDescription(proposal: DramaAgentProposal) {
 function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: { proposal: DramaAgentProposal; target?: DramaCast; valid: boolean; busy: boolean; onApply: () => void; onDismiss: () => void }) {
     const title = { setup: "创作配置建议", source: "故事正文草稿", cast: "资产设定调整", cast_create: "新增资产", cast_delete: "删除资产", shot: "镜头文字调整", segment_prompt: "段提示词调整" }[proposal.kind];
     const deleting = proposal.kind === "cast_delete";
-    const chooseLabel =
-        deleting
-            ? "删除此资产"
-            : proposal.kind === "cast_create"
-              ? "新增此资产"
-              : proposal.kind === "source"
-                ? "采用这份正文"
-                : proposal.kind === "cast"
-                  ? "保存资产设定"
-                  : proposal.kind === "shot"
-                    ? "保存分镜修改"
-                    : "保存段提示词";
+    const chooseLabel = deleting ? "删除此资产" : proposal.kind === "cast_create" ? "新增此资产" : proposal.kind === "source" ? "采用这份正文" : proposal.kind === "cast" ? "保存资产设定" : proposal.kind === "shot" ? "保存分镜修改" : "保存段提示词";
     return (
         <article className="drama-guide-card drama-guide-proposal">
             <div className="drama-guide-section-head">

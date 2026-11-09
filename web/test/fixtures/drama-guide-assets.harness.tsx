@@ -42,7 +42,7 @@ mock.module("@/pages/projects/drama-model-picker", () => ({ DramaModelPicker: em
 mock.module("@/pages/projects/step-settings", () => ({ DramaAssetImageModels: empty, DramaTextSteps: empty, VideoResolutionField: empty }));
 mock.module("@/pages/projects/storyboard-rules", () => ({ EpisodeDurationInput: empty, StoryboardRules: empty }));
 mock.module("@/pages/projects/style-picker", () => ({ DramaStylePicker: empty }));
-mock.module("@/pages/projects/studio/segment-parts", () => ({ secondsLabel: () => "", SegmentStatus: empty }));
+mock.module("@/pages/projects/studio/segment-parts", () => ({ secondsLabel: () => "", segmentState: () => ({ tone: "idle", label: "" }), SegmentStatus: empty }));
 mock.module("@/pages/projects/studio/segment-dialog", () => ({ ShotEditor: empty }));
 mock.module("@/pages/projects/studio/use-studio", () => ({ dramaKeys: {} }));
 const { GuideAssets } = await import("@/pages/projects/guide-panels");

@@ -385,6 +385,7 @@ export function GuideStory({
     episodeId,
     detail,
     details = [],
+    failedEpisodeIds,
     busy,
     loading,
     failed,
@@ -414,17 +415,14 @@ export function GuideStory({
     const [segmentFilter, setSegmentFilter] = useState<"all" | SegmentTone>("all");
     useEffect(() => setSegmentFilter("all"), [episodeId]);
     const failedEpisodeIdSet = useMemo(() => new Set(failedEpisodeIds), [failedEpisodeIds]);
-    const visibleDetails = useMemo(
-        () => (allEpisodes ? details.filter((current) => !failedEpisodeIdSet.has(current.episode.id)) : detail ? [detail] : []),
-        [allEpisodes, detail, details, failedEpisodeIdSet],
-    );
+    const visibleDetails = useMemo(() => (allEpisodes ? details.filter((current) => !failedEpisodeIdSet.has(current.episode.id)) : detail ? [detail] : []), [allEpisodes, detail, details, failedEpisodeIdSet]);
     const progress = useMemo(() => {
         const detailProgress = new Map(
             visibleDetails.map((current) => [
                 current.episode.id,
                 current.segments.reduce(
                     (result, segment) => {
-                        const failed = segmentState(segment).tone === "failed";
+                        const failed = segmentState(segment, "prompt").tone === "failed";
                         result.total += 1;
                         if (failed) result.failed += 1;
                         else if (segment.custom || segment.promptStatus === "ready") result.completed += 1;
@@ -440,7 +438,7 @@ export function GuideStory({
                 const current = detailProgress.get(episode.id);
                 result.total += current?.total ?? episode.stats?.segments ?? 0;
                 const failed = current?.failed ?? episode.stats?.failed ?? 0;
-                result.completed += current?.completed ?? episode.stats?.promptSucceeded ?? Math.max(0, Math.min(episode.stats?.promptReady ?? 0, (episode.stats?.segments ?? 0) - failed));
+                result.completed += current?.completed ?? episode.stats?.promptSucceeded ?? 0;
                 result.failed += failed;
                 return result;
             },
@@ -459,7 +457,7 @@ export function GuideStory({
         { value: "stale", label: "已过期" },
         { value: "blocked", label: "等待中" },
     ];
-    const filteredSegments = (current: DramaEpisodeDetail) => current.segments.filter((segment) => segmentFilter === "all" || segmentState(segment).tone === segmentFilter);
+    const filteredSegments = (current: DramaEpisodeDetail) => current.segments.filter((segment) => segmentFilter === "all" || segmentState(segment, "prompt").tone === segmentFilter);
     const detailLoading = loading;
     const unavailableEpisodes = allEpisodes ? episodes.filter((episode) => failedEpisodeIdSet.has(episode.id)) : [];
     return (
@@ -471,7 +469,9 @@ export function GuideStory({
                     <div className="drama-guide-story-progress" aria-label={`段提示词进度：已完成 ${progress.completed} 段，失败 ${progress.failed} 段，共 ${progress.total} 段`}>
                         <div className="drama-guide-story-progress-head">
                             <strong>段提示词进度</strong>
-                            <span>{progress.completed + progress.failed}/{progress.total || 0} 段已处理</span>
+                            <span>
+                                {progress.completed + progress.failed}/{progress.total || 0} 段已处理
+                            </span>
                         </div>
                         <div className="drama-guide-story-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
                             <span className="is-success" style={{ width: `${successPercent}%` }} />
@@ -492,7 +492,13 @@ export function GuideStory({
             </div>
             {episodes.length ? (
                 <div className="drama-guide-story-filters">
-                    <Select className="drama-guide-story-episode-select" aria-label="审阅集数" value={episodeId || undefined} options={[{ value: "all", label: `全部集（${episodes.length} 集）` }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))]} onChange={onSelect} />
+                    <Select
+                        className="drama-guide-story-episode-select"
+                        aria-label="审阅集数"
+                        value={episodeId || undefined}
+                        options={[{ value: "all", label: `全部集（${episodes.length} 集）` }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))]}
+                        onChange={onSelect}
+                    />
                     <Select className="drama-guide-story-status-select" aria-label="筛选段状态" value={segmentFilter} options={statusOptions} onChange={setSegmentFilter} />
                 </div>
             ) : null}
@@ -512,7 +518,11 @@ export function GuideStory({
                         const segments = filteredSegments(current);
                         return (
                             <section key={current.episode.id} className="drama-guide-story-episode">
-                                {allEpisodes ? <h3 className="drama-guide-story-episode-title">第 {current.episode.number} 集 · {current.episode.title}</h3> : null}
+                                {allEpisodes ? (
+                                    <h3 className="drama-guide-story-episode-title">
+                                        第 {current.episode.number} 集 · {current.episode.title}
+                                    </h3>
+                                ) : null}
                                 {current.episode.synopsis ? (
                                     <section className="drama-guide-card">
                                         <h3>本集梗概</h3>
@@ -527,7 +537,7 @@ export function GuideStory({
                                             </span>
                                             <span className="drama-guide-segment-meta">
                                                 {secondsLabel(segment.durationMs)}
-                                                <SegmentStatus segment={segment} />
+                                                <SegmentStatus segment={segment} phase="prompt" />
                                             </span>
                                         </summary>
                                         <div className="drama-guide-segment-body">
@@ -537,7 +547,12 @@ export function GuideStory({
                                                     <Button size="small" disabled={busy} onClick={() => onEditPrompt(segment, current.episode.id)} icon={<Pencil className="size-3.5" />}>
                                                         编辑
                                                     </Button>
-                                                    <Button size="small" disabled={busy || segment.promptStatus === "queued" || segment.promptStatus === "running"} onClick={() => onWritePrompt(segment, current.episode.id)} icon={<RotateCcw className="size-3.5" />}>
+                                                    <Button
+                                                        size="small"
+                                                        disabled={busy || segment.promptStatus === "queued" || segment.promptStatus === "running"}
+                                                        onClick={() => onWritePrompt(segment, current.episode.id)}
+                                                        icon={<RotateCcw className="size-3.5" />}
+                                                    >
                                                         重新撰写
                                                     </Button>
                                                 </div>
@@ -570,13 +585,19 @@ export function GuideStory({
                                         </div>
                                     </details>
                                 ))}
-                                {!segments.length && !detailLoading ? <p className="drama-guide-empty" role="status">{current.episode.error || (segmentFilter === "all" ? "本集尚无镜头" : "没有符合当前状态的段")}</p> : null}
+                                {!segments.length && !detailLoading ? (
+                                    <p className="drama-guide-empty" role="status">
+                                        {current.episode.error || (segmentFilter === "all" ? "本集尚无镜头" : "没有符合当前状态的段")}
+                                    </p>
+                                ) : null}
                             </section>
                         );
                     })}
                     {unavailableEpisodes.map((episode) => (
                         <section key={episode.id} className="drama-guide-story-episode">
-                            <h3 className="drama-guide-story-episode-title">第 {episode.number} 集 · {episode.title}</h3>
+                            <h3 className="drama-guide-story-episode-title">
+                                第 {episode.number} 集 · {episode.title}
+                            </h3>
                             <div className="drama-guide-empty" role="alert">
                                 <h3>本集内容暂时无法读取</h3>
                                 <p>请重新读取全部集后继续。</p>
