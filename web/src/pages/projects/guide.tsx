@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
 import { ArrowLeft, ArrowRight, Check, CheckCheck, ChevronRight, MessageSquare, RefreshCw, Sparkles, X } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
@@ -109,9 +109,24 @@ export default function DramaGuidePage() {
     const jobsActive = Boolean((summary?.jobCounts.queued || 0) + (summary?.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary?.production.revision);
     const episodes = summary?.episodes || [];
-    const episodeId = episodes.some((item) => item.id === selectedEpisodeId) ? selectedEpisodeId : episodes[0]?.id || "";
-    const episodeQuery = useDramaEpisode(projectId, step === "story" || step === "completed" || viewStep === "story" ? episodeId : "", jobsActive);
+    const allEpisodesSelected = selectedEpisodeId === "all";
+    const episodeId = allEpisodesSelected ? "" : episodes.some((item) => item.id === selectedEpisodeId) ? selectedEpisodeId : episodes[0]?.id || "";
+    const storyActive = step === "story" || step === "completed" || viewStep === "story";
+    const episodeQuery = useDramaEpisode(projectId, storyActive ? episodeId : "", jobsActive);
     const detail = episodeQuery.data?.episode.id === episodeId ? episodeQuery.data : undefined;
+    const allEpisodeQueries = useQueries({
+        queries: allEpisodesSelected && storyActive
+            ? episodes.map((episode) => ({
+                  queryKey: dramaKeys.episode(projectId, episode.id),
+                  queryFn: ({ signal }: { signal: AbortSignal }) => getDramaEpisode(projectId, episode.id, signal),
+                  refetchInterval: jobsActive ? 2_500 : false,
+              }))
+            : [],
+    });
+    const allEpisodeDetails = allEpisodeQueries.flatMap((query) => (query.data ? [query.data] : []));
+    const allEpisodesLoading = allEpisodeQueries.some((query) => query.isLoading || query.isFetching);
+    const allEpisodesFailed = allEpisodeQueries.length > 0 && allEpisodeQueries.every((query) => query.isError);
+    const failedEpisodeIds = allEpisodeQueries.flatMap((query, index) => (query.isError && episodes[index] ? [episodes[index].id] : []));
     const operation = useMutation({
         mutationFn: ({ work }: Operation) => work(),
         onSuccess: async (_data, input) => {
@@ -518,6 +533,7 @@ export default function DramaGuidePage() {
                                 void summaryQuery.refetch();
                                 void castQuery.refetch();
                                 if (episodeId) void episodeQuery.refetch();
+                                if (allEpisodesSelected) for (const query of allEpisodeQueries) void query.refetch();
                             }}
                         />
                     </div>
@@ -611,13 +627,18 @@ export default function DramaGuidePage() {
                                 </details>
                                 <GuideStory
                                     episodes={episodes}
-                                    episodeId={episodeId}
+                                    episodeId={allEpisodesSelected ? "all" : episodeId}
                                     detail={detail}
+                                    details={allEpisodeDetails}
+                                    failedEpisodeIds={failedEpisodeIds}
                                     busy={busy || step === "completed"}
-                                    loading={jobsActive || episodeQuery.isLoading}
-                                    failed={episodeQuery.isError}
-                                    onSelect={setSelectedEpisodeId}
-                                    onReload={() => void episodeQuery.refetch()}
+                                    loading={jobsActive || episodeQuery.isLoading || allEpisodesLoading}
+                                    failed={allEpisodesSelected ? allEpisodesFailed : episodeQuery.isError}
+                                    onSelect={(value) => setSelectedEpisodeId(value === "all" ? "all" : value)}
+                                    onReload={() => {
+                                        if (allEpisodesSelected) for (const query of allEpisodeQueries) void query.refetch();
+                                        else void episodeQuery.refetch();
+                                    }}
                                     onRescript={() =>
                                         modal.confirm({
                                             title: "重新改编本集？",
@@ -628,8 +649,8 @@ export default function DramaGuidePage() {
                                         })
                                     }
                                     onPatch={(shot, patch) => perform(() => updateDramaShot(projectId, shot.id, { ...patch, expectedRevision: revision }))}
-                                    onEditPrompt={(segment) => setPromptDraft({ segment, episodeId, text: segment.videoPrompt, revision })}
-                                    onWritePrompt={(segment) => perform(() => writeDramaSegmentPrompts(projectId, episodeId, [segment.index]))}
+                                    onEditPrompt={(segment, targetEpisodeId) => setPromptDraft({ segment, episodeId: targetEpisodeId, text: segment.videoPrompt, revision })}
+                                    onWritePrompt={(segment, targetEpisodeId) => perform(() => writeDramaSegmentPrompts(projectId, targetEpisodeId, [segment.index]))}
                                 />
                             </div>
                         )}

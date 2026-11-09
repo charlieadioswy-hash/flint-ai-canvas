@@ -256,6 +256,90 @@
     min-width: 160px;
 }
 
+.drama-guide-story-progress {
+    display: grid;
+    gap: var(--space-2);
+    max-width: 620px;
+    margin-top: var(--space-3);
+}
+
+.drama-guide-story-progress-head,
+.drama-guide-story-progress-meta,
+.drama-guide-story-filters {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.drama-guide-story-progress-head {
+    justify-content: space-between;
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-guide-story-progress-head strong {
+    color: var(--foreground);
+    font-weight: 600;
+}
+
+.drama-guide-story-progress-track {
+    display: flex;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--drama-sunken);
+}
+
+.drama-guide-story-progress-track > span {
+    min-width: 0;
+    transition: width 180ms ease;
+}
+
+.drama-guide-story-progress-track > .is-success {
+    background: var(--status-success);
+}
+
+.drama-guide-story-progress-track > .is-failed {
+    background: var(--status-error);
+}
+
+.drama-guide-story-progress-meta {
+    flex-wrap: wrap;
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-guide-story-progress-meta .is-success {
+    color: var(--status-success);
+}
+
+.drama-guide-story-progress-meta .is-failed {
+    color: var(--status-error);
+}
+
+.drama-guide-story-filters {
+    flex-wrap: wrap;
+}
+
+.drama-guide-story-episode-select {
+    flex: 1 1 260px;
+    min-width: 220px;
+}
+
+.drama-guide-story-status-select {
+    flex: 0 1 180px;
+    min-width: 160px;
+}
+
+.drama-guide-story-episode {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.drama-guide-story-episode-title {
+    margin: var(--space-2) 0 calc(var(--space-1) * -1);
+}
+
 .drama-guide-brief {
     margin-block: var(--space-4);
     padding: var(--space-3) var(--space-4);

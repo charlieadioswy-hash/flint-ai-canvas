@@ -174,7 +174,7 @@ export type DramaProductionView = {
 };
 
 /** 按剧情段统计的单集进度；videoGenerated 是持有视频的段数（含已过期的旧视频）。 */
-export type DramaEpisodeStats = { segments: number; promptReady: number; videoReady: number; videoGenerated: number; failed: number };
+export type DramaEpisodeStats = { segments: number; promptReady: number; promptSucceeded?: number; videoReady: number; videoGenerated: number; failed: number };
 
 export type DramaEpisodeRow = {
     id: string;

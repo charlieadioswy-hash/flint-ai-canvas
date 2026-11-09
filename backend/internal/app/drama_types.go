@@ -459,14 +459,15 @@ type DramaProductionView struct {
 	ReservedWordCount    int `json:"reservedWordCount"`
 }
 
-// DramaEpisodeStats 按剧情段统计进度：视频提示词写好几段、视频生成几段、失败几段。
+// DramaEpisodeStats 按剧情段统计进度：视频提示词写好几段、其中未失败几段、视频生成几段、失败几段。
 // VideoGenerated 是当前持有视频的段数（含已过期的旧视频），删除本集前据此要求输入确认。
 type DramaEpisodeStats struct {
-	Segments       int64 `json:"segments"`
-	PromptReady    int64 `json:"promptReady"`
-	VideoReady     int64 `json:"videoReady"`
-	VideoGenerated int64 `json:"videoGenerated"`
-	Failed         int64 `json:"failed"`
+	Segments        int64 `json:"segments"`
+	PromptReady     int64 `json:"promptReady"`
+	PromptSucceeded int64 `json:"promptSucceeded"`
+	VideoReady      int64 `json:"videoReady"`
+	VideoGenerated  int64 `json:"videoGenerated"`
+	Failed          int64 `json:"failed"`
 }
 
 type DramaEpisodeRow struct {

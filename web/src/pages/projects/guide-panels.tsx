@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Input, Select } from "antd";
 import { Check, ImagePlus, ImageIcon, Pencil, RotateCcw, Shirt, UsersRound } from "lucide-react";
@@ -14,7 +14,7 @@ import { CAST_KIND_LABEL, mediaBusy, MediaThumb } from "./drama-shared";
 import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./step-settings";
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { DramaStylePicker } from "./style-picker";
-import { secondsLabel, SegmentStatus } from "./studio/segment-parts";
+import { secondsLabel, segmentState, SegmentStatus, type SegmentTone } from "./studio/segment-parts";
 import { ShotEditor } from "./studio/segment-dialog";
 import { dramaKeys } from "./studio/use-studio";
 
@@ -384,6 +384,7 @@ export function GuideStory({
     episodes,
     episodeId,
     detail,
+    details = [],
     busy,
     loading,
     failed,
@@ -402,93 +403,186 @@ export function GuideStory({
     failed: boolean;
     onSelect: (id: string) => void;
     onReload: () => void;
-    onRescript: () => void;
+    details?: DramaEpisodeDetail[];
+    failedEpisodeIds?: string[];
+    onRescript?: () => void;
     onPatch: (shot: DramaShot, patch: DramaShotPatch) => void;
-    onEditPrompt: (segment: DramaSegment) => void;
-    onWritePrompt: (segment: DramaSegment) => void;
+    onEditPrompt: (segment: DramaSegment, episodeId: string) => void;
+    onWritePrompt: (segment: DramaSegment, episodeId: string) => void;
 }) {
+    const allEpisodes = episodeId === "all";
+    const [segmentFilter, setSegmentFilter] = useState<"all" | SegmentTone>("all");
+    useEffect(() => setSegmentFilter("all"), [episodeId]);
+    const failedEpisodeIdSet = useMemo(() => new Set(failedEpisodeIds), [failedEpisodeIds]);
+    const visibleDetails = useMemo(
+        () => (allEpisodes ? details.filter((current) => !failedEpisodeIdSet.has(current.episode.id)) : detail ? [detail] : []),
+        [allEpisodes, detail, details, failedEpisodeIdSet],
+    );
+    const progress = useMemo(() => {
+        const detailProgress = new Map(
+            visibleDetails.map((current) => [
+                current.episode.id,
+                current.segments.reduce(
+                    (result, segment) => {
+                        const failed = segmentState(segment).tone === "failed";
+                        result.total += 1;
+                        if (failed) result.failed += 1;
+                        else if (segment.custom || segment.promptStatus === "ready") result.completed += 1;
+                        return result;
+                    },
+                    { total: 0, completed: 0, failed: 0 },
+                ),
+            ]),
+        );
+        const selectedEpisodes = allEpisodes ? episodes : episodes.filter((episode) => episode.id === episodeId);
+        return selectedEpisodes.reduce(
+            (result, episode) => {
+                const current = detailProgress.get(episode.id);
+                result.total += current?.total ?? episode.stats?.segments ?? 0;
+                const failed = current?.failed ?? episode.stats?.failed ?? 0;
+                result.completed += current?.completed ?? episode.stats?.promptSucceeded ?? Math.max(0, Math.min(episode.stats?.promptReady ?? 0, (episode.stats?.segments ?? 0) - failed));
+                result.failed += failed;
+                return result;
+            },
+            { total: 0, completed: 0, failed: 0 },
+        );
+    }, [allEpisodes, detail, details, episodeId, episodes, visibleDetails]);
+    const progressPercent = progress.total ? Math.min(100, Math.round(((progress.completed + progress.failed) / progress.total) * 100)) : 0;
+    const successPercent = progress.total ? (progress.completed / progress.total) * 100 : 0;
+    const failurePercent = progress.total ? (progress.failed / progress.total) * 100 : 0;
+    const statusOptions: Array<{ value: "all" | SegmentTone; label: string }> = [
+        { value: "all", label: "全部状态" },
+        { value: "idle", label: "待处理" },
+        { value: "busy", label: "处理中" },
+        { value: "ready", label: "已完成" },
+        { value: "failed", label: "失败" },
+        { value: "stale", label: "已过期" },
+        { value: "blocked", label: "等待中" },
+    ];
+    const filteredSegments = (current: DramaEpisodeDetail) => current.segments.filter((segment) => segmentFilter === "all" || segmentState(segment).tone === segmentFilter);
+    const detailLoading = loading;
+    const unavailableEpisodes = allEpisodes ? episodes.filter((episode) => failedEpisodeIdSet.has(episode.id)) : [];
     return (
         <div className="drama-guide-stack">
             <div className="drama-guide-section-head">
                 <div>
                     <h2>审阅剧本、镜头与段提示词</h2>
                     <p>逐集检查内容，可以直接修改文字，或请 Agent 提出调整建议。</p>
+                    <div className="drama-guide-story-progress" aria-label={`段提示词进度：已完成 ${progress.completed} 段，失败 ${progress.failed} 段，共 ${progress.total} 段`}>
+                        <div className="drama-guide-story-progress-head">
+                            <strong>段提示词进度</strong>
+                            <span>{progress.completed + progress.failed}/{progress.total || 0} 段已处理</span>
+                        </div>
+                        <div className="drama-guide-story-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
+                            <span className="is-success" style={{ width: `${successPercent}%` }} />
+                            <span className="is-failed" style={{ width: `${failurePercent}%` }} />
+                        </div>
+                        <div className="drama-guide-story-progress-meta">
+                            <span className="is-success">{progress.completed} 段已完成</span>
+                            <span className="is-failed">{progress.failed} 段失败</span>
+                            <span>{Math.max(0, progress.total - progress.completed - progress.failed)} 段待处理</span>
+                        </div>
+                    </div>
                 </div>
-                {episodeId ? (
+                {episodeId && episodeId !== "all" && onRescript ? (
                     <Button icon={<RotateCcw className="size-3.5" />} disabled={busy || loading} onClick={onRescript}>
                         重新改编本集
                     </Button>
                 ) : null}
             </div>
-            {episodes.length ? <Select className="w-full" aria-label="审阅集数" value={episodeId || undefined} options={episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))} onChange={onSelect} /> : null}
+            {episodes.length ? (
+                <div className="drama-guide-story-filters">
+                    <Select className="drama-guide-story-episode-select" aria-label="审阅集数" value={episodeId || undefined} options={[{ value: "all", label: `全部集（${episodes.length} 集）` }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))]} onChange={onSelect} />
+                    <Select className="drama-guide-story-status-select" aria-label="筛选段状态" value={segmentFilter} options={statusOptions} onChange={setSegmentFilter} />
+                </div>
+            ) : null}
             {failed ? (
                 <div className="drama-guide-empty" role="alert">
                     <h3>本集内容暂时无法读取</h3>
                     <Button onClick={onReload}>重新读取</Button>
                 </div>
-            ) : !detail?.shots.length ? (
+            ) : detailLoading && !visibleDetails.length ? (
                 <div className="drama-guide-empty" role="status">
-                    <h3>{detail?.episode.error ? "本集剧本改编失败" : loading ? "正在改编剧本与分镜" : "本集尚无镜头"}</h3>
-                    <p>{detail?.episode.error || "内容会分步显示，全部文字任务结束后再确认进入制作台。"}</p>
+                    <h3>正在读取剧本与分镜</h3>
+                    <p>内容会分步显示，全部文字任务结束后再确认进入制作台。</p>
                 </div>
             ) : (
                 <>
-                    {detail.episode.synopsis ? (
-                        <section className="drama-guide-card">
-                            <h3>本集梗概</h3>
-                            <p>{detail.episode.synopsis}</p>
-                        </section>
-                    ) : null}
-                    {detail.segments.map((segment, index) => (
-                        <details key={segment.id} open={index === 0} className="drama-guide-card drama-guide-segment">
-                            <summary>
-                                <span>
-                                    第 {segment.index + 1} 段 · {segment.title}
-                                </span>
-                                <span className="drama-guide-segment-meta">
-                                    {secondsLabel(segment.durationMs)}
-                                    <SegmentStatus segment={segment} />
-                                </span>
-                            </summary>
-                            <div className="drama-guide-segment-body">
-                                <div className="drama-guide-section-head">
-                                    <h3>段视频提示词</h3>
-                                    <div className="drama-guide-inline-actions">
-                                        <Button size="small" disabled={busy} onClick={() => onEditPrompt(segment)} icon={<Pencil className="size-3.5" />}>
-                                            编辑
-                                        </Button>
-                                        <Button size="small" disabled={busy || segment.promptStatus === "queued" || segment.promptStatus === "running"} onClick={() => onWritePrompt(segment)} icon={<RotateCcw className="size-3.5" />}>
-                                            重新撰写
-                                        </Button>
-                                    </div>
-                                </div>
-                                <p className="drama-guide-prompt">{segment.videoPrompt || segment.promptError || "段提示词尚未就绪"}</p>
-                                {detail.shots
-                                    .filter((shot) => shot.segmentIndex === segment.index)
-                                    .map((shot) => (
-                                        <details key={shot.id} className="drama-guide-shot">
-                                            <summary>
-                                                <strong>
-                                                    镜头 {shot.position + 1} · {shot.scene || "场景待定"}
-                                                </strong>
-                                                <span>
-                                                    {shot.shotSize} · {secondsLabel(shot.durationMs)}
-                                                    <Pencil className="size-3" />
-                                                </span>
-                                            </summary>
-                                            {shot.dialogue ? (
-                                                <p className="drama-guide-dialogue">
-                                                    {shot.speaker ? `${shot.speaker}：` : ""}
-                                                    {shot.dialogue}
-                                                </p>
-                                            ) : null}
-                                            <fieldset disabled={busy} inert={busy}>
-                                                <ShotEditor shot={shot} onPatch={(patch) => onPatch(shot, patch)} />
-                                            </fieldset>
-                                        </details>
-                                    ))}
+                    {visibleDetails.map((current) => {
+                        const segments = filteredSegments(current);
+                        return (
+                            <section key={current.episode.id} className="drama-guide-story-episode">
+                                {allEpisodes ? <h3 className="drama-guide-story-episode-title">第 {current.episode.number} 集 · {current.episode.title}</h3> : null}
+                                {current.episode.synopsis ? (
+                                    <section className="drama-guide-card">
+                                        <h3>本集梗概</h3>
+                                        <p>{current.episode.synopsis}</p>
+                                    </section>
+                                ) : null}
+                                {segments.map((segment, index) => (
+                                    <details key={segment.id} open={index === 0} className="drama-guide-card drama-guide-segment">
+                                        <summary>
+                                            <span>
+                                                第 {segment.index + 1} 段 · {segment.title}
+                                            </span>
+                                            <span className="drama-guide-segment-meta">
+                                                {secondsLabel(segment.durationMs)}
+                                                <SegmentStatus segment={segment} />
+                                            </span>
+                                        </summary>
+                                        <div className="drama-guide-segment-body">
+                                            <div className="drama-guide-section-head">
+                                                <h3>段视频提示词</h3>
+                                                <div className="drama-guide-inline-actions">
+                                                    <Button size="small" disabled={busy} onClick={() => onEditPrompt(segment, current.episode.id)} icon={<Pencil className="size-3.5" />}>
+                                                        编辑
+                                                    </Button>
+                                                    <Button size="small" disabled={busy || segment.promptStatus === "queued" || segment.promptStatus === "running"} onClick={() => onWritePrompt(segment, current.episode.id)} icon={<RotateCcw className="size-3.5" />}>
+                                                        重新撰写
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            <p className="drama-guide-prompt">{segment.videoPrompt || segment.promptError || "段提示词尚未就绪"}</p>
+                                            {current.shots
+                                                .filter((shot) => shot.segmentIndex === segment.index)
+                                                .map((shot) => (
+                                                    <details key={shot.id} className="drama-guide-shot">
+                                                        <summary>
+                                                            <strong>
+                                                                镜头 {shot.position + 1} · {shot.scene || "场景待定"}
+                                                            </strong>
+                                                            <span>
+                                                                {shot.shotSize} · {secondsLabel(shot.durationMs)}
+                                                                <Pencil className="size-3" />
+                                                            </span>
+                                                        </summary>
+                                                        {shot.dialogue ? (
+                                                            <p className="drama-guide-dialogue">
+                                                                {shot.speaker ? `${shot.speaker}：` : ""}
+                                                                {shot.dialogue}
+                                                            </p>
+                                                        ) : null}
+                                                        <fieldset disabled={busy} inert={busy}>
+                                                            <ShotEditor shot={shot} onPatch={(patch) => onPatch(shot, patch)} />
+                                                        </fieldset>
+                                                    </details>
+                                                ))}
+                                        </div>
+                                    </details>
+                                ))}
+                                {!segments.length && !detailLoading ? <p className="drama-guide-empty" role="status">{current.episode.error || (segmentFilter === "all" ? "本集尚无镜头" : "没有符合当前状态的段")}</p> : null}
+                            </section>
+                        );
+                    })}
+                    {unavailableEpisodes.map((episode) => (
+                        <section key={episode.id} className="drama-guide-story-episode">
+                            <h3 className="drama-guide-story-episode-title">第 {episode.number} 集 · {episode.title}</h3>
+                            <div className="drama-guide-empty" role="alert">
+                                <h3>本集内容暂时无法读取</h3>
+                                <p>请重新读取全部集后继续。</p>
+                                <Button onClick={onReload}>重新读取</Button>
                             </div>
-                        </details>
+                        </section>
                     ))}
                 </>
             )}

@@ -1146,14 +1146,15 @@ func (r *Repository) DramaShotsReferencingCast(projectID string, castID string) 
 	return shots, err
 }
 
-// DramaSegmentStat 是集列表进度使用的剧情段聚合计数；VideoGenerated 是持有视频的段（含已过期的旧视频）。
+// DramaSegmentStat 是集列表进度使用的剧情段聚合计数；PromptSucceeded 排除提示词或视频失败的已就绪提示词；VideoGenerated 是持有视频的段（含已过期的旧视频）。
 type DramaSegmentStat struct {
-	EpisodeID      string
-	Total          int64
-	PromptReady    int64
-	VideoReady     int64
-	VideoGenerated int64
-	Failed         int64
+	EpisodeID       string
+	Total           int64
+	PromptReady     int64
+	PromptSucceeded int64
+	VideoReady      int64
+	VideoGenerated  int64
+	Failed          int64
 }
 
 func (r *Repository) DramaSegmentStats(projectID string) (map[string]DramaSegmentStat, error) {
@@ -1161,6 +1162,7 @@ func (r *Repository) DramaSegmentStats(projectID string) (map[string]DramaSegmen
 	err := r.db.Model(&model.DramaSegment{}).Select(`episode_id,
 		COUNT(*) AS total,
 		SUM(CASE WHEN (prompt_status = 'ready' OR video_prompt_override <> '') THEN 1 ELSE 0 END) AS prompt_ready,
+		SUM(CASE WHEN prompt_status <> 'failed' AND video_status <> 'failed' AND (prompt_status = 'ready' OR video_prompt_override <> '') THEN 1 ELSE 0 END) AS prompt_succeeded,
 		SUM(CASE WHEN video_status = 'ready' THEN 1 ELSE 0 END) AS video_ready,
 		SUM(CASE WHEN video_resource_id <> '' THEN 1 ELSE 0 END) AS video_generated,
 		SUM(CASE WHEN prompt_status = 'failed' OR video_status = 'failed' THEN 1 ELSE 0 END) AS failed`).
