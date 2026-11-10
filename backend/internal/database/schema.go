@@ -174,6 +174,7 @@ func Models() []any {
 		&model.DramaTake{},
 		&model.DramaSegment{},
 		&model.DramaJob{},
+		&model.EcommerceRound{},
 	}
 }
 

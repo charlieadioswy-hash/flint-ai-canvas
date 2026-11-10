@@ -9,6 +9,7 @@ import { generationTaskProgress } from "@/lib/generation-task-display";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
 import { modelGenerationParameterError, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
+import { currentGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
@@ -407,7 +408,8 @@ export async function hydrateAssistantImages(sessions: CanvasAssistantSession[])
 }
 
 export function getGenerationCount(count: string) {
-    return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
+    // 画布张数是拆单数，上限不超过账号同时任务数。
+    return Math.max(1, Math.min(15, currentGenerationBatchLimit(), Math.floor(Math.abs(Number(count)) || 1)));
 }
 
 export function generationWorkflowMetadata(config: AiConfig): Pick<CanvasNodeMetadata, "workflowProvider" | "runningHubWorkflowId" | "runningHubWorkflowKind"> {
@@ -516,11 +518,18 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
               )
             : {};
     if (!displayOnly && workflowProvider === "model" && node && (mode === "image" || mode === "video")) {
-        const explicit = mode === "image"
-            ? { size: node.metadata?.size, quality: node.metadata?.quality, imageResolution: node.metadata?.imageResolution, imageParameters: node.metadata?.imageParameters, count: node.metadata?.count === undefined ? undefined : String(node.metadata.count) }
-            : { size: node.metadata?.size, videoSeconds: node.metadata?.seconds, vquality: node.metadata?.vquality };
+        const explicit =
+            mode === "image"
+                ? {
+                      size: node.metadata?.size,
+                      quality: node.metadata?.quality,
+                      imageResolution: node.metadata?.imageResolution,
+                      imageParameters: node.metadata?.imageParameters,
+                      count: node.metadata?.count === undefined ? undefined : String(node.metadata.count),
+                  }
+                : { size: node.metadata?.size, videoSeconds: node.metadata?.seconds, vquality: node.metadata?.vquality };
         const values = { ...generationDefaults, ...Object.fromEntries(Object.entries(explicit).filter(([, value]) => value !== undefined)) };
-        const parameterError = modelGenerationParameterError(config, model, mode, values);
+        const parameterError = modelGenerationParameterError(config, model, mode, mode === "image" ? { ...values, count: "1" } : values);
         if (parameterError) throw new Error(parameterError);
     }
     const modeCapability = mode === "video" || mode === "audio" ? mode : "image";

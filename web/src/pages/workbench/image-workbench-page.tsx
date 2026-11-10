@@ -1407,7 +1407,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
     const specControls =
         kind === "image" && imageProfile ? (
             <>
-                <ImageSizePicker profile={imageProfile} size={ratio} quality={quality} imageResolution={imageResolution} ratioHint={(value) => workbenchRatioUsage("image", value)} onChange={updateImageSettings} />
+                <ImageSizePicker profile={imageProfile} size={ratio} quality={quality} imageResolution={imageResolution} declaredSizeOptions ratioHint={(value) => workbenchRatioUsage("image", value)} onChange={updateImageSettings} />
                 <ImageParameterFields
                     profile={imageProfile}
                     config={composerConfig}

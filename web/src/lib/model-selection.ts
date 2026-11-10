@@ -1,8 +1,19 @@
-import { defaultImageCapabilityConfig, imageSizeAllowed, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoResolutionRequest, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import {
+    defaultImageCapabilityConfig,
+    imageSizeAllowed,
+    modelCapabilityConfigFor,
+    normalizeImageValue,
+    normalizeVideoValue,
+    STANDARD_IMAGE_SIZE_VALUES,
+    videoDurationAllowed,
+    videoResolutionRequest,
+    type ImageCapabilityConfig,
+} from "@/lib/model-capabilities";
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageParameterRequest, imageParameterDefaults, imageParameterAccepts } from "./image-parameters";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { resolveImageRequestSize } from "@/services/api/image-validation";
+import { currentGenerationBatchLimit } from "./generation-batch-limit";
 import { modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
@@ -166,8 +177,8 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
 
     if (capability === "text") {
         const text = modelCapabilityConfigFor(config, model).text;
-        if (input.imageCount > (text?.references.maxImages ?? 0)) return `最多支持 ${(text?.references.maxImages ?? 0)} 张参考图`;
-        if (input.videoCount > (text?.references.maxVideos ?? 0)) return `最多支持 ${(text?.references.maxVideos ?? 0)} 个参考视频`;
+        if (input.imageCount > (text?.references.maxImages ?? 0)) return `最多支持 ${text?.references.maxImages ?? 0} 张参考图`;
+        if (input.videoCount > (text?.references.maxVideos ?? 0)) return `最多支持 ${text?.references.maxVideos ?? 0} 个参考视频`;
         if (input.audioCount > 0) return "文本模型不支持参考音频";
         return "";
     }
@@ -210,7 +221,21 @@ export function modelRequestOptions(config: AiConfig, capability: ModelCapabilit
         case "video":
             return { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" };
         case "audio":
-            return { audioVoice: config.audioVoice, audioFormat: config.audioFormat, audioSpeed: Number(config.audioSpeed), audioEmotionControlMethod: config.audioEmotionControlMethod, audioEmotionRandom: config.audioEmotionRandom === "true", audioEmotionHappy: Number(config.audioEmotionHappy), audioEmotionAngry: Number(config.audioEmotionAngry), audioEmotionSad: Number(config.audioEmotionSad), audioEmotionAfraid: Number(config.audioEmotionAfraid), audioEmotionDisgusted: Number(config.audioEmotionDisgusted), audioEmotionMelancholic: Number(config.audioEmotionMelancholic), audioEmotionSurprised: Number(config.audioEmotionSurprised), audioEmotionCalm: Number(config.audioEmotionCalm) };
+            return {
+                audioVoice: config.audioVoice,
+                audioFormat: config.audioFormat,
+                audioSpeed: Number(config.audioSpeed),
+                audioEmotionControlMethod: config.audioEmotionControlMethod,
+                audioEmotionRandom: config.audioEmotionRandom === "true",
+                audioEmotionHappy: Number(config.audioEmotionHappy),
+                audioEmotionAngry: Number(config.audioEmotionAngry),
+                audioEmotionSad: Number(config.audioEmotionSad),
+                audioEmotionAfraid: Number(config.audioEmotionAfraid),
+                audioEmotionDisgusted: Number(config.audioEmotionDisgusted),
+                audioEmotionMelancholic: Number(config.audioEmotionMelancholic),
+                audioEmotionSurprised: Number(config.audioEmotionSurprised),
+                audioEmotionCalm: Number(config.audioEmotionCalm),
+            };
         default:
             return {};
     }
@@ -292,12 +317,16 @@ export function compatibleModelInGroup(config: AiConfig, models: string[], requi
     const compatible = models.filter((model) => !modelCompatibilityError(config, model, requirements));
     if (!compatible.length) return "";
     if (compatible.length === 1) return compatible[0];
+    // 用户显式选中的模型只要兼容就必须保留：同显示名组内可能包含不同 SKU（如 fast/quality），
+    // 按价格重路由会静默改变产物档位，且与请求日志对不上。仅在未指定偏好或偏好不兼容时，
+    // 才回退到组内最低价成员（无成本信息的模型视为最贵，避免被当成默认落点）。
+    if (preferred && compatible.includes(preferred)) return preferred;
     const priceOf = (model: string) => {
         const channel = resolveModelChannel(config, model);
         const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
         return cost && Number.isFinite(cost.unitPriceMicrocredits) ? cost.unitPriceMicrocredits : Number.POSITIVE_INFINITY;
     };
-    return compatible.sort((left, right) => priceOf(left) - priceOf(right) || (left === preferred ? -1 : right === preferred ? 1 : 0))[0];
+    return compatible.sort((left, right) => priceOf(left) - priceOf(right))[0];
 }
 
 export function resolveCompatibleModel(config: AiConfig, selected: string, requirements?: ModelRequirements) {
@@ -368,12 +397,17 @@ export function modelGenerationParameterError(config: AiConfig, model: string, c
     if (capability === "image" && profile.image) {
         const image = profile.image;
         if (image.parameters) {
-            try { imageParameterRequest(image, values, true); } catch (error) { return error instanceof Error ? error.message : "图片参数不受当前模型支持"; }
+            try {
+                imageParameterRequest(image, values, true);
+            } catch (error) {
+                return error instanceof Error ? error.message : "图片参数不受当前模型支持";
+            }
             return "";
         }
         if (present(values.size) && !imageSizeAllowed(image, values.size!.trim())) return "当前模型不支持所选图片尺寸，请重新选择";
         if (present(values.count) && (!Number.isInteger(Number(values.count)) || Number(values.count) < 1 || Number(values.count) > image.maxOutputs)) return `当前模型生成数量必须为 1–${image.maxOutputs} 张`;
-        if (image.resolution.supported && present(values.imageResolution) && !/^(auto|any)$/i.test(values.imageResolution!) && !image.resolution.values.some((value) => value.toLowerCase() === values.imageResolution!.toLowerCase())) return "当前模型不支持所选图片分辨率，请重新选择";
+        if (image.resolution.supported && present(values.imageResolution) && !/^(auto|any)$/i.test(values.imageResolution!) && !image.resolution.values.some((value) => value.toLowerCase() === values.imageResolution!.toLowerCase()))
+            return "当前模型不支持所选图片分辨率，请重新选择";
         if (image.quality.supported && present(values.quality) && !/^(auto|any)$/i.test(values.quality!) && !image.quality.values.includes(values.quality!)) return "当前模型不支持所选图片质量，请重新选择";
     }
     if (capability === "video" && profile.video) {
@@ -418,7 +452,11 @@ export function resolveModelGenerationDefaults(
             },
             cost?.protocol,
         );
-        return normalized;
+        return {
+            ...normalized,
+            // 画布与创作页的张数是拆单数，不能被单模型 maxOutputs(=1) 压回 1。
+            count: String(Math.max(1, Math.min(currentGenerationBatchLimit(), Math.floor(Math.abs(Number(source("count") ?? normalized.count)) || 1)))),
+        };
     }
 
     if (capability === "video" && profile.video) {
@@ -439,17 +477,12 @@ export function resolveModelGenerationDefaults(
     return {};
 }
 
-export function resolveModelVideoBooleanOptions(
-    config: AiConfig,
-    model: string,
-    explicit: Partial<ModelVideoBooleanOptions> = {},
-    fallback: Partial<ModelVideoBooleanOptions> = {},
-): ModelVideoBooleanOptions {
+export function resolveModelVideoBooleanOptions(config: AiConfig, model: string, explicit: Partial<ModelVideoBooleanOptions> = {}, fallback: Partial<ModelVideoBooleanOptions> = {}): ModelVideoBooleanOptions {
     const profile = modelCapabilityConfigFor(config, model).video!;
     const defaults = resolveModelGenerationDefaults(config, model, "video", explicit, fallback);
     return {
-        videoGenerateAudio: profile.generateAudio.supported ? defaults.videoGenerateAudio ?? String(profile.generateAudio.default) : "false",
-        videoWatermark: profile.watermark.supported ? defaults.videoWatermark ?? String(profile.watermark.default) : "false",
+        videoGenerateAudio: profile.generateAudio.supported ? (defaults.videoGenerateAudio ?? String(profile.generateAudio.default)) : "false",
+        videoWatermark: profile.watermark.supported ? (defaults.videoWatermark ?? String(profile.watermark.default)) : "false",
     };
 }
 

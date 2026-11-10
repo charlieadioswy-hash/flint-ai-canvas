@@ -14,6 +14,7 @@ import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
 import { modelRequestOptions, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
+import { useGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import { referenceImageSizeSelection, type ImageDimensions } from "@/lib/canvas/canvas-reference-image-size";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -136,6 +137,8 @@ export function CanvasNodePromptPanel({
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    // 画布节点选几张等于拆几单，上限按账号同时任务数。
+    const batchLimit = useGenerationBatchLimit();
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -242,6 +245,7 @@ export function CanvasNodePromptPanel({
         if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
+    // 张数是拆单数，上限与执行链路的 getGenerationCount 保持一致。
     const generationCount = getGenerationCount(config.count);
     const priceChannel = resolveModelChannel(config, config.model);
     const configuredCredits = requestCreditCost({
@@ -260,7 +264,9 @@ export function CanvasNodePromptPanel({
         try {
             const style = resolveCanvasStyleExecution(styleNode ? [styleNode] : [], node, prompt, config, "image")?.profile;
             quoteRequirements = { ...resolvedRequirements, providerOptions: liblibLoraQuoteOptions(config, node.metadata?.providerOptions, style) };
-        } catch (error) { loraQuoteError = error instanceof Error ? error.message : "LoRA 配置无效"; }
+        } catch (error) {
+            loraQuoteError = error instanceof Error ? error.message : "LoRA 配置无效";
+        }
     }
     // The canvas image executor submits one count=1 task per output, including
     // logical models. Quote that task once, then total the actual task count.
@@ -617,11 +623,11 @@ export function CanvasNodePromptPanel({
                                     <InputNumber
                                         size="small"
                                         min={1}
-                                        max={15}
-                                        value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
+                                        max={Math.min(15, batchLimit)}
+                                        value={Math.max(1, Math.min(Math.min(15, batchLimit), Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
                                         onChange={(value) =>
                                             onConfigChange(node.id, {
-                                                textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value) || 1)))),
+                                                textCount: Math.max(1, Math.min(Math.min(15, batchLimit), Math.floor(Math.abs(Number(value) || 1)))),
                                             })
                                         }
                                         aria-label="文本生成份数"
@@ -652,6 +658,7 @@ export function CanvasNodePromptPanel({
                             <CanvasImageSettingsPopover
                                 config={config}
                                 showCount={false}
+                                countLimit={batchLimit}
                                 placement={expanded ? "topRight" : "topLeft"}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : key === "size" ? { size: value, imageSizeSource: "user" } : { [key]: value })}

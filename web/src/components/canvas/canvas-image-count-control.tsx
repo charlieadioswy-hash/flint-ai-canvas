@@ -1,23 +1,22 @@
 import { canvasThemes } from "@/lib/canvas-theme";
-import { imageParameterAccepts } from "@/lib/image-parameters";
-import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
+import { useGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 
 export function CanvasImageCountControl({ config, disabled = false, onChange }: { config: AiConfig; disabled?: boolean; onChange: (count: number) => void }) {
     const theme = canvasThemes[useActiveTheme()];
+    const batchLimit = Math.min(15, useGenerationBatchLimit());
     const profile = modelCapabilityConfigFor(config, config.model || config.imageModel).image;
     if (!profile) return null;
-    const field = profile.parameters?.find((parameter) => parameter.name === "count" && parameter.enabled !== false);
-    const maxCount = Math.max(1, Math.floor(profile.maxOutputs));
-    const counts = Array.from({ length: maxCount }, (_, index) => index + 1).filter((count) => !field || imageParameterAccepts(field, count));
-    const current = Number(normalizeImageValue(profile, config).count);
+    const counts = Array.from({ length: batchLimit }, (_, index) => index + 1);
+    const current = Math.max(1, Math.min(batchLimit, Math.floor(Math.abs(Number(config.count)) || 1)));
     return (
         <label className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[var(--fs-tiny)]" style={{ background: theme.toolbar.itemHover, color: theme.node.text }} data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
             <span style={{ color: theme.node.muted }}>数量</span>
             <select
                 aria-label="图片生成数量"
-                title={counts.length === 1 ? "当前模型仅支持此生成数量" : `最多生成 ${counts.at(-1)} 张图片`}
+                title={counts.length === 1 ? "当前账号最多同时提交 1 个任务" : `最多并行生成 ${counts.at(-1)} 张图片，每张独立提交任务`}
                 className="h-full min-w-0 cursor-pointer bg-transparent outline-none focus-visible:ring-1 disabled:cursor-default disabled:opacity-60"
                 value={counts.includes(current) ? current : counts[0]}
                 disabled={disabled || counts.length <= 1}

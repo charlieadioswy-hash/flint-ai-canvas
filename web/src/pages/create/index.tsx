@@ -8,8 +8,9 @@ import { useTranslation } from "react-i18next";
 
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
+import { useGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import { isGenerationCostUncertainError } from "@/lib/canvas/canvas-generation-batch";
-import { imageParameterRequest, normalizeImageParameters } from "@/lib/image-parameters";
+import { imageParameterRequest } from "@/lib/image-parameters";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
@@ -150,6 +151,8 @@ export default function CreatePage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const userId = useUserStore((state) => state.user?.id || null);
     const userSessionHydrated = useUserStore((state) => state.hydrated);
+    // 一次可选张数按账号同时任务数，硬上限仍为 15；每张图仍拆成独立任务提交。
+    const imageBatchLimit = Math.min(15, useGenerationBatchLimit());
     const activeConversationScope = getActiveUserScope();
     const initialConversationSnapshot = userSessionHydrated ? readCreationConversationSnapshot<CreationConversation>(activeConversationScope) : null;
     const [conversations, setConversations] = useState<CreationConversation[]>(() => initialConversationSnapshot || []);
@@ -320,15 +323,16 @@ export default function CreatePage() {
             size: saved?.ratio || imageProfile.size.default,
             quality: saved?.quality || imageProfile.quality.default,
             imageResolution: saved?.imageResolution || imageProfile.resolution.default,
-            imageParameters: saved?.imageParameters,
+            imageParameters: saved?.model === selectedModel ? saved?.imageParameters : undefined,
             count: saved?.count || count,
         });
         setRatio(normalized.size);
         setQuality(normalized.quality);
         setImageResolution(normalized.imageResolution || imageProfile.resolution.default);
         setImageParameters(normalized.imageParameters ?? "{}");
-        setCount(normalized.count);
-    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, imageProfile]);
+        // 恢复上次张数时按账号同时任务数 clamp，不再被单模型 maxOutputs(=1) 压回 1。
+        setCount(String(Math.max(1, Math.min(imageBatchLimit, Math.floor(Number(saved?.count || count)) || 1))));
+    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, imageProfile, imageBatchLimit]);
 
     useEffect(() => {
         if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video") return;
@@ -859,7 +863,7 @@ export default function CreatePage() {
             releaseSubmitGate();
             return;
         }
-        const parameterError = modelGenerationParameterError(config, selectedModel, mode, { size: ratio, quality, imageResolution, imageParameters, count, videoSeconds: seconds, vquality: videoQuality });
+        const parameterError = modelGenerationParameterError(config, selectedModel, mode, { size: ratio, quality, imageResolution, imageParameters, count: mode === "image" ? "1" : count, videoSeconds: seconds, vquality: videoQuality });
         if (parameterError) {
             toast.error(parameterError);
             releaseRetryLock();
@@ -1004,7 +1008,7 @@ export default function CreatePage() {
                 if (!result.text?.trim()) throw new Error(t("create.page.noTextResult"));
                 updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
             } else if (mode === "image") {
-                const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
+                const taskCount = Math.max(1, Math.min(imageBatchLimit, Math.floor(Number(count) || 1)));
                 const settled = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () =>
                     runtime.runBackendGenerationTaskBatch({
                         mode: "image",
