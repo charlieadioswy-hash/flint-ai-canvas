@@ -949,6 +949,45 @@
     opacity: 0.5;
 }
 
+.agent-reply-option-input {
+    cursor: text;
+}
+
+.agent-reply-option.agent-reply-option-input:active {
+    transform: none;
+}
+
+.agent-reply-option-input[data-disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.agent-reply-option-send {
+    display: grid;
+    flex: none;
+    place-items: center;
+    padding: var(--space-2);
+    border: 0;
+    border-radius: var(--agent-radius-surface);
+    background: transparent;
+    color: var(--agent-ink);
+    cursor: pointer;
+}
+
+.agent-reply-option-send:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.agent-reply-option-send:focus-visible {
+    outline: 2px solid var(--agent-focus-ring);
+}
+
+.agent-reply-option-input .agent-reply-option-arrow {
+    opacity: 1;
+    transform: none;
+}
+
 .agent-reply-option-marker {
     display: grid;
     width: 22px;

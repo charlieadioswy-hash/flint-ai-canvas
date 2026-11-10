@@ -67,7 +67,7 @@ import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
-import { prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
+import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
 
 // hidden 为 true 时入口保持挂载但不显示：Live2D 模型加载开销大，面板开合不能卸载它，
@@ -647,12 +647,14 @@ function useLinkStableReferences(references: CanvasResourceReference[]) {
  * 只有对话停在 Agent 的最后一条回复上（之后没有用户发言）时，这条回复末尾的编号选项
  * 才变成可点击卡片；更早的回复保持原文，便于回看。
  */
-function agentReplyOptionsTarget(messages: readonly CloudAgentChatMessage[]): { id: string; options: AgentReplyOptions } | null {
+function agentReplyOptionsTarget(messages: readonly CloudAgentChatMessage[], drama = false): { id: string; options: AgentReplyOptions } | null {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         if (message.role === "user") return null;
         // 调用方只在本轮已停下（非运行、无审批）时启用，这里的最后一条回复一定是完整的。
         if (message.role !== "assistant" || message.reasoning) continue;
+        // 短剧推进只能由当前阶段回调提供，不能把恢复的旧引导文案变成普通续聊操作。
+        if (drama && hasExplicitDramaStageTransition(message.text)) return null;
         const options = extractAgentReplyOptions(message.text);
         return options ? { id: message.id, options } : null;
     }
@@ -750,7 +752,7 @@ export function AgentConversation({
     const dramaProposalChoices = guideMode ? proposalChoices : undefined;
     const dramaStageChoices = guideMode ? stageChoices : undefined;
     const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices && !dramaProposalChoices && !dramaStageChoices;
-    const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages) : null), [messages, replyOptionsEnabled]);
+    const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages, guideMode) : null), [guideMode, messages, replyOptionsEnabled]);
     const setupPresentation = useMemo(() => {
         const byMessage = new Map<string, ReturnType<typeof prepareDramaSetupMessage>>();
         const fallback: DramaAgentProposal[] = [];

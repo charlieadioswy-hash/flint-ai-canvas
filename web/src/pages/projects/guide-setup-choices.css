@@ -118,6 +118,11 @@
     cursor: pointer;
 }
 
+.drama-guide-stage-input {
+    align-items: center;
+    padding: var(--space-1) var(--space-2);
+}
+
 .drama-guide-setup-refresh {
     align-self: flex-start;
     color: var(--workspace-accent);

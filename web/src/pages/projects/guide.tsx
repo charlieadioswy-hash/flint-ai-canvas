@@ -8,6 +8,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { AppModal } from "@/components/ui/product/app-modal";
+import { useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
 import { analyzeNovel, EPISODE_SOURCE_CHARS, sourceChars } from "@/lib/drama/novel-parse";
 import { dramaChoiceKey, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import type { DramaAgentProposal } from "@/services/api/agent";
@@ -67,6 +68,7 @@ export default function DramaGuidePage() {
     const summaryRef = useRef(summary);
     summaryRef.current = summary;
     const step = summary?.production.guideStep || "configuring";
+    const stageChoiceDrafts = useAgentReplyOptionDrafts(JSON.stringify([projectId, step]));
     const revision = summary?.production.revision || 0;
     const stepIndex = STEPS.findIndex((item) => item.key === step);
     const [viewStep, setViewStep] = useState<VisibleStep>("configuring");
@@ -404,23 +406,25 @@ export default function DramaGuidePage() {
             step === "configuring"
                 ? [
                       { key: "confirm", title: "确认配置，开始提取资产", detail: "使用当前视频配置、风格、语言和正文进入资产提取。" },
-                      { key: "adjust", title: "继续调整", detail: "让 Agent 根据你的要求继续调整配置或故事正文。" },
+                      { key: "adjust", title: "继续调整", detail: "让 Agent 根据你的要求继续调整配置或故事正文。", input: true },
                   ]
                 : step === "assets"
                   ? [
                         { key: "confirm", title: "确认资产，开始改编剧本与分镜", detail: "使用当前角色、场景和道具文字进入下一阶段。" },
-                        { key: "adjust", title: "继续调整", detail: "让 Agent 继续补充或修改角色与场景设定。" },
+                        { key: "adjust", title: "继续调整", detail: "让 Agent 继续补充或修改角色与场景设定。", input: true },
                     ]
                   : [
                         { key: "confirm", title: "确认剧本与分镜，进入制作台", detail: "文字产物已完成，进入现有短剧制作流程。" },
-                        { key: "adjust", title: "继续调整", detail: "让 Agent 根据你的要求继续修改剧本与分镜，暂不进入制作台。" },
+                        { key: "adjust", title: "继续调整", detail: "让 Agent 根据你的要求继续修改剧本与分镜，暂不进入制作台。", input: true },
                     ];
         const title = step === "configuring" ? "下一步：提取资产" : step === "assets" ? "下一步：开始改编" : "下一步：剧本与分镜";
         return {
             pending: visibleProposals.some(validProposal),
             render: (labels?: { confirm: string; adjust: string }) => (
                 <GuideStageChoices
+                    key={projectId}
                     title={title}
+                    drafts={stageChoiceDrafts}
                     choices={choices.map((choice) => {
                         const label = labels?.[choice.key as "confirm" | "adjust"];
                         // 上一阶段回答仍在会话中；只沿用通用确认或当前动作的文案。
@@ -428,23 +432,24 @@ export default function DramaGuidePage() {
                         return { ...choice, title: label && matchesStage ? label : choice.title };
                     })}
                     busy={busy || stale || summaryQuery.isError}
-                    onChoose={(choice) => {
+                    onChoose={(choice, text) => {
                         if (choice.key === "confirm") {
                             confirmStageRef.current();
                             return;
                         }
+                        if (!text?.trim()) return;
                         const prompt =
                             step === "configuring"
                                 ? "我想继续调整创作配置，请先读取最新短剧状态，再根据我的要求修改配置或故事正文；暂不提取资产。"
                                 : step === "assets"
                                   ? "我想继续调整角色与场景，请先读取最新短剧状态，再根据我的要求修改资产文字；暂不开始改编剧本与分镜。"
                                   : "我想继续调整剧本与分镜，请先读取最新短剧状态，再根据我的要求修改文字内容；暂不进入制作台。";
-                        sendGuideMessage(prompt, choice.title, true);
+                        sendGuideMessage(`${prompt}\n我的调整要求是：\n${text.trim()}`, text.trim(), true);
                     }}
                 />
             ),
         };
-    }, [busy, stale, step, summary?.guide?.canConfirm, summaryQuery.isError, visibleProposals, validProposal]);
+    }, [busy, projectId, stale, step, summary?.guide?.canConfirm, summaryQuery.isError, visibleProposals, validProposal, stageChoiceDrafts.values]);
     useEffect(() => {
         if (!host || summary?.project.id !== projectId || !summary.production.guideStep) {
             if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);

@@ -121,6 +121,7 @@ import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
 import { AGENT_SCENE_DEFS, AgentChatComposer, parseCloudAgentFormAnswer, AgentPlanBar, AgentQuestionBar, AgentSceneCapsules, type AgentSceneBucket, type CloudAgentChatMessage } from "./canvas-cloud-agent-chat-ui";
 import { AgentContextChip } from "./canvas-cloud-agent-composer";
+import { useAgentReplyOptionDrafts } from "./canvas-agent-reply-options";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
 import { useSkillCuration, curationQuery } from "@/components/skills/skill-curation-browser";
 import { CanvasCloudAgentSettings, agentPermissionLabel, type AgentContextKey } from "./canvas-cloud-agent-settings";
@@ -417,6 +418,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const pendingSubmission = useRef<CloudAgentPendingSubmission | null>(null);
     const submissionRequestRef = useRef(false);
     const conversationScope = activeConversationId;
+    const questionReplyDrafts = useAgentReplyOptionDrafts(JSON.stringify([accountScope, conversationScope, dramaProjectId, pendingQuestion?.questionId, pendingQuestion?.question]));
     const currentScope = useRef(conversationScope);
     currentScope.current = conversationScope;
     useEffect(
@@ -2964,6 +2966,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                     {pendingQuestion ? (
                                         <AgentQuestionBar
                                             question={pendingQuestion}
+                                            replyOptionDrafts={questionReplyDrafts}
                                             theme={theme}
                                             inlineFreeform={Boolean(dramaProjectId)}
                                             disabled={otherAgentRunning || approvalSubmitting || connectionStatus !== "connected"}

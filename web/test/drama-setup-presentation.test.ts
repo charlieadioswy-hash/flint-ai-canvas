@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { prepareDramaProposalMessage, prepareDramaSetupMessage, prepareDramaStageMessage } from "@/lib/canvas/drama-setup-presentation";
+import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage, prepareDramaStageMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { DramaAgentProposal } from "@/services/api/agent";
 
 const proposal = (changes: Record<string, unknown>, toolCallId = "call"): DramaAgentProposal => ({ kind: "setup", changes, baseRevision: 4, runId: "run", toolCallId });
@@ -13,6 +13,18 @@ test("阶段确认编号选项原位转为可点击内容，保留前后正文�
 
 test("阶段选项按语义绑定确认与调整，兼容加粗编号和反序文案", () => {
     expect(prepareDramaStageMessage("请选择：\n**1. 继续调整**\n\n**2. 确认资产，开始改编剧本与分镜**")).toEqual({ body: "请选择：", after: "", labels: { confirm: "确认资产，开始改编剧本与分镜", adjust: "继续调整" } });
+});
+
+test.each(["确认这版对白", "确认角色设定", "同意这一版镜头台词", "确认第 3 镜头对白，继续推进改写", "确认并继续", "确认，继续推进"])("普通创意确认不作为阶段推进：%s", (label) => {
+    const text = `请选择对白处理方式：\n\n1. ${label}\n2. 修改第 3 镜头的台词`;
+    expect(hasExplicitDramaStageTransition(text)).toBe(false);
+});
+
+test.each(["确认配置，开始提取资产", "确认资产，开始改编剧本与分镜", "确认剧本与分镜，进入制作台", "确认，进入改编与分镜阶段", "进入下一阶段"])("明确阶段推进仍识别为阶段选项：%s", (label) => {
+    const text = `请选择下一步：\n\n1. ${label}\n2. 继续调整`;
+    const result = prepareDramaStageMessage(text);
+    expect(result.labels).toEqual({ confirm: label, adjust: "继续调整" });
+    expect(hasExplicitDramaStageTransition(text)).toBe(true);
 });
 
 test("整套配置仅保留一组采用与修改操作，不影响真实建议数据", () => {

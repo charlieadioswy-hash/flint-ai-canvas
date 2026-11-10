@@ -211,6 +211,7 @@ async function withGuide(
         click: (label: string) => Promise<void>;
         refresh: () => Promise<void>;
         switchProject: () => Promise<void>;
+        setAgentBusy: (busy: boolean) => Promise<void>;
         startSlowRead: () => Promise<() => Promise<void>>;
         container: HTMLElement;
         chatHost: HTMLDivElement;
@@ -260,6 +261,7 @@ async function withGuide(
     document.body.append(container);
     const root = createRoot(container);
     const choicesRoot = createRoot(choicesHost);
+    let agentBusy = false;
     renderSetupChoices = () => {
         const choices = dramaContext?.setupChoices;
         const proposals = dramaContext?.proposalChoices;
@@ -268,7 +270,7 @@ async function withGuide(
             <>
                 {choices ? choices.render(choices.proposals) : null}
                 {proposals ? proposals.render(proposals.proposals) : null}
-                {stage?.render(stageLabels) || null}
+                {!agentBusy ? stage?.render(stageLabels) || null : null}
             </>,
         );
     };
@@ -340,6 +342,13 @@ async function withGuide(
             refresh: async () => {
                 await act(async () => {
                     await client.invalidateQueries({ queryKey: dramaKeys.summary("project"), exact: true });
+                    await settle();
+                });
+            },
+            setAgentBusy: async (busy) => {
+                await act(async () => {
+                    agentBusy = busy;
+                    renderSetupChoices!();
                     await settle();
                 });
             },
@@ -672,7 +681,7 @@ test("剧本与分镜阶段在对话内提供确认选项，确认后进入制�
         const confirm = findButton(chatHost, "确认剧本与分镜，进入制作台");
         expect(confirm).toBeDefined();
         expect(confirm?.disabled).toBe(false);
-        expect(findButton(chatHost, "继续调整")).toBeDefined();
+        expect(chatHost.querySelector('input[aria-label="继续调整"]')).not.toBeNull();
         expect(container.querySelector('[aria-label="创作产物"]')?.textContent).not.toMatch(/确认剧本与分镜.*进入制作台|确认并进入制作台/);
 
         await click("确认剧本与分镜，进入制作台");
@@ -693,6 +702,82 @@ test("刷新失败时阶段确认选项保持禁用", async () => {
         expect(confirm).toBeDefined();
         expect(confirm?.disabled).toBe(true);
         expect(guideConfirms).toEqual([]);
+    });
+});
+
+test("各阶段继续调整在回复原位输入，Enter发送具体要求且不推进或生成媒体", async () => {
+    for (const step of ["configuring", "assets", "story"] as const) {
+        await withGuide(step, async ({ refresh, chatHost }) => {
+            summary.guide!.canConfirm = true;
+            await refresh();
+            expect(findButton(chatHost, "继续调整")).toBeUndefined();
+            const input = chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!;
+            expect(input).not.toBeNull();
+            const form = input.closest("form")!;
+            await act(async () => form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })));
+            expect(dramaContext?.prefillRequest).toBeNull();
+
+            const requirement = step === "configuring" ? "改为横屏，其余配置保留" : step === "assets" ? "把秦子文的年龄改为26岁" : "第二段去掉旁白";
+            await act(async () => {
+                Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, `  ${requirement}  `);
+                input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+            });
+            await act(async () => {
+                input.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+                await settle();
+            });
+            expect(dramaContext?.prefillRequest?.text).toContain(`我的调整要求是：\n${requirement}`);
+            expect(dramaContext?.prefillRequest?.text).toContain("读取最新短剧状态");
+            expect(dramaContext?.prefillRequest?.displayText).toBe(requirement);
+            expect(dramaContext?.prefillRequest?.requireIdle).toBe(true);
+            expect(guideConfirms).toEqual([]);
+            expect(writes).toEqual([]);
+            expect(unexpectedWrites).toBe(0);
+            expect(summary.production.guideStep).toBe(step);
+            expect(errors).toEqual([]);
+        });
+    }
+});
+
+test("引导页父层保留临时隐藏的阶段草稿，阶段和作品切换不串用", async () => {
+    await withGuide("assets", async ({ refresh, chatHost, setAgentBusy, switchProject }) => {
+        summary.guide!.canConfirm = true;
+        await refresh();
+        const input = chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "保留角色原文定义");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+            await settle();
+        });
+        await setAgentBusy(true);
+        expect(chatHost.querySelector('input[aria-label="继续调整"]')).toBeNull();
+        await setAgentBusy(false);
+        const restored = chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!;
+        expect(restored.value).toBe("保留角色原文定义");
+        await act(async () => {
+            restored.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+            await settle();
+        });
+        expect(dramaContext?.prefillRequest?.displayText).toBe("保留角色原文定义");
+        await setAgentBusy(true);
+        await setAgentBusy(false);
+        expect(chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!.value).toBe("保留角色原文定义");
+
+        summary.production.guideStep = "story";
+        summary.guide!.step = "story";
+        await refresh();
+        const storyInput = chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!;
+        expect(storyInput.value).toBe("");
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(storyInput, "第二段去掉旁白");
+            storyInput.dispatchEvent(new browser.Event("input", { bubbles: true }));
+            await settle();
+        });
+        await switchProject();
+        expect(chatHost.querySelector<HTMLInputElement>('input[aria-label="继续调整"]')!.value).toBe("");
+        expect(guideConfirms).toEqual([]);
+        expect(writes).toEqual([]);
+        expect(unexpectedWrites).toBe(0);
     });
 });
 
@@ -789,7 +874,7 @@ test("资产阶段不会沿用上一阶段确认文案，仍调用当前资产�
             await refresh();
             expect(findButton(chatHost, "确认配置，开始提取资产")).toBeUndefined();
             expect(findButton(chatHost, "确认资产，开始改编剧本与分镜")?.disabled).toBe(false);
-            expect(findButton(chatHost, "继续调整")).toBeDefined();
+            expect(chatHost.querySelector('input[aria-label="继续调整"]')).not.toBeNull();
 
             await click("确认资产，开始改编剧本与分镜");
             expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "assets", expectedRevision: 7 } }]);

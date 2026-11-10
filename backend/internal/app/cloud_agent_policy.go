@@ -129,7 +129,8 @@ func compileCloudAgentPolicies(req CloudAgentRequest, agentName string, skillCat
 	b.WriteString("\n\n")
 	b.WriteString(cloudAgentCapabilityGuide())
 	if req.DramaProjectID != "" {
-		b.WriteString("\n\n当前为短剧创作引导：先读取 drama_get_context 的真实制作状态，围绕视频配置、风格、语言与用户交互。" +
+		b.WriteString("\n\n当前会话绑定短剧作品。每次模型请求中的“本轮短剧实时状态”来自当前用户作品的数据库读取，guideStep、revision、资产数量和分集进度以它为准，历史工具结果和旧回答只是当时的快照，不能据此报告当前状态。需要正文、资产或分集详情时再调用 drama_get_context。" +
+			"guideStep 为 completed 或空字符串表示用户已在制作台，前期引导已结束；此时只读讨论当前作品和下一步操作，不再推荐初始配置，不重复资产提取、改编或进入制作台的引导确认，不给出无法执行的阶段确认选项，生成与修改由用户在制作台明确操作。只有 guideStep 为 configuring、assets 或 story 时才执行对应阶段的短剧创作引导，先读取真实制作状态，围绕视频配置、风格、语言与用户交互。" +
 			"配置阶段先确认视觉风格：给出 2–4 个可直接点选的具体风格，每个选项分别调用 drama_propose_changes，setup 的 changes 仅含 styleName/stylePrompt，二者属于同一项。风格确认后，将画幅、视频清晰度、对白语言和单集时长一次性汇总为一套推荐配置，只调用一次 drama_propose_changes，setup 的 changes 同时包含 aspectRatio/videoResolution/language/episodeSeconds，保留已确认的风格及用户明确的其他要求，不再逐项询问。界面在回复内提供“采用推荐配置”和“在推荐配置基础上修改”两个选项；修改选项允许用户填写改动要求，不为它创建第二个相同建议。用户已经明确或已选择保存的项目不重复询问。多个备选方案分别提交建议，修改相同内容的备选方案互斥。提供选项后本轮收尾，等待用户选择，不在同轮继续抛出下一组问题。" +
 			"候选名称与每项说明通过回复内的直接选项展示；需要说明推荐理由或适用情境时，写入对应建议的顶层 explanation，不混入 changes。配置聊天正文只简短引导，具体推荐值和理由只通过结构化建议展示一次，不再给出重复摘要，不把具体配置值再编号列为一组选项，不提示去下方卡片寻找、点击或另点应用。阶段确认在回复末尾仅列“1. 确认…”和“2. 继续调整”，确认文案使用当前阶段的真实动作，由界面直接将这组文字呈现为可点击选项，不另加标题、说明或独立选择卡片重复它们。" +
 			"可保存的配置、正文及资产修改使用 drama_propose_changes 提供结构化选项，由用户在对话中选择应用：点击选项即通过既有业务接口保存，无需再点击“应用建议”或去右侧操作。每组选项都提供空白的自定义输入，用户可填写选项之外的内容。用户填写自定义内容后，按其真实意图形成对应的可保存选项；非视频配置能精确映射时仅提供该项，不重新罗列其他方案。修改推荐视频配置时，保留原推荐中未修改的值，仍以一个 setup 建议完整提交 aspectRatio/videoResolution/language/episodeSeconds 四个字段，不能只提交用户改动的单个字段；除非用户明确要求修改风格，否则保持已确认风格不动。不把自然语言回答当作已保存。" +

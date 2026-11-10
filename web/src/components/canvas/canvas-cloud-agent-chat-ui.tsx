@@ -10,8 +10,8 @@ import type { CloudAgentInterjectionState } from "@/services/cloud-agent-convers
 import { canvasThemes } from "@/lib/canvas-theme";
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { AgentMemoryUpdateCard, AgentSkillSuggestionCard } from "./canvas-cloud-agent-memory-cards";
-import { AgentReplyOptionCards } from "./canvas-agent-reply-options";
-import type { AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
+import { AgentReplyOptionCards, useAgentReplyOptionDrafts } from "./canvas-agent-reply-options";
+import { agentReplyOptionNeedsInput, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
 import { prepareDramaStageMessage, type DramaStageChoiceLabels } from "@/lib/canvas/drama-setup-presentation";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Components } from "streamdown";
@@ -459,6 +459,7 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     const isUser = item.role === "user";
     const reducedMotion = useReducedMotion();
     const isSystem = item.role === "system";
+    const replyDrafts = useAgentReplyOptionDrafts(`${item.runId || ""}:${item.id}`);
     const displayedText = useTypewriterText(item.text, item.role === "assistant" && isStreaming);
     const formAnswer = item.formAnswer ?? (isUser ? parseCloudAgentFormAnswer(item.text) : undefined);
     const markdownComponents = useMemo(() => createAgentMessageMarkdownComponents(references, onFocusNode), [onFocusNode, references]);
@@ -627,7 +628,9 @@ export const AgentChatMessage = memo(function AgentChatMessage({
                                     {rewriteAgentNodeLinks(stageMessage.after, references)}
                                 </AIMessageMarkdown>
                             ) : null}
-                            {showReplyOptions && replyOptions && onReplyOption ? <AgentReplyOptionCards options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} /> : null}
+                            {showReplyOptions && replyOptions && onReplyOption ? (
+                                <AgentReplyOptionCards scopeKey={`${item.runId || ""}:${item.id}`} drafts={replyDrafts} options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} />
+                            ) : null}
                         </>
                     ) : isUser && canvasReference ? (
                         <AIMessageMarkdown className="text-left" components={markdownComponents}>
@@ -1301,6 +1304,7 @@ export function AgentQuestionBar({
     onRecordDecision,
     disabled = false,
     inlineFreeform = false,
+    replyOptionDrafts,
 }: {
     question: CloudAgentUserQuestion;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
@@ -1309,6 +1313,7 @@ export function AgentQuestionBar({
     onRecordDecision?: (record: CloudAgentDecisionRecord) => string | null | undefined;
     disabled?: boolean;
     inlineFreeform?: boolean;
+    replyOptionDrafts?: ReturnType<typeof useAgentReplyOptionDrafts>;
 }) {
     const fields = question.fields || EMPTY_QUESTION_FIELDS;
     // 同一分组的字段排在一起，按分组首次出现的顺序；没有分组的字段保持原位。
@@ -1334,6 +1339,10 @@ export function AgentQuestionBar({
     const [validation, setValidation] = useState("");
     const [freeform, setFreeform] = useState("");
     const freeformId = useId();
+    const replyScope = JSON.stringify([question.questionId, question.question]);
+    const localReplyDrafts = useAgentReplyOptionDrafts(replyScope);
+    const replyDrafts = replyOptionDrafts || localReplyDrafts;
+    const hasInputOption = question.options.some((option) => [option.label, option.detail].some((text) => text && agentReplyOptionNeedsInput(text)));
 
     useEffect(() => {
         setFreeform("");
@@ -1600,13 +1609,15 @@ export function AgentQuestionBar({
             </div>
             <div className="agent-question-choices px-3 pb-2 pt-2">
                 <AgentReplyOptionCards
+                    scopeKey={replyScope}
+                    drafts={replyDrafts}
                     label={question.question}
                     disabled={disabled}
                     options={question.options.map((option, index) => ({ marker: String(index + 1), title: option.label, detail: option.detail, text: option.label }))}
                     onSelect={(option) => onAnswer(option.text)}
                 />
             </div>
-            {inlineFreeform ? (
+            {inlineFreeform && !hasInputOption ? (
                 <div className="px-3 pb-2">
                     <label className="mb-1 block text-[var(--fs-label)] opacity-55" htmlFor={freeformId}>
                         其他想法
@@ -1644,7 +1655,7 @@ export function AgentQuestionBar({
                         </button>
                     </div>
                 </div>
-            ) : (
+            ) : !inlineFreeform ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2">
                     <span className="text-[var(--fs-label)] opacity-50">{question.allowFreeform === false ? "请从上面选一项。" : "也可以在下方输入框里补充说明。"}</span>
                     <button
@@ -1663,7 +1674,7 @@ export function AgentQuestionBar({
                         按默认方案开始
                     </button>
                 </div>
-            )}
+            ) : null}
         </div>
     );
 }

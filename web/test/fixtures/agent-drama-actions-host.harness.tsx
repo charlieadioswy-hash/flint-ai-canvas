@@ -23,6 +23,7 @@ const { createPortal } = await import("react-dom");
 const { createRoot } = await import("react-dom/client");
 const { AgentConversation } = await import("@/components/canvas/canvas-cloud-agent-panel-parts");
 const { GuideSetupChoices, GuideStageChoices } = await import("@/pages/projects/guide-setup-choices");
+const { useAgentReplyOptionDrafts } = await import("@/components/canvas/canvas-agent-reply-options");
 const { canvasThemes } = await import("@/lib/canvas-theme");
 const { applyAgentEvent } = await import("@/lib/canvas/cloud-agent-events");
 const { dramaProposalFromToolDetail } = await import("@/services/api/agent");
@@ -319,13 +320,129 @@ test("整组推荐配置的模型正文仅保留一组采用与修改操作", as
     }
 });
 
-test("模型回复的确认与调整选项原位可点击，保留前后正文且不叠加阶段卡片", async () => {
+test("制作台保留历史及新回复的引导阶段列表正文，不转换为普通回复按钮", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const text = "四项配置齐全，请选择下一步：\n\n1. 确认资产，开始改编剧本与分镜\n2. 继续调整";
+    const previous: CloudAgentChatMessage = { id: "old-guide", runId: "old-run", role: "assistant", text };
+    const genericReplies: string[] = [];
+    try {
+        for (const messages of [[previous], [previous, { id: "user", role: "user" as const, text: "现在哪一步？" }, { id: "latest", runId: "studio-run", role: "assistant" as const, text }]]) {
+            await act(async () => root.render(<AgentConversation {...conversationDefaults} messages={messages} guideMode onReplyOption={(reply) => genericReplies.push(reply)} />));
+            expect(container.textContent).toContain("四项配置齐全");
+            expect(container.textContent).toContain("确认资产，开始改编剧本与分镜");
+            expect(container.textContent).toContain("继续调整");
+            expect(container.querySelectorAll("ol li")).toHaveLength(messages.length === 1 ? 2 : 4);
+            expect(container.querySelector(".agent-reply-options")).toBeNull();
+            expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
+            expect(genericReplies).toEqual([]);
+        }
+        expect(previous.text).toBe(text);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each([false, true])("短剧上下文=%s 时普通创意编号选项仍可直接回复", async (guideMode) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation {...conversationDefaults} messages={[{ id: "creative-options", role: "assistant", text: "请选择创意方向：\n\n1. 加强兄弟冲突\n2. 补充森林环境" }]} guideMode={guideMode} onReplyOption={(text) => selected.push(text)} />,
+            ),
+        );
+        const buttons = container.querySelectorAll<HTMLButtonElement>(".agent-reply-option");
+        expect(buttons).toHaveLength(2);
+        expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
+        await act(async () => buttons[1].click());
+        expect(selected).toEqual(["补充森林环境"]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("制作台的确认对白与修改镜头是普通选择，仍能直接点击回复", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const labels = ["确认这版对白", "修改第 3 镜头的台词"];
+    try {
+        await act(async () =>
+            root.render(<AgentConversation {...conversationDefaults} messages={[{ id: "dialogue-options", role: "assistant", text: `请选择对白处理方式：\n\n1. ${labels[0]}\n2. ${labels[1]}` }]} guideMode onReplyOption={(text) => selected.push(text)} />),
+        );
+        const buttons = container.querySelectorAll<HTMLButtonElement>(".agent-reply-option");
+        expect(buttons).toHaveLength(2);
+        expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
+        await act(async () => buttons[0].click());
+        await act(async () => buttons[1].click());
+        expect(selected).toEqual(labels);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("真实对话忙碌时临时卸载阶段输入，恢复后保留父层草稿且作品与阶段隔离", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const chosen: string[] = [];
+    function Harness({ busy, scope }: { busy: boolean; scope: string }) {
+        const drafts = useAgentReplyOptionDrafts(scope);
+        return (
+            <AgentConversation
+                {...conversationDefaults}
+                busy={busy}
+                guideMode
+                messages={[{ id: "current-stage", role: "assistant", text: "请选择下一步：\n\n1. 确认资产，开始改编剧本与分镜\n2. 继续调整" }]}
+                stageChoices={{
+                    pending: false,
+                    render: () => <GuideStageChoices title="下一步：开始改编" drafts={drafts} choices={[{ key: "adjust", title: "继续调整", detail: "", input: true }]} busy={false} onChoose={(_choice, text) => text && chosen.push(text)} />,
+                }}
+            />
+        );
+    }
+    const render = (busy: boolean, scope = "project:assets") => act(async () => root.render(<Harness busy={busy} scope={scope} />));
+    try {
+        await render(false);
+        const input = container.querySelector<HTMLInputElement>("input")!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "保留秦子文原文定义");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+        });
+        await render(true);
+        expect(container.querySelector("input")).toBeNull();
+        await render(false);
+        const restored = container.querySelector<HTMLInputElement>("input")!;
+        expect(restored.value).toBe("保留秦子文原文定义");
+        await act(async () => restored.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" })));
+        expect(chosen).toEqual(["保留秦子文原文定义"]);
+        await render(true);
+        await render(false);
+        expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("保留秦子文原文定义");
+        await render(false, "project:story");
+        expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+        await render(false, "other-project:assets");
+        expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each(["确认，进入下一阶段", "确认", "确认资产"])("真实阶段回调的%s与调整选项原位可点击，保留前后正文且不重复", async (confirm) => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
     const before = "四项配置现已齐全，是否按当前配置推进？";
     const after = "图片可在制作台按需生成。";
-    const confirm = "确认，进入下一阶段";
     const adjust = "继续调整（可说明想改哪一项）";
     const messages: CloudAgentChatMessage[] = [{ id: "assistant", role: "assistant", text: `${before}\n\n1. ${confirm}\n2. ${adjust}\n\n${after}` }];
     const selected: string[] = [];

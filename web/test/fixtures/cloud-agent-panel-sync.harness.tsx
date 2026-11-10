@@ -172,7 +172,8 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
     AgentPlanBar: () => null,
     AgentQuestionBar: (props: any) => {
         questionUI = props;
-        return null;
+        const draftKey = `2:${props.question.options[1]?.label}`;
+        return <input data-testid="question-option-draft" value={props.replyOptionDrafts?.values[draftKey] || ""} onChange={(event) => props.replyOptionDrafts?.onChange(draftKey, event.target.value)} />;
     },
     AgentSceneCapsules: () => null,
 }));
@@ -1215,6 +1216,42 @@ test("保存反馈不能回答已有问题，用户明确回答后才继续", as
         expect(sent).toEqual(["question-feedback-parent", "submitted-child"]);
         expect(composer.prompt).toBe("");
     } finally {
+        await mounted.close();
+    }
+});
+
+test.each([400, 422])("ask_user输入回答被HTTP%s明确拒绝后，问题重挂仍保留同一草稿", async (status) => {
+    const existing = guideChat("guide-local", `question-rejected-${status}`);
+    const question = { questionId: "custom-direction", question: "选择创作方向", options: [{ label: "悬疑" }, { label: "其他（请直接描述）" }] };
+    existing.messages.push({ id: "pending-question", role: "assistant", text: "", question });
+    const mounted = await mount(existing, [existing], null, "guide-project");
+    let rejectSend: ((reason: Error) => void) | undefined;
+    try {
+        const draftKey = `2:${question.options[1].label}`;
+        await act(async () => questionUI!.replyOptionDrafts.onChange(draftKey, "按原设定保留兄弟关系，补充森林背景"));
+        expect(mounted.host.querySelector<HTMLInputElement>('[data-testid="question-option-draft"]')!.value).toBe("按原设定保留兄弟关系，补充森林背景");
+        sendOverride = () =>
+            new Promise((_resolve, reject) => {
+                rejectSend = reject;
+            });
+        await act(async () => {
+            questionUI!.onAnswer("按原设定保留兄弟关系，补充森林背景");
+            await settle();
+        });
+        expect(rejectSend).toBeDefined();
+        expect(mounted.host.querySelector('[data-testid="question-option-draft"]')).toBeNull();
+        await act(async () => {
+            rejectSend!(new ApiError("回答未被受理", { status }));
+            await settle();
+        });
+        expect(mounted.host.querySelector<HTMLInputElement>('[data-testid="question-option-draft"]')!.value).toBe("按原设定保留兄弟关系，补充森林背景");
+        expect(sendInputs[0].prompt).toBe("按原设定保留兄弟关系，补充森林背景");
+        expect(pending).toBeNull();
+        expect(composer.prompt).toBe("");
+        expect(sent).toHaveLength(1);
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        rejectSend?.(new ApiError("测试清理", { status }));
         await mounted.close();
     }
 });

@@ -67,6 +67,12 @@ function readList(lines: string[], start: number) {
     return { items, end };
 }
 
+function confirmsStageTransition(value: string) {
+    const label = normalizedLabel(value);
+    if (!/^(?:确认|同意|进入|开始)/u.test(label)) return false;
+    return /(?:进入(?:下一阶段|制作台|(?:改编(?:剧本)?(?:与分镜)?|剧本与分镜|资产提取)阶段)|开始提取资产|开始改编(?:剧本|分镜))/u.test(label);
+}
+
 function prepareDramaDecisionMessage(text: string, configuration: boolean): { body: string; after: string; labels?: DramaStageChoiceLabels } {
     const lines = text.split(/\r?\n/);
     const choiceLine = /^ {0,3}(?:[-*+]\s+)?(?:\*\*|__)?(?:[1-9]\s*[.)、．）]|[①-⑨])\s*(.+)$/u;
@@ -101,6 +107,12 @@ function prepareDramaDecisionMessage(text: string, configuration: boolean): { bo
 /** 只把明确的阶段确认/调整列表接到真实业务回调，不从模型文字推断新的操作。 */
 export function prepareDramaStageMessage(text: string) {
     return prepareDramaDecisionMessage(text, false);
+}
+
+/** 没有真实阶段回调时，只拦截明确的阶段推进，不屏蔽确认对白等普通创作选择。 */
+export function hasExplicitDramaStageTransition(text: string) {
+    const labels = prepareDramaStageMessage(text).labels;
+    return Boolean(labels && confirmsStageTransition(labels.confirm));
 }
 
 /** 只合并已能按真实配置值唯一核对的重复选项；编号本身不承担建议映射。 */

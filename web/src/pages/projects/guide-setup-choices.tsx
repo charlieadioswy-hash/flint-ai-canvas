@@ -1,5 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
+import { useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
 import type { DramaAgentProposal } from "@/services/api/agent";
 
 import "./guide-setup-choices.css";
@@ -162,23 +163,84 @@ export function GuideSetupChoices({ proposals, ...props }: ChoiceProps) {
     return choiceGroups(proposals).map((group) => <SetupChoiceGroup key={group.key} group={group} {...props} />);
 }
 
-export type GuideStageChoice = { key: string; title: string; detail: string };
+export type GuideStageChoice = { key: string; title: string; detail: string; input?: boolean };
+
+function GuideStageChoiceInput({ choice, index, busy, text, onChange, onChoose }: { choice: GuideStageChoice; index: number; busy: boolean; text: string; onChange: (text: string) => void; onChoose: (choice: GuideStageChoice, text?: string) => void }) {
+    const composing = useRef(false);
+    const submit = () => {
+        if (!busy && !composing.current && text.trim()) onChoose(choice, text.trim());
+    };
+    return (
+        <form
+            className="drama-guide-setup-custom drama-guide-stage-input"
+            onSubmit={(event) => {
+                event.preventDefault();
+                submit();
+            }}
+        >
+            <span className="drama-guide-setup-choice-number" aria-hidden="true">
+                {index + 1}.
+            </span>
+            <label>
+                <input
+                    aria-label={choice.title}
+                    placeholder={`${choice.title}，请描述具体要求`}
+                    title={`${choice.detail}，回车发送`}
+                    value={text}
+                    disabled={busy}
+                    maxLength={1600}
+                    onChange={(event) => onChange(event.target.value)}
+                    onCompositionStart={() => (composing.current = true)}
+                    onCompositionEnd={() => (composing.current = false)}
+                    onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key !== "Enter") return;
+                        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composing.current) return;
+                        event.preventDefault();
+                        submit();
+                    }}
+                />
+            </label>
+            <button type="submit" disabled={busy || !text.trim()} aria-label={`发送${choice.title}`}>
+                发送
+            </button>
+        </form>
+    );
+}
 
 /** 将阶段确认放进 Agent 回复，点击后直接推进已有引导状态机。 */
-export function GuideStageChoices({ title, choices, busy, onChoose }: { title: string; choices: GuideStageChoice[]; busy: boolean; onChoose: (choice: GuideStageChoice) => void }) {
+export function GuideStageChoices({
+    title,
+    choices,
+    busy,
+    drafts,
+    onChoose,
+}: {
+    title: string;
+    choices: GuideStageChoice[];
+    busy: boolean;
+    drafts?: ReturnType<typeof useAgentReplyOptionDrafts>;
+    onChoose: (choice: GuideStageChoice, text?: string) => void;
+}) {
+    const localDrafts = useAgentReplyOptionDrafts(title);
+    const inputDrafts = drafts || localDrafts;
     return (
         <section className="drama-guide-setup-choices" aria-label={title}>
             <div className="drama-guide-setup-choice-list" role="group" aria-label={title}>
-                {choices.map((choice, index) => (
-                    <button type="button" className="drama-guide-setup-choice" key={choice.key} disabled={busy} title={choice.detail} onClick={() => onChoose(choice)}>
-                        <span className="drama-guide-setup-choice-number" aria-hidden="true">
-                            {index + 1}.
-                        </span>
-                        <span className="drama-guide-setup-choice-copy">
-                            <strong>{choice.title}</strong>
-                        </span>
-                    </button>
-                ))}
+                {choices.map((choice, index) =>
+                    choice.input ? (
+                        <GuideStageChoiceInput key={`${title}:${choice.key}`} choice={choice} index={index} busy={busy} text={inputDrafts.values[choice.key] || ""} onChange={(text) => inputDrafts.onChange(choice.key, text)} onChoose={onChoose} />
+                    ) : (
+                        <button type="button" className="drama-guide-setup-choice" key={choice.key} disabled={busy} title={choice.detail} onClick={() => onChoose(choice)}>
+                            <span className="drama-guide-setup-choice-number" aria-hidden="true">
+                                {index + 1}.
+                            </span>
+                            <span className="drama-guide-setup-choice-copy">
+                                <strong>{choice.title}</strong>
+                            </span>
+                        </button>
+                    ),
+                )}
             </div>
         </section>
     );

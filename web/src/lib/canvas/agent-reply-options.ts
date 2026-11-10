@@ -19,6 +19,8 @@ export type AgentReplyOption = {
     detail?: string;
     /** 点击后发给 Agent 的文本：去掉 Markdown 标记的整条选项。 */
     text: string;
+    /** 明确要求用户填写的选项，提交填写内容而不是选项标签。 */
+    input?: boolean;
 };
 
 export type AgentReplyOptions = {
@@ -52,6 +54,17 @@ function stripInlineMarkdown(text: string) {
         .replace(/\*\*|__|`/g, "")
         .replace(/\s+/g, " ")
         .trim();
+}
+
+/** “说明/描述/提供”也可能是给 Agent 的命令，只有明确的填写提示或用户自述目标才算输入。 */
+export function agentReplyOptionNeedsInput(text: string) {
+    const plain = stripInlineMarkdown(text).normalize("NFKC");
+    return (
+        /^(?:其[他它](?:$|[\s(:：]|问题|想法|要求|需求|内容|方向|选项|方案|风格|配置|语言|角色|场景|设定|方式)|自定义(?:$|[\s(:：]|风格|配置|内容|角色|场景|选项|语言|时长|分辨率))/u.test(plain) ||
+        /(?:请(?:你|您)?(?:直接)?(?:输入|填写|填入)|(?:自己|自行|手动|直接)(?:输入|填写|填入)|^(?:输入|填写|填入)(?!法)|^自填(?:$|[\s(:：]|内容|要求|配置|风格)|^指定(?:集数|集号|段号|镜头号|角色名|场景名)\s*$)/u.test(plain) ||
+        /(?:(?:请(?:你|您)?(?:直接)?|直接)(?:描述|说明|补充|提供)(?:一下)?(?:你|您)(?:的|想(?:要|调整|修改|补充))|(?:自己|自行|手动)(?:描述|说明|补充|提供)|[(:：]请(?:直接)?(?:描述|说明|补充|提供)\s*\)?$)/u.test(plain) ||
+        /^(?:other|custom)(?:$|\s*[:(])|\bplease\s+(?:enter|type|fill\s+in)\b|\bplease\s+(?:describe|specify|provide)\s+your\b/iu.test(plain)
+    );
 }
 
 function parseListItem(line: string): ParsedItem | null {
@@ -128,7 +141,7 @@ function toOptions(items: readonly ParsedItem[], maxChars: number): AgentReplyOp
         if (item.kind !== kind || (!lazy && item.value !== index + 1)) return null;
         const text = stripInlineMarkdown(item.raw);
         if (!text || Array.from(text).length > maxChars) return null;
-        options.push({ marker: markerLabel(kind, index + 1), ...splitTitle(item.raw), text });
+        options.push({ marker: markerLabel(kind, index + 1), ...splitTitle(item.raw), text, ...(agentReplyOptionNeedsInput(text) ? { input: true } : {}) });
     }
     return options;
 }
