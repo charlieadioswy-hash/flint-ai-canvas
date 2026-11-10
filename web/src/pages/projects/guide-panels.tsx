@@ -4,7 +4,7 @@ import { Button, Input, Select } from "antd";
 import { Check, ImagePlus, ImageIcon, Pencil, RotateCcw, Shirt, UsersRound } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { dramaChoiceKey } from "@/lib/drama/model-choice";
+import { dramaChoiceKey, dramaResolutionAfterModelChange } from "@/lib/drama/model-choice";
 import { DRAMA_STYLES, styleCoverBackground } from "@/lib/drama/drama-styles";
 import { getDramaChapter, listDramaChapters, type DramaCast, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaSegment, type DramaSettings, type DramaShot, type DramaShotPatch, type DramaSummary } from "@/services/api/drama";
 
@@ -153,8 +153,10 @@ export function GuideConfiguration({
                                             capability={capability}
                                             value={settings.models[capability]}
                                             aspectRatio={settings.aspectRatio}
-                                            videoResolution={settings.videoResolution}
-                                            onChange={(choice) => patch({ models: { ...settings.models, [capability]: choice } })}
+                                            onChange={(choice) => {
+                                                const next = capability === "video" ? catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(choice)) : undefined;
+                                                patch({ models: { ...settings.models, [capability]: choice }, ...(next ? { videoResolution: dramaResolutionAfterModelChange(next, settings.videoResolution) } : {}) });
+                                            }}
                                         />
                                     </label>
                                 ))}

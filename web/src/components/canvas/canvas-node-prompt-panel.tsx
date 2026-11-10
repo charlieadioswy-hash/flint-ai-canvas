@@ -222,7 +222,7 @@ export function CanvasNodePromptPanel({
                 ...globalConfig,
                 size: node.metadata?.size || globalConfig.size,
                 quality: node.metadata?.quality || globalConfig.quality,
-                count: String(node.metadata?.count || globalConfig.count),
+                count: mode === "image" ? "1" : String(node.metadata?.count || globalConfig.count),
                 transparentBackground: node.metadata?.transparentBackground || globalConfig.transparentBackground,
                 videoSeconds: node.metadata?.seconds ?? globalConfig.videoSeconds,
                 vquality: node.metadata?.vquality || globalConfig.vquality,
@@ -238,7 +238,7 @@ export function CanvasNodePromptPanel({
     const config = buildNodeConfig(globalConfig, node, mode, requirements, referenceImageSize);
     const resolvedRequirements: ModelRequirements = {
         ...requirements,
-        options: modelRequestOptions(config, mode),
+        options: modelRequestOptions(mode === "image" ? { ...config, count: "1" } : config, mode),
         videoSeconds: mode === "video" ? config.videoSeconds : undefined,
     };
     const promptOptimizerProvider = useMemo(() => {

@@ -478,7 +478,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const imageSize = mode === "image" ? requestedConfig.size : undefined;
     // 无 requirements 的调用（重试、媒体工具等）也按当前能力与尺寸路由到组内最低价兼容模型，
     // 避免旧 metadata.model 不支持当前尺寸导致生成时被 normalize 回退。
-    const liveOptions = modelRequestOptions(requestedConfig, mode);
+    const liveOptions = modelRequestOptions(mode === "image" ? { ...requestedConfig, count: "1" } : requestedConfig, mode);
     const baseRequirements = requirements?.capability ? { ...requirements, options: { ...liveOptions, ...(requirements.options || {}) } } : { capability: mode, options: liveOptions };
     const model = workflowProvider === "model" ? resolveCompatibleModel(config, preferredModel, imageSize ? { ...baseRequirements, imageSize } : baseRequirements) || preferredModel : preferredModel;
     const generationDefaults: Partial<ModelGenerationDefaults> =

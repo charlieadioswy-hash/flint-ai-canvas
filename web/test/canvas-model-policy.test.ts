@@ -4,7 +4,17 @@ import { canvasConnectionError } from "../src/lib/canvas/canvas-connection-polic
 import { assertCanvasImageReferenceLimit, buildGenerationConfig, canvasImageReferenceLimitError, resolveCanvasGenerationModel } from "../src/lib/canvas/canvas-project-generation";
 import { readNodeGenerationSpec, synchronizeGenerationSpec } from "../src/lib/canvas/generation-contract";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
-import { audioModelForConnectionInput, groupModelsByDisplayName, inferVideoOperation, modelCompatibilityError, modelGroupReferenceLimits, modelPromptLengthError, resolveCompatibleModel, resolveModelGenerationDefaults, resolveModelVideoBooleanOptions } from "../src/lib/model-selection";
+import {
+    audioModelForConnectionInput,
+    groupModelsByDisplayName,
+    inferVideoOperation,
+    modelCompatibilityError,
+    modelGroupReferenceLimits,
+    modelPromptLengthError,
+    resolveCompatibleModel,
+    resolveModelGenerationDefaults,
+    resolveModelVideoBooleanOptions,
+} from "../src/lib/model-selection";
 import { defaultConfig, normalizeModelOptionValue, type AiConfig, type ModelChannel } from "../src/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -54,6 +64,41 @@ function node(id: string, type: CanvasNodeType, generationMode?: "image" | "vide
 }
 
 describe("逻辑模型选择", () => {
+    test("图片拆单数不参与单次模型数量兼容路由", () => {
+        const models = ["platform::single-image", "platform::multi-image"];
+        const image = defaultModelCapabilityConfig("liblib-image").image!;
+        const channel: ModelChannel = {
+            id: "platform",
+            name: "平台模型",
+            baseUrl: "/api",
+            apiKey: "test",
+            apiFormat: "openai",
+            scope: "system",
+            enabled: true,
+            models: ["single-image", "multi-image"],
+            modelCosts: ["single-image", "multi-image"].map((model, index) => ({
+                model,
+                displayName: "Image Model",
+                capability: "image" as const,
+                billingMode: "fixed_request" as const,
+                unitPriceMicrocredits: index + 1,
+                logicalModelId: `logical-${model}`,
+                capabilityConfig: { version: 1 as const, image },
+                logicalCapabilitySpec: {
+                    version: 1 as const,
+                    capability: "image" as const,
+                    options: { size: { values: ["*"] }, count: { min: 1, max: index === 0 ? 1 : 4 } },
+                },
+            })),
+        };
+        const config: AiConfig = { ...defaultConfig, channels: [channel], models, imageModels: models, imageModel: models[0]!, model: models[0]!, count: "3" };
+        const source = { ...node("image", CanvasNodeType.Image), metadata: { model: models[0], count: 3, size: image.size.default } };
+
+        const generation = buildGenerationConfig(config, source, "image");
+
+        expect(generation.model).toBe(models[0]!);
+        expect(generation.count).toBe("3");
+    });
 
     test("generationSpec 的显式 false 和 0 覆盖陈旧镜像及全局默认", () => {
         const config = policyConfig();
@@ -159,18 +204,20 @@ describe("逻辑模型选择", () => {
             scope: "system",
             enabled: true,
             models: ["gpt-image-2"],
-            modelCosts: [{
-                model: "gpt-image-2",
-                displayName: "GPT Image 2",
-                capability: "image",
-                billingMode: "fixed_request",
-                unitPriceMicrocredits: 1,
-                logicalCapabilitySpec: {
-                    version: 1,
+            modelCosts: [
+                {
+                    model: "gpt-image-2",
+                    displayName: "GPT Image 2",
                     capability: "image",
-                    options: { size: { values: ["1:1", "3:2"] } },
+                    billingMode: "fixed_request",
+                    unitPriceMicrocredits: 1,
+                    logicalCapabilitySpec: {
+                        version: 1,
+                        capability: "image",
+                        options: { size: { values: ["1:1", "3:2"] } },
+                    },
                 },
-            }],
+            ],
         };
         const config: AiConfig = {
             ...defaultConfig,
@@ -181,13 +228,15 @@ describe("逻辑模型选择", () => {
             model,
         };
 
-        expect(modelCompatibilityError(config, model, {
-            capability: "image",
-            input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
-            videoSeconds: "6",
-            imageSize: "3:2",
-            options: { size: "3:2" },
-        })).toBe("");
+        expect(
+            modelCompatibilityError(config, model, {
+                capability: "image",
+                input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
+                videoSeconds: "6",
+                imageSize: "3:2",
+                options: { size: "3:2" },
+            }),
+        ).toBe("");
     });
 
     test("后台图片默认比例优先于旧的全局 1:1 配置", () => {
@@ -197,7 +246,20 @@ describe("逻辑模型选择", () => {
         const config: AiConfig = {
             ...defaultConfig,
             size: "1:1",
-            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-image"], modelCosts: [{ model: "managed-image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, logicalModelId: "managed-image", logicalCapabilitySpec: { version: 1, capability: "image" }, capabilityConfig: profile }] }],
+            channels: [
+                {
+                    id: "platform",
+                    name: "平台模型",
+                    baseUrl: "/api",
+                    apiKey: "system",
+                    apiFormat: "openai",
+                    scope: "system",
+                    models: ["managed-image"],
+                    modelCosts: [
+                        { model: "managed-image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, logicalModelId: "managed-image", logicalCapabilitySpec: { version: 1, capability: "image" }, capabilityConfig: profile },
+                    ],
+                },
+            ],
             models: [model],
             imageModels: [model],
             imageModel: model,
@@ -214,7 +276,18 @@ describe("逻辑模型选择", () => {
         const config: AiConfig = {
             ...defaultConfig,
             videoSeconds: "6",
-            channels: [{ id: "platform", name: "平台模型", baseUrl: "/api", apiKey: "system", apiFormat: "openai", scope: "system", models: ["managed-video"], modelCosts: [{ model: "managed-video", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, logicalModelId: "managed-video", logicalCapabilitySpec: { version: 1, capability: "video" }, capabilityConfig: profile }] }],
+            channels: [
+                {
+                    id: "platform",
+                    name: "平台模型",
+                    baseUrl: "/api",
+                    apiKey: "system",
+                    apiFormat: "openai",
+                    scope: "system",
+                    models: ["managed-video"],
+                    modelCosts: [{ model: "managed-video", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 1, logicalModelId: "managed-video", logicalCapabilitySpec: { version: 1, capability: "video" }, capabilityConfig: profile }],
+                },
+            ],
             models: [model],
             videoModels: [model],
             videoModel: model,
@@ -233,50 +306,67 @@ describe("逻辑模型选择", () => {
             ...defaultConfig,
             videoGenerateAudio: "true",
             videoWatermark: "true",
-            channels: [{
-                id: "platform",
-                name: "平台模型",
-                baseUrl: "/api",
-                apiKey: "system",
-                apiFormat: "openai",
-                scope: "system",
-                models: ["silent-video"],
-                modelCosts: [{
-                    model: "silent-video",
-                    capability: "video",
-                    billingMode: "per_second",
-                    unitPriceMicrocredits: 1,
-                    logicalModelId: "silent-video",
-                    logicalCapabilitySpec: {
-                        version: 1,
-                        capability: "video",
-                        options: {
-                            videoGenerateAudio: { values: [false] },
-                            videoWatermark: { values: [false] },
+            channels: [
+                {
+                    id: "platform",
+                    name: "平台模型",
+                    baseUrl: "/api",
+                    apiKey: "system",
+                    apiFormat: "openai",
+                    scope: "system",
+                    models: ["silent-video"],
+                    modelCosts: [
+                        {
+                            model: "silent-video",
+                            capability: "video",
+                            billingMode: "per_second",
+                            unitPriceMicrocredits: 1,
+                            logicalModelId: "silent-video",
+                            logicalCapabilitySpec: {
+                                version: 1,
+                                capability: "video",
+                                options: {
+                                    videoGenerateAudio: { values: [false] },
+                                    videoWatermark: { values: [false] },
+                                },
+                            },
+                            capabilityConfig: profile,
                         },
-                    },
-                    capabilityConfig: profile,
-                }],
-            }],
+                    ],
+                },
+            ],
             models: [model],
             videoModels: [model],
             videoModel: model,
             model,
         };
 
-        expect(resolveModelVideoBooleanOptions(config, model, {}, {
-            videoGenerateAudio: config.videoGenerateAudio,
-            videoWatermark: config.videoWatermark,
-        })).toEqual({ videoGenerateAudio: "false", videoWatermark: "false" });
+        expect(
+            resolveModelVideoBooleanOptions(
+                config,
+                model,
+                {},
+                {
+                    videoGenerateAudio: config.videoGenerateAudio,
+                    videoWatermark: config.videoWatermark,
+                },
+            ),
+        ).toEqual({ videoGenerateAudio: "false", videoWatermark: "false" });
 
         profile.video!.generateAudio = { supported: true, default: true };
         config.videoGenerateAudio = "false";
-        expect(resolveModelVideoBooleanOptions(config, model, {}, {
-            videoGenerateAudio: config.videoGenerateAudio,
-            videoWatermark: config.videoWatermark,
-        })).toEqual({ videoGenerateAudio: "true", videoWatermark: "false" });
+        expect(
+            resolveModelVideoBooleanOptions(
+                config,
+                model,
+                {},
+                {
+                    videoGenerateAudio: config.videoGenerateAudio,
+                    videoWatermark: config.videoWatermark,
+                },
+            ),
+        ).toEqual({ videoGenerateAudio: "true", videoWatermark: "false" });
     });
-
 
     test("渠道视频能力配置优先于旧的全局 6 秒和 1:1 配置", () => {
         const model = "autodl-channel::MiniMax H3";
@@ -287,7 +377,18 @@ describe("逻辑模型选择", () => {
             ...defaultConfig,
             videoSeconds: "6",
             size: "1:1",
-            channels: [{ id: "autodl-channel", name: "AutoDL", baseUrl: "https://autodl.art", apiKey: "system", apiFormat: "openai", scope: "system", models: ["MiniMax H3"], modelCosts: [{ model: "MiniMax H3", capability: "video", protocol: "autodl-comfyui", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: profile }] }],
+            channels: [
+                {
+                    id: "autodl-channel",
+                    name: "AutoDL",
+                    baseUrl: "https://autodl.art",
+                    apiKey: "system",
+                    apiFormat: "openai",
+                    scope: "system",
+                    models: ["MiniMax H3"],
+                    modelCosts: [{ model: "MiniMax H3", capability: "video", protocol: "autodl-comfyui", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: profile }],
+                },
+            ],
             models: [model],
             videoModels: [model],
             videoModel: model,
@@ -310,7 +411,18 @@ describe("逻辑模型选择", () => {
             ...defaultConfig,
             size: "16:9",
             vquality: "720",
-            channels: [{ id: "autodl-channel", name: "AutoDL", baseUrl: "https://autodl.art", apiKey: "system", apiFormat: "openai", scope: "system", models: ["minimax_h3_lightx2v_no_pic"], modelCosts: [{ model: "minimax_h3_lightx2v_no_pic", capability: "video", protocol: "autodl-comfyui", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: profile }] }],
+            channels: [
+                {
+                    id: "autodl-channel",
+                    name: "AutoDL",
+                    baseUrl: "https://autodl.art",
+                    apiKey: "system",
+                    apiFormat: "openai",
+                    scope: "system",
+                    models: ["minimax_h3_lightx2v_no_pic"],
+                    modelCosts: [{ model: "minimax_h3_lightx2v_no_pic", capability: "video", protocol: "autodl-comfyui", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig: profile }],
+                },
+            ],
             models: [model],
             videoModels: [model],
             videoModel: model,
@@ -394,34 +506,38 @@ describe("逻辑模型选择", () => {
             apiFormat: "openai",
             scope: "system",
             models: [model],
-            modelCosts: [{
-                model,
-                capability: "video",
-                billingMode: "per_second",
-                unitPriceMicrocredits: 1,
-                logicalCapabilitySpec: {
-                    version: 1,
+            modelCosts: [
+                {
+                    model,
                     capability: "video",
-                    operations: ["text_to_video"],
-                    inputs: {},
-                    options: {
-                        videoSeconds: { min: 1, max: 15, step: 1 },
-                        size: { values: ["16:9"] },
-                        vquality: { values: ["720p"] },
-                        videoGenerateAudio: { values: [false] },
-                        videoWatermark: { values: [false] },
+                    billingMode: "per_second",
+                    unitPriceMicrocredits: 1,
+                    logicalCapabilitySpec: {
+                        version: 1,
+                        capability: "video",
+                        operations: ["text_to_video"],
+                        inputs: {},
+                        options: {
+                            videoSeconds: { min: 1, max: 15, step: 1 },
+                            size: { values: ["16:9"] },
+                            vquality: { values: ["720p"] },
+                            videoGenerateAudio: { values: [false] },
+                            videoWatermark: { values: [false] },
+                        },
                     },
                 },
-            }],
+            ],
         };
         const value = `logical-video::${model}`;
         const config = { ...defaultConfig, channels: [channel], models: [value], videoModels: [value], videoModel: value };
 
-        expect(modelCompatibilityError(config, value, {
-            capability: "video",
-            input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
-            options: { size: "16:9", videoSeconds: 6, vquality: "720", videoGenerateAudio: false, videoWatermark: false },
-        })).toBe("");
+        expect(
+            modelCompatibilityError(config, value, {
+                capability: "video",
+                input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 },
+                options: { size: "16:9", videoSeconds: 6, vquality: "720", videoGenerateAudio: false, videoWatermark: false },
+            }),
+        ).toBe("");
     });
 
     test("已保存的旧 SKU 选择会解析到新的模型家族", () => {
@@ -478,8 +594,25 @@ describe("画布连线能力", () => {
             audioModel: "openai::tts-1",
             audioModels: ["openai::tts-1", "doubao::seed-audio-1.0"],
             channels: [
-                { id: "openai", name: "OpenAI", baseUrl: "https://api.example.com", apiKey: "k", apiFormat: "openai" as const, interfaceType: "openai-audio", models: ["tts-1"], modelCosts: [{ model: "tts-1", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }] },
-                { id: "doubao", name: "豆包语音", baseUrl: "https://openspeech.bytedance.com", apiKey: "k", apiFormat: "openai" as const, models: ["seed-audio-1.0"], modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }] },
+                {
+                    id: "openai",
+                    name: "OpenAI",
+                    baseUrl: "https://api.example.com",
+                    apiKey: "k",
+                    apiFormat: "openai" as const,
+                    interfaceType: "openai-audio",
+                    models: ["tts-1"],
+                    modelCosts: [{ model: "tts-1", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
+                },
+                {
+                    id: "doubao",
+                    name: "豆包语音",
+                    baseUrl: "https://openspeech.bytedance.com",
+                    apiKey: "k",
+                    apiFormat: "openai" as const,
+                    models: ["seed-audio-1.0"],
+                    modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
+                },
             ],
         } satisfies AiConfig;
         const imageInput = { textCount: 0, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 };
@@ -494,18 +627,20 @@ describe("画布连线能力", () => {
         const config = {
             ...defaultConfig,
             audioModel: "doubao::family-audio",
-            channels: [{
-                id: "doubao",
-                name: "豆包语音",
-                baseUrl: "https://openspeech.bytedance.com",
-                apiKey: "test-key",
-                apiFormat: "openai" as const,
-                models: ["family-audio", "seed-audio-1.0"],
-                modelCosts: [
-                    { model: "family-audio", displayName: "豆包音频", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 2 },
-                    { model: "seed-audio-1.0", displayName: "豆包音频", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 },
-                ],
-            }],
+            channels: [
+                {
+                    id: "doubao",
+                    name: "豆包语音",
+                    baseUrl: "https://openspeech.bytedance.com",
+                    apiKey: "test-key",
+                    apiFormat: "openai" as const,
+                    models: ["family-audio", "seed-audio-1.0"],
+                    modelCosts: [
+                        { model: "family-audio", displayName: "豆包音频", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 2 },
+                        { model: "seed-audio-1.0", displayName: "豆包音频", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 },
+                    ],
+                },
+            ],
         } satisfies AiConfig;
         const target = { ...node("target", CanvasNodeType.Audio), metadata: { model: "doubao::family-audio", generationMode: "audio" as const } };
         expect(canvasConnectionError(config, [node("picture", CanvasNodeType.Image), target], [], { fromNodeId: "picture", toNodeId: "target" })).toBe("");
@@ -517,15 +652,17 @@ describe("画布连线能力", () => {
             model: "relay::cinema-image",
             audioModel: "",
             audioModels: ["doubao::seed-audio-1.0"],
-            channels: [{
-                id: "doubao",
-                name: "豆包语音",
-                baseUrl: "https://openspeech.bytedance.com",
-                apiKey: "test-key",
-                apiFormat: "openai" as const,
-                models: ["seed-audio-1.0"],
-                modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
-            }],
+            channels: [
+                {
+                    id: "doubao",
+                    name: "豆包语音",
+                    baseUrl: "https://openspeech.bytedance.com",
+                    apiKey: "test-key",
+                    apiFormat: "openai" as const,
+                    models: ["seed-audio-1.0"],
+                    modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
+                },
+            ],
         } satisfies AiConfig;
         const nodes = [node("picture", CanvasNodeType.Image), node("target", CanvasNodeType.Audio)];
         expect(canvasConnectionError(config, nodes, [], { fromNodeId: "picture", toNodeId: "target" })).toBe("");
@@ -535,15 +672,17 @@ describe("画布连线能力", () => {
         const config = {
             ...defaultConfig,
             audioModel: "doubao::seed-audio-1.0",
-            channels: [{
-                id: "doubao",
-                name: "豆包语音",
-                baseUrl: "https://openspeech.bytedance.com",
-                apiKey: "test-key",
-                apiFormat: "openai" as const,
-                models: ["seed-audio-1.0"],
-                modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
-            }],
+            channels: [
+                {
+                    id: "doubao",
+                    name: "豆包语音",
+                    baseUrl: "https://openspeech.bytedance.com",
+                    apiKey: "test-key",
+                    apiFormat: "openai" as const,
+                    models: ["seed-audio-1.0"],
+                    modelCosts: [{ model: "seed-audio-1.0", capability: "audio" as const, protocol: "doubao-streaming-tts", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
+                },
+            ],
         } satisfies AiConfig;
         const nodes = [node("picture", CanvasNodeType.Image), node("voice", CanvasNodeType.Audio), node("target", CanvasNodeType.Audio)];
         const imageConnection = { id: "image", fromNodeId: "picture", toNodeId: "target" };
@@ -555,16 +694,18 @@ describe("画布连线能力", () => {
             ...defaultConfig,
             model: "openai::tts-1",
             audioModel: "openai::tts-1",
-            channels: [{
-                id: "openai",
-                name: "OpenAI",
-                baseUrl: "https://api.example.com",
-                apiKey: "test-key",
-                apiFormat: "openai" as const,
-                interfaceType: "openai-audio",
-                models: ["tts-1"],
-                modelCosts: [{ model: "tts-1", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
-            }],
+            channels: [
+                {
+                    id: "openai",
+                    name: "OpenAI",
+                    baseUrl: "https://api.example.com",
+                    apiKey: "test-key",
+                    apiFormat: "openai" as const,
+                    interfaceType: "openai-audio",
+                    models: ["tts-1"],
+                    modelCosts: [{ model: "tts-1", capability: "audio" as const, protocol: "openai-audio", billingMode: "fixed_request" as const, unitPriceMicrocredits: 1 }],
+                },
+            ],
         } satisfies AiConfig;
         const nodes = [node("voice", CanvasNodeType.Audio), node("target", CanvasNodeType.Audio)];
         expect(canvasConnectionError(config, nodes, [], { fromNodeId: "voice", toNodeId: "target" })).toContain("不支持参考音频");

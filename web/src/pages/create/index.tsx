@@ -230,11 +230,11 @@ export default function CreatePage() {
             imageSize: mode === "image" ? ratio : undefined,
             options:
                 mode === "image"
-                    ? (imageParameterRequest(modelCapabilityConfigFor(config, preferredModel).image!, { ...config, size: ratio, imageResolution, quality, count, imageParameters }) ?? {
+                    ? (imageParameterRequest(modelCapabilityConfigFor(config, preferredModel).image!, { ...config, size: ratio, imageResolution, quality, count: "1", imageParameters }) ?? {
                           size: ratio,
                           imageResolution,
                           quality,
-                          count: Number(count),
+                          count: 1,
                           transparentBackground: config.transparentBackground === "true",
                       })
                     : mode === "video"

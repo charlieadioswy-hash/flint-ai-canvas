@@ -16,6 +16,8 @@ import * as projectGeneration from "../src/lib/canvas/canvas-project-generation"
 import { buildVideoGenerationMetadata } from "../src/lib/canvas/canvas-project-generation";
 import * as styleExecution from "../src/lib/canvas/canvas-style-execution";
 import * as loraQuote from "../src/lib/canvas/liblib-lora-quote";
+import { currentGenerationBatchLimit } from "../src/lib/generation-batch-limit";
+import { useUserStore } from "../src/stores/use-user-store";
 import { executeImageGeneration } from "../src/pages/canvas/canvas-image-generation-executor";
 import { resolveVideoImageReferences } from "../src/services/api/video-reference-roles";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "../src/types/canvas";
@@ -33,7 +35,18 @@ const quoteSource = await quoteBuild.outputs[0].text();
 type Element = { type: string; props: Record<string, any> };
 
 function imageAsset(): Asset {
-    return { id: "robot-asset", title: "QA-robot-front.png", kind: "image", category: "material", status: "confirmed", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { dataUrl: "data:image/png;base64,AA==", storageKey: "resource:robot-image", mimeType: "image/png", width: 512, height: 512, bytes: 1 } };
+    return {
+        id: "robot-asset",
+        title: "QA-robot-front.png",
+        kind: "image",
+        category: "material",
+        status: "confirmed",
+        coverUrl: "",
+        tags: [],
+        createdAt: "",
+        updatedAt: "",
+        data: { dataUrl: "data:image/png;base64,AA==", storageKey: "resource:robot-image", mimeType: "image/png", width: 512, height: 512, bytes: 1 },
+    };
 }
 
 function videoConfig() {
@@ -44,15 +57,45 @@ function videoConfig() {
     capabilityConfig.video!.resolutions = ["512P"];
     capabilityConfig.video!.defaultResolution = "512P";
     capabilityConfig.video!.duration = { selection: "enum", values: [6], default: 6 };
-    const channel = configStore.createModelChannel({ id: "system-hailuo", name: "Hailuo 512", scope: "system", apiFormat: "openai", interfaceType: "newapi-channel-2", baseUrl: "/api/system-channel", apiKey: "system", models: [model], modelCosts: [{ model, capability: "video", protocol: "newapi-channel-2", billingMode: "per_second", unitPriceMicrocredits: 1_000_000, capabilityConfig }] });
-    return { ...configStore.defaultConfig, channels: [channel], model: `${channel.id}::${model}`, videoModel: `${channel.id}::${model}`, videoModels: [`${channel.id}::${model}`], models: [`${channel.id}::${model}`], size: "16:9", vquality: "512P", videoSeconds: "6", taskWorkflowProvider: "model" as const };
+    const channel = configStore.createModelChannel({
+        id: "system-hailuo",
+        name: "Hailuo 512",
+        scope: "system",
+        apiFormat: "openai",
+        interfaceType: "newapi-channel-2",
+        baseUrl: "/api/system-channel",
+        apiKey: "system",
+        models: [model],
+        modelCosts: [{ model, capability: "video", protocol: "newapi-channel-2", billingMode: "per_second", unitPriceMicrocredits: 1_000_000, capabilityConfig }],
+    });
+    return {
+        ...configStore.defaultConfig,
+        channels: [channel],
+        model: `${channel.id}::${model}`,
+        videoModel: `${channel.id}::${model}`,
+        videoModels: [`${channel.id}::${model}`],
+        models: [`${channel.id}::${model}`],
+        size: "16:9",
+        vquality: "512P",
+        videoSeconds: "6",
+        taskWorkflowProvider: "model" as const,
+    };
 }
 
 function imageConfig(logical = false, count = "4") {
     const config = videoConfig();
     const model = "liblib-image-model";
     const image = { ...modelCapabilities.defaultImageCapabilityConfig("liblib-image"), maxOutputs: 4 };
-    const channel = configStore.createModelChannel({ id: "image-channel", name: "Image", scope: "system", interfaceType: "liblib-image", baseUrl: "/api/system-channel", apiKey: "system", models: [model], modelCosts: [{ model, capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 250_000, ...(logical ? { logicalModelId: "logical-image" } : {}), capabilityConfig: { version: 1, image } }] });
+    const channel = configStore.createModelChannel({
+        id: "image-channel",
+        name: "Image",
+        scope: "system",
+        interfaceType: "liblib-image",
+        baseUrl: "/api/system-channel",
+        apiKey: "system",
+        models: [model],
+        modelCosts: [{ model, capability: "image", protocol: "liblib-image", billingMode: "fixed_request", unitPriceMicrocredits: 250_000, ...(logical ? { logicalModelId: "logical-image" } : {}), capabilityConfig: { version: 1, image } }],
+    });
     return { ...config, channels: [channel], model: `${channel.id}::${model}`, imageModel: `${channel.id}::${model}`, models: [`${channel.id}::${model}`], imageModels: [`${channel.id}::${model}`], count };
 }
 
@@ -64,10 +107,26 @@ function descendants(value: any): Element[] {
 
 function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", connected = false, config = videoConfig()) {
     const imageMode = config.channels[0].modelCosts?.[0].capability === "image";
-    let target: CanvasNodeData = { id: "target", type: imageMode ? CanvasNodeType.Image : CanvasNodeType.Video, title: "Generation", position: { x: 0, y: 0 }, width: 400, height: 300, metadata: { prompt, composerContent: prompt, model: config.model, vquality: "512P", seconds: "6", ...(imageMode ? { count: Number(config.count) } : {}) } };
-    const image: CanvasNodeData = { id: "connected-image", type: CanvasNodeType.Image, title: "Robot", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { assetId: "robot-asset", content: "data:image/png;base64,AA==", storageKey: "resource:robot-image" } };
+    let target: CanvasNodeData = {
+        id: "target",
+        type: imageMode ? CanvasNodeType.Image : CanvasNodeType.Video,
+        title: "Generation",
+        position: { x: 0, y: 0 },
+        width: 400,
+        height: 300,
+        metadata: { prompt, composerContent: prompt, model: config.model, vquality: "512P", seconds: "6", ...(imageMode ? { count: Number(config.count) } : {}) },
+    };
+    const image: CanvasNodeData = {
+        id: "connected-image",
+        type: CanvasNodeType.Image,
+        title: "Robot",
+        position: { x: 0, y: 0 },
+        width: 100,
+        height: 100,
+        metadata: { assetId: "robot-asset", content: "data:image/png;base64,AA==", storageKey: "resource:robot-image" },
+    };
     const connections: CanvasConnection[] = connected ? [{ id: "edge", fromNodeId: image.id, toNodeId: target.id }] : [];
-    const nodes = () => connected ? [image, target] : [target];
+    const nodes = () => (connected ? [image, target] : [target]);
     const resolutions: { nodeId: string; prompt: string }[] = [];
     const resolveContext = (nodeId: string, text: string) => {
         resolutions.push({ nodeId, prompt: text });
@@ -89,12 +148,21 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         useState(initial: any) {
             const index = cursor++;
             if (!(index in cells)) cells[index] = typeof initial === "function" ? initial() : initial;
-            return [cells[index], (next: any) => {
-                const value = typeof next === "function" ? next(cells[index]) : next;
-                if (!Object.is(value, cells[index])) { cells[index] = value; dirty = true; }
-            }];
+            return [
+                cells[index],
+                (next: any) => {
+                    const value = typeof next === "function" ? next(cells[index]) : next;
+                    if (!Object.is(value, cells[index])) {
+                        cells[index] = value;
+                        dirty = true;
+                    }
+                },
+            ];
         },
-        useRef(initial: any) { const index = cursor++; return cells[index] ||= { current: initial }; },
+        useRef(initial: any) {
+            const index = cursor++;
+            return (cells[index] ||= { current: initial });
+        },
         useMemo(factory: () => any, deps: unknown[]) {
             const index = cursor++;
             if (!cells[index] || changed(cells[index].deps, deps)) cells[index] = { deps, value: factory() };
@@ -105,14 +173,25 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
             if (!cells[index] || changed(cells[index].deps, deps)) {
                 const cleanup = cells[index]?.cleanup;
                 cells[index] = { deps };
-                effects.push(() => { cleanup?.(); cells[index].cleanup = effect(); });
+                effects.push(() => {
+                    cleanup?.();
+                    cells[index].cleanup = effect();
+                });
             }
         },
     };
     const quoteModule = { exports: {} as { useCanvasModelQuote: typeof import("../src/components/canvas/use-canvas-model-quote").useCanvasModelQuote } };
-    runInNewContext(quoteSource, { module: quoteModule, exports: quoteModule.exports, AbortController, require: (name: string) => name === "react" ? hooks : {
-        quoteModel: (request: ModelQuoteRequest, signal?: AbortSignal) => new Promise<{ quote: LogicalModelQuote }>((resolve, reject) => quoteCalls.push({ request, signal, resolve, reject })),
-    } });
+    runInNewContext(quoteSource, {
+        module: quoteModule,
+        exports: quoteModule.exports,
+        AbortController,
+        require: (name: string) =>
+            name === "react"
+                ? hooks
+                : {
+                      quoteModel: (request: ModelQuoteRequest, signal?: AbortSignal) => new Promise<{ quote: LogicalModelQuote }>((resolve, reject) => quoteCalls.push({ request, signal, resolve, reject })),
+                  },
+    });
     const jsx = (type: string, props: Record<string, any>) => ({ type, props });
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const themeName = Object.keys(canvasThemes)[0];
@@ -138,13 +217,19 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         "@/lib/model-selection": modelSelection,
         "@/lib/model-capabilities": modelCapabilities,
         "@/lib/model-pricing": modelPricing,
+        "@/lib/generation-batch-limit": { useGenerationBatchLimit: currentGenerationBatchLimit },
         "@/constant/credits": { CreditSymbol: "CreditSymbol", requestCreditCost: modelPricing.requestCreditCost },
         "@/types/canvas": { CanvasNodeType },
         "./canvas-node-prompt-config": promptConfig,
         "./canvas-node-prompt-resize": promptResize,
         "./canvas-node-prompt-references": { ConnectedReferenceShelf: "ConnectedReferenceShelf", ReferenceToolsPopover: "ReferenceToolsPopover", referenceShelfHeading: () => "已连接素材" },
         "./use-resolved-canvas-resource-references": { useResolvedCanvasResourceReferences: (references: unknown) => references },
-        "./use-canvas-model-quote": { useCanvasModelQuote: (request: typeof quoteRequest, enabled: boolean, taskCount?: number) => { quoteRequest = request; return quoteModule.exports.useCanvasModelQuote(request, enabled, taskCount); } },
+        "./use-canvas-model-quote": {
+            useCanvasModelQuote: (request: typeof quoteRequest, enabled: boolean, taskCount?: number) => {
+                quoteRequest = request;
+                return quoteModule.exports.useCanvasModelQuote(request, enabled, taskCount);
+            },
+        },
         "@/lib/plugins/builtin/prompt-optimizer": { PROMPT_OPTIMIZER_PLUGIN_ID: "prompt-optimizer" },
     };
     const module = { exports: {} as { CanvasNodePromptPanel: (props: Record<string, any>) => Element } };
@@ -161,10 +246,19 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
             cursor = 0;
             dirty = false;
             effects = [];
-            tree = module.exports.CanvasNodePromptPanel({ projectId: "canvas", node: target, isRunning: false, mentionReferences: resourceReferences.buildCanvasNodeMentionReferenceMap(nodes(), connections).get(target.id), resolveGenerationContext, onPromptChange: (_nodeId: string, value: string) => {
-                if (persistPromptChanges) target = { ...target, metadata: { ...target.metadata, prompt: value, composerContent: value } };
-                dirty = true;
-            }, onConfigChange, onGenerate: noop });
+            tree = module.exports.CanvasNodePromptPanel({
+                projectId: "canvas",
+                node: target,
+                isRunning: false,
+                mentionReferences: resourceReferences.buildCanvasNodeMentionReferenceMap(nodes(), connections).get(target.id),
+                resolveGenerationContext,
+                onPromptChange: (_nodeId: string, value: string) => {
+                    if (persistPromptChanges) target = { ...target, metadata: { ...target.metadata, prompt: value, composerContent: value } };
+                    dirty = true;
+                },
+                onConfigChange,
+                onGenerate: noop,
+            });
             effects.forEach((effect) => effect());
         } while (dirty);
     }
@@ -179,24 +273,81 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         resolutions,
         quoteCalls,
         config,
-        get node() { return target; },
-        get quote() { return quoteRequest!; },
-        context() { return resolveGenerationContext(target.id, target.metadata?.composerContent || ""); },
-        requirements() { return find("ModelPicker").props.requirements as modelSelection.ModelRequirements; },
-        generationConfig() { return find("ModelPicker").props.config as configStore.AiConfig; },
-        compatibility() { const picker = find("ModelPicker").props; return modelSelection.modelCompatibilityError(picker.config, picker.value, picker.requirements); },
-        frameOptions() { return descendants(tree).find((item) => item.type === "CanvasVideoPromptTools")?.props.frameOptions || []; },
-        prompt() { return find("CanvasResourceMentionTextarea").props.value; },
-        submitButton() { return descendants(tree).find((item) => item.type === "Button" && String(item.props.className).includes("canvas-node-composer-submit"))!.props; },
-        changeCount(count: number) { find("CanvasImageCountControl").props.onChange(count); render(); },
-        async resolveQuote(index: number, quote: LogicalModelQuote) { quoteCalls[index].resolve({ quote }); await Promise.resolve(); await Promise.resolve(); render(); },
-        deferPromptPersistence() { persistPromptChanges = false; },
-        switchNode(next: CanvasNodeData) { target = next; render(); },
-        replaceAssets(next: Asset[]) { library = next; resolveGenerationContext = (nodeId, text) => resolveContext(nodeId, text); render(); },
-        chooseFrames(patch: Partial<CanvasNodeMetadata>) { find("CanvasVideoPromptTools").props.onMetadataChange(patch); render(); },
-        edit(value: string) { find("CanvasResourceMentionTextarea").props.onChange(value); render(); },
+        get node() {
+            return target;
+        },
+        get quote() {
+            return quoteRequest!;
+        },
+        context() {
+            return resolveGenerationContext(target.id, target.metadata?.composerContent || "");
+        },
+        requirements() {
+            return find("ModelPicker").props.requirements as modelSelection.ModelRequirements;
+        },
+        generationConfig() {
+            return find("ModelPicker").props.config as configStore.AiConfig;
+        },
+        compatibility() {
+            const picker = find("ModelPicker").props;
+            return modelSelection.modelCompatibilityError(picker.config, picker.value, picker.requirements);
+        },
+        frameOptions() {
+            return descendants(tree).find((item) => item.type === "CanvasVideoPromptTools")?.props.frameOptions || [];
+        },
+        prompt() {
+            return find("CanvasResourceMentionTextarea").props.value;
+        },
+        submitButton() {
+            return descendants(tree).find((item) => item.type === "Button" && String(item.props.className).includes("canvas-node-composer-submit"))!.props;
+        },
+        changeCount(count: number) {
+            find("CanvasImageCountControl").props.onChange(count);
+            render();
+        },
+        async resolveQuote(index: number, quote: LogicalModelQuote) {
+            quoteCalls[index].resolve({ quote });
+            await Promise.resolve();
+            await Promise.resolve();
+            render();
+        },
+        deferPromptPersistence() {
+            persistPromptChanges = false;
+        },
+        switchNode(next: CanvasNodeData) {
+            target = next;
+            render();
+        },
+        replaceAssets(next: Asset[]) {
+            library = next;
+            resolveGenerationContext = (nodeId, text) => resolveContext(nodeId, text);
+            render();
+        },
+        chooseFrames(patch: Partial<CanvasNodeMetadata>) {
+            find("CanvasVideoPromptTools").props.onMetadataChange(patch);
+            render();
+        },
+        edit(value: string) {
+            find("CanvasResourceMentionTextarea").props.onChange(value);
+            render();
+        },
     };
 }
+
+test("canvas batch requirements validate one image per task for single-output logical models", async () => {
+    const config = imageConfig(true, "4");
+    const cost = config.channels[0]!.modelCosts![0]!;
+    cost.capabilityConfig!.image!.maxOutputs = 1;
+    cost.logicalCapabilitySpec = { version: 1, capability: "image", options: { size: { values: ["*"] }, count: { min: 1, max: 1 } } };
+    const h = harness([], "画一只熊猫", false, config);
+
+    expect(h.generationConfig().count).toBe("4");
+    expect(h.requirements().options?.count).toBe(1);
+    expect(h.compatibility()).toBe("");
+    expect(h.quote.intent.options.count).toBe(1);
+    await h.resolveQuote(0, { logicalModelId: "logical-image", billingMode: "fixed_request", quantity: 1, amountMicrocredits: 250_000, estimated: false });
+    expect(h.submitButton().disabled).toBe(false);
+});
 
 test.each([false, true])("canvas image quote totals independent tasks without double-counting logical=%s", async (logical) => {
     const h = harness([], "画一只熊猫", false, imageConfig(logical));
@@ -214,20 +365,45 @@ test.each([false, true])("canvas image quote totals independent tasks without do
     let connections: CanvasConnection[] = [];
     const controller = new AbortController();
     const noop = () => {};
-    await executeImageGeneration({
-        nodeId: h.node.id, sourceNode: h.node, canvasNodes: nodes, canvasConnections: connections,
-        prompt: h.prompt(), effectivePrompt: h.prompt(), generationConfig: h.generationConfig(), generationContext: h.context(),
-        controller, projectId: "", editingTextNode: false, styleMetadata: {}, skillMetadata: {},
-        setNodes: (update) => { nodes = typeof update === "function" ? update(nodes) : update; },
-        setConnections: (update) => { connections = typeof update === "function" ? update(connections) : update; },
-        setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
-        startGenerationRequest: () => controller, finishGenerationRequest: noop, registerPendingNodeIds: noop,
-        showError: (message) => { throw new Error(message); }, bindGenerationTask: noop, applyGenerationTaskResult: async () => {},
-    }, async (options) => {
-        submitted.push(options.config.count);
-        options.onTaskCreated?.({ id: `quoted-task-${submitted.length}`, type: "canvas_image", status: "succeeded", prompt: h.prompt(), attempts: 1, createdAt: "", updatedAt: "" });
-        return { mode: "image", images: [] };
-    });
+    await executeImageGeneration(
+        {
+            nodeId: h.node.id,
+            sourceNode: h.node,
+            canvasNodes: nodes,
+            canvasConnections: connections,
+            prompt: h.prompt(),
+            effectivePrompt: h.prompt(),
+            generationConfig: h.generationConfig(),
+            generationContext: h.context(),
+            controller,
+            projectId: "",
+            editingTextNode: false,
+            styleMetadata: {},
+            skillMetadata: {},
+            setNodes: (update) => {
+                nodes = typeof update === "function" ? update(nodes) : update;
+            },
+            setConnections: (update) => {
+                connections = typeof update === "function" ? update(connections) : update;
+            },
+            setSelectedNodeIds: noop,
+            setSelectedConnectionId: noop,
+            setDialogNodeId: noop,
+            startGenerationRequest: () => controller,
+            finishGenerationRequest: noop,
+            registerPendingNodeIds: noop,
+            showError: (message) => {
+                throw new Error(message);
+            },
+            bindGenerationTask: noop,
+            applyGenerationTaskResult: async () => {},
+        },
+        async (options) => {
+            submitted.push(options.config.count);
+            options.onTaskCreated?.({ id: `quoted-task-${submitted.length}`, type: "canvas_image", status: "succeeded", prompt: h.prompt(), attempts: 1, createdAt: "", updatedAt: "" });
+            return { mode: "image", images: [] };
+        },
+    );
     expect(submitted).toEqual(["1", "1", "1", "1"]);
 
     h.changeCount(2);
@@ -240,11 +416,17 @@ test.each([false, true])("canvas image quote totals independent tasks without do
     expect(h.submitButton().title).toBe("本次消耗 0.5 积分");
 });
 
-test("canvas quote totals use the normalized model output limit", async () => {
-    const h = harness([], "画一只熊猫", false, imageConfig(false, "99"));
-    expect(h.generationConfig().count).toBe("4");
-    await h.resolveQuote(0, { logicalModelId: "", billingMode: "fixed_request", quantity: 1, amountMicrocredits: 250_000, estimated: false });
-    expect(h.submitButton()["aria-label"]).toBe("消耗 1 积分，生成");
+test("canvas quote totals use the account batch limit instead of the model output limit", async () => {
+    const runtimeLimits = useUserStore.getState().runtimeLimits;
+    useUserStore.setState({ runtimeLimits: { ...runtimeLimits, activeTaskLimit: 5 } });
+    try {
+        const h = harness([], "画一只熊猫", false, imageConfig(false, "99"));
+        expect(h.generationConfig().count).toBe("5");
+        await h.resolveQuote(0, { logicalModelId: "", billingMode: "fixed_request", quantity: 1, amountMicrocredits: 250_000, estimated: false });
+        expect(h.submitButton()["aria-label"]).toBe("消耗 1.25 积分，生成");
+    } finally {
+        useUserStore.setState({ runtimeLimits });
+    }
 });
 
 test("an unconnected asset mention drives the real panel capability, quote and provider first-frame identity", () => {

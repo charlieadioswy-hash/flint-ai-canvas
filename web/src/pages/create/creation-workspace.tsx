@@ -238,7 +238,7 @@ export function CreationComposer(props: ComposerProps) {
         seconds: props.mode === "video" ? props.seconds : 1,
         capability: props.mode,
         config: props.config,
-        requirements: props.modelRequirements,
+        requirements: quoteRequirements,
     });
     useEffect(() => {
         if (!creditsEnabled || !quoteRequest) {

@@ -98,6 +98,8 @@ async function fixture() {
 }
 
 test("visible count selection uses the same count in node config, generation and credits", async () => {
+    const beforeLimits = useUserStore.getState().runtimeLimits;
+    useUserStore.setState({ runtimeLimits: { ...beforeLimits, activeTaskLimit: 4 } });
     const f = await fixture();
     const config = configWithProfile({ ...defaultImageCapabilityConfig(), maxOutputs: 4 });
     let node: CanvasNodeData = { id: "image", type: "image", title: "Image", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { model: config.model } };
@@ -128,6 +130,7 @@ test("visible count selection uses the same count in node config, generation and
         expect(f.host.textContent).toContain("生成张数");
     } finally {
         await f.dispose();
+        useUserStore.setState({ runtimeLimits: beforeLimits });
     }
 });
 
@@ -207,23 +210,29 @@ test("native admin edits save ratios and resolution without creating pixel prese
     }
 });
 
-test("count choices honor single-output models and declared enum or step constraints", async () => {
+test("count choices select independent tasks by account limit even when a model only returns one image", async () => {
+    const beforeLimits = useUserStore.getState().runtimeLimits;
+    useUserStore.setState({ runtimeLimits: { ...beforeLimits, activeTaskLimit: 5 } });
     const f = await fixture();
     try {
-        for (const [profile, options] of [
-            [defaultImageCapabilityConfig("km-kemei-seedream"), ["1"]],
-            [{ ...defaultImageCapabilityConfig(), maxOutputs: 4, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 4, values: [1, 4], default: 1 }] }, ["1", "4"]],
-            [{ ...defaultImageCapabilityConfig(), maxOutputs: 5, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 5, step: 2, default: 1 }] }, ["1", "3", "5"]],
-            [{ ...defaultImageCapabilityConfig(), maxOutputs: 32, parameters: [{ name: "count", label: "数量", type: "integer", values: [1, 16, 32], default: 1 }] }, ["1", "16", "32"]],
-        ] as [ImageCapabilityConfig, string[]][]) {
+        for (const profile of [
+            defaultImageCapabilityConfig("km-kemei-seedream"),
+            { ...defaultImageCapabilityConfig(), maxOutputs: 4, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 4, values: [1, 4], default: 1 }] },
+            { ...defaultImageCapabilityConfig(), maxOutputs: 5, parameters: [{ name: "count", label: "数量", type: "integer", min: 1, max: 5, step: 2, default: 1 }] },
+            { ...defaultImageCapabilityConfig(), maxOutputs: 32, parameters: [{ name: "count", label: "数量", type: "integer", values: [1, 16, 32], default: 1 }] },
+        ] as ImageCapabilityConfig[]) {
             await f.render(<CanvasImageCountControl config={{ ...configWithProfile(profile), count: "15" }} onChange={() => {}} />);
             const select = f.host.querySelector("select")!;
-            expect([...select.options].map((option) => option.value)).toEqual(options);
-            expect(select.disabled).toBe(options.length === 1);
-            expect(options).toContain(select.value);
+            expect([...select.options].map((option) => option.value)).toEqual(["1", "2", "3", "4", "5"]);
+            expect(select.disabled).toBe(false);
+            expect(select.value).toBe("5");
         }
+        await act(async () => useUserStore.setState({ runtimeLimits: { ...beforeLimits, activeTaskLimit: 1 } }));
+        expect([...f.host.querySelector("select")!.options].map((option) => option.value)).toEqual(["1"]);
+        expect(f.host.querySelector("select")!.disabled).toBe(true);
     } finally {
         await f.dispose();
+        useUserStore.setState({ runtimeLimits: beforeLimits });
     }
 });
 
