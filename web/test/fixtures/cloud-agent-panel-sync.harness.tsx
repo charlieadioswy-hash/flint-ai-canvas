@@ -177,7 +177,12 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
     AgentSceneCapsules: () => null,
 }));
 mock.module("@/components/canvas/canvas-cloud-agent-panel-parts", () => ({
-    AgentLauncher: () => null,
+    AgentLauncher: (props: any) =>
+        props.hidden ? null : (
+            <button aria-label="打开 Agent" onClick={props.onOpen}>
+                打开 Agent
+            </button>
+        ),
     AgentContextRing: () => null,
     ComposerControls: (props: any) => {
         controls = props;
@@ -273,6 +278,8 @@ type MountOptions = {
     guideConversationId?: string | null;
     offline?: boolean;
     strictMode?: boolean;
+    floatingDrama?: boolean;
+    initiallyOpen?: boolean;
 };
 async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string, options: MountOptions = {}) {
     local = options.localConversations || [initial];
@@ -307,13 +314,13 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     const host = document.createElement("div");
     document.body.append(host);
     useGlobalAgentStore.setState({
-        open: true,
+        open: options.initiallyOpen ?? true,
         canvas: guideProjectId ? null : { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
         drama: guideProjectId
             ? {
                   projectId: guideProjectId,
                   guideConversationId: options.guideConversationId === undefined ? initial.serverConversationId : options.guideConversationId || undefined,
-                  host,
+                  host: options.floatingDrama ? undefined : host,
                   startupRequest: options.startupRequest,
                   prefillRequest: options.prefillRequest,
                   onConversationBound: options.onConversationBound,
@@ -620,6 +627,46 @@ test("另一端已推进parent的明确拒绝只同步上下文，保留草稿�
 function guideChat(id: string, runId: string, projectId = "guide-project"): CloudAgentConversation {
     return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
 }
+
+test("制作台悬浮入口接续短剧原会话，可收起重开且保持只读文字边界", async () => {
+    const existing = guideChat("guide-local", "studio-parent");
+    const mounted = await mount(existing, [existing], null, "guide-project", { floatingDrama: true, initiallyOpen: false });
+    try {
+        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
+        expect(createInputs).toHaveLength(0);
+        const launcher = mounted.host.querySelector<HTMLButtonElement>('[aria-label="打开 Agent"]')!;
+        expect(launcher).toBeTruthy();
+        await act(async () => {
+            launcher.click();
+            await settle();
+        });
+        expect(mounted.host.querySelector(".canvas-agent-panel")?.className).toContain("fixed");
+        expect(mounted.host.textContent).toContain("短剧创作助手");
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-studio-parent")).toBe(true);
+        expect(controls.guideMode).toBe(true);
+        expect(controls.showReadOnlyPermission).toBe(true);
+        expect(controls.onModelChange).toBeFunction();
+        expect(controls.onReasoningModeChange).toBeFunction();
+        await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="收起短剧 Agent"]')!.click());
+        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
+        await act(async () => {
+            mounted.host.querySelector<HTMLButtonElement>('[aria-label="打开 Agent"]')!.click();
+            await settle();
+        });
+        expect(conversationUI.messages.some((item: any) => item.text === "结果-studio-parent")).toBe(true);
+        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-child", parentId: existing.run!.id } });
+        await act(async () => composer.onPromptChange("接着核对第九集的人物与分镜"));
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toEqual(["studio-parent"]);
+        expect(sendInputs[0]).toMatchObject({ prompt: "接着核对第九集的人物与分镜", dramaProjectId: "guide-project", permissionMode: "read_only", budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 } });
+        expect(createInputs).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
 
 const guideStartup: AgentPrefillRequest = { id: 1, text: "请读取当前短剧，按预设流程起草正文并推荐配置，等待我确认后再提取资产。", displayText: "请根据创作想法开始引导", autoSubmit: true };
 function emptyGuide(projectId = "guide-project"): CloudAgentConversation {

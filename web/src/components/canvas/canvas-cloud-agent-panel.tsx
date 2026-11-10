@@ -179,6 +179,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     // 只订阅渲染要用的字段。画布每次选中、拖动或编辑都会重发上下文；订阅整份会让面板和全部消息跟着重渲染。
     // 选中节点只在发送时读取，审批目标节点状态只在有审批时订阅（见 approvalTargetGenerating）。
     const drama = useGlobalAgentStore((state) => state.drama);
+    const embeddedDrama = Boolean(drama?.host);
     const dramaProjectId = drama?.projectId || "";
     const canvasId = useGlobalAgentStore((state) => (state.drama ? "" : (state.canvas?.canvasId ?? "")));
     const domainProjectId = useGlobalAgentStore((state) => state.drama?.projectId || state.canvas?.domainProjectId);
@@ -188,7 +189,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const startupRequest = drama?.startupRequest;
     const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
     const insertAgentMarkdown = useGlobalAgentStore((state) => (state.drama ? undefined : state.canvas?.insertAgentMarkdown));
-    const open = useGlobalAgentStore((state) => state.open || Boolean(state.drama));
+    const open = useGlobalAgentStore((state) => state.open || Boolean(state.drama?.host));
     const onOpen = useGlobalAgentStore((state) => state.openAgent);
     const onCollapse = useGlobalAgentStore((state) => state.closeAgent);
     const setDocked = useGlobalAgentStore((state) => state.setDocked);
@@ -2675,7 +2676,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
 
     const panel = (
         <>
-            {!drama ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} status={status} hidden={open} onOpen={onOpen} /> : null}
+            {!embeddedDrama ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} status={status} hidden={open} onOpen={onOpen} /> : null}
             <AnimatePresence>
                 {open ? (
                     <motion.aside
@@ -2683,10 +2684,10 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                         animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
                         exit={reducedMotion ? { opacity: 0 } : dock.active ? { opacity: 0, x: 24 } : { opacity: 0, y: 12, scale: 0.985 }}
                         transition={{ duration: reducedMotion ? 0 : 0.26, ease: [0.16, 1, 0.3, 1] }}
-                        className={`canvas-agent-panel ${drama ? "relative" : "fixed z-[calc(var(--z-toast)+1)]"} flex min-w-0 flex-col overflow-hidden${!drama && dock.active ? " is-docked" : ""}`}
+                        className={`canvas-agent-panel ${embeddedDrama ? "relative" : "fixed z-[calc(var(--z-toast)+1)]"} flex min-w-0 flex-col overflow-hidden${!embeddedDrama && dock.active ? " is-docked" : ""}`}
                         style={
                             {
-                                ...(drama
+                                ...(embeddedDrama
                                     ? { position: "relative", inset: "auto", top: "auto", right: "auto", bottom: "auto", left: "auto", width: "100%", height: "100%", maxWidth: "none", maxHeight: "none", borderRadius: 0, boxShadow: "none" }
                                     : panelLayout.style),
                                 "--agent-surface-base": theme.node.panel,
@@ -2699,7 +2700,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                         data-popover-anchor-container
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
-                        {...(drama ? {} : panelLayout.pointerHandlers)}
+                        {...(embeddedDrama ? {} : panelLayout.pointerHandlers)}
                         {...(drama ? {} : panelDropHandlers)}
                         onWheel={(event) => event.stopPropagation()}
                     >
@@ -2709,7 +2710,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                 <span>{insertAgentFiles ? "松开以添加到对话：图片会放到画布上，再引用给 Agent" : "进入画布后才能添加图片"}</span>
                             </div>
                         ) : null}
-                        {drama ? null : dock.active ? (
+                        {embeddedDrama ? null : dock.active ? (
                             // 停靠时只保留左边缘：拖动或用左右方向键调宽，画布同步让出空间。
                             <div
                                 role="separator"
@@ -2807,8 +2808,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                 <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                     {drama ? (
                                         <header className="agent-panel-header shrink-0">
-                                            <strong>创作助手</strong>
-                                            <p className="agent-panel-context">一起确认设定，逐步完成剧本与分镜</p>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <strong>{embeddedDrama ? "创作助手" : "短剧创作助手"}</strong>
+                                                {!embeddedDrama ? (
+                                                    <Button type="text" size="small" aria-label="收起短剧 Agent" onClick={onCollapse}>
+                                                        <X className="size-4" />
+                                                    </Button>
+                                                ) : null}
+                                            </div>
+                                            <p className="agent-panel-context">{embeddedDrama ? "一起确认设定，逐步完成剧本与分镜" : "接着讨论本作品的角色、剧本与分镜"}</p>
                                             <span role="status" style={{ color: statusColor }}>
                                                 {statusLabel}
                                             </span>
@@ -3026,6 +3034,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                                 onSkillsOpenChange={setSkillsOpen}
                                                 selectedSkillCount={selectedSkillIds.length}
                                                 guideMode={Boolean(drama)}
+                                                showReadOnlyPermission={Boolean(drama) && !embeddedDrama}
                                             />
                                         }
                                     />
@@ -3040,7 +3049,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
 
     return (
         <>
-            {drama ? createPortal(panel, drama.host) : panel}
+            {drama?.host ? createPortal(panel, drama.host) : panel}
             {assetPickerOpen ? (
                 <Suspense fallback={null}>
                     <AgentAssetPickerModal open multiple onInsert={pickAssets} onClose={() => setAssetPickerOpen(false)} />

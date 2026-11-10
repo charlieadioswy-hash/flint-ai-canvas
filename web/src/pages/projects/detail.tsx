@@ -49,6 +49,7 @@ import { Storyboard, type EpisodeEmpty } from "./studio/storyboard";
 import { isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
 import { progressFillStyle } from "@/lib/progress-fill";
 import { activeDramaGuide, dramaProjectPath } from "./guide-state";
+import { useStudioAgent } from "./studio/use-studio-agent";
 import "./drama.css";
 
 type Tab = "board" | "script" | "final";
@@ -93,6 +94,8 @@ export default function DramaStudioPage() {
     const { cast, byId: castById } = useDramaCast(projectId, Boolean(running));
     const shots = useMemo(() => detail?.shots || [], [detail]);
     const currentShot = shots.find((shot) => shot.id === shotParam);
+
+    useStudioAgent(projectId, summary, summaryQuery.isError);
 
     const setParams = useCallback(
         (patch: Record<string, string | null>) => {

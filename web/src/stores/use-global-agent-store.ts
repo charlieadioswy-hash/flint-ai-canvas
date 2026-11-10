@@ -11,7 +11,8 @@ import type { DramaStageChoiceLabels } from "@/lib/canvas/drama-setup-presentati
 export type AgentDramaContext = {
     projectId: string;
     guideConversationId?: string;
-    host: HTMLElement;
+    /** 引导页嵌入容器；制作台省略，沿用全局悬浮面板。 */
+    host?: HTMLElement;
     prefillRequest?: AgentPrefillRequest | null;
     startupRequest?: AgentPrefillRequest | null;
     onConversationBound?: (id: string) => void;

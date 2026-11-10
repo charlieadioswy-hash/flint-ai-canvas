@@ -18,7 +18,30 @@ import { Live2DAvatar } from "./live2d-avatar";
 import { agentAvatarBundleFileURL, live2DModelURL } from "@/services/api/appearance";
 import { AgentAvatarVideo } from "@/components/canvas/agent-avatar-video";
 import { FluidOrb } from "@/components/ui/fluid-orb";
-import { ArrowDown, ArrowLeft, Check, ChevronDown, Clock3, Download, Ellipsis, History, LoaderCircle, Maximize2, MessageSquarePlus, Minus, PanelRight, PictureInPicture2, RefreshCw, Scaling, Settings2, ShieldCheck, Trash2, X, Blocks } from "lucide-react";
+import {
+    ArrowDown,
+    ArrowLeft,
+    Check,
+    ChevronDown,
+    Clock3,
+    Download,
+    Ellipsis,
+    Eye,
+    History,
+    LoaderCircle,
+    Maximize2,
+    MessageSquarePlus,
+    Minus,
+    PanelRight,
+    PictureInPicture2,
+    RefreshCw,
+    Scaling,
+    Settings2,
+    ShieldCheck,
+    Trash2,
+    X,
+    Blocks,
+} from "lucide-react";
 import { agentModifierShortcut } from "@/lib/canvas/agent-outbox";
 import { Button, Input, Popover } from "antd";
 import { CanvasAnchoredDropdown as Dropdown } from "./canvas-anchored-dropdown";
@@ -959,6 +982,7 @@ export function ComposerControls({
     onSkillsOpenChange,
     selectedSkillCount,
     guideMode = false,
+    showReadOnlyPermission = false,
     reasoningMode,
     onReasoningModeChange,
 }: {
@@ -972,6 +996,7 @@ export function ComposerControls({
     onSkillsOpenChange: (open: boolean) => void;
     selectedSkillCount: number;
     guideMode?: boolean;
+    showReadOnlyPermission?: boolean;
     reasoningMode: AgentReasoningMode;
     onReasoningModeChange: (value: AgentReasoningMode) => void;
 }) {
@@ -1018,6 +1043,12 @@ export function ComposerControls({
                 </Popover>
             ) : null}
             {/* 权限常显文字：只读 / 审批 / 自动，面板窄时只留图标。图标形状和颜色同时区分三种权限。 */}
+            {guideMode && showReadOnlyPermission ? (
+                <span className="agent-permission-trigger" title="短剧助手可读取当前作品并讨论建议；生成与修改仍通过制作台明确操作。" aria-label="短剧助手执行权限：只读">
+                    <Eye className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="agent-permission-label">只读</span>
+                </span>
+            ) : null}
             {!guideMode ? (
                 <Dropdown trigger={["click"]} placement="topLeft" menu={{ items: agentPermissionMenuItems(permissionMode, onPermissionChange) }}>
                     <button
