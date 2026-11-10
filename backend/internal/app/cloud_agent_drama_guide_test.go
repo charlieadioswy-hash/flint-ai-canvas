@@ -60,15 +60,30 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 	for _, instruction := range []string{
 		"由用户在对话中选择应用",
 		"多个备选方案分别提交建议",
-		"配置阶段每轮只讨论一个决策",
-		"给出 2–4 个可直接点选的具体选项",
-		"styleName 与 stylePrompt 合为同一项",
+		"配置阶段先确认视觉风格",
+		"给出 2–4 个可直接点选的具体风格",
+		"setup 的 changes 仅含 styleName/stylePrompt",
+		"风格确认后，将画幅、视频清晰度、对白语言和单集时长一次性汇总为一套推荐配置",
+		"只调用一次 drama_propose_changes",
+		"changes 同时包含 aspectRatio/videoResolution/language/episodeSeconds",
+		"“采用推荐配置”和“在推荐配置基础上修改”两个选项",
+		"修改选项允许用户填写改动要求，不为它创建第二个相同建议",
+		"保留已确认的风格及用户明确的其他要求，不再逐项询问",
 		"用户已经明确或已选择保存的项目不重复询问",
 		"提供选项后本轮收尾，等待用户选择",
-		"候选名称与每项说明只通过结构化选项展示",
+		"候选名称与每项说明通过回复内的直接选项展示",
 		"写入对应建议的顶层 explanation，不混入 changes",
-		"聊天正文只用一句话引导当前决策，不重复列举、编号或解释同一组选项",
+		"配置聊天正文只简短引导，具体推荐值和理由只通过结构化建议展示一次，不再给出重复摘要",
+		"不把具体配置值再编号列为一组选项",
+		"非视频配置能精确映射时仅提供该项",
+		"修改推荐视频配置时，保留原推荐中未修改的值",
+		"仍以一个 setup 建议完整提交 aspectRatio/videoResolution/language/episodeSeconds 四个字段",
+		"不能只提交用户改动的单个字段",
+		"除非用户明确要求修改风格，否则保持已确认风格不动",
 		"不提示去下方卡片寻找、点击或另点应用",
+		"阶段确认在回复末尾仅列“1. 确认…”和“2. 继续调整”",
+		"由界面直接将这组文字呈现为可点击选项",
+		"不另加标题、说明或独立选择卡片重复它们",
 		"点击选项即通过既有业务接口保存",
 		"每组选项都提供空白的自定义输入",
 		"不把自然语言回答当作已保存",
@@ -83,8 +98,10 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 			t.Fatalf("missing guide interaction contract: %s", instruction)
 		}
 	}
-	if strings.Contains(text, "由页面按钮启动") {
-		t.Fatal("guide still directs users to the old page confirmation flow")
+	for _, obsolete := range []string{"由页面按钮启动", "配置阶段每轮只讨论一个决策", "不要一次提交整套配置", "按风格、画幅与清晰度、语言、单集时长逐项引导"} {
+		if strings.Contains(text, obsolete) {
+			t.Fatalf("guide retains obsolete confirmation flow: %s", obsolete)
+		}
 	}
 	var description string
 	for _, tool := range compileCloudAgentTools(request, true) {
@@ -104,9 +121,25 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 			}
 		}
 	}
-	for _, instruction := range []string{"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频", "用户点选即保存，无需再次应用", "每组保留空白自定义输入", "setup 的 changes 只填当前决策字段", "每项推荐理由或适用情境放顶层 explanation，不放入 changes", "不重复候选列表，不提示去下方卡片或另点应用"} {
+	for _, instruction := range []string{
+		"用户在对话中选择应用", "多个备选分别调用本工具", "不保存、不推进阶段、不生成图片或视频",
+		"用户点选即保存，无需再次应用", "每组保留空白自定义输入",
+		"短剧配置先给 2–4 个风格选项", "setup 的 changes 仅含 styleName/stylePrompt",
+		"一次调用本工具给出整套推荐配置", "changes 同时包含 aspectRatio/videoResolution/language/episodeSeconds",
+		"“采用推荐配置”和“在推荐配置基础上修改”两个选项", "后者接收用户的改动要求，不生成第二个相同建议",
+		"用户修改推荐视频配置后，保留原推荐中未修改的值", "仍完整提交 aspectRatio/videoResolution/language/episodeSeconds 四个字段",
+		"不能只提交改动的单个字段", "除非用户明确要求，否则不修改已确认风格",
+		"正文只简短引导，具体推荐值和理由只通过结构化建议展示一次，不再给出重复摘要",
+		"每项推荐理由或适用情境放顶层 explanation，不放入 changes", "不重复候选列表，不提示去下方卡片或另点应用",
+		"回复末尾只列“1. 确认…”和“2. 继续调整”", "不再重复展示独立卡片",
+	} {
 		if !strings.Contains(description, instruction) {
 			t.Fatalf("proposal tool lost confirmation boundary: %s", instruction)
+		}
+	}
+	for _, obsolete := range []string{"短剧配置每轮仅一个决策", "不要一次提交整套配置", "继续下一项"} {
+		if strings.Contains(description, obsolete) {
+			t.Fatalf("proposal tool retains obsolete setup sequence: %s", obsolete)
 		}
 	}
 	canvasPolicy, _, err := compileCloudAgentPolicies(agentTestRequest(), defaultCanvasAppearance().AgentName, nil, "", cloudAgentProfileSnapshot{})
@@ -116,7 +149,7 @@ func TestCloudAgentDramaGuideUsesChatConfirmation(t *testing.T) {
 	if strings.Contains(canvasPolicy, "由用户在对话中选择应用") {
 		t.Fatal("short-drama confirmation policy leaked into ordinary canvas sessions")
 	}
-	if strings.Contains(canvasPolicy, "候选名称与每项说明只通过结构化选项展示") {
+	if strings.Contains(canvasPolicy, "候选名称与每项说明通过回复内的直接选项展示") {
 		t.Fatal("guide-only presentation policy leaked into ordinary canvas sessions")
 	}
 }
@@ -425,7 +458,7 @@ func TestCloudAgentDramaGuideSetupUsesVideoModelContract(t *testing.T) {
 		}
 	}
 	for _, resolution := range []string{"1080p", "", " auto "} {
-		result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": resolution, "episodeSeconds": 90.0})
+		result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": resolution, "language": "中文普通话", "episodeSeconds": 90.0})
 		if err != nil {
 			t.Fatalf("valid resolution %q rejected: %v", resolution, err)
 		}
@@ -434,8 +467,8 @@ func TestCloudAgentDramaGuideSetupUsesVideoModelContract(t *testing.T) {
 			want = ""
 		}
 		proposal := result.(cloudAgentDramaProposal)
-		if proposal.Changes["videoResolution"] != want || proposal.Changes["episodeSeconds"] != float64(90) || len(proposal.Changes) != 3 {
-			t.Fatalf("proposal must show exactly the fields that would be saved: %+v", proposal)
+		if proposal.Changes["aspectRatio"] != "9:16" || proposal.Changes["videoResolution"] != want || proposal.Changes["language"] != "中文普通话" || proposal.Changes["episodeSeconds"] != float64(90) || len(proposal.Changes) != 4 {
+			t.Fatalf("batch recommendation must show all four settings without changing the confirmed style: %+v", proposal)
 		}
 	}
 	for _, changes := range []map[string]any{

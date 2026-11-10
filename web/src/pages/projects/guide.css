@@ -317,6 +317,16 @@
     color: var(--status-error);
 }
 
+.drama-guide-notice.drama-guide-story-episode-failure {
+    color: var(--status-error);
+    background: color-mix(in oklab, var(--status-error) 8%, var(--surface));
+}
+
+.drama-guide-story-episode-failure p {
+    flex-basis: 100%;
+    overflow-wrap: anywhere;
+}
+
 .drama-guide-story-filters {
     flex-wrap: wrap;
 }

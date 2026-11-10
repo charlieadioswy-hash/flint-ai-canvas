@@ -3,6 +3,7 @@ package production
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -353,6 +354,13 @@ func ParsePlan(raw string, batch []Chapter) ([]PlannedEpisode, error) {
 func ParseScript(raw string) ([]ScriptShot, error) {
 	text, err := ExtractJSONObject(raw)
 	if err != nil {
+		if start := strings.Index(raw, "{"); start >= 0 {
+			decoder := json.NewDecoder(strings.NewReader(raw[start:]))
+			var first, second json.RawMessage
+			if decoder.Decode(&first) == nil && decoder.Decode(&second) == nil {
+				return nil, fmt.Errorf("%w：模型返回了多个独立 JSON 对象，剧本必须放在同一个根对象中", err)
+			}
+		}
 		return nil, err
 	}
 	var payload struct {

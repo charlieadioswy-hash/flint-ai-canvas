@@ -392,6 +392,7 @@ export function GuideStory({
     onSelect,
     onReload,
     onRescript,
+    onRetryEpisode,
     onPatch,
     onEditPrompt,
     onWritePrompt,
@@ -407,6 +408,7 @@ export function GuideStory({
     details?: DramaEpisodeDetail[];
     failedEpisodeIds?: string[];
     onRescript?: () => void;
+    onRetryEpisode?: (episodeId: string) => void;
     onPatch: (shot: DramaShot, patch: DramaShotPatch) => void;
     onEditPrompt: (segment: DramaSegment, episodeId: string) => void;
     onWritePrompt: (segment: DramaSegment, episodeId: string) => void;
@@ -416,6 +418,19 @@ export function GuideStory({
     useEffect(() => setSegmentFilter("all"), [episodeId]);
     const failedEpisodeIdSet = useMemo(() => new Set(failedEpisodeIds), [failedEpisodeIds]);
     const visibleDetails = useMemo(() => (allEpisodes ? details.filter((current) => !failedEpisodeIdSet.has(current.episode.id)) : detail ? [detail] : []), [allEpisodes, detail, details, failedEpisodeIdSet]);
+    const selectedEpisodes = allEpisodes ? episodes : episodes.filter((episode) => episode.id === episodeId);
+    const episodeProgress = selectedEpisodes.reduce(
+        (result, episode) => {
+            const current = visibleDetails.find((item) => item.episode.id === episode.id);
+            const row = current?.episode || episode;
+            if (row.error) result.failed.push(episode.number);
+            else if (failedEpisodeIdSet.has(episode.id)) result.unavailable += 1;
+            else if (row.stage === "queued" || row.stage === "script" || (current?.segments.length ?? episode.stats?.segments ?? 0) === 0) result.pending += 1;
+            return result;
+        },
+        { failed: [] as number[], pending: 0, unavailable: 0 },
+    );
+    const episodesIncomplete = episodeProgress.failed.length + episodeProgress.pending + episodeProgress.unavailable;
     const progress = useMemo(() => {
         const detailProgress = new Map(
             visibleDetails.map((current) => [
@@ -468,7 +483,7 @@ export function GuideStory({
                     <p>逐集检查内容，可以直接修改文字，或请 Agent 提出调整建议。</p>
                     <div className="drama-guide-story-progress" aria-label={`段提示词进度：已完成 ${progress.completed} 段，失败 ${progress.failed} 段，共 ${progress.total} 段`}>
                         <div className="drama-guide-story-progress-head">
-                            <strong>段提示词进度</strong>
+                            <strong>已生成段的提示词进度</strong>
                             <span>
                                 {progress.completed + progress.failed}/{progress.total || 0} 段已处理
                             </span>
@@ -482,9 +497,24 @@ export function GuideStory({
                             <span className="is-failed">{progress.failed} 段失败</span>
                             <span>{Math.max(0, progress.total - progress.completed - progress.failed)} 段待处理</span>
                         </div>
+                        {selectedEpisodes.length ? (
+                            <div className="drama-guide-story-progress-meta" role="status" aria-label="剧本与分镜进度">
+                                <span>
+                                    剧本与分镜：{selectedEpisodes.length - episodesIncomplete}/{selectedEpisodes.length} 集就绪
+                                </span>
+                                {episodeProgress.failed.length ? (
+                                    <span className="is-failed">
+                                        {episodeProgress.failed.length} 集剧本失败（第 {episodeProgress.failed.join("、")} 集）
+                                    </span>
+                                ) : null}
+                                {episodeProgress.pending ? <span>{episodeProgress.pending} 集剧本尚未就绪</span> : null}
+                                {episodeProgress.unavailable ? <span>{episodeProgress.unavailable} 集读取失败</span> : null}
+                                {episodesIncomplete ? <span>全部文字尚未完成，段进度仅统计已生成的剧情段。</span> : null}
+                            </div>
+                        ) : null}
                     </div>
                 </div>
-                {episodeId && episodeId !== "all" && onRescript ? (
+                {episodeId && episodeId !== "all" && onRescript && !detail?.episode.error ? (
                     <Button icon={<RotateCcw className="size-3.5" />} disabled={busy || loading} onClick={onRescript}>
                         重新改编本集
                     </Button>
@@ -516,12 +546,25 @@ export function GuideStory({
                 <>
                     {visibleDetails.map((current) => {
                         const segments = filteredSegments(current);
+                        const scriptError = current.episode.error;
+                        const scriptBusy = current.episode.stage === "script" && (current.scriptJob?.status === "queued" || current.scriptJob?.status === "running");
                         return (
                             <section key={current.episode.id} className="drama-guide-story-episode">
                                 {allEpisodes ? (
                                     <h3 className="drama-guide-story-episode-title">
                                         第 {current.episode.number} 集 · {current.episode.title}
                                     </h3>
+                                ) : null}
+                                {scriptError ? (
+                                    <div className="drama-guide-notice drama-guide-story-episode-failure" role="alert">
+                                        <strong>第 {current.episode.number} 集剧本与分镜生成失败</strong>
+                                        <p>{scriptError}</p>
+                                        {onRetryEpisode ? (
+                                            <Button disabled={busy || scriptBusy} icon={<RotateCcw className="size-3.5" />} onClick={() => onRetryEpisode(current.episode.id)}>
+                                                {scriptBusy ? "本集剧本正在重试" : "重试本集剧本"}
+                                            </Button>
+                                        ) : null}
+                                    </div>
                                 ) : null}
                                 {current.episode.synopsis ? (
                                     <section className="drama-guide-card">
@@ -585,7 +628,7 @@ export function GuideStory({
                                         </div>
                                     </details>
                                 ))}
-                                {!segments.length && !detailLoading ? (
+                                {!segments.length && !detailLoading && !scriptError ? (
                                     <p className="drama-guide-empty" role="status">
                                         {current.episode.error || (segmentFilter === "all" ? "本集尚无镜头" : "没有符合当前状态的段")}
                                     </p>

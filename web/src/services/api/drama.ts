@@ -590,8 +590,10 @@ export function pauseDrama(projectId: string) {
     return http.post<DramaSummary>(`${base(projectId)}/pause`);
 }
 
-export function retryFailedDrama(projectId: string) {
-    return http.post<{ segments: number; casts: number }>(`${base(projectId)}/retry-failed`);
+export function retryFailedDrama(projectId: string, episodeId?: undefined): Promise<{ segments: number; casts: number }>;
+export function retryFailedDrama(projectId: string, episodeId: string): Promise<{ jobs: number }>;
+export function retryFailedDrama(projectId: string, episodeId?: string) {
+    return http.post<{ segments: number; casts: number } | { jobs: number }>(`${base(projectId)}/retry-failed`, episodeId === undefined ? undefined : { episodeId });
 }
 
 export function listDramaJobs(projectId: string, limit = 60, signal?: AbortSignal) {

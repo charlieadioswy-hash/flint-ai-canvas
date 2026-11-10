@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -129,7 +132,21 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/dramas/:id/pause", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.SetDramaRunning(userID, c.Param("id"), false)
 	}))
-	r.POST("/dramas/:id/retry-failed", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+	r.POST("/dramas/:id/retry-failed", dramaRoute(svc, 4<<10, func(c *gin.Context, userID string) (any, error) {
+		var req *struct {
+			EpisodeID json.RawMessage `json:"episodeId"`
+		}
+		err := json.NewDecoder(c.Request.Body).Decode(&req)
+		if err != nil && !errors.Is(err, io.EOF) || err == nil && req == nil {
+			return nil, service.BadAuthRequest("请求格式错误")
+		}
+		if req != nil && len(req.EpisodeID) > 0 {
+			var episodeID string
+			if err := json.Unmarshal(req.EpisodeID, &episodeID); err != nil {
+				return nil, service.BadAuthRequest("集 ID 无效")
+			}
+			return svc.RetryFailedDramaEpisode(userID, c.Param("id"), episodeID)
+		}
 		return svc.RetryFailedDrama(userID, c.Param("id"))
 	}))
 	r.GET("/dramas/:id/jobs", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {

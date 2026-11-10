@@ -1,10 +1,35 @@
 import { expect, test } from "bun:test";
-import { prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
+import { prepareDramaProposalMessage, prepareDramaSetupMessage, prepareDramaStageMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { DramaAgentProposal } from "@/services/api/agent";
 
 const proposal = (changes: Record<string, unknown>, toolCallId = "call"): DramaAgentProposal => ({ kind: "setup", changes, baseRevision: 4, runId: "run", toolCallId });
 const languages = ["中文普通话", "中文普通话（北方口语，少量方言语气词）", "粤语", "英语"];
 const languageChoices = () => languages.map((language, index) => proposal({ language }, `language-${index}`));
+
+test("阶段确认编号选项原位转为可点击内容，保留前后正文及模型文案", () => {
+    const result = prepareDramaStageMessage("四项配置现已齐全，是否按当前配置推进？\n\n1. 确认，进入下一阶段\n2. 继续调整（可说明想改哪一项）\n\n图片可以到制作台再生成。");
+    expect(result).toEqual({ body: "四项配置现已齐全，是否按当前配置推进？", after: "图片可以到制作台再生成。", labels: { confirm: "确认，进入下一阶段", adjust: "继续调整（可说明想改哪一项）" } });
+});
+
+test("阶段选项按语义绑定确认与调整，兼容加粗编号和反序文案", () => {
+    expect(prepareDramaStageMessage("请选择：\n**1. 继续调整**\n\n**2. 确认资产，开始改编剧本与分镜**")).toEqual({ body: "请选择：", after: "", labels: { confirm: "确认资产，开始改编剧本与分镜", adjust: "继续调整" } });
+});
+
+test("整套配置仅保留一组采用与修改操作，不影响真实建议数据", () => {
+    const proposals = [proposal({ aspectRatio: "9:16", videoResolution: "720p", language: "中文", episodeSeconds: 60 })];
+    const result = prepareDramaSetupMessage("配置已整理好，请选择：\n1. 采用推荐配置\n2. 在推荐配置基础上修改\n\n风格保持不变。", proposals);
+    expect(result.body).toBe("配置已整理好，请选择：\n\n风格保持不变。");
+    expect(result.proposals).toBe(proposals);
+    const incomplete = [proposal({ language: "中文" })];
+    expect(prepareDramaSetupMessage("1. 采用推荐配置\n2. 在推荐配置基础上修改", incomplete).body).toContain("1. 采用推荐配置");
+});
+
+test.each(["执行步骤：\n1. 阅读正文\n2. 确认人设", "请选择：\n1. 确认\n2. 继续调整\n3. 删除全部", "```markdown\n1. 确认\n2. 继续调整\n```", "> 1. 确认\n> 2. 继续调整", "1. 暂不确认\n2. 继续调整", "1. 确认角色资料\n2. 确认场景资料"])(
+    "无明确两种阶段决策时保持原文：%s",
+    (text) => {
+        expect(prepareDramaStageMessage(text)).toEqual({ body: text, after: "" });
+    },
+);
 
 test("语言编号列表合并到选项说明，保留前后正文及多行说明", () => {
     const text = [

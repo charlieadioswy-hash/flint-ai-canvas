@@ -62,6 +62,38 @@ func TestPersistDramaTaskRollsBackWhenJobChanged(t *testing.T) {
 	}
 }
 
+func TestPersistDramaTaskRejectsJobAfterGuideStepChanged(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	summary := createGuidedDrama(t, svc, DramaChapterInput{Title: "第一章", Text: "街区忽然来到森林。"})
+	project := summary.Project.ID
+	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", project).Update("guide_step", model.DramaGuideStory).Error; err != nil {
+		t.Fatal(err)
+	}
+	job := model.DramaJob{ID: newID(), ProjectID: project, Status: model.DramaJobQueued, Kind: model.DramaJobSegmentPrompt}
+	if err := fake.db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 调度已读到旧的排队作业，用户此时返回了资产阶段；不得提交属于剧本阶段的付费任务。
+	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", project).Update("guide_step", model.DramaGuideAssets).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := &model.Task{ID: newID(), UserID: "usr-drama", ProjectID: project, Type: "canvas_text", Status: model.TaskStatusQueued, InputJSON: "{}"}
+	order := &model.BillingOrder{ID: newID(), UserID: task.UserID, TaskID: task.ID, IdempotencyKey: newID(), AmountMicrocredits: 100}
+	if _, err := svc.persistDramaTask(&job, task, order); !errors.Is(err, repository.ErrDramaJobChanged) {
+		t.Fatalf("wrong-step job must invalidate dispatch before task or billing writes: %v", err)
+	}
+	for _, row := range []any{&model.Task{}, &model.BillingOrder{}, &model.CreditLedgerEntry{}} {
+		var count int64
+		if err := fake.db.Model(row).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("wrong-step dispatch must not create task or billing rows: %T count=%d err=%v", row, count, err)
+		}
+	}
+	var stored model.DramaJob
+	if err := fake.db.First(&stored, "id = ?", job.ID).Error; err != nil || stored.Status != model.DramaJobQueued || stored.TaskID != "" {
+		t.Fatalf("wrong-step dispatch must preserve the existing job: %+v %v", stored, err)
+	}
+}
+
 // 结算记录按 attempts_json 乐观锁写入：旧行的 NULL 也能匹配；已被改动的作业返回冲突，不改作品花费缓存。
 func TestRecordDramaJobCostUsesOptimisticAttempts(t *testing.T) {
 	svc, fake := newDramaTestService(t)

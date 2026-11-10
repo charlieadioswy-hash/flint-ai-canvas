@@ -1106,31 +1106,54 @@ func (s *Service) RequestDramaSegmentPrompts(userID string, projectID string, ep
 	if err != nil {
 		return nil, err
 	}
-	shots, err := s.repo.DramaShots(episode.ID)
-	if err != nil {
-		return nil, err
-	}
-	known := map[int]bool{}
-	for _, shot := range shots {
-		known[shot.SegmentIndex] = true
-	}
-	indexes := []int{}
-	for _, index := range req.Segments {
-		if !known[index] {
-			return nil, BadAuthRequest("剧情段不存在")
-		}
-		indexes = append(indexes, index)
-	}
 	queued := 0
-	var expected *int64
-	if dramaGuideActive(productionRow) {
-		expected = &productionRow.Revision
-	}
-	err = s.withDramaGuideEdit(projectID, expected, false, func(tx *repository.Repository) error {
-		var err error
-		queued, err = tx.RequestDramaSegmentPrompts(project.ID, episode.ID, indexes)
-		return err
-	})
+	// 重试只排队指定段，不修改撰写输入；沿用制作行锁，允许其他段提示词继续运行。
+	err = dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
+		current, err := tx.DramaProductionForUpdate(projectID)
+		if err != nil {
+			return err
+		}
+		guided := dramaGuideActive(current)
+		if guided {
+			if current.GuideStep != model.DramaGuideStory {
+				return repository.ErrDramaGuideChanged
+			}
+			changing, err := tx.DramaPromptInputsChanging(projectID)
+			if err != nil {
+				return err
+			}
+			if changing {
+				return dramaGuideConflict("剧本或资产文字正在生成，请完成后再重试提示词")
+			}
+		} else if dramaGuideActive(productionRow) {
+			return repository.ErrDramaGuideChanged
+		}
+		shots, err := tx.DramaShots(episode.ID)
+		if err != nil {
+			return err
+		}
+		known := map[int]bool{}
+		for _, shot := range shots {
+			known[shot.SegmentIndex] = true
+		}
+		for _, index := range req.Segments {
+			if !known[index] {
+				return BadAuthRequest("剧情段不存在")
+			}
+		}
+		if guided {
+			queued, err = tx.RequestDramaGuideSegmentPrompts(project.ID, episode.ID, req.Segments)
+		} else {
+			queued, err = tx.RequestDramaSegmentPrompts(project.ID, episode.ID, req.Segments)
+		}
+		if err != nil {
+			return err
+		}
+		if guided && queued > 0 {
+			return tx.UpdateDramaGuideIf(projectID, current.Revision, current.GuideStep, map[string]any{})
+		}
+		return nil
+	}))
 	if err != nil {
 		return nil, err
 	}

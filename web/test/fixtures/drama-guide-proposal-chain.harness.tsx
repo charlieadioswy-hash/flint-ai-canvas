@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { DramaAgentProposal } from "@/services/api/agent";
-import type { DramaCast, DramaGuideStep, DramaSettings, DramaSummary } from "@/services/api/drama";
+import type { DramaCast, DramaEpisodeDetail, DramaGuideStep, DramaSettings, DramaSummary } from "@/services/api/drama";
 import type { AgentDramaContext } from "@/stores/use-global-agent-store";
 
 const browser = new Window({ url: "http://localhost/projects/project/guide" });
@@ -29,6 +29,10 @@ let nextStep: DramaGuideStep | undefined;
 let routeProject = "project";
 let guideConfirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings } }>;
 let allowGuideConfirm: boolean;
+let episodeRetries: Array<{ projectId: string; episodeId?: string }>;
+let allowEpisodeRetry: boolean;
+let episodeReads: string[];
+let currentEpisodeDetail: DramaEpisodeDetail | undefined;
 let unexpectedWrites: number;
 let pendingRead: { promise: Promise<void>; resolve: () => void; snapshot: DramaSummary; started: boolean } | null = null;
 const silent = () => {};
@@ -87,7 +91,14 @@ mock.module("@/pages/projects/guide-panels", () => ({
         </section>
     ),
     GuideAssets: ({ cast: items }: { cast: DramaCast[] }) => <output aria-label="当前资产">{items.map((item) => item.name).join("、")}</output>,
-    GuideStory: () => null,
+    GuideStory: ({ episodeId, detail, details, onSelect, onRetryEpisode }: { episodeId: string; detail?: DramaEpisodeDetail; details: DramaEpisodeDetail[]; onSelect: (episodeId: string) => void; onRetryEpisode: (episodeId: string) => void }) => (
+        <section>
+            <output aria-label="当前分集">{episodeId}</output>
+            <output aria-label="当前分集错误">{episodeId === "all" ? details.map((item) => item.episode.error).join("、") : detail?.episode.error}</output>
+            <button onClick={() => onSelect("all")}>审阅全部集</button>
+            <button onClick={() => onRetryEpisode("episode-9")}>重试第九集剧本</button>
+        </section>
+    ),
     GuideTextField: () => null,
 }));
 
@@ -119,7 +130,10 @@ mock.module("@/services/api/drama", () => ({
         return structuredClone(summary);
     },
     listDramaCast: async () => ({ cast: structuredClone(cast) }),
-    getDramaEpisode: async () => episodeDetail(),
+    getDramaEpisode: async (_projectId: string, episodeId: string) => {
+        episodeReads.push(episodeId);
+        return structuredClone(currentEpisodeDetail || episodeDetail());
+    },
     updateDramaSettings: async (_project: string, input: { settings: DramaSettings; expectedRevision: number }) => {
         write("setup", input.expectedRevision, input.settings);
         summary.production.settings = structuredClone(input.settings);
@@ -166,7 +180,11 @@ mock.module("@/services/api/drama", () => ({
     },
     regenerateDramaCast: forbidden,
     rescriptDramaEpisode: forbidden,
-    retryFailedDrama: forbidden,
+    retryFailedDrama: async (projectId: string, episodeId?: string) => {
+        if (!allowEpisodeRetry) return forbidden();
+        episodeRetries.push({ projectId, episodeId });
+        return { jobs: 1 };
+    },
     writeDramaSegmentPrompts: forbidden,
 }));
 
@@ -181,7 +199,8 @@ function proposal(kind: DramaAgentProposal["kind"], call: string, changes: Recor
     return { kind, toolCallId: call, runId: "run", baseRevision: 7, changes, targetId, ...overrides };
 }
 const source = (call = "source") => proposal("source", call, { chapters: [{ title: "第一章", text: "雨夜的小青回到了旧车站。" }], sourceFormat: "novel" });
-const setup = (call = "setup", changes: Record<string, unknown> = { language: "粤语" }) => proposal("setup", call, changes);
+const recommendedConfiguration = { aspectRatio: "9:16", videoResolution: "720p", language: "粤语", episodeSeconds: 90 };
+const setup = (call = "setup", changes: Record<string, unknown> = recommendedConfiguration) => proposal("setup", call, changes);
 
 async function withGuide(
     step: DramaGuideStep,
@@ -196,6 +215,7 @@ async function withGuide(
         container: HTMLElement;
         chatHost: HTMLDivElement;
     }) => Promise<void>,
+    stageLabels?: { confirm: string; adjust: string },
 ) {
     routeProject = "project";
     pendingRead = null;
@@ -215,6 +235,10 @@ async function withGuide(
     writes = [];
     guideConfirms = [];
     allowGuideConfirm = false;
+    episodeRetries = [];
+    allowEpisodeRetry = false;
+    episodeReads = [];
+    currentEpisodeDetail = undefined;
     unexpectedWrites = 0;
     confirmations = [];
     errors = [];
@@ -244,7 +268,7 @@ async function withGuide(
             <>
                 {choices ? choices.render(choices.proposals) : null}
                 {proposals ? proposals.render(proposals.proposals) : null}
-                {stage?.content || null}
+                {stage?.render(stageLabels) || null}
             </>,
         );
     };
@@ -288,9 +312,13 @@ async function withGuide(
                     });
                     expect(actionsHost.querySelector(".drama-guide-setup-choice")).toBeNull();
                     const card = Array.from(chatHost.querySelectorAll<HTMLElement>(".drama-guide-proposal, .drama-guide-setup-choice")).find((entry) => !previous.has(entry));
-                    expect(card).toBeDefined();
+                    if (!card) {
+                        // 同轮完整配置始终只有一份推荐；后续备选不再增加单独的配置按钮。
+                        expect(item.kind).toBe("setup");
+                        expect(findButton(chatHost, "采用推荐配置")).toBeDefined();
+                    }
                     expect(container.querySelector('[aria-label="创作产物"] .drama-guide-proposal')).toBeNull();
-                    cards.set(item.toolCallId, card!);
+                    cards.set(item.toolCallId, card || document.createElement("div"));
                 }
             },
             apply: (call, label) =>
@@ -375,12 +403,12 @@ test("正文与配置双向连续应用，第三条晚到同轮建议也使用�
             await apply(first.toolCallId);
             expect(disabled(second.toolCallId)).toBe(false);
             await apply(second.toolCallId);
-            await receive(setup("late", { episodeSeconds: 120 }));
+            await receive(setup("late", { styleName: "国风动画", stylePrompt: "水墨线条" }));
             expect(disabled("late")).toBe(false);
             await apply("late");
             expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9]);
             expect(summary.production.settings.language).toBe("粤语");
-            expect(summary.production.settings.episodeSeconds).toBe(120);
+            expect(summary.production.settings.styleName).toBe("国风动画");
             expect(container.querySelectorAll(".drama-guide-proposal")).toHaveLength(0);
             expect(first.baseRevision).toBe(7);
             expect(second.baseRevision).toBe(7);
@@ -406,26 +434,28 @@ test("独立资产与创建可连续，同资产和同名创建及改名撞名�
     });
 });
 
-test("同字段、关联字段、重复正文与其他run或原始版本不接续", async () => {
+test("风格互斥、整套配置互斥、重复正文与其他run或原始版本不接续", async () => {
     await withGuide("configuring", async ({ receive, apply, disabled }) => {
-        await receive(setup("first", { styleName: "电影", aspectRatio: "16:9" }), setup("style", { stylePrompt: "高反差" }), setup("frame", { videoResolution: "1080p" }), setup("same-run-language", { language: "英语" }));
+        await receive(setup("first", { styleName: "电影" }), setup("style", { stylePrompt: "高反差" }), setup("configuration"), setup("alternative-configuration", { ...recommendedConfiguration, language: "英语" }));
         // 其他run必须真的来自另一轮，且不能由本轮记录抬升。
-        await receive(proposal("setup", "another-run", { language: "英语" }, undefined, { runId: "other" }), proposal("setup", "old-base", { language: "英语" }, undefined, { baseRevision: 6 }));
+        await receive(proposal("setup", "another-run", { ...recommendedConfiguration, language: "英语" }, undefined, { runId: "other" }), proposal("setup", "old-base", { ...recommendedConfiguration, language: "英语" }, undefined, { baseRevision: 6 }));
         await apply("first");
         expect(disabled("style")).toBe(true);
-        expect(disabled("frame")).toBe(true);
+        expect(disabled("configuration")).toBe(false);
+        await apply("configuration");
+        expect(disabled("alternative-configuration")).toBe(true);
         expect(disabled("another-run")).toBe(true);
         expect(disabled("old-base")).toBe(true);
         await receive(source(), source("duplicate-source"));
         await apply("source");
         expect(disabled("duplicate-source")).toBe(true);
-        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8]);
-        await receive(proposal("setup", "new-base", { language: "日语" }, undefined, { baseRevision: 9 }), proposal("setup", "new-base-duration", { episodeSeconds: 180 }, undefined, { baseRevision: 9 }));
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9]);
+        await receive(proposal("setup", "new-base", { ...recommendedConfiguration, language: "日语" }, undefined, { baseRevision: 10 }), proposal("setup", "new-base-style", { stylePrompt: "水墨" }, undefined, { baseRevision: 10 }));
         await apply("new-base");
-        expect(disabled("same-run-language")).toBe(true);
-        expect(disabled("new-base-duration")).toBe(false);
-        await apply("new-base-duration");
-        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9, 10]);
+        expect(disabled("alternative-configuration")).toBe(true);
+        expect(disabled("new-base-style")).toBe(false);
+        await apply("new-base-style");
+        expect(writes.map((item) => item.expectedRevision)).toEqual([7, 8, 9, 10, 11]);
     });
 });
 
@@ -512,7 +542,7 @@ test("保存失败不伪造接续；成功写入但强刷新失败保留阻断�
 test("点选只保存当前配置，手动或高级草稿保留且保存后仍执行版本保护", async () => {
     await withGuide("configuring", async ({ receive, apply, disabled, click }) => {
         await click("改为1080P");
-        await receive(setup("setup", { language: "粤语" }), source(), setup("language", { language: "日语" }));
+        await receive(setup(), source(), setup("language", { ...recommendedConfiguration, language: "日语" }));
         await apply("setup");
         expect(summary.production.settings.videoResolution).toBe("720p");
         expect(summary.production.settings.language).toBe("粤语");
@@ -664,4 +694,109 @@ test("刷新失败时阶段确认选项保持禁用", async () => {
         expect(confirm?.disabled).toBe(true);
         expect(guideConfirms).toEqual([]);
     });
+});
+
+test("引导页重试只绑定卡片目标集，不使用当前选择集或全项目重试", async () => {
+    await withGuide("story", async ({ refresh, click, container }) => {
+        allowEpisodeRetry = true;
+        summary.episodes.push({ id: "episode-9", number: 9, title: "第九集", stage: "script", error: "分镜脚本解析失败：模型没有返回可解析的 JSON" } as DramaSummary["episodes"][number]);
+        await refresh();
+        expect(container.querySelector('[aria-label="当前分集"]')?.textContent).toBe("episode");
+
+        await click("重试第九集剧本");
+
+        expect(episodeRetries).toEqual([{ projectId: "project", episodeId: "episode-9" }]);
+        expect(guideConfirms).toEqual([]);
+        expect(confirmations).toEqual([]);
+        expect(unexpectedWrites).toBe(0);
+        expect(errors).toEqual([]);
+    });
+});
+
+test("最后文字任务结束后，单集和全部集详情都刷新失败终态", async () => {
+    for (const all of [false, true]) {
+        await withGuide("story", async ({ refresh, click, container }) => {
+            if (all) await click("审阅全部集");
+            summary = { ...summary, jobCounts: { running: 1 } };
+            await refresh();
+            const before = episodeReads.length;
+            const error = "分镜脚本解析失败：模型没有返回可解析的 JSON";
+            currentEpisodeDetail = { ...episodeDetail(), episode: { ...episodeDetail().episode, stage: "script", error } } as DramaEpisodeDetail;
+            summary = { ...summary, jobCounts: {}, episodes: [{ ...summary.episodes[0], stage: "script", error }] };
+
+            await refresh();
+
+            expect(episodeReads.length).toBeGreaterThan(before);
+            expect(container.querySelector('[aria-label="当前分集错误"]')?.textContent).toBe(error);
+            expect(errors).toEqual([]);
+        });
+    }
+});
+
+test("两次摘要读取间已结束的短任务也刷新详情，未变化摘要不重复刷新", async () => {
+    await withGuide("story", async ({ refresh, container }) => {
+        const before = episodeReads.length;
+        const error = "分镜脚本解析失败：分镜脚本没有可用镜头";
+        currentEpisodeDetail = { ...episodeDetail(), episode: { ...episodeDetail().episode, stage: "script", error } } as DramaEpisodeDetail;
+        summary = { ...summary, episodes: [{ ...summary.episodes[0], stage: "script", error }] };
+
+        await refresh();
+
+        expect(episodeReads.length).toBeGreaterThan(before);
+        expect(container.querySelector('[aria-label="当前分集错误"]')?.textContent).toBe(error);
+        const settledReads = episodeReads.length;
+        await refresh();
+        expect(episodeReads).toHaveLength(settledReads);
+        expect(errors).toEqual([]);
+    });
+});
+
+test("新一轮推荐保存后旧候选仍保留但不再阻塞阶段确认", async () => {
+    await withGuide("configuring", async ({ receive, apply, disabled, refresh, click }) => {
+        allowGuideConfirm = true;
+        summary.guide!.canConfirm = true;
+        await refresh();
+        await receive(setup("original-recommendation"));
+        const revised = proposal("setup", "revised-recommendation", { ...recommendedConfiguration, aspectRatio: "16:9", episodeSeconds: 120 }, undefined, { runId: "revised-run" });
+        await receive(revised);
+        expect(disabled("revised-recommendation")).toBe(false);
+        expect(dramaContext?.stageChoices?.pending).toBe(true);
+
+        await apply("revised-recommendation");
+        expect(summary.production.revision).toBe(8);
+        expect(summary.production.settings.aspectRatio).toBe("16:9");
+        expect(summary.production.settings.episodeSeconds).toBe(120);
+        expect(dramaContext?.setupChoices?.proposals.some((item) => item.toolCallId === "original-recommendation")).toBe(true);
+        expect(disabled("original-recommendation")).toBe(true);
+        expect(dramaContext?.stageChoices?.pending).toBe(false);
+
+        await click("确认配置，开始提取资产");
+        expect(guideConfirms).toHaveLength(1);
+        expect(guideConfirms[0].input.expectedRevision).toBe(8);
+        expect(guideConfirms[0].input.expectedStep).toBe("configuring");
+        expect(summary.production.guideStep).toBe("assets");
+        expect(unexpectedWrites).toBe(0);
+        expect(errors).toEqual([]);
+    });
+});
+
+test("资产阶段不会沿用上一阶段确认文案，仍调用当前资产确认流程", async () => {
+    await withGuide(
+        "assets",
+        async ({ refresh, click, chatHost }) => {
+            allowGuideConfirm = true;
+            summary.guide!.canConfirm = true;
+            await refresh();
+            expect(findButton(chatHost, "确认配置，开始提取资产")).toBeUndefined();
+            expect(findButton(chatHost, "确认资产，开始改编剧本与分镜")?.disabled).toBe(false);
+            expect(findButton(chatHost, "继续调整")).toBeDefined();
+
+            await click("确认资产，开始改编剧本与分镜");
+            expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "assets", expectedRevision: 7 } }]);
+            expect(summary.production.guideStep).toBe("story");
+            expect(unexpectedWrites).toBe(0);
+            expect(errors).toEqual([]);
+        },
+        { confirm: "确认配置，开始提取资产", adjust: "继续调整" },
+    );
 });

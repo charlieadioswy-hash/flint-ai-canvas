@@ -774,7 +774,7 @@ export function AgentConversation({
         return { byMessage, fallback };
     }, [busy, dramaProposalChoices, segments]);
     const stagePresentation = useMemo(() => {
-        if (!dramaStageChoices || busy || approval) return { targetId: null as string | null, fallback: false };
+        if (!dramaStageChoices || dramaStageChoices.pending || busy || approval) return { targetId: null as string | null, fallback: false };
         for (let index = segments.length - 1; index >= 0; index -= 1) {
             const segment = segments[index];
             if (segment.kind !== "message" || segment.item.role !== "assistant" || segment.item.reasoning || segment.item.streaming) continue;
@@ -879,7 +879,7 @@ export function AgentConversation({
                         ) : (
                             <AgentChatMessage
                                 key={segment.key}
-                                item={segment.item}
+                                item={stageMessage && (setupMessage || proposalMessage) ? { ...segment.item, text: (setupMessage || proposalMessage)!.body } : segment.item}
                                 theme={theme}
                                 references={linkReferences}
                                 onFocusNode={onFocusNode}
@@ -892,8 +892,8 @@ export function AgentConversation({
                                 replyOptions={replyTarget?.id === segment.item.id ? replyTarget.options : null}
                                 onReplyOption={replyTarget?.id === segment.item.id && onReplyOption ? stableReply : undefined}
                                 replyOptionsDisabled={replyOptionsDisabled}
-                                setupChoices={setupMessage && dramaSetupChoices ? { body: setupMessage.body, content: dramaSetupChoices.render(setupMessage.proposals) } : undefined}
-                                proposalChoices={proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: dramaProposalChoices.render(proposalMessage.proposals) } : undefined}
+                                setupChoices={!stageMessage && setupMessage && dramaSetupChoices ? { body: setupMessage.body, content: dramaSetupChoices.render(setupMessage.proposals) } : undefined}
+                                proposalChoices={!stageMessage && proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: dramaProposalChoices.render(proposalMessage.proposals) } : undefined}
                                 stageChoices={stageMessage}
                                 onRetry={onRetryRun && retryableErrorId === segment.item.id ? stableRetry : undefined}
                                 retrying={retryingRun && retryableErrorId === segment.item.id}

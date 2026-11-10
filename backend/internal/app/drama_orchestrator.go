@@ -200,7 +200,24 @@ func (r *dramaRun) persistJobs() error {
 		if (dramaGuideActive(current) || dramaGuideActive(r.production)) && (current.GuideStep != r.production.GuideStep || current.Revision != r.production.Revision) {
 			return repository.ErrDramaGuideChanged
 		}
-		return tx.CreateDramaJobs(r.newJobs)
+		// 重试可能在 syncJobs 快照之后恢复原作业；入队时重新检查，避免同槽位重复派发和计费。
+		activeJobs, err := tx.DramaJobsByStatus(r.project.ID, model.DramaJobQueued, model.DramaJobRunning)
+		if err != nil {
+			return err
+		}
+		active := make(map[string]bool, len(activeJobs))
+		for _, job := range activeJobs {
+			active[dramaJobKey(job.Kind, job.EpisodeID, job.ShotID, job.CastID)] = true
+		}
+		pending := make([]model.DramaJob, 0, len(r.newJobs))
+		for _, job := range r.newJobs {
+			key := dramaJobKey(job.Kind, job.EpisodeID, job.ShotID, job.CastID)
+			if !active[key] {
+				pending = append(pending, job)
+				active[key] = true
+			}
+		}
+		return tx.CreateDramaJobs(pending)
 	})
 }
 
@@ -1021,7 +1038,7 @@ func (r *dramaRun) applyScript(job *model.DramaJob, task *model.Task) error {
 	}
 	scripted, err := production.ParseScript(text)
 	if err != nil {
-		return fmt.Errorf("分镜脚本解析失败：%w", err)
+		return &dramaResultIssue{message: "分镜脚本解析失败：" + err.Error() + "；请重试本集剧本"}
 	}
 	episode, err := r.s.repo.DramaEpisode(r.project.ID, job.EpisodeID)
 	if err != nil {
@@ -1929,6 +1946,13 @@ func (s *Service) persistDramaTask(job *model.DramaJob, task *model.Task, order 
 	// 读到的状态时生效；期间被取消或重试则整笔回滚，不留下已扣费却没人认领的任务。
 	s.storageMu.Lock()
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
+		current, err := repo.DramaProductionForUpdate(job.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !dramaGuideAllowsJob(current, job.Kind) {
+			return repository.ErrDramaJobChanged
+		}
 		if err := createTaskWithStorageQuotaRepository(repo, task, order, policy); err != nil {
 			return err
 		}

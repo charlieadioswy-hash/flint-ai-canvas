@@ -100,7 +100,7 @@ export default function DramaGuidePage() {
         if (summary?.project.id !== projectId || summary.production.guideStep !== "configuring" || summaryQuery.isError) return null;
         return {
             id: 1,
-            text: `请开始这个短剧的创作引导，先读取当前阶段、现有正文和配置。${creativeBrief ? `我的创作想法是：\n${creativeBrief}\n` : ""}请根据故事内容逐项引导我选择风格、视频画幅与清晰度、语言和时长，一轮只选择一项，用 drama_propose_changes 给出同一项的 2–4 个可直接保存的选项，不要一次给整套配置，也不要让我先回复选项再去应用建议。每项说明放顶层 explanation，正文只简短引导，不重复列举选项或提示去下方卡片。界面会提供自定义输入。${chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : creativeBrief ? "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。" : "请先询问我的创作想法或需要改编的正文。"}点选后界面会直接保存并反馈结果，再读取最新配置继续下一项，已明确的选择不重复问。阶段推进时，请在 Agent 回复中提供“确认”与“继续调整”选项，由我直接选择，不使用右侧或下方独立确认按钮。每个阶段都等待我确认，不自动生成图片或视频。`,
+            text: `请开始这个短剧的创作引导，先读取当前阶段、现有正文和配置。${creativeBrief ? `我的创作想法是：\n${creativeBrief}\n` : ""}先根据故事内容推荐 2–4 个视觉风格，用 drama_propose_changes 提供可直接保存的风格选项，并允许自行填写。风格选定后，将视频画幅、清晰度、语言和单集时长一次性汇总为一份推荐配置，用一个 setup 建议提交全部四项；只提供“采用推荐配置”和“在推荐配置基础上修改”两个选项，不逐项询问。修改时保留未要求调整的推荐值。每项说明放顶层 explanation，正文简短说明推荐依据，界面会将选项直接呈现在这条回复中，不重复列举选项或提示去下方卡片，不让我先回复再应用建议。${chapterCount ? "请直接读取已保存的正文，不需要我重复粘贴。" : creativeBrief ? "请先基于我的创作想法起草可改编的故事正文，用故事正文建议提交供我确认。" : "请先询问我的创作想法或需要改编的正文。"}点选后界面会直接保存并反馈结果，读取最新状态继续；已选风格和已确认的整套配置不重复问。阶段推进时，请在 Agent 回复中提供“确认”与“继续调整”选项，由我直接选择，不使用右侧或下方独立确认按钮。每个阶段都等待我确认，不自动生成图片或视频。`,
             autoSubmit: true,
             displayText: chapterCount ? "请根据已保存的正文推荐创作方案" : creativeBrief ? "请根据我的创作想法起草正文，并推荐创作方案" : "请引导我开始创作短剧",
         };
@@ -128,6 +128,16 @@ export default function DramaGuidePage() {
     const allEpisodesLoading = allEpisodeQueries.some((query) => query.isLoading || query.isFetching);
     const allEpisodesFailed = allEpisodeQueries.length > 0 && allEpisodeQueries.every((query) => query.isError);
     const failedEpisodeIds = allEpisodeQueries.flatMap((query, index) => (query.isError && episodes[index] ? [episodes[index].id] : []));
+    const episodeRefreshRef = useRef<{ projectId: string; episodes: DramaSummary["episodes"]; jobsActive: boolean } | null>(null);
+    useEffect(() => {
+        if (summary?.project.id !== projectId) return;
+        const previous = episodeRefreshRef.current;
+        episodeRefreshRef.current = { projectId, episodes, jobsActive };
+        // 最后一个任务结束后详情轮询会停止；摘要变化仍需拉取一次终态，避免保留旧失败或旧成功。
+        if (previous?.projectId === projectId && (previous.episodes !== episodes || (previous.jobsActive && !jobsActive))) {
+            void queryClient.invalidateQueries({ queryKey: dramaKeys.episodes(projectId) });
+        }
+    }, [projectId, summary?.project.id, episodes, jobsActive, queryClient]);
     const operation = useMutation({
         mutationFn: ({ work }: Operation) => work(),
         onSuccess: async (_data, input) => {
@@ -282,7 +292,7 @@ export default function DramaGuidePage() {
                     const value = savedDraft ? rebaseDramaGuideSettingsDraft(savedDraft.baseline, savedDraft.value, latest.production.settings, application.change.patch) : null;
                     setSettingsDraft(value ? { value, baseline: latest.production.settings, revision: latest.production.revision } : null);
                     sendGuideMessage(
-                        `用户已在对话中点选并成功保存配置。当前制作版本：${latest.production.revision}；本次选择：${JSON.stringify(application.change.patch)}。请先用 drama_get_context 读取最新状态，再继续下一项尚未确认的配置选择；每轮只提供一个决策的可保存选项，不重复询问已确认项，不自动确认阶段或生成图片视频。`,
+                        `用户已在对话中点选并成功保存配置。当前制作版本：${latest.production.revision}；本次选择：${JSON.stringify(application.change.patch)}。请先用 drama_get_context 读取最新状态。${isStyleOnlySetup(proposal) ? "风格已经选定，不再重复询问；接下来把视频画幅、清晰度、语言和单集时长一次性汇总为一份推荐配置，用一个 setup 建议提交全部四项，只提供‘采用推荐配置’和‘在推荐配置基础上修改’两个选项，不逐项询问。" : "这份配置已经确认，不再拆分逐项询问；如故事正文也已就绪，在回复中提供阶段确认与继续调整的直接选项。"}不自动确认阶段或生成图片视频。`,
                         `已选择：${setupChoiceDescription(proposal)}`,
                         true,
                     );
@@ -338,11 +348,16 @@ export default function DramaGuidePage() {
         [summaryQuery.isError, step, revision, proposalBatches, castQuery.cast],
     );
     const refreshChoices = (proposal: DramaAgentProposal) =>
-        sendGuideMessage(`请先用 drama_get_context 读取当前真实配置与版本，重新提供${setupChoiceFields(proposal)}的 2–4 个可直接保存选项。不要让我回答‘是否点了/是否看到卡片’，不要重复已确认的配置，不自动推进阶段。`, "请重新提供当前可选项");
+        sendGuideMessage(
+            `请先用 drama_get_context 读取当前真实配置与版本，${isStyleOnlySetup(proposal) ? "重新提供 2–4 个可直接保存的视觉风格选项" : "保持已选风格，把视频画幅、清晰度、语言和单集时长一次性汇总为一份完整推荐配置，用一个 setup 建议提交全部四项，只提供‘采用推荐配置’和‘在推荐配置基础上修改’两个选项，不逐项询问"}。不要让我回答‘是否点了/是否看到卡片’，不要重复已确认的配置，不自动推进阶段。`,
+            "请重新提供当前可选项",
+        );
     const customChoice = (text: string, proposal: DramaAgentProposal) => {
         if (busy || !text.trim()) return;
+        const styleOnly = isStyleOnlySetup(proposal);
+        const recommendation = Object.fromEntries(["aspectRatio", "videoResolution", "language", "episodeSeconds"].filter((field) => Object.hasOwn(proposal.changes, field)).map((field) => [field, proposal.changes[field]]));
         sendGuideMessage(
-            `我想为当前讨论的配置填写其他内容。当前讨论项：${setupChoiceFields(proposal)}。我的输入是：\n${text.trim()}\n请先用 drama_get_context 读取最新状态，再只针对这一项提供符合我输入的可保存选项；不替我编造其他设置，不声称已保存，不让我再去右侧应用。`,
+            `我想${styleOnly ? "为视觉风格填写其他内容" : "在推荐配置基础上修改"}。当前讨论项：${setupChoiceFields(proposal)}。${!styleOnly ? `推荐配置：${JSON.stringify(recommendation)}。` : ""}我的输入是：\n${text.trim()}\n请先用 drama_get_context 读取最新状态，${styleOnly ? "只针对视觉风格提供符合我输入的可保存选项，不替我编造其他设置" : "只修改我明确要求的配置，其余保留推荐值；将视频画幅、清晰度、语言和单集时长合成一个完整 setup 建议，只提供‘采用推荐配置’和‘在推荐配置基础上修改’两个选项，不逐项询问"}；不声称已保存，不让我再去右侧应用。`,
             text.trim(),
         );
     };
@@ -402,10 +417,16 @@ export default function DramaGuidePage() {
                     ];
         const title = step === "configuring" ? "下一步：提取资产" : step === "assets" ? "下一步：开始改编" : "下一步：剧本与分镜";
         return {
-            content: (
+            pending: visibleProposals.some(validProposal),
+            render: (labels?: { confirm: string; adjust: string }) => (
                 <GuideStageChoices
                     title={title}
-                    choices={choices}
+                    choices={choices.map((choice) => {
+                        const label = labels?.[choice.key as "confirm" | "adjust"];
+                        // 上一阶段回答仍在会话中；只沿用通用确认或当前动作的文案。
+                        const matchesStage = choice.key !== "confirm" || label === choice.title || /^确认[，,：:\s]*(?:进入下一阶段|并继续|继续|继续推进|继续当前流程)?[。！!]?$/u.test(label || "");
+                        return { ...choice, title: label && matchesStage ? label : choice.title };
+                    })}
                     busy={busy || stale || summaryQuery.isError}
                     onChoose={(choice) => {
                         if (choice.key === "confirm") {
@@ -423,7 +444,7 @@ export default function DramaGuidePage() {
                 />
             ),
         };
-    }, [busy, stale, step, summary?.guide?.canConfirm, summaryQuery.isError]);
+    }, [busy, stale, step, summary?.guide?.canConfirm, summaryQuery.isError, visibleProposals, validProposal]);
     useEffect(() => {
         if (!host || summary?.project.id !== projectId || !summary.production.guideStep) {
             if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
@@ -640,6 +661,7 @@ export default function DramaGuidePage() {
                                         if (allEpisodesSelected) for (const query of allEpisodeQueries) void query.refetch();
                                         else void episodeQuery.refetch();
                                     }}
+                                    onRetryEpisode={(targetEpisodeId) => perform(() => retryFailedDrama(projectId, targetEpisodeId))}
                                     onRescript={() =>
                                         modal.confirm({
                                             title: "重新改编本集？",
@@ -824,6 +846,10 @@ function setupChoiceFields(proposal: DramaAgentProposal) {
             .map((key) => CHANGE_LABEL[key])
             .join("、") || "创作配置"
     );
+}
+
+function isStyleOnlySetup(proposal: DramaAgentProposal) {
+    return !["aspectRatio", "videoResolution", "language", "episodeSeconds"].some((field) => Object.hasOwn(proposal.changes, field));
 }
 
 function setupChoiceDescription(proposal: DramaAgentProposal) {

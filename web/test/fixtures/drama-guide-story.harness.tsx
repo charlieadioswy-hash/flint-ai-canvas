@@ -120,7 +120,7 @@ async function fixture(props: Pick<Props, "episodes" | "episodeId"> & Partial<Pr
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const calls = { reload: 0, edited: [] as Array<[string, string]>, written: [] as Array<[string, string]> };
+    const calls = { reload: 0, retried: [] as string[], edited: [] as Array<[string, string]>, written: [] as Array<[string, string]> };
     let current: Props = {
         busy: false,
         loading: false,
@@ -128,6 +128,7 @@ async function fixture(props: Pick<Props, "episodes" | "episodeId"> & Partial<Pr
         onSelect: () => {},
         onReload: () => calls.reload++,
         onRescript: () => {},
+        onRetryEpisode: (episodeId) => calls.retried.push(episodeId),
         onPatch: () => {},
         onEditPrompt: (item, episodeId) => calls.edited.push([item.id, episodeId]),
         onWritePrompt: (item, episodeId) => calls.written.push([item.id, episodeId]),
@@ -186,6 +187,105 @@ test("全部集保留已读取内容，失败集显示错误并可重试恢复",
     }
 });
 
+test("已有72段完成仍显示第9集剧本失败，全部集和单集均可定向重试", async () => {
+    const finished = Array.from({ length: 8 }, (_, index) => episode(`episode-${index + 1}`, index + 1, { segments: 9, promptReady: 9, promptSucceeded: 9 }));
+    const unfinished = { ...episode("episode-9", 9), stage: "script" as const, error: "分镜脚本解析失败：模型没有返回可解析的 JSON" };
+    const failedDetail = detail(unfinished, []);
+    const finishedDetails = finished.map((row) =>
+        detail(
+            row,
+            Array.from({ length: 9 }, (_, index) => segment(`${row.id}-segment-${index}`, index)),
+        ),
+    );
+    const ui = await fixture({ episodes: [...finished, unfinished], episodeId: "all", details: [...finishedDetails, failedDetail], loading: true });
+    try {
+        const progress = ui.host.querySelector(".drama-guide-story-progress")!;
+        expect(progress.textContent).toContain("72/72 段已处理");
+        expect(progress.textContent).toContain("8/9 集就绪");
+        expect(progress.textContent).toContain("1 集剧本失败（第 9 集）");
+        expect(progress.textContent).toContain("全部文字尚未完成");
+        expect(progress.textContent).toContain("段进度仅统计已生成的剧情段");
+        const failure = ui.host.querySelector(".drama-guide-story-episode-failure")!;
+        expect(failure.textContent).toContain("第 9 集剧本与分镜生成失败");
+        expect(failure.textContent).toContain(unfinished.error);
+        expect(namedButton(failure, "重试本集剧本").disabled).toBe(false);
+        await act(async () => namedButton(failure, "重试本集剧本").click());
+        expect(ui.calls.retried).toEqual([unfinished.id]);
+        expect(ui.calls.written).toEqual([]);
+
+        await ui.render({ episodeId: unfinished.id, detail: failedDetail });
+        expect(ui.host.querySelector('[aria-label="剧本与分镜进度"]')!.textContent).toContain("0/1 集就绪");
+        expect(ui.host.textContent).toContain("1 集剧本失败（第 9 集）");
+        expect(ui.host.querySelectorAll(".drama-guide-story-episode-failure")).toHaveLength(1);
+        expect(ui.host.textContent).not.toContain("重新改编本集");
+        await act(async () => namedButton(ui.host, "重试本集剧本").click());
+        expect(ui.calls.retried).toEqual([unfinished.id, unfinished.id]);
+
+        const recovered = { ...unfinished, stage: "prompts" as const, error: "", stats: { ...unfinished.stats, segments: 1, promptReady: 1, promptSucceeded: 1 } };
+        await ui.render({ episodes: [...finished, recovered], detail: detail(recovered, [segment("recovered", 0)]), loading: false });
+        expect(ui.host.querySelector(".drama-guide-story-episode-failure")).toBeNull();
+        expect(ui.host.textContent).not.toContain("集剧本失败");
+        expect(ui.host.textContent).toContain("1/1 集就绪");
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("失败集保留已有段并可重试，只有本集排队运行或提交中禁用入口", async () => {
+    const row = { ...episode("failed", 9), stage: "script" as const, error: "保存剧本结果失败" };
+    const original = detail(row, [segment("saved-segment", 0)]);
+    const ui = await fixture({ episodes: [row], episodeId: row.id, detail: original, loading: true });
+    try {
+        expect(ui.host.textContent).toContain("saved-segment");
+        expect(namedButton(ui.host, "重试本集剧本").disabled).toBe(false);
+        await act(async () => namedButton(ui.host, "重试本集剧本").click());
+        expect(ui.calls.retried).toEqual([row.id]);
+        const job = { id: "script", kind: "script" as const, status: "queued" as const, label: "改编本集", costMicrocredits: 0, attempt: 0, createdAt: "", updatedAt: "" };
+        for (const status of ["queued", "running"] as const) {
+            await ui.render({ detail: { ...original, scriptJob: { ...job, status } } });
+            const retry = namedButton(ui.host, "本集剧本正在重试");
+            expect(retry.disabled).toBe(true);
+            await act(async () => retry.click());
+            expect(ui.calls.retried).toEqual([row.id]);
+            expect(ui.host.textContent).toContain("saved-segment");
+        }
+        await ui.render({ detail: original, busy: true });
+        expect(namedButton(ui.host, "重试本集剧本").disabled).toBe(true);
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("新内容不沿用历史剧本任务状态，当前错误仍可重试且清除错误后不再误报失败", async () => {
+    const row = { ...episode("replaced", 9), stage: "review" as const };
+    const current = detail(row, [segment("imported-storyboard", 0)]);
+    const job = { id: "historical-script", kind: "script" as const, status: "failed" as const, label: "旧版改编", error: "旧版剧本解析失败", costMicrocredits: 0, attempt: 0, createdAt: "", updatedAt: "" };
+    const ui = await fixture({ episodes: [row], episodeId: row.id, detail: { ...current, scriptJob: job } });
+    try {
+        for (const status of ["failed", "queued", "running"] as const) {
+            const replaced = { ...current, scriptJob: { ...job, status } };
+            await ui.render({ detail: replaced });
+            expect(ui.host.textContent).toContain("剧本与分镜：1/1 集就绪");
+            expect(ui.host.querySelector('[role="alert"]')).toBeNull();
+            expect(ui.host.textContent).not.toContain("重试本集剧本");
+            expect(namedButton(ui.host, "重新改编本集").disabled).toBe(false);
+            expect(ui.host.textContent).toContain("imported-storyboard");
+
+            if (status !== "failed") {
+                await ui.render({ detail: { ...replaced, episode: { ...replaced.episode, error: "当前内容处理失败" } } });
+                expect(namedButton(ui.host, "重试本集剧本").disabled).toBe(false);
+            }
+        }
+        const restarting = { ...current, episode: { ...current.episode, stage: "script" as const }, scriptJob: job };
+        await ui.render({ detail: restarting });
+        expect(ui.host.textContent).toContain("1 集剧本尚未就绪");
+        expect(ui.host.querySelector('[role="alert"]')).toBeNull();
+        expect(ui.host.textContent).not.toContain("重试本集剧本");
+    } finally {
+        await ui.dispose();
+    }
+});
+
 test("分批读取时用未加载集的独立成功统计，补齐详情不改变混合进度", async () => {
     const first = episode("first", 1, { segments: 2, promptReady: 1, promptSucceeded: 1, failed: 1 });
     const second = episode("second", 2, { segments: 9, promptReady: 6, promptSucceeded: 3, failed: 4 });
@@ -234,6 +334,53 @@ test("全部集编辑和重新撰写携带真实集ID而非同名段下标", asy
         expect(ui.calls.written).toEqual([["same-index-second", "second"]]);
         expect(ui.host.textContent).not.toContain("重新改编本集");
         expect(ui.host.querySelector('select[aria-label="审阅集数"]')!.textContent).toContain("全部集（2 集）");
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("不同失败段可连续重新撰写，仅排队或运行中的当前段禁止重复提交", async () => {
+    const first = episode("first", 1);
+    const second = episode("second", 2);
+    const failedFirst = segment("failed-first", 0, { promptStatus: "failed" });
+    const failedNext = segment("failed-next", 1, { promptStatus: "failed" });
+    const failedOtherEpisode = segment("failed-other-episode", 0, { promptStatus: "failed" });
+    const ui = await fixture({ episodes: [first, second], episodeId: "all", details: [detail(first, [failedFirst, failedNext]), detail(second, [failedOtherEpisode])] });
+    const rewriteButtons = () => [...ui.host.querySelectorAll(".drama-guide-segment")].map((card) => namedButton(card, "重新撰写"));
+    try {
+        expect(rewriteButtons().map((button) => button.disabled)).toEqual([false, false, false]);
+        await act(async () => rewriteButtons()[0].click());
+        await ui.render({ details: [detail(first, [{ ...failedFirst, promptStatus: "queued" }, failedNext]), detail(second, [failedOtherEpisode])], loading: true });
+        expect(rewriteButtons().map((button) => button.disabled)).toEqual([true, false, false]);
+        await act(async () => {
+            rewriteButtons()[0].click();
+            rewriteButtons()[1].click();
+        });
+        expect(ui.calls.written).toEqual([
+            ["failed-first", "first"],
+            ["failed-next", "first"],
+        ]);
+        await ui.render({
+            details: [
+                detail(first, [
+                    { ...failedFirst, promptStatus: "running" },
+                    { ...failedNext, promptStatus: "queued" },
+                ]),
+                detail(second, [failedOtherEpisode]),
+            ],
+        });
+        expect(rewriteButtons().map((button) => button.disabled)).toEqual([true, true, false]);
+        await act(async () => {
+            rewriteButtons()[0].click();
+            rewriteButtons()[1].click();
+            rewriteButtons()[2].click();
+        });
+        expect(ui.calls.written).toEqual([
+            ["failed-first", "first"],
+            ["failed-next", "first"],
+            ["failed-other-episode", "second"],
+        ]);
+        expect(ui.calls.edited).toEqual([]);
     } finally {
         await ui.dispose();
     }

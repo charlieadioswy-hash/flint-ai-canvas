@@ -21,6 +21,13 @@ func (r *Repository) AdvanceDramaGuideRevision(projectID string) error {
 
 func (r *Repository) DramaProductionForUpdate(projectID string) (*model.DramaProduction, error) {
 	var row model.DramaProduction
+	if r.Dialect() == "sqlite" {
+		// SQLite 忽略 FOR UPDATE；先写入取得事务写锁，避免读快照后升级写入时立即报 SQLITE_BUSY。
+		if err := r.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).
+			UpdateColumn("revision", gorm.Expr("revision")).Error; err != nil {
+			return &row, err
+		}
+	}
 	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "project_id = ?", projectID).Error
 	return &row, err
 }
@@ -54,9 +61,18 @@ func (r *Repository) UpdateDramaGuideIf(projectID string, revision int64, step s
 }
 
 func (r *Repository) DramaTextJobsActive(projectID string) (bool, error) {
+	return r.dramaTextJobsActive(projectID, []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt})
+}
+
+// DramaPromptInputsChanging excludes independent prompt jobs, but keeps structural text generation mutually exclusive with retries.
+func (r *Repository) DramaPromptInputsChanging(projectID string) (bool, error) {
+	return r.dramaTextJobsActive(projectID, []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript})
+}
+
+func (r *Repository) dramaTextJobsActive(projectID string, kinds []string) (bool, error) {
 	var count int64
 	err := r.db.Model(&model.DramaJob{}).Where("project_id = ? AND kind IN ? AND status IN ?", projectID,
-		[]string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt},
+		kinds,
 		[]string{model.DramaJobQueued, model.DramaJobRunning}).Count(&count).Error
 	return count > 0, err
 }

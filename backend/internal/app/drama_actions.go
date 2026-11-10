@@ -2,7 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -809,6 +811,49 @@ func (s *Service) DramaCastImpact(userID string, projectID string, castID string
 		segments[shot.EpisodeID+"|"+itoa(shot.SegmentIndex)] = true
 	}
 	return map[string]any{"segments": len(segments), "episodes": len(episodes)}, nil
+}
+
+// RetryFailedDramaEpisode 仅恢复指定集当前失败的文字作业，不删除已保存镜头或重试媒体。
+func (s *Service) RetryFailedDramaEpisode(userID, projectID, episodeID string) (map[string]any, error) {
+	episodeID = strings.TrimSpace(episodeID)
+	if episodeID == "" {
+		return nil, BadAuthRequest("请选择要重试的剧集")
+	}
+	_, productionRow, err := s.dramaForUser(userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	count := 0
+	err = dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
+		current, err := tx.DramaProductionForUpdate(projectID)
+		if err != nil {
+			return err
+		}
+		if dramaGuideActive(current) && current.GuideStep != model.DramaGuideStory {
+			return BadAuthRequest("请在剧本与分镜阶段重试本集文字")
+		}
+		if dramaGuideActive(productionRow) && !dramaGuideActive(current) {
+			return repository.ErrDramaGuideChanged
+		}
+		count, err = tx.RetryDramaEpisodeText(projectID, episodeID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return NewAppError(http.StatusNotFound, "剧集不存在或不属于当前短剧")
+		}
+		if err != nil {
+			return err
+		}
+		if count > 0 && dramaGuideActive(current) {
+			return tx.UpdateDramaGuideIf(projectID, current.Revision, current.GuideStep, map[string]any{})
+		}
+		return nil
+	}))
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		err = s.requestDramaWork(productionRow)
+	}
+	return map[string]any{"jobs": count}, err
 }
 
 // RetryFailedDrama 把失败槽位重置为待生成，由调度循环重新派发。

@@ -6,6 +6,7 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import type { CloudAgentMessagePresentation } from "@/services/cloud-agent-conversations";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { DramaAgentProposal } from "@/services/api/agent";
+import type { DramaStageChoiceLabels } from "@/lib/canvas/drama-setup-presentation";
 
 export type AgentDramaContext = {
     projectId: string;
@@ -19,7 +20,7 @@ export type AgentDramaContext = {
     setupChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
     proposalChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
     /** 当前阶段的推进选择，直接显示在 Agent 最新回复中。 */
-    stageChoices?: { content: ReactNode };
+    stageChoices?: { pending: boolean; render: (labels?: DramaStageChoiceLabels) => ReactNode };
 };
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };

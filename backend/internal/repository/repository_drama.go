@@ -1019,6 +1019,15 @@ func (r *Repository) SaveDramaSegmentReferenceFields(episodeID string, index int
 
 // RequestDramaSegmentPrompts 把指定段标记为待撰写；正在撰写的段保持不动。返回实际排队的段数。
 func (r *Repository) RequestDramaSegmentPrompts(projectID, episodeID string, indexes []int) (int, error) {
+	return r.requestDramaSegmentPrompts(projectID, episodeID, indexes, false)
+}
+
+// RequestDramaGuideSegmentPrompts 只重排所选文字段；引导阶段尚无视频，不使其他段提示词作废。
+func (r *Repository) RequestDramaGuideSegmentPrompts(projectID, episodeID string, indexes []int) (int, error) {
+	return r.requestDramaSegmentPrompts(projectID, episodeID, indexes, true)
+}
+
+func (r *Repository) requestDramaSegmentPrompts(projectID, episodeID string, indexes []int, guided bool) (int, error) {
 	queued := 0
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		for _, index := range indexes {
@@ -1026,11 +1035,23 @@ func (r *Repository) RequestDramaSegmentPrompts(projectID, episodeID string, ind
 			if err := tx.Where("project_id = ? AND episode_id = ? AND segment_index = ?", projectID, episodeID, index).First(&segment).Error; err != nil {
 				return err
 			}
-			if segment.PromptStatus == model.DramaMediaRunning {
+			if segment.PromptStatus == "" || segment.PromptStatus == model.DramaMediaQueued || segment.PromptStatus == model.DramaMediaRunning {
 				continue
 			}
-			if err := invalidateDramaSegment(tx, segment, map[string]any{"prompt_status": "", "prompt_error": ""}, true); err != nil {
-				return err
+			if guided {
+				if err := tx.Model(&model.DramaSegment{}).Where("id = ?", segment.ID).Updates(map[string]any{"prompt_status": "", "prompt_error": "", "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&model.DramaEpisode{}).Where("id = ?", episodeID).Updates(map[string]any{"stage": model.DramaEpisodePrompts, "approved": false, "error": "", "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&model.DramaJob{}).Where("episode_id = ? AND shot_id = ? AND kind = ? AND status = ?", episodeID, segment.ID, model.DramaJobSegmentPrompt, model.DramaJobQueued).Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error; err != nil {
+					return err
+				}
+			} else {
+				if err := invalidateDramaSegment(tx, segment, map[string]any{"prompt_status": "", "prompt_error": ""}, true); err != nil {
+					return err
+				}
 			}
 			queued++
 		}
@@ -1282,21 +1303,100 @@ func (r *Repository) RequestDramaSegmentVideos(projectID, episodeID string, inde
 }
 
 func (r *Repository) RetryDramaResultJobs(projectID string) error {
+	return r.retryDramaResultJobs(projectID, nil)
+}
+
+func (r *Repository) retryDramaResultJobs(projectID string, jobIDs []string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		jobs := func() *gorm.DB {
+			query := tx.Model(&model.DramaJob{}).Where("project_id = ? AND status = ?", projectID, model.DramaJobFailed)
+			if jobIDs != nil {
+				query = query.Where("id IN ?", jobIDs)
+			}
+			return query
+		}
 		// 结构化文本返回不完整时，成功任务里保存的结果本身不可用。
 		// 这类作业不能重放原任务，否则会再次解析同一份截断 JSON；保留原任务
 		// 作为历史记录，清空绑定后让调度器重新提交一次生成。
-		if err := tx.Model(&model.DramaJob{}).
-			Where("project_id = ? AND status = ? AND kind IN ? AND error LIKE ?", projectID, model.DramaJobFailed, []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt}, "%模型没有返回可解析的 JSON%").
+		if err := jobs().
+			Where("kind IN ? AND (error LIKE ? OR (kind = ? AND error LIKE ?))", []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt}, "%模型没有返回可解析的 JSON%", model.DramaJobScript, "%分镜脚本解析失败：%").
 			Updates(map[string]any{"status": model.DramaJobQueued, "task_id": "", "error": "", "finished_at": nil, "started_at": nil, "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
 		// A successful provider task is re-applied, never submitted a second time.
-		if err := tx.Model(&model.DramaJob{}).Where("project_id = ? AND status = ? AND task_id IN (?)", projectID, "failed", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
+		if err := jobs().Where("task_id IN (?)", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+// RetryDramaEpisodeText 在持有制作行锁的事务内恢复本集最新、版本仍匹配的失败文字槽位。
+// 旧失败作业只保留为历史，不能因一次重试将同槽位的历次任务一起复活。
+func (r *Repository) RetryDramaEpisodeText(projectID, episodeID string) (int, error) {
+	episode, err := r.DramaEpisode(projectID, episodeID)
+	if err != nil {
+		return 0, err
+	}
+	segments, err := r.DramaSegments(episodeID)
+	if err != nil {
+		return 0, err
+	}
+	failedSegments := map[string]model.DramaSegment{}
+	for _, segment := range segments {
+		if segment.PromptStatus == model.DramaMediaFailed {
+			failedSegments[segment.ID] = segment
+		}
+	}
+	var jobs []model.DramaJob
+	if err := r.db.Where("project_id = ? AND episode_id = ? AND kind IN ?", projectID, episodeID, []string{model.DramaJobScript, model.DramaJobSegmentPrompt}).
+		Order("created_at desc, id desc").Find(&jobs).Error; err != nil {
+		return 0, err
+	}
+	seen := map[string]bool{}
+	var retryIDs []string
+	for _, job := range jobs {
+		key := job.Kind + ":" + job.ShotID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if job.Status != model.DramaJobFailed {
+			continue
+		}
+		var payload struct {
+			Revision int64 `json:"revision"`
+		}
+		if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
+			continue
+		}
+		switch job.Kind {
+		case model.DramaJobScript:
+			if episode.Stage != model.DramaEpisodeScript || episode.Error == "" || payload.Revision != episode.Revision {
+				continue
+			}
+			if applied, err := r.UpdateDramaEpisodeIfRevision(episode.ID, episode.Revision, map[string]any{"error": ""}); err != nil {
+				return 0, err
+			} else if !applied {
+				return 0, ErrDramaGuideChanged
+			}
+		case model.DramaJobSegmentPrompt:
+			segment, ok := failedSegments[job.ShotID]
+			if !ok || payload.Revision != segment.Revision {
+				continue
+			}
+			if applied, err := r.UpdateDramaSegmentRevision(segment.ID, segment.Revision, map[string]any{"prompt_status": "", "prompt_error": ""}); err != nil {
+				return 0, err
+			} else if !applied {
+				return 0, ErrDramaGuideChanged
+			}
+		}
+		retryIDs = append(retryIDs, job.ID)
+	}
+	if len(retryIDs) == 0 {
+		return 0, nil
+	}
+	return len(retryIDs), r.retryDramaResultJobs(projectID, retryIDs)
 }
 
 // ReopenDramaSegmentVideoJob 把生成任务已成功、回写失败的段视频作业重新置为运行中，

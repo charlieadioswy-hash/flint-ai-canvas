@@ -9,17 +9,17 @@
     margin-top: var(--space-3);
 }
 
-.drama-guide-setup-choice-heading h3 {
-    font-size: var(--fs-label);
-    font-weight: 600;
-}
-
-.drama-guide-setup-choice-heading p,
+.drama-guide-setup-summary p + p,
 .drama-guide-setup-custom label > span,
 .drama-guide-setup-choice-problem {
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
     line-height: 1.6;
+}
+
+.drama-guide-setup-summary {
+    line-height: 1.6;
+    overflow-wrap: anywhere;
 }
 
 .drama-guide-setup-choice-list,
@@ -29,7 +29,7 @@
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-1);
 }
 
 .drama-guide-setup-choice {
@@ -37,19 +37,19 @@
     width: 100%;
     min-width: 0;
     align-items: flex-start;
-    gap: var(--space-3);
-    padding: var(--space-3);
-    border: 1px solid var(--drama-line);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
     color: var(--foreground);
     text-align: left;
     cursor: pointer;
 }
 
 .drama-guide-setup-choice:not(:disabled):hover {
-    border-color: var(--workspace-accent);
     background: var(--workspace-accent-soft);
+    color: var(--workspace-accent);
 }
 
 .drama-guide-setup-choice:disabled,
@@ -59,15 +59,11 @@
 }
 
 .drama-guide-setup-choice-number {
-    display: inline-flex;
+    display: inline-block;
     flex: none;
-    align-items: center;
-    justify-content: center;
-    width: var(--space-6);
-    height: var(--space-6);
-    border-radius: var(--radius-xl);
-    background: var(--surface-hover);
-    font-size: var(--fs-tiny);
+    min-width: 1.5em;
+    font-size: var(--fs-label);
+    line-height: 1.6;
 }
 
 .drama-guide-setup-choice-copy {
@@ -77,7 +73,7 @@
 
 .drama-guide-setup-choice-copy strong {
     font-size: var(--fs-label);
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .drama-guide-setup-choice-copy > span {
