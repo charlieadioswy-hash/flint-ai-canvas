@@ -9,6 +9,7 @@ import { apiClient } from "../src/services/api/request";
 import { queryGenerationTask, waitForGenerationTask, type GenerationTask } from "../src/services/api/task-center";
 import { CanvasGenerationDurableAckError } from "../src/services/canvas-generation-consumer";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "../src/stores/use-config-store";
+import { useUserStore } from "../src/stores/use-user-store";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { CanvasGenerationExecution } from "../src/pages/canvas/canvas-generation-executor-types";
 import { recoverCanvasGenerationTaskNode } from "../src/pages/canvas/use-canvas-generation";
@@ -199,20 +200,26 @@ async function harness(outcomes: Outcome[], sourceType: CanvasNodeData["type"] =
 }
 
 test("nine images keep a disconnected running task pending without adding it to failed-image retries", async () => {
-    const h = await harness([...Array<Outcome>(8).fill("succeeded"), "running-disconnected"]);
-    expect(h.queries.get("task-8")).toBe(5);
-    expect(h.node(8).metadata).toMatchObject({ status: "loading", taskId: "task-8", taskStatus: "running" });
-    expect(h.node(8).metadata?.errorDetails).toContain("同步");
-    expect(h.root().metadata?.batchFailedCount).toBe(0);
-    expect(h.failed()).toHaveLength(0);
-    expect(h.messages.join(" ")).toContain("同步");
-    expect(h.messages.join(" ")).not.toContain("图片生成失败");
-    await h.recover(8);
-    expect(h.tasks).toHaveLength(9);
-    expect(h.submittedNodeIds).toHaveLength(9);
-    expect(h.node(8).metadata).toMatchObject({ status: "success", taskId: "task-8", taskStatus: "succeeded" });
-    expect(h.node(8).metadata?.errorDetails).toBeUndefined();
-    expect(h.root().metadata?.batchFailedCount).toBe(0);
+    const runtimeLimits = useUserStore.getState().runtimeLimits;
+    useUserStore.setState({ runtimeLimits: { ...runtimeLimits, activeTaskLimit: 9 } });
+    try {
+        const h = await harness([...Array<Outcome>(8).fill("succeeded"), "running-disconnected"]);
+        expect(h.queries.get("task-8")).toBe(5);
+        expect(h.node(8).metadata).toMatchObject({ status: "loading", taskId: "task-8", taskStatus: "running" });
+        expect(h.node(8).metadata?.errorDetails).toContain("同步");
+        expect(h.root().metadata?.batchFailedCount).toBe(0);
+        expect(h.failed()).toHaveLength(0);
+        expect(h.messages.join(" ")).toContain("同步");
+        expect(h.messages.join(" ")).not.toContain("图片生成失败");
+        await h.recover(8);
+        expect(h.tasks).toHaveLength(9);
+        expect(h.submittedNodeIds).toHaveLength(9);
+        expect(h.node(8).metadata).toMatchObject({ status: "success", taskId: "task-8", taskStatus: "succeeded" });
+        expect(h.node(8).metadata?.errorDetails).toBeUndefined();
+        expect(h.root().metadata?.batchFailedCount).toBe(0);
+    } finally {
+        useUserStore.setState({ runtimeLimits });
+    }
 });
 
 test("all disconnected tasks leave the batch and source config pending", async () => {

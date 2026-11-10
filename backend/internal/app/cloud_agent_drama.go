@@ -348,6 +348,16 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议格式无效")}
 		}
 		normalized, err := service.validateDramaGuideSettings(userID, settings)
+		// 换模型时可沿用默认分辨率；新推荐的明确档位必须确实受当前模型支持。
+		if _, specified := args.Changes["videoResolution"]; err == nil && specified && normalized.VideoResolution != "" {
+			var profile dramaVideoProfile
+			profile, err = service.dramaVideoProfile(normalized.Models.Video)
+			if err == nil {
+				if issue := profile.screen(normalized.AspectRatio, normalized.VideoResolution).Issue; issue != "" {
+					err = BadAuthRequest(issue)
+				}
+			}
+		}
 		if err != nil {
 			video := cloudAgentDramaVideoModelContext(service, settings)
 			return nil, &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("%s。请重新读取 drama_get_context，videoResolution 必须取 guide.videoModel.videoResolutions 中的真实值（当前可选：%s），或传空字符串使用模型默认；画幅单独填写 aspectRatio。不要自行使用宽×高像素值，除非模型可选值明确包含它", err.Error(), strings.Join(video.VideoResolutions, "、")))}

@@ -13,7 +13,30 @@ import { modelQuoteRequest } from "../src/lib/model-pricing";
 function configForImage(): AiConfig {
     const capabilityConfig = defaultModelCapabilityConfig();
     capabilityConfig.image = { ...capabilityConfig.image!, size: { parameter: "size", values: ["512x512", "1024x1024"], default: "512x512", allowCustom: false }, resolution: { supported: true, values: ["1k", "2k"], default: "1k" }, maxOutputs: 2 };
-    return { ...defaultConfig, models: ["test::image"], imageModels: ["test::image"], model: "test::image", imageModel: "test::image", size: "512x512", imageResolution: "1k", count: "1", canvasImageCount: "1", channels: [{ id: "test", name: "Test", scope: "system", enabled: true, baseUrl: "/api", apiKey: "", apiFormat: "openai", models: ["image"], modelCosts: [{ model: "image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig }] }] } as AiConfig;
+    return {
+        ...defaultConfig,
+        models: ["test::image"],
+        imageModels: ["test::image"],
+        model: "test::image",
+        imageModel: "test::image",
+        size: "512x512",
+        imageResolution: "1k",
+        count: "1",
+        canvasImageCount: "1",
+        channels: [
+            {
+                id: "test",
+                name: "Test",
+                scope: "system",
+                enabled: true,
+                baseUrl: "/api",
+                apiKey: "",
+                apiFormat: "openai",
+                models: ["image"],
+                modelCosts: [{ model: "image", capability: "image", billingMode: "fixed_request", unitPriceMicrocredits: 1, capabilityConfig }],
+            },
+        ],
+    } as AiConfig;
 }
 
 test("schema count enums drive the visible maximum and invalid defaults fall back to an allowed value", () => {
@@ -22,7 +45,15 @@ test("schema count enums drive the visible maximum and invalid defaults fall bac
     expect(profile.maxOutputs).toBe(8);
     expect(normalizeImageValue(profile, { count: "9" }).count).toBe("1");
     expect(imageParameterRequest(profile, { count: "4" }, true)?.count).toBe(4);
-    expect(normalizeImageParameters([{ name: "seed", label: "种子", type: "integer", default: 42 }, { name: "flag", label: "开关", type: "boolean", default: true }], { seed: 0, flag: false })).toEqual({ seed: 0, flag: false });
+    expect(
+        normalizeImageParameters(
+            [
+                { name: "seed", label: "种子", type: "integer", default: 42 },
+                { name: "flag", label: "开关", type: "boolean", default: true },
+            ],
+            { seed: 0, flag: false },
+        ),
+    ).toEqual({ seed: 0, flag: false });
 });
 
 test("custom image sizes reject malformed old values during normalization", () => {
@@ -45,13 +76,16 @@ test.each([{ size: "4000x3000" }, { count: "3" }, { imageResolution: "4k" }])("t
     expect(() => backendProviderConfig({ ...config, ...patch }, "image")).toThrow();
 });
 
-test("canvas submit does not silently clamp an old output count while showing a different quote", () => {
+test("canvas submission preserves independent task count beyond the model output limit", () => {
     const config = configForImage();
     const node: CanvasNodeData = { id: "image", type: CanvasNodeType.Image, title: "Image", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: { model: config.model, size: "512x512", count: 3 } };
-    expect(() => buildGenerationConfig(config, node, "image")).toThrow(/数量|张数/);
+    const generation = buildGenerationConfig(config, node, "image");
+    expect(generation.count).toBe("3");
+    expect(() => backendProviderConfig(generation, "image")).toThrow(/数量|张数/);
+    expect(backendProviderConfig({ ...generation, count: "1" }, "image").count).toBe("1");
 });
 
-test("canvas model switch preserves valid settings and sends the selected count to quote and task", () => {
+test("canvas model switch preserves the batch count while each quote and task uses one output", () => {
     const config = configForImage();
     config.channels[0]!.modelCosts![0]!.logicalModelId = "image-logical";
     const current = { ...config, model: "previous::image", size: "1024x1024", imageResolution: "2k", count: "2", canvasImageCount: "1" };
@@ -62,8 +96,8 @@ test("canvas model switch preserves valid settings and sends the selected count 
     expect(switched.metadata?.imageResolution).toBe("2k");
     const generation = buildGenerationConfig(config, switched, "image");
     expect(generation.count).toBe("2");
-    expect(modelQuoteRequest(generation, config.model, "image")?.intent.options.count).toBe(2);
-    expect(backendProviderConfig(generation, "image").count).toBe("2");
+    expect(modelQuoteRequest(generation, config.model, "image", { capability: "image", options: { count: 1 } })?.intent.options.count).toBe(1);
+    expect(backendProviderConfig({ ...generation, count: "1" }, "image").count).toBe("1");
 });
 
 test("switching to schema parameters corrects invalid fields and preserves typed zero and false", () => {
@@ -81,7 +115,7 @@ test("switching to schema parameters corrects invalid fields and preserves typed
     expect(JSON.parse(next.imageParameters!)).not.toHaveProperty("removed");
     const corrected = modelGenerationParamsForSwitch({ ...config, size: "9:16", count: "3" }, config.model, "image");
     expect(corrected.size).toBe("1:1");
-    expect(corrected.count).toBe("1");
+    expect(corrected.count).toBe("3");
     expect(modelGenerationParameterError(config, config.model, "image", { count: "3" })).toContain("数量");
 });
 

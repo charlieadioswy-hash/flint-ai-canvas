@@ -448,13 +448,15 @@ func TestCloudAgentDramaGuideSetupUsesVideoModelContract(t *testing.T) {
 		call.Function.Arguments = string(arguments)
 		return cloudAgentHandleDramaProposeChanges(svc.repo, "usr-drama", state, call, svc)
 	}
-	result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": "1080x1920"})
-	if _, ok := err.(*cloudAgentArgumentError); !ok || result != nil {
-		t.Fatalf("invalid resolution must fail before a proposal can be emitted: %+v %v", result, err)
-	}
-	for _, correction := range []string{"480p", "720p", "1080p", "guide.videoModel.videoResolutions", "空字符串", "aspectRatio"} {
-		if !strings.Contains(err.Error(), correction) {
-			t.Fatalf("missing actionable correction %q: %v", correction, err)
+	for _, resolution := range []string{"1080x1920", "768p"} {
+		result, err := propose(map[string]any{"aspectRatio": "9:16", "videoResolution": resolution})
+		if _, ok := err.(*cloudAgentArgumentError); !ok || result != nil {
+			t.Fatalf("invalid resolution %q must fail before a proposal can be emitted: %+v %v", resolution, result, err)
+		}
+		for _, correction := range []string{"480p", "720p", "1080p", "guide.videoModel.videoResolutions", "空字符串", "aspectRatio"} {
+			if !strings.Contains(err.Error(), correction) {
+				t.Fatalf("missing actionable correction %q: %v", correction, err)
+			}
 		}
 	}
 	for _, resolution := range []string{"1080p", "", " auto "} {
