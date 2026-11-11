@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { App, Button, Input, Popover } from "antd";
 import { ArrowDown, ArrowUp, Check, Library, Plus, RotateCcw, Search, Trash2, Upload, ZoomIn } from "lucide-react";
 
@@ -9,6 +9,7 @@ import { MediaThumb, parseList } from "../drama-shared";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoicePreview } from "./cast-voice";
 import { referenceMissingReason } from "./segment-parts";
+import "./segment-references.css";
 
 const ASSET_KINDS = ["character", "scene", "prop"] as const;
 const KIND_LABEL = { character: "人物", scene: "场景", prop: "道具", image: "附加图片" };
@@ -26,7 +27,7 @@ function castName(cast: DramaCast) {
     return `${cast.name}${cast.lookName ? ` · ${cast.lookName}` : ""}`;
 }
 
-/** 分组只改变展示；保存的 ID 顺序仍是提示词编号和模型发送顺序。 */
+/** 缩略图遵循请求顺序，详细选择与音色控制留在参考资产菜单。 */
 export function ReferenceBoard({
     segment,
     shots,
@@ -49,10 +50,31 @@ export function ReferenceBoard({
     const [voiceDraft, setVoiceDraft] = useState<string[] | null>(null);
     const [preview, setPreview] = useState<{ resourceId: string; name: string }>();
     const fileRef = useRef<HTMLInputElement>(null);
+    const railRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const rail = railRef.current;
+        if (!rail) return;
+        const onWheel = (event: WheelEvent) => {
+            if (event.ctrlKey) return;
+            const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+            if (!delta) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rail.clientWidth : 1;
+            rail.scrollLeft += delta * scale;
+        };
+        // 原生非 passive 监听在滚动边界也阻止父弹窗滚动。
+        rail.addEventListener("wheel", onWheel, { passive: false });
+        return () => rail.removeEventListener("wheel", onWheel);
+    }, []);
     const busy = saving || uploading;
     const openPreview = (image: { resourceId: string; name: string }) => {
         setMenuOpen(false);
         setPreview(image);
+    };
+    const openCast = (id: string) => {
+        setMenuOpen(false);
+        onOpenCast(id);
     };
     const { request } = segment;
     const ids = request.references.filter((ref) => ref.castId).map((ref) => ref.castId);
@@ -67,12 +89,7 @@ export function ReferenceBoard({
     const saveIDs = (next: string[]) => save({ referenceCastIds: next });
     const toggleCast = (cast: DramaCast) => {
         if (ids.includes(cast.id)) saveIDs(ids.filter((id) => id !== cast.id));
-        else {
-            const last = ids.findLastIndex((id) => castById.get(id)?.kind === cast.kind);
-            const next = [...ids];
-            next.splice(last < 0 ? next.length : last + 1, 0, cast.id);
-            saveIDs(next);
-        }
+        else saveIDs([...ids, cast.id]);
     };
     const addImage = async (resourceId: string, name: string) => {
         if (request.references.some((ref) => ref.resourceId === resourceId)) {
@@ -97,17 +114,10 @@ export function ReferenceBoard({
         }
     };
 
-    const activeKinds = [...new Set(ids.map((id) => castById.get(id)?.kind).filter((kind): kind is DramaCast["kind"] => Boolean(kind)))];
-    const groupOrder = [...activeKinds, ...ASSET_KINDS.filter((kind) => !activeKinds.includes(kind))];
-    const groupedIDs = (kind: DramaCast["kind"]) => ids.filter((id) => castById.get(id)?.kind === kind);
-    const moveGroup = (kind: DramaCast["kind"], direction: number) => {
-        const index = activeKinds.indexOf(kind);
-        saveIDs(moved(activeKinds, index, index + direction).flatMap(groupedIDs));
-    };
     const moveCast = (cast: DramaCast, direction: number) => {
-        const group = groupedIDs(cast.kind);
-        const reordered = moved(group, group.indexOf(cast.id), group.indexOf(cast.id) + direction);
-        saveIDs(activeKinds.flatMap((kind) => (kind === cast.kind ? reordered : groupedIDs(kind))));
+        const index = ids.indexOf(cast.id);
+        const target = index + direction;
+        if (index >= 0 && target >= 0 && target < ids.length) saveIDs(moved(ids, index, target));
     };
 
     const visible = new Set(ids);
@@ -147,8 +157,7 @@ export function ReferenceBoard({
     };
     const renderCast = (cast: DramaCast) => {
         const ref = refsById.get(cast.id);
-        const group = groupedIDs(cast.kind);
-        const index = group.indexOf(cast.id);
+        const index = ids.indexOf(cast.id);
         return (
             <AssetCard
                 key={cast.id}
@@ -160,10 +169,10 @@ export function ReferenceBoard({
                 disabled={busy}
                 note={ref ? (ref.sent ? "随请求发送" : `未附图：${referenceMissingReason(segment, cast, ref.resourceId)}`) : "未选用参考图"}
                 onToggle={() => toggleCast(cast)}
-                onOpen={() => onOpenCast(cast.id)}
+                onOpen={() => openCast(cast.id)}
                 onPreview={openPreview}
                 onRaise={index > 0 ? () => moveCast(cast, -1) : undefined}
-                onLower={index >= 0 && index < group.length - 1 ? () => moveCast(cast, 1) : undefined}
+                onLower={index >= 0 && index < ids.length - 1 ? () => moveCast(cast, 1) : undefined}
             >
                 {voiceControls(cast)}
             </AssetCard>
@@ -217,21 +226,11 @@ export function ReferenceBoard({
         </>
     );
     return (
-        <section className="drama-sdx-section" aria-label="本段参考资产">
+        <section className="drama-sdx-section drama-sdx-reference-board" aria-label="本段参考资产">
             <div className="drama-sdx-section-head">
                 <span className="drama-sdx-count">
                     本段参考 {request.references.filter((ref) => ref.sent).length}/{request.references.length}
                 </span>
-                <small>
-                    {segment.referenceMode === "custom" ? "手动指定" : "按镜头自动取"} · 本段最多发送 {request.referenceCapacity} 张{request.modelMaxImages ? ` · 模型上限 ${request.modelMaxImages} 张（含首帧）` : ""}
-                </small>
-                {segment.referenceMode === "custom" ? (
-                    <Button size="small" type="text" disabled={busy} icon={<RotateCcw className="size-3.5" />} onClick={() => save({ autoReferences: true })}>
-                        恢复自动参考
-                    </Button>
-                ) : null}
-            </div>
-            <div className="drama-sdx-assets-foot">
                 <Popover
                     trigger="click"
                     placement="bottomLeft"
@@ -246,15 +245,32 @@ export function ReferenceBoard({
                             busy={busy}
                             renderCast={renderCast}
                             renderImage={renderImage}
-                            voiceActions={
-                                voiceDraft !== null ? (
-                                    <>
+                            details={
+                                <>
+                                    <div className="drama-sdx-assets-foot">
                                         <small>
-                                            音色 {selectedVoices.length}/{audioLimit}
+                                            {segment.referenceMode === "custom" ? "手动指定" : "按镜头自动取"} · 本段最多发送 {request.referenceCapacity} 张{request.modelMaxImages ? ` · 模型上限 ${request.modelMaxImages} 张（含首帧）` : ""}
                                         </small>
-                                        {voiceActions}
-                                    </>
-                                ) : null
+                                        {segment.referenceMode === "custom" ? (
+                                            <Button size="small" type="text" disabled={busy} icon={<RotateCcw className="size-3.5" />} onClick={() => save({ autoReferences: true })}>
+                                                恢复自动参考
+                                            </Button>
+                                        ) : null}
+                                    </div>
+                                    <div className="drama-sdx-frame-note">
+                                        <span>{first ? "开场段：无首帧，按提示词与参考图生成" : request.firstFrameResourceId ? `首帧：第 ${segment.index} 段尾帧` : `首帧：等待第 ${segment.index} 段视频生成`}</span>
+                                    </div>
+                                    <small className="drama-sdx-hint">调整卡片顺序会更新参考图编号。模型撰写的提示词需重新撰写；手写提示词请核对编号。移除只取消本段引用。</small>
+                                </>
+                            }
+                            voiceActions={
+                                <>
+                                    <small>
+                                        音色 {selectedVoices.length}/{audioLimit} · {segment.audioReferenceMode === "custom" ? "手动选择" : "按对白自动开启"} · {audioLimit ? `当前模型音色不可多于 ${audioLimit} 个` : "当前模型不支持参考音色"}
+                                    </small>
+                                    {voiceActions}
+                                    {selectedVoices.length > audioLimit ? <p className="drama-sdx-hint is-error">已选音色超过模型上限，请在人物卡片下关闭部分音色后保存。</p> : null}
+                                </>
                             }
                             onLibrary={() => {
                                 setMenuOpen(false);
@@ -274,50 +290,42 @@ export function ReferenceBoard({
                 <Button size="small" icon={<Upload className="size-3.5" />} loading={uploading} disabled={busy} onClick={() => fileRef.current?.click()}>
                     上传参考图
                 </Button>
-                <small>分类和卡片均可调整顺序；移除只取消本段引用。</small>
             </div>
-            <div className="drama-sdx-frame-note">
+            <div ref={railRef} className="drama-sdx-reference-rail" role="region" aria-label="参考资产缩略图" tabIndex={0} data-canvas-wheel-scroll>
                 {request.firstFrameResourceId ? (
-                    <button type="button" aria-label="预览上一段尾帧" onClick={() => setPreview({ resourceId: request.firstFrameResourceId!, name: "上一段尾帧" })}>
-                        <MediaThumb resourceId={request.firstFrameResourceId} alt="上一段尾帧" />
-                    </button>
+                    <ReferenceTile
+                        name="上一段尾帧"
+                        resourceId={request.firstFrameResourceId}
+                        label="预览上一段尾帧"
+                        title={`首帧：第 ${segment.index} 段尾帧`}
+                        onOpen={() => openPreview({ resourceId: request.firstFrameResourceId!, name: "上一段尾帧" })}
+                    />
                 ) : null}
-                <span>{first ? "开场段：无首帧，按提示词与参考图生成" : request.firstFrameResourceId ? `首帧：第 ${segment.index} 段尾帧` : `首帧：等待第 ${segment.index} 段视频生成`}</span>
+                {request.references.map((ref, index) => {
+                    const cast = castById.get(ref.castId);
+                    const name = cast ? castName(cast) : ref.name;
+                    const resourceId = ref.resourceId || cast?.imageResourceId;
+                    return (
+                        <ReferenceTile
+                            key={`${ref.castId || ref.resourceId}-${index}`}
+                            name={name}
+                            resourceId={resourceId}
+                            label={cast ? `查看${name}设定` : `放大预览${name}`}
+                            title={`${ref.label} · ${name}${ref.sent ? "" : ` · 未附图：${referenceMissingReason(segment, cast, ref.resourceId)}`}`}
+                            onOpen={cast ? () => openCast(cast.id) : resourceId ? () => openPreview({ resourceId, name }) : undefined}
+                        />
+                    );
+                })}
+                {[...visible]
+                    .filter((id) => !ids.includes(id))
+                    .map((id) => {
+                        const cast = castById.get(id);
+                        if (!cast) return null;
+                        const name = castName(cast);
+                        return <ReferenceTile key={id} name={name} resourceId={cast.imageResourceId} label={`查看${name}设定`} title={`${name} · 关联资产，未选用参考图`} related onOpen={() => openCast(cast.id)} />;
+                    })}
+                {!request.references.length && !request.firstFrameResourceId && !visible.size ? <p className="drama-sdx-hint">暂无参考资产，可在“管理参考资产”中添加。</p> : null}
             </div>
-            {groupOrder.map((kind) => {
-                const group = [...ids.map((id) => castById.get(id)).filter((cast): cast is DramaCast => Boolean(cast)), ...[...castById.values()].filter((cast) => visible.has(cast.id) && !ids.includes(cast.id))].filter((cast) => cast.kind === kind);
-                const index = activeKinds.indexOf(kind);
-                return (
-                    <section className="drama-sdx-asset-group" aria-label={`${KIND_LABEL[kind]}参考`} key={kind}>
-                        <div className="drama-sdx-group-head">
-                            <strong>{KIND_LABEL[kind]}</strong>
-                            <small>{groupedIDs(kind).length} 个参考</small>
-                            <Button size="small" type="text" disabled={busy || index <= 0} aria-label={`提前${KIND_LABEL[kind]}分组`} icon={<ArrowUp className="size-3.5" />} onClick={() => moveGroup(kind, -1)} />
-                            <Button size="small" type="text" disabled={busy || index < 0 || index === activeKinds.length - 1} aria-label={`后移${KIND_LABEL[kind]}分组`} icon={<ArrowDown className="size-3.5" />} onClick={() => moveGroup(kind, 1)} />
-                        </div>
-                        {kind === "character" ? (
-                            <div className="drama-sdx-assets-foot">
-                                <small>
-                                    音色 {selectedVoices.length}/{audioLimit} · {segment.audioReferenceMode === "custom" ? "手动选择" : "按对白自动开启"} · {audioLimit ? `当前模型音色不可多于 ${audioLimit} 个` : "当前模型不支持参考音色"}
-                                </small>
-                                {voiceActions}
-                            </div>
-                        ) : null}
-                        {kind === "character" && selectedVoices.length > audioLimit ? <p className="drama-sdx-hint is-error">已选音色超过模型上限，请在人物卡片下关闭部分音色后保存。</p> : null}
-                        {group.length ? <div className="drama-sdx-assets">{group.map(renderCast)}</div> : <p className="drama-sdx-hint">暂无{KIND_LABEL[kind]}参考，可在“管理参考资产”中搜索添加。</p>}
-                    </section>
-                );
-            })}
-            {images.length ? (
-                <section className="drama-sdx-asset-group" aria-label="附加图片参考">
-                    <div className="drama-sdx-group-head">
-                        <strong>附加图片</strong>
-                        <small>排在设定参考之后</small>
-                    </div>
-                    <div className="drama-sdx-assets">{request.references.filter((ref) => !ref.castId).map(renderImage)}</div>
-                </section>
-            ) : null}
-            <small className="drama-sdx-hint">顺序变化会更新参考图编号。模型撰写的提示词需重新撰写；手写提示词请核对编号。</small>
             <input
                 ref={fileRef}
                 type="file"
@@ -335,6 +343,19 @@ export function ReferenceBoard({
     );
 }
 
+function ReferenceTile({ name, resourceId, label, title, related, onOpen }: { name: string; resourceId?: string; label: string; title: string; related?: boolean; onOpen?: () => void }) {
+    return (
+        <button type="button" className={`drama-sdx-reference-tile${related ? " is-related" : ""}`} aria-label={label} title={title} disabled={!onOpen} onClick={onOpen}>
+            {resourceId ? <MediaThumb resourceId={resourceId} alt={name} fallback={<span className="drama-sdx-reference-name">{name}</span>} /> : <span className="drama-sdx-reference-name">{name}</span>}
+            {onOpen ? (
+                <span className="drama-sdx-reference-zoom" aria-hidden="true">
+                    <ZoomIn className="size-4" />
+                </span>
+            ) : null}
+        </button>
+    );
+}
+
 /** 二级资产菜单保留已选项；搜索角色名、别名或造型名后可直接添加或移除。 */
 function AssetMenu({
     casts,
@@ -343,6 +364,7 @@ function AssetMenu({
     busy,
     renderCast,
     renderImage,
+    details,
     voiceActions,
     onLibrary,
     onUpload,
@@ -353,6 +375,7 @@ function AssetMenu({
     busy: boolean;
     renderCast: (cast: DramaCast) => ReactNode;
     renderImage: (ref: Reference) => ReactNode;
+    details: ReactNode;
     voiceActions: ReactNode;
     onLibrary: () => void;
     onUpload: () => void;
@@ -365,6 +388,7 @@ function AssetMenu({
     const filteredImages = kind === "all" || kind === "image" ? images.filter((ref) => matches(ref.name)) : [];
     return (
         <div className="drama-root drama-sdx-asset-menu" aria-label="搜索参考资产">
+            {details}
             <Input allowClear value={query} prefix={<Search className="size-3.5" />} placeholder="搜索人物、别名、造型、场景或道具" aria-label="搜索资产" onChange={(event) => setQuery(event.target.value)} />
             <nav className="drama-sdx-asset-menu-kinds" aria-label="资产分类">
                 {(["all", ...ASSET_KINDS, "image"] as const).map((value) => (

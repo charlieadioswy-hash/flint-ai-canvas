@@ -22,10 +22,10 @@ test("切换简易模式清理复杂面板参数，保留当前集段、镜头�
     expect(advanced.searchParams.get("mode")).toBe("advanced");
 });
 
-test("旧详细深链通过真实制作台标签与面板导航后仍保留详细模式", () => {
+test("详细台导航与段资产弹窗保留模式、定位并正确刷新", () => {
     const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/drama-studio-navigation.harness.tsx"], { cwd: resolve(import.meta.dir, ".."), timeout: 15_000 });
     const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
     expect(result.exitCode, output).toBe(0);
-    expect(output).toContain("7 pass");
+    expect(output).toContain("11 pass");
     expect(output).toContain("0 fail");
 }, 20_000);

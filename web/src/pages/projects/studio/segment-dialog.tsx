@@ -74,7 +74,7 @@ type Props = {
 
 /**
  * 剧情段弹窗（生成节点）：上方是本段的生成控制（视频模型、时长、画幅与操作），
- * 接着是本段使用的参考资产（可逐个勾选）、生成依据回执与按时间排开的镜头脚本，最后是提交时发送的完整提示词；
+ * 接着是本段使用的参考资产、完整提示词、生成依据回执与按时间排开的镜头脚本；
  * 右侧固定本段视频、处理状态与版本记录。
  */
 export function SegmentDialog({
@@ -158,8 +158,8 @@ export function SegmentDialog({
                                 onGenerate={(model) => onGenerate(segment, model)}
                                 onWritePrompt={() => onWritePrompt(segment)}
                             />
-                            <SegmentPrompt segment={segment} castById={castById} writing={writing} onSave={(override) => onSavePrompt(segment, override)} onWrite={() => onWritePrompt(segment)} />
                             <ReferenceBoard key={segment.id} segment={segment} shots={shots} castById={castById} busy={busy} onSave={(patch) => onSaveReferences(segment, patch)} onOpenCast={onOpenCast} />
+                            <SegmentPrompt segment={segment} castById={castById} writing={writing} onSave={(override) => onSavePrompt(segment, override)} onWrite={() => onWritePrompt(segment)} />
                             <SegmentReceipt segment={segment} />
                             <section className="drama-sdx-section" aria-label="本段镜头">
                                 <div className="drama-sdx-section-head">
@@ -282,8 +282,10 @@ function SegmentToolbar({
           : "生成本段视频";
     return (
         <section className="drama-sdx-toolbar" aria-label="生成设置">
-            <div className="drama-sdx-toolbar-row">
-                <DramaModelPicker capability="video" size="sm" value={choice} onChange={setChoice} placeholder="视频模型" className="drama-sdx-model" aspectRatio={aspectRatio} requirements={requirements} />
+            <div className="drama-sdx-toolbar-row drama-sdx-settings-row">
+                <div className="drama-sdx-model">
+                    <DramaModelPicker capability="video" size="sm" value={choice} onChange={setChoice} placeholder="视频模型" aspectRatio={aspectRatio} requirements={requirements} />
+                </div>
                 <Tooltip title={segment.request.maxVideoSeconds ? `按本段镜头时长生成；模型单次最长 ${segment.request.maxVideoSeconds} 秒` : "按本段镜头时长生成"}>
                     <span className="drama-sdx-chip">{segment.request.seconds ? `${segment.request.seconds}s` : secondsLabel(segment.durationMs)}</span>
                 </Tooltip>

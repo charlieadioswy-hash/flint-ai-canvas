@@ -6424,6 +6424,7 @@
 }
 .drama-sdx-main {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 12px;
     min-width: 0;
@@ -6486,7 +6487,9 @@
 .drama-sdx-section,
 .drama-sdx-receipt {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
+    min-width: 0;
     padding: 12px 12px;
     border: 1px solid var(--drama-line);
     border-radius: var(--radius-lg);
@@ -6497,6 +6500,9 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+}
+.drama-sdx-settings-row {
+    flex-wrap: nowrap;
 }
 .drama-sdx-model {
     min-width: 0;

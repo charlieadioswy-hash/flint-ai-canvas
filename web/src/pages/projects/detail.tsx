@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
 import { ArrowLeft, Brush, CheckCheck, Clapperboard, FileDown, FileUp, Film, Inbox, Package, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
@@ -35,6 +35,7 @@ import {
 
 import { formatCount, formatDuration, sourceFormatOf, StagePips, STAGE_LABEL, STATUS_LABEL } from "./drama-shared";
 import { CastPanel, InboxPanel, SettingsPanel } from "./studio/panels";
+import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { EpisodeDeleteModal } from "./studio/episode-delete-modal";
 import { EpisodeRail } from "./studio/episode-rail";
 import { AddEpisodeModal, type EpisodePlacement } from "./studio/episode-source";
@@ -46,7 +47,7 @@ import { SegmentDialog } from "./studio/segment-dialog";
 import { QueueBar } from "./studio/queue-bar";
 import { ScriptView } from "./studio/script-view";
 import { Storyboard, type EpisodeEmpty } from "./studio/storyboard";
-import { isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
+import { dramaKeys, isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
 import { progressFillStyle } from "@/lib/progress-fill";
 import { activeDramaGuide, dramaProjectPath } from "./guide-state";
 import { useStudioAgent } from "./studio/use-studio-agent";
@@ -70,6 +71,7 @@ export default function DramaStudioPage() {
 
 function AdvancedDramaStudioPage() {
     const { projectId = "", episodeId: routeEpisodeId = "" } = useParams();
+    const location = useLocation();
     const navigate = useNavigate();
     const { message, modal } = App.useApp();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -84,9 +86,12 @@ function AdvancedDramaStudioPage() {
     const [deleting, setDeleting] = useState<DramaEpisodeRow | null>(null);
     const [pickingChapters, setPickingChapters] = useState(false);
     const [assetDialog, setAssetDialog] = useState<"export" | "import" | null>(null);
+    const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
     // 窄屏只显示一栏：集列表与制作区用分段切换（宽屏两栏并排，不受影响）。
     const [mobilePane, setMobilePane] = useState<"episodes" | "production">("production");
     const invalidate = useDramaInvalidate(projectId);
+    const queryClient = useQueryClient();
+    useEffect(() => setCastSelection(undefined), [projectId, location.key]);
 
     const summaryQuery = useDramaSummary(projectId);
     const summary = summaryQuery.data;
@@ -732,13 +737,26 @@ function AdvancedDramaStudioPage() {
                             onReprocess={(segment) => reprocessSegment.mutate(segment.index)}
                             defaultVideoModel={production.settings.models.video}
                             videoResolution={production.settings.videoResolution}
-                            onOpenCast={(id) => openView("cast", { cast: id, segment: null, shot: null })}
+                            onOpenCast={(id) => setCastSelection({ projectId, id })}
                             onOpenCanvas={(segment) => void canvas.open({ kind: "segment", episodeId, segmentIndex: segment.index })}
                             canvasOpening={Boolean(canvas.opening?.startsWith("segment:"))}
                         />
                     </div>
                 )}
 
+                {castSelection?.projectId === projectId ? (
+                    <CastEditorDialog
+                        key={`${projectId}:${castSelection.id}`}
+                        summary={summary}
+                        cast={cast}
+                        castId={castSelection.id}
+                        onClose={() => setCastSelection(undefined)}
+                        onChanged={() => {
+                            void invalidate();
+                            void queryClient.invalidateQueries({ queryKey: dramaKeys.episodes(projectId) });
+                        }}
+                    />
+                ) : null}
                 <QueueBar projectId={projectId} summary={summary} retrying={retry.isPending} onRetry={() => retry.mutate()} onJump={jumpToJob} />
                 <AddEpisodeModal
                     open={adding}
