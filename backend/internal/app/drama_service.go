@@ -476,7 +476,7 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	awaiting := 0
 	for _, episode := range episodes {
 		stat := stats[episode.ID]
-		held := dramaMediaHeld(settings, &episode)
+		held := dramaMediaHeld(settings, productionRow, &episode)
 		if held {
 			awaiting++
 		}
@@ -1227,7 +1227,7 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 			return BadAuthRequest("段提示词过长（最多 12000 字）")
 		}
 	}
-	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+	if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
 		if len(fields) > 0 {
 			if err := tx.SaveDramaSegmentReferenceFields(episode.ID, index, fields); err != nil {
 				return err

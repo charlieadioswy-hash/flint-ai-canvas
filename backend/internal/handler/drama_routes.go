@@ -56,6 +56,20 @@ func bindDramaJSON(c *gin.Context, target any) error {
 }
 
 func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.POST("/dramas/:id/actions/preflight", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaStudioActionRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.PreflightDramaStudioAction(userID, c.Param("id"), req)
+	}))
+	r.POST("/dramas/:id/actions/execute", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaStudioActionRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.ExecuteDramaStudioAction(userID, c.Param("id"), req)
+	}))
 	r.GET("/dramas", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		page, err := parsePositiveQueryInt(c.Query("page"), 1)
 		if err != nil {
@@ -135,15 +149,30 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/dramas/:id/retry-failed", dramaRoute(svc, 4<<10, func(c *gin.Context, userID string) (any, error) {
 		var req *struct {
 			EpisodeID json.RawMessage `json:"episodeId"`
+			Target    json.RawMessage `json:"target"`
 		}
 		err := json.NewDecoder(c.Request.Body).Decode(&req)
 		if err != nil && !errors.Is(err, io.EOF) || err == nil && req == nil {
 			return nil, service.BadAuthRequest("请求格式错误")
 		}
+		target := "text"
+		if req != nil && len(req.Target) > 0 {
+			var parsed *string
+			if err := json.Unmarshal(req.Target, &parsed); err != nil || parsed == nil || (*parsed != "text" && *parsed != "render") {
+				return nil, service.BadAuthRequest("重试目标无效")
+			}
+			target = *parsed
+			if len(req.EpisodeID) == 0 {
+				return nil, service.BadAuthRequest("请选择要重试的剧集")
+			}
+		}
 		if req != nil && len(req.EpisodeID) > 0 {
 			var episodeID string
 			if err := json.Unmarshal(req.EpisodeID, &episodeID); err != nil {
 				return nil, service.BadAuthRequest("集 ID 无效")
+			}
+			if target == "render" {
+				return svc.RetryFailedDramaEpisodeRender(userID, c.Param("id"), episodeID)
 			}
 			return svc.RetryFailedDramaEpisode(userID, c.Param("id"), episodeID)
 		}

@@ -70,16 +70,31 @@ func dramaGuideError(err error) error {
 
 // withDramaGuideEdit shares the production revision across guided text edits only.
 func (s *Service) withDramaGuideEdit(projectID string, expected *int64, rewindAssets bool, edit func(*repository.Repository) error) error {
+	return s.withDramaRevisionEdit(projectID, expected, rewindAssets, false, edit)
+}
+
+// Production conversations use the same CAS as the guide without reopening completed guide stages.
+func (s *Service) withDramaTextEdit(projectID string, expected *int64, rewindAssets bool, edit func(*repository.Repository) error) error {
+	return s.withDramaRevisionEdit(projectID, expected, rewindAssets, true, edit)
+}
+
+func (s *Service) withDramaRevisionEdit(projectID string, expected *int64, rewindAssets, productionEdit bool, edit func(*repository.Repository) error) error {
 	return dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
 		p, err := tx.DramaProductionForUpdate(projectID)
 		if err != nil {
 			return err
 		}
 		if !dramaGuideActive(p) {
-			if expected != nil {
+			if expected != nil && (!productionEdit || *expected != p.Revision) {
 				return repository.ErrDramaGuideChanged
 			}
-			return edit(tx)
+			if err := edit(tx); err != nil {
+				return err
+			}
+			if productionEdit {
+				return tx.UpdateDramaGuideIf(projectID, p.Revision, p.GuideStep, map[string]any{})
+			}
+			return nil
 		}
 		if expected == nil || *expected != p.Revision {
 			return repository.ErrDramaGuideChanged

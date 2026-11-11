@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
 import { ArrowLeft, Brush, CheckCheck, Clapperboard, FileDown, FileUp, Film, Inbox, Package, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
@@ -50,6 +50,8 @@ import { isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useD
 import { progressFillStyle } from "@/lib/progress-fill";
 import { activeDramaGuide, dramaProjectPath } from "./guide-state";
 import { useStudioAgent } from "./studio/use-studio-agent";
+import SimpleStudioPage from "./simple-studio";
+import { dramaStudioPath, isAdvancedDramaStudio } from "./studio/studio-route";
 import "./drama.css";
 
 type Tab = "board" | "script" | "final";
@@ -62,6 +64,11 @@ const AWAITING_MEDIA_BANNER = {
 };
 
 export default function DramaStudioPage() {
+    const [search] = useSearchParams();
+    return isAdvancedDramaStudio(search) ? <AdvancedDramaStudioPage /> : <SimpleStudioPage />;
+}
+
+function AdvancedDramaStudioPage() {
     const { projectId = "", episodeId: routeEpisodeId = "" } = useParams();
     const navigate = useNavigate();
     const { message, modal } = App.useApp();
@@ -95,22 +102,32 @@ export default function DramaStudioPage() {
     const shots = useMemo(() => detail?.shots || [], [detail]);
     const currentShot = shots.find((shot) => shot.id === shotParam);
 
-    useStudioAgent(projectId, summary, summaryQuery.isError);
+    const openSimpleStudio = useCallback(() => navigate(dramaStudioPath(projectId, episodeId, searchParams, "simple")), [navigate, projectId, episodeId, searchParams]);
+    useStudioAgent(projectId, summary, summaryQuery.isError, openSimpleStudio);
+    const activePage = useRef<{ projectId: string; episodeId: string } | null>({ projectId, episodeId: routeEpisodeId });
+    useEffect(() => {
+        activePage.current = { projectId, episodeId: routeEpisodeId };
+        return () => {
+            activePage.current = null;
+        };
+    }, [projectId, routeEpisodeId]);
 
     const setParams = useCallback(
         (patch: Record<string, string | null>) => {
+            if (activePage.current?.projectId !== projectId || activePage.current.episodeId !== routeEpisodeId) return;
             const next = new URLSearchParams(searchParams);
+            next.set("mode", "advanced");
             for (const [key, value] of Object.entries(patch)) {
                 if (value) next.set(key, value);
                 else next.delete(key);
             }
             setSearchParams(next, { replace: true });
         },
-        [searchParams, setSearchParams],
+        [projectId, routeEpisodeId, searchParams, setSearchParams],
     );
     const selectEpisode = useCallback(
         (id: string) => {
-            navigate({ pathname: `/projects/${projectId}/e/${id}`, search: tab === "board" ? "" : `?tab=${tab}` });
+            navigate({ pathname: `/projects/${projectId}/e/${id}`, search: tab === "board" ? "?mode=advanced" : `?mode=advanced&tab=${tab}` });
         },
         [navigate, projectId, tab],
     );
@@ -296,10 +313,10 @@ export default function DramaStudioPage() {
             openView("settings");
             return;
         }
-        if (item.episodeId) navigate({ pathname: `/projects/${projectId}/e/${item.episodeId}`, search: item.kind === "segment_failed" ? `?segment=${item.segmentIndex}` : "" });
+        if (item.episodeId) navigate({ pathname: `/projects/${projectId}/e/${item.episodeId}`, search: item.kind === "segment_failed" ? `?mode=advanced&segment=${item.segmentIndex}` : "?mode=advanced" });
     };
     const jumpToJob = (job: DramaJob) => {
-        if (job.episodeId) navigate({ pathname: `/projects/${projectId}/e/${job.episodeId}`, search: "" });
+        if (job.episodeId) navigate({ pathname: `/projects/${projectId}/e/${job.episodeId}`, search: "?mode=advanced" });
     };
 
     // 直接打开草稿的制作台地址时回到创建页，草稿参数都在那里编辑。

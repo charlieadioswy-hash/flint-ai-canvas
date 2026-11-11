@@ -161,7 +161,8 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 		}
 		castViews = append(castViews, map[string]any{
 			"id": cast.ID, "kind": cast.Kind, "name": cast.Name, "imageStatus": cast.ImageStatus, "hasImage": cast.ImageResourceID != "",
-			"locked": cast.Locked, "appearance": truncateRunes(cast.Appearance, 200),
+			"revision": cast.Revision,
+			"locked":   cast.Locked, "appearance": truncateRunes(cast.Appearance, 200),
 			"description": truncateRunes(cast.Description, 1000), "voiceInstructions": truncateRunes(cast.VoiceInstructions, 500),
 		})
 	}
@@ -274,6 +275,7 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 		"cast_delete":    {"reason"},
 		"shot":           {"speaker", "dialogue", "action", "shotSize", "camera", "imagePrompt", "videoPrompt", "transition", "durationSeconds"},
 		"segment_prompt": {"videoPromptOverride"},
+		"media":          {"action", "episodeId", "targetRevision"},
 	}
 	keys, ok := allowed[args.Kind]
 	if !ok || len(args.Changes) == 0 || args.BaseRevision <= 0 {
@@ -287,7 +289,11 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 		if !found || value == nil {
 			return nil, &cloudAgentArgumentError{BadAuthRequest("建议包含不允许修改的字段：" + key)}
 		}
-		if key == "episodeSeconds" || key == "durationSeconds" {
+		if args.Kind == "media" && key == "targetRevision" {
+			if number, ok := value.(float64); !ok || number < 0 || math.Trunc(number) != number || number > 9007199254740991 {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("媒体建议需要当前对象的有效版本")}
+			}
+		} else if key == "episodeSeconds" || key == "durationSeconds" {
 			if number, ok := value.(float64); !ok || number <= 0 || number > 3600 {
 				return nil, &cloudAgentArgumentError{BadAuthRequest("建议时长无效")}
 			} else if key == "episodeSeconds" && math.Trunc(number) != number {
@@ -334,6 +340,53 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 	}
 	if production.Revision != args.BaseRevision {
 		return nil, &cloudAgentArgumentError{creationConflict("短剧内容已变化，请重新读取上下文后提出建议")}
+	}
+	if args.Kind == "media" {
+		if production.GuideStep != "" && production.GuideStep != model.DramaGuideCompleted {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("请先完成短剧文字引导，再确认媒体生成")}
+		}
+		if err := validateCloudAgentID(args.TargetID, "建议目标 ID", 80); err != nil {
+			return nil, &cloudAgentArgumentError{err}
+		}
+		action, _ := args.Changes["action"].(string)
+		targetRevision, hasTargetRevision := args.Changes["targetRevision"].(float64)
+		if !hasTargetRevision || targetRevision < 0 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("请读取当前目标对象版本 targetRevision")}
+		}
+		var revision int64
+		var lookupErr error
+		switch action {
+		case "cast_image":
+			var cast *model.DramaCast
+			cast, lookupErr = repo.DramaCast(production.ProjectID, args.TargetID)
+			if cast != nil {
+				revision = cast.Revision
+			}
+			if _, specified := args.Changes["episodeId"]; specified {
+				return nil, &cloudAgentArgumentError{BadAuthRequest("资产生图建议不需要 episodeId")}
+			}
+		case "segment_video", "segment_prompt", "segment_reprocess":
+			var segment *model.DramaSegment
+			segment, lookupErr = repo.DramaSegment(production.ProjectID, args.TargetID)
+			if segment != nil {
+				revision = segment.Revision
+				if episodeID, _ := args.Changes["episodeId"].(string); episodeID != segment.EpisodeID {
+					return nil, &cloudAgentArgumentError{BadAuthRequest("建议中的集与剧情段不一致，请重新读取上下文")}
+				}
+			}
+		default:
+			return nil, &cloudAgentArgumentError{BadAuthRequest("不支持此媒体动作，仅可建议指定资产生图、指定段生视频、提示词重写或结果重处理")}
+		}
+		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("建议目标不属于当前短剧，请重新读取上下文")}
+		}
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if int64(targetRevision) != revision {
+			return nil, &cloudAgentArgumentError{creationConflict("目标内容已变化，请重新读取上下文后提出媒体建议")}
+		}
+		return args, nil
 	}
 	if args.Kind == "setup" {
 		if production.GuideStep != model.DramaGuideConfiguring {

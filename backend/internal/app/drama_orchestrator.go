@@ -117,10 +117,16 @@ type dramaRun struct {
 	castByID   map[string]*model.DramaCast
 	active     map[string]bool
 	// running 是各并发池（见 dramaDispatchPool）正在运行的作业数。
-	running map[string]int
-	newJobs []model.DramaJob
+	running      map[string]int
+	newJobs      []model.DramaJob
+	episodeMedia map[string]dramaEpisodeMediaSnapshot
 	// imageSizes 缓存本轮调度中“期望画幅 → 模型尺寸参数”的换算，避免每张参考图重复读取能力合同。
 	imageSizes map[string]dramaImageRequest
+}
+
+type dramaEpisodeMediaSnapshot struct {
+	requestedOnly bool
+	released      bool
 }
 
 func dramaJobKey(kind, episodeID, shotID, castID string) string {
@@ -170,6 +176,7 @@ func (s *Service) tickDrama(productionRow *model.DramaProduction) error {
 		return err
 	}
 	run.production.GuideStep, run.production.Revision = current.GuideStep, current.Revision
+	run.production.MediaRequestsOnly, run.production.AssetsReleased = current.MediaRequestsOnly, current.AssetsReleased
 	run.settings = parseDramaSettings(current.SettingsJSON)
 	if err := run.loadCasts(); err != nil {
 		return err
@@ -199,6 +206,21 @@ func (r *dramaRun) persistJobs() error {
 		}
 		if (dramaGuideActive(current) || dramaGuideActive(r.production)) && (current.GuideStep != r.production.GuideStep || current.Revision != r.production.Revision) {
 			return repository.ErrDramaGuideChanged
+		}
+		// Exact requests acquire this same lock. An auto plan built before their scope restriction must never enter the queue afterward.
+		if current.MediaRequestsOnly != r.production.MediaRequestsOnly || current.AssetsReleased != r.production.AssetsReleased {
+			return repository.ErrDramaGuideChanged
+		}
+		if r.episodeMedia != nil {
+			episodes, err := tx.DramaEpisodes(r.project.ID)
+			if err != nil {
+				return err
+			}
+			for _, episode := range episodes {
+				if snapshot, ok := r.episodeMedia[episode.ID]; ok && (snapshot.requestedOnly != episode.VideoRequestsOnly || snapshot.released != episode.MediaReleased) {
+					return repository.ErrDramaGuideChanged
+				}
+			}
 		}
 		// 重试可能在 syncJobs 快照之后恢复原作业；入队时重新检查，避免同槽位重复派发和计费。
 		activeJobs, err := tx.DramaJobsByStatus(r.project.ID, model.DramaJobQueued, model.DramaJobRunning)
@@ -533,6 +555,10 @@ func (r *dramaRun) plan() error {
 	if err != nil {
 		return err
 	}
+	r.episodeMedia = make(map[string]dramaEpisodeMediaSnapshot, len(episodes))
+	for _, episode := range episodes {
+		r.episodeMedia[episode.ID] = dramaEpisodeMediaSnapshot{requestedOnly: episode.VideoRequestsOnly, released: episode.MediaReleased}
+	}
 	inFlight := 0
 	for i := range episodes {
 		episode := &episodes[i]
@@ -599,15 +625,17 @@ func (r *dramaRun) failCastLook(cast *model.DramaCast, reason string) error {
 
 func (r *dramaRun) manualMedia() bool { return r.settings.MediaMode == DramaMediaManual }
 
-func (r *dramaRun) assetsReleased() bool { return !r.manualMedia() || r.production.AssetsReleased }
+func (r *dramaRun) assetsReleased() bool {
+	return (!r.manualMedia() && !r.production.MediaRequestsOnly) || r.production.AssetsReleased
+}
 
 // mediaHeld 表示用户尚未放行本集的参考图和段视频。
 func (r *dramaRun) mediaHeld(episode *model.DramaEpisode) bool {
-	return dramaMediaHeld(r.settings, episode)
+	return dramaMediaHeld(r.settings, r.production, episode)
 }
 
-func dramaMediaHeld(settings DramaSettings, e *model.DramaEpisode) bool {
-	return settings.MediaMode == DramaMediaManual && !e.MediaReleased && (e.Stage == model.DramaEpisodePrompts || e.Stage == model.DramaEpisodeReview || e.Stage == model.DramaEpisodeVideo)
+func dramaMediaHeld(settings DramaSettings, p *model.DramaProduction, e *model.DramaEpisode) bool {
+	return (e.VideoRequestsOnly || ((settings.MediaMode == DramaMediaManual || p.MediaRequestsOnly) && !e.MediaReleased)) && (e.Stage == model.DramaEpisodePrompts || e.Stage == model.DramaEpisodeReview || e.Stage == model.DramaEpisodeVideo)
 }
 
 func (r *dramaRun) sampleBlocked(episode *model.DramaEpisode) bool {
@@ -684,7 +712,7 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 		if err != nil {
 			return err
 		}
-		if ready {
+		if ready && !e.VideoRequestsOnly {
 			e.Stage = model.DramaEpisodeRender
 		}
 	case model.DramaEpisodeRender:
@@ -707,6 +735,8 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 // requestedOnly 时只提交用户明确请求（queued）的段，用于全集尚未进入视频阶段时。返回全部段视频是否就绪。
 // 等待条件与 dramaVideoWaitReason 同源，详情页显示的等待原因就是这里卡住的条件。
 func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.DramaSegment, requestedOnly bool) (bool, error) {
+	// 单段明确请求可越过整集媒体闸门，其余段仍须用户放行。
+	requestedOnly = requestedOnly || r.mediaHeld(e)
 	if len(segments) == 0 {
 		return false, nil
 	}

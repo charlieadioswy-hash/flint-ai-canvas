@@ -261,6 +261,8 @@ description: 影策后端核心持久化表与状态边界
 
 短剧流水线把“上传小说 → 成片”放在服务端完成。章节仍是 `project_units`（`kind=chapter`），只保存小说原文；集（`drama_episodes`）是剧本、剧情段与成片的基石，与章节多对多，由 `chapter_ids_json` 回溯原文。视频生成单位是剧情段：一段一次调用视频模型，台词、音效与镜头切换都在这一个视频里生成，不再逐镜配音、出首帧或生成单镜视频。新库初始化、正式迁移和 SQLite → PostgreSQL 搬迁均包含这些表。
 
+Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_requests_only`、为 `drama_episodes` 增加 `video_requests_only`（均为非空布尔，默认 false）。任一简易台精确操作都会将作品设为仅允许明确请求的媒体，防止唤醒自动流程时排入无关的未请求图片或其他集视频；已明确放行的 `assets_released` / `media_released` 与已排队任务保留授权。精确视频或提示词请求还限制当前集只派发明确排队的段，不自动放行其余段或合成；图片请求不修改此集标志。详细台明确整集放行、审批或批量视频请求会清除此集标志，「全部放行」同时清除作品标志。旧数据保持 false，迁移不修改媒体状态、资源、费用或已有授权。
+
 | 表 | 用途 | 约束 |
 | --- | --- | --- |
 | `drama_productions` | 每个项目一行的控制面：`status`（draft/running/paused/completed）、全剧阶段 `stage`、作品设置 `settings_json`、作品圣经摘要 `bible_json`、预算与已用积分、分集游标 `plan_cursor` / `plan_done`、样片确认 `sample_approved`、参考图放行 `assets_released`、暂停原因 | 主键 `project_id`；用户操作只写状态、设置、预算与确认列；调度循环只写进度列，状态变更带 `status = running` 条件 |

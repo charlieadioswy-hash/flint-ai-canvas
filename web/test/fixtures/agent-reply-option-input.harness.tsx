@@ -12,6 +12,8 @@ for (const [key, value] of Object.entries({
     Element: browser.Element,
     Node: browser.Node,
     SVGElement: browser.SVGElement,
+    ResizeObserver: browser.ResizeObserver,
+    MutationObserver: browser.MutationObserver,
     getComputedStyle: browser.getComputedStyle.bind(browser),
     IS_REACT_ACT_ENVIRONMENT: true,
 }))
@@ -22,7 +24,36 @@ const { AgentChatMessage, AgentQuestionBar } = await import("@/components/canvas
 const { useAgentReplyOptionDrafts } = await import("@/components/canvas/canvas-agent-reply-options");
 const { extractAgentReplyOptions } = await import("@/lib/canvas/agent-reply-options");
 const { canvasThemes } = await import("@/lib/canvas-theme");
+const { AgentChatComposer } = await import("@/components/canvas/canvas-cloud-agent-composer");
 afterAll(() => browser.happyDOM.abort());
+
+test("对象引用可聚焦普通或富文本输入，保留草稿且不自动发送", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    let sent = 0;
+    try {
+        for (const rich of [false, true]) {
+            const references = rich ? [{ id: "text-node", nodeId: "text-node", kind: "text" as const, label: "文本", title: "正文", active: true }] : [];
+            const render = (focusRequest?: number) => (
+                <>
+                    <button type="button">其他位置</button>
+                    <AgentChatComposer prompt="未发送的调整要求" placeholder="Agent 输入" theme={canvasThemes.light} onPromptChange={() => {}} onSubmit={() => sent++} references={references} focusRequest={focusRequest} />
+                </>
+            );
+            await act(async () => root.render(render()));
+            host.querySelector("button")!.focus();
+            await act(async () => root.render(render(rich ? 2 : 1)));
+            const input = host.querySelector<HTMLElement>('[aria-label="Agent 输入"]')!;
+            expect(document.activeElement).toBe(input);
+            expect(rich ? input.textContent : (input as HTMLTextAreaElement).value).toBe("未发送的调整要求");
+            expect(sent).toBe(0);
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
 
 test("父容器保留问题卸载期间的填写内容，并按账号、会话及问题隔离", async () => {
     const host = document.createElement("div");

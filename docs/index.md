@@ -12,6 +12,8 @@
 
 ## 设计沉淀
 
+- [短剧简易制作台](design/short-drama-simple-studio.md)：引导与制作共用左侧 Agent、右侧分集分镜界面，复用原编辑弹窗与任务能力，支持详细设置往返、对象引用及按确认范围生成（提案，未实施）。
+
 - [个人风格管理与资产封面](design/personal-style-management.md)：账户设置复用画布风格管理，支持资产库选封面与 AI 填写配置；封面资产绑定、按风格生图与短剧联动保留为后续方案。
 
 - [短剧 Agent 引导创建](design/short-drama-guided-creation.md)：复用现有 Agent 会话与短剧流水线，仅 Agent 入口启用方案、资产文字、剧本分镜确认，保留传统创建入口与原流程，图片按需生成后进入原制作台（提案，未实施）。

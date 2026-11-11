@@ -55,6 +55,7 @@ import {
 } from "@/services/api/agent";
 import { agentApprovalMatchesSettings, agentApprovalTargetGenerating } from "@/lib/canvas/agent-media-approval";
 import { appendAgentPromptPrefill, claimDramaAgentPrefill } from "@/lib/canvas/agent-prompt-prefill";
+import { appendDramaAgentReference } from "@/lib/canvas/drama-agent-reference";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { AgentMediaSettings } from "@/services/api/agent";
 import { addSkill, listAddedSkills, listSkillLibraryCategories, listSkills, listSkillPresets, setSkillAgentMode, type Skill, type SkillAgentMode, type SkillCategory, type SkillLibraryCategory, type SkillPreset } from "@/services/api/skills";
@@ -181,7 +182,10 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     // 选中节点只在发送时读取，审批目标节点状态只在有审批时订阅（见 approvalTargetGenerating）。
     const drama = useGlobalAgentStore((state) => state.drama);
     const embeddedDrama = Boolean(drama?.host);
+    const dramaStudio = Boolean(drama?.studioMode);
     const dramaProjectId = drama?.projectId || "";
+    const dramaReference = useGlobalAgentStore((state) => (state.dramaReference?.projectId === state.drama?.projectId ? state.dramaReference : null));
+    const dramaReferenceFocus = useGlobalAgentStore((state) => state.dramaReferenceFocus);
     const canvasId = useGlobalAgentStore((state) => (state.drama ? "" : (state.canvas?.canvasId ?? "")));
     const domainProjectId = useGlobalAgentStore((state) => state.drama?.projectId || state.canvas?.domainProjectId);
     const nodeCount = useGlobalAgentStore((state) => state.canvas?.nodeCount ?? 0);
@@ -190,7 +194,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const startupRequest = drama?.startupRequest;
     const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
     const insertAgentMarkdown = useGlobalAgentStore((state) => (state.drama ? undefined : state.canvas?.insertAgentMarkdown));
-    const open = useGlobalAgentStore((state) => state.open || Boolean(state.drama?.host));
+    const open = useGlobalAgentStore((state) => (state.drama?.onOpenStudio ? false : state.open || Boolean(state.drama?.host)));
     const onOpen = useGlobalAgentStore((state) => state.openAgent);
     const onCollapse = useGlobalAgentStore((state) => state.closeAgent);
     const setDocked = useGlobalAgentStore((state) => state.setDocked);
@@ -281,6 +285,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const guideRefreshEpochRef = useRef(0);
     const guidePreviousRef = useRef<CloudAgentConversation | null>(null);
     const deliveredProposalsRef = useRef(new Set<string>());
+    const proposalConsumerRef = useRef(drama?.onProposal);
     const [pendingHydrated, setPendingHydrated] = useState(false);
     const [historyRestoreAttempt, setHistoryRestoreAttempt] = useState(0);
     const [cloudHistoryLoading, setCloudHistoryLoading] = useState(false);
@@ -1525,6 +1530,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         const matchesPending = !outboxItem && Boolean(pendingRequest?.request) && (pendingRequest!.displayText?.trim() || pendingRequest!.request!.prompt) === draft;
         const matchesPrefill = !outboxItem && !matchesPending && Boolean(prefilled?.displayText) && prefilled!.displayText!.trim() === draft;
         let value = matchesPending ? pendingRequest!.request!.prompt : matchesPrefill ? prefilled!.text : draft;
+        const fromPrompt = !outboxItem && (override === undefined || override.trim() === prompt.trim());
         options = outboxItem
             ? { displayText: outboxItem.displayText, canvasReferenceNodeId: outboxItem.canvasReferenceNodeId, requiresVision: outboxItem.requiresVision, outboxItem }
             : matchesPending
@@ -1532,18 +1538,23 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
               : matchesPrefill
                 ? prefilled!
                 : options;
+        if (fromPrompt && !matchesPending && dramaReference) {
+            const referenced = appendDramaAgentReference(value, dramaReference);
+            value = referenced.text;
+            options = { ...options, displayText: referenced.displayText };
+        }
         // 输入框附件：节点引用补到正文末尾。原样重试待确认提交时不改正文，否则会换掉幂等身份。
         if (composerExtras?.attachmentNodeIds.length && !matchesPending) {
             value = appendAgentNodeReferences(value, composerExtras.attachmentNodeIds);
             if (options?.displayText) options = { ...options, displayText: appendAgentNodeReferences(options.displayText, composerExtras.attachmentNodeIds) };
         }
         // 正文来自输入框本身时才清空或回填输入框；提问条、选项卡片、队列不碰用户的草稿。
-        const fromPrompt = !outboxItem && (override === undefined || override.trim() === prompt.trim());
         if (running && !pendingRequest?.request && !outboxItem) {
             // 运行中一律排队（输入框已按排队处理，这里兜住提问条、选项卡片等其他入口）。
             if (enqueueOutboxItem(outboxItemFromDraft(value, options, composerExtras))) {
                 if (fromPrompt) {
                     setPrompt("");
+                    if (dramaReference && useGlobalAgentStore.getState().dramaReference === dramaReference) useGlobalAgentStore.getState().setDramaReference(null);
                     prefilledSubmissionRef.current = null;
                     if (composerExtras) consumeDraftAttachments();
                 }
@@ -1661,6 +1672,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             if (!accountIsCurrent() || currentScope.current !== scope) return "skipped";
             if (fromPrompt) {
                 setPrompt("");
+                if (dramaReference && useGlobalAgentStore.getState().dramaReference === dramaReference) useGlobalAgentStore.getState().setDramaReference(null);
                 prefilledSubmissionRef.current = null;
                 // 失败时要判断用户是否已在等待期间输入新内容；下一次渲染前先按已清空处理。
                 cloudLiveState.current = { ...cloudLiveState.current, prompt: "" };
@@ -1686,6 +1698,9 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             return "sent";
         } catch (cause) {
             if (!accountIsCurrent() || currentScope.current !== scope) return "failed";
+            if (fromPrompt && !accepted && dramaReference && !useGlobalAgentStore.getState().dramaReference && useGlobalAgentStore.getState().drama?.projectId === dramaProjectId) {
+                useGlobalAgentStore.getState().setDramaReference(dramaReference);
+            }
             if (cause instanceof CanvasSyncPendingError) {
                 // 画布仍在同步：还没交给服务端的队列项回到队列并暂停，等用户确认后再发，不反复重试。
                 if (outboxItem && !outboxReleased) updateOutbox(scope, (current) => pauseAgentOutbox(updateAgentOutboxItem(current, outboxItem.id, { status: "queued" }), "sync"));
@@ -2241,16 +2256,21 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     }, [historyHydrated, dramaProjectId, drama?.guideConversationId, accountScope, cloudRefreshEpoch]);
 
     useEffect(() => {
-        if (!dramaProjectId || guideReadyProject !== dramaProjectId || (run && run.dramaProjectId !== dramaProjectId)) return;
+        const consumer = drama?.onProposal;
+        if (!consumer || !dramaProjectId || guideReadyProject !== dramaProjectId || (run && run.dramaProjectId !== dramaProjectId)) return;
+        if (proposalConsumerRef.current !== consumer) {
+            deliveredProposalsRef.current.clear();
+            proposalConsumerRef.current = consumer;
+        }
         for (const message of messages) {
             const proposal = dramaProposalFromToolDetail(message.detail);
             if (!proposal) continue;
             const key = `${proposal.runId}:${proposal.toolCallId}`;
             if (deliveredProposalsRef.current.has(key)) continue;
             deliveredProposalsRef.current.add(key);
-            useGlobalAgentStore.getState().drama?.onProposal?.(proposal);
+            consumer(proposal);
         }
-    }, [messages, run?.dramaProjectId, dramaProjectId, guideReadyProject]);
+    }, [messages, run?.dramaProjectId, dramaProjectId, guideReadyProject, drama?.onProposal]);
 
     // ---- 输入区：发送 / 排队 / 插话 / 保存的路由与提示 ----
     const modifierEnter = agentModifierShortcut("Enter");
@@ -2427,8 +2447,21 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const visionMissing = composerAttachments.some((item) => item.kind === "image") && Boolean(selectedModel) && !modelSupportsImageInspection(config, selectedModel);
     const visionCandidate = visionMissing ? selectImageInspectionModel(config, selectedModel) : "";
     const contextBar =
-        (canvasId && selectionCount > 0) || visionMissing || longTextVisible ? (
+        dramaReference || (canvasId && selectionCount > 0) || visionMissing || longTextVisible ? (
             <>
+                {dramaReference ? (
+                    <AgentContextChip
+                        icon={<FileText className="size-3.5 shrink-0" aria-hidden="true" />}
+                        title={dramaReference.title}
+                        actions={
+                            <button type="button" className="agent-context-chip-action" aria-label="移除剧情段引用" onClick={() => useGlobalAgentStore.getState().setDramaReference(null)}>
+                                <X className="size-3" aria-hidden="true" />
+                            </button>
+                        }
+                    >
+                        {`第 ${dramaReference.episodeNumber} 集 · 第 ${dramaReference.segmentIndex + 1} 段`}
+                    </AgentContextChip>
+                ) : null}
                 {canvasId && selectionCount > 0 ? (
                     <AgentContextChip
                         tone={selectionExcluded ? "off" : "default"}
@@ -2552,13 +2585,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         if (!outboxReady) return;
         const prefilled = prefilledSubmissionRef.current;
         const matchesPrefill = Boolean(prefilled?.displayText) && prefilled!.displayText!.trim() === draft;
-        const item = matchesPrefill ? outboxItemFromDraft(prefilled!.text, prefilled!, extras) : outboxItemFromDraft(draft, undefined, extras);
+        const referenced = appendDramaAgentReference(matchesPrefill ? prefilled!.text : draft, dramaReference);
+        const item = outboxItemFromDraft(referenced.text, { ...(matchesPrefill ? prefilled! : {}), ...(referenced.displayText ? { displayText: referenced.displayText } : {}) }, extras);
         if (agentTextLength(item.text) > AGENT_PROMPT_MAX_CHARS) {
             void appMessage.warning(`单条消息最多 ${AGENT_PROMPT_MAX_CHARS} 字`);
             return;
         }
         const consumeDraft = () => {
             setPrompt("");
+            if (dramaReference && useGlobalAgentStore.getState().dramaReference === dramaReference) useGlobalAgentStore.getState().setDramaReference(null);
             if (matchesPrefill) prefilledSubmissionRef.current = null;
             consumeDraftAttachments();
         };
@@ -2818,7 +2853,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                                     </Button>
                                                 ) : null}
                                             </div>
-                                            <p className="agent-panel-context">{embeddedDrama ? "一起确认设定，逐步完成剧本与分镜" : "接着讨论本作品的角色、剧本与分镜"}</p>
+                                            <p className="agent-panel-context">{dramaStudio ? "一起调整分镜，准备参考图与视频" : embeddedDrama ? "一起确认设定，逐步完成剧本与分镜" : "接着讨论本作品的角色、剧本与分镜"}</p>
                                             <span role="status" style={{ color: statusColor }}>
                                                 {statusLabel}
                                             </span>
@@ -2883,10 +2918,12 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                     <AgentConversation
                                         key={dramaProjectId ? `drama:${dramaProjectId}:${activeConversationId}` : activeConversationId}
                                         guideMode={Boolean(drama)}
+                                        dramaStudio={dramaStudio}
                                         onActionsHost={drama?.onActionsHost}
                                         setupChoices={drama?.setupChoices}
                                         proposalChoices={drama?.proposalChoices}
                                         stageChoices={drama?.stageChoices}
+                                        focusLatestRequest={dramaProjectId ? dramaReferenceFocus : undefined}
                                         theme={theme}
                                         messages={messages}
                                         onFocusNode={onFocusNode}
@@ -2988,13 +3025,22 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                         </div>
                                     ) : null}
                                     <AgentChatComposer
+                                        focusRequest={dramaReference ? dramaReferenceFocus : undefined}
                                         prompt={prompt}
                                         submitDisabled={composerSubmitDisabled}
                                         submitMode={composerSubmitMode}
                                         primaryDisabled={composerSubmitMode === "queue" && outboxIsFull}
                                         sending={busy}
                                         running={running}
-                                        placeholder={drama ? "告诉我想调整的配置、风格或故事内容…" : canvasId ? "说说要做什么，@ 引用节点，/ 或 、 引用技能，可粘贴图片" : "说说要做什么，/ 或 、 引用技能；进入画布后可引用节点和图片"}
+                                        placeholder={
+                                            dramaStudio
+                                                ? "说说想调整哪段分镜，或要生成什么…"
+                                                : drama
+                                                  ? "告诉我想调整的配置、风格或故事内容…"
+                                                  : canvasId
+                                                    ? "说说要做什么，@ 引用节点，/ 或 、 引用技能，可粘贴图片"
+                                                    : "说说要做什么，/ 或 、 引用技能；进入画布后可引用节点和图片"
+                                        }
                                         theme={theme}
                                         onPromptChange={(value) => {
                                             cloudLiveState.current = { ...cloudLiveState.current, prompt: value };

@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { AgentEvent, AgentRun } from "@/services/api/agent";
+import type { AgentEvent, AgentRun, DramaAgentProposal } from "@/services/api/agent";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 import type { AgentOutbox } from "@/lib/canvas/agent-outbox";
 import type { AgentPrefillRequest } from "@/stores/use-global-agent-store";
@@ -276,6 +276,7 @@ type MountOptions = {
     createRun?: (input: any) => Promise<{ run: AgentRun }>;
     loadConversation?: (id: string) => Promise<CloudAgentConversation>;
     onConversationBound?: (id: string) => void;
+    onProposal?: (proposal: DramaAgentProposal) => void;
     guideConversationId?: string | null;
     offline?: boolean;
     strictMode?: boolean;
@@ -315,6 +316,8 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     const host = document.createElement("div");
     document.body.append(host);
     useGlobalAgentStore.setState({
+        dramaReference: null,
+        dramaReferenceFocus: 0,
         open: options.initiallyOpen ?? true,
         canvas: guideProjectId ? null : { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
         drama: guideProjectId
@@ -325,6 +328,7 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
                   startupRequest: options.startupRequest,
                   prefillRequest: options.prefillRequest,
                   onConversationBound: options.onConversationBound,
+                  onProposal: options.onProposal,
               }
             : null,
     });
@@ -628,6 +632,155 @@ test("另一端已推进parent的明确拒绝只同步上下文，保留草稿�
 function guideChat(id: string, runId: string, projectId = "guide-project"): CloudAgentConversation {
     return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
 }
+
+test("往返详细台后向新的简易台投递历史及在途完成的建议", async () => {
+    const existing = guideChat("guide-local", "studio-proposal-parent");
+    existing.messages.push({
+        id: "tool-studio-proposal",
+        role: "tool",
+        text: "建议完成",
+        runId: existing.run!.id,
+        detail: { eventType: "tool_completed", toolName: "drama_propose_changes", runId: existing.run!.id, callId: "studio-call", result: { kind: "shot", targetId: "shot-one", baseRevision: 8, changes: { dialogue: "别怕" } } },
+    });
+    const first: DramaAgentProposal[] = [];
+    const afterSwitch: DramaAgentProposal[] = [];
+    const mounted = await mount(existing, [existing], null, "guide-project", { onProposal: (proposal) => first.push(proposal) });
+    try {
+        expect(first).toHaveLength(1);
+        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, onOpenStudio: () => {} }));
+        await act(async () =>
+            subscriptions.at(-1)!.event({
+                eventId: "studio-proposal-while-away",
+                runId: existing.run!.id,
+                seq: 5,
+                type: "tool_completed",
+                payload: { toolName: "drama_propose_changes", callId: "studio-away-call", result: { kind: "shot", targetId: "shot-two", baseRevision: 8, changes: { dialogue: "往前走" } } },
+                createdAt: existing.updatedAt,
+            }),
+        );
+        const consumer = (proposal: DramaAgentProposal) => afterSwitch.push(proposal);
+        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host, onProposal: consumer }));
+        expect(conversationUI.messages.some((item: any) => item.id === "tool-studio-proposal")).toBe(true);
+        expect(conversationLoads).toHaveLength(1);
+        expect(afterSwitch.map((proposal) => proposal.targetId)).toEqual(["shot-one", "shot-two"]);
+        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host, onProposal: consumer }));
+        expect(afterSwitch).toHaveLength(2);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("简易和详细台切换只更换host，保持同一会话、草稿与剧情段引用", async () => {
+    const existing = guideChat("guide-local", "studio-switch-parent");
+    const mounted = await mount(existing, [existing], null, "guide-project");
+    try {
+        await act(async () => composer.onPromptChange("还没发送的分镜调整"));
+        const reference = { projectId: "guide-project", episodeId: "episode-real", episodeNumber: 9, segmentId: "segment-real", segmentIndex: 2, title: "森林", revision: 4 };
+        await act(async () => useGlobalAgentStore.getState().setDramaReference(reference));
+        expect(sent).toHaveLength(0);
+        expect(composer.focusRequest).toBeGreaterThan(0);
+        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, onOpenStudio: () => {} }));
+        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
+        expect(composer.prompt).toBe("还没发送的分镜调整");
+        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host }));
+        expect(composer.prompt).toBe("还没发送的分镜调整");
+        expect(useGlobalAgentStore.getState().dramaReference).toEqual(reference);
+        expect(conversationLoads).toHaveLength(1);
+        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-switch-child", parentId: existing.run!.id } });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sendInputs[0]?.prompt).toContain('"segmentId":"segment-real"');
+        expect(sendInputs[0]?.prompt).toContain('"revision":4');
+        expect(useGlobalAgentStore.getState().dramaReference).toBeNull();
+        expect(conversationUI.messages.findLast((item: any) => item.role === "user")?.text).toBe("第 9 集 · 第 3 段 · 森林\n还没发送的分镜调整");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("运行中排队保存入队时引用，之后切换引用不改写原队列消息", async () => {
+    const existing = guideChat("guide-local", "studio-running");
+    existing.run!.status = "running";
+    const mounted = await mount(existing, [existing], null, "guide-project");
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-first", segmentIndex: 0, title: "开场", revision: 3 });
+            composer.onPromptChange("修改这段节奏");
+        });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toHaveLength(0);
+        expect(outboxUI.outbox.items).toHaveLength(1);
+        expect(outboxUI.outbox.items[0]?.text).toContain('"segmentId":"segment-first"');
+        expect(useGlobalAgentStore.getState().dramaReference).toBeNull();
+        await act(async () => useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-second", segmentIndex: 1, title: "后续", revision: 2 }));
+        expect(outboxUI.outbox.items[0]?.text).not.toContain("segment-second");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("引用消息未发送成功时保留结构化目标，原样重试不丢失或重复绑定", async () => {
+    const existing = guideChat("guide-local", "studio-reference-parent");
+    const mounted = await mount(existing, [existing], null, "guide-project");
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-real", segmentIndex: 0, title: "开场", revision: 3 });
+            composer.onPromptChange("改一下对白");
+        });
+        sendFailure = new Error("网络断开");
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(pending?.request?.prompt).toContain('"segmentId":"segment-real"');
+        expect(useGlobalAgentStore.getState().dramaReference?.segmentId).toBe("segment-real");
+        sendFailure = undefined;
+        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-reference-child", parentId: existing.run!.id } });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sendInputs[1]?.prompt).toBe(sendInputs[0]?.prompt);
+        expect(sendInputs[1]?.prompt.match(/本条消息引用的短剧对象/gu)).toHaveLength(1);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("发送检查期间选择新的剧情段，旧消息发送后保留新引用", async () => {
+    const existing = guideChat("guide-local", "studio-reference-race");
+    const mounted = await mount(existing, [existing], null, "guide-project");
+    try {
+        let release!: (value: unknown) => void;
+        capabilitiesOverride = () =>
+            new Promise((resolve) => {
+                release = resolve;
+            });
+        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-reference-next", parentId: existing.run!.id } });
+        await act(async () => {
+            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-first", segmentIndex: 0, title: "开场", revision: 3 });
+            composer.onPromptChange("修改第一段");
+        });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        await act(async () => {
+            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-next", segmentIndex: 1, title: "后续", revision: 2 });
+            release({ permissionModes: ["read_only"], skills: true });
+            await settle();
+        });
+        expect(sendInputs[0]?.prompt).toContain('"segmentId":"segment-first"');
+        expect(useGlobalAgentStore.getState().dramaReference?.segmentId).toBe("segment-next");
+    } finally {
+        await mounted.close();
+    }
+});
 
 test("制作台悬浮入口接续短剧原会话，可收起重开且保持只读文字边界", async () => {
     const existing = guideChat("guide-local", "studio-parent");

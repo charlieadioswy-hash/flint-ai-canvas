@@ -37,7 +37,7 @@ import { canvasNodeMentionToken } from "@/lib/canvas/canvas-resource-references"
 import { CanvasAnchoredDropdown as Dropdown } from "./canvas-anchored-dropdown";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasResourceMentionTextarea, type CanvasResourceMentionTextareaActions } from "./canvas-resource-mention-textarea";
 import { agentAttachmentReferences, type CloudAgentChatAttachment } from "./canvas-cloud-agent-attachments";
 
 export const MIN_AGENT_PROMPT_HEIGHT = 60;
@@ -240,6 +240,7 @@ export function AgentChatComposer({
     references = [],
     slashSkills,
     includeAssetLibrary,
+    focusRequest,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -288,8 +289,14 @@ export function AgentChatComposer({
     slashSkills?: Skill[];
     /** 是否在「@」候选里包含素材库资源 */
     includeAssetLibrary?: boolean;
+    /** 外部对象引用只聚焦输入，不代替用户发送。 */
+    focusRequest?: number;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const promptInputRef = useRef<CanvasResourceMentionTextareaActions | null>(null);
+    useEffect(() => {
+        if (focusRequest) promptInputRef.current?.focus();
+    }, [focusRequest]);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
     const [slashIndex, setSlashIndex] = useState(0);
     const [previewAttachment, setPreviewAttachment] = useState<CloudAgentChatAttachment | null>(null);
@@ -575,6 +582,7 @@ export function AgentChatComposer({
                     <div className="relative" onKeyDownCapture={handleSlashKeyCapture} onPasteCapture={handlePasteCapture}>
                         <div className="agent-composer-prompt-scroll" style={{ height: promptHeight }}>
                             <CanvasResourceMentionTextarea
+                                actionsRef={promptInputRef}
                                 value={prompt}
                                 references={composerReferences}
                                 includeAssetLibrary={includeAssetLibrary}

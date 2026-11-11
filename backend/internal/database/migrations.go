@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 101
+const CurrentSchemaVersion int64 = 102
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -358,6 +358,19 @@ var schemaMigrations = []migration{
 		// projects stay readable and are converted lazily on their next save.
 		if err := tx.AutoMigrate(&model.EcommerceProject{}, &model.EcommerceRound{}); err != nil {
 			return err
+		}
+		return nil
+	}},
+	{version: 102, name: "drama_exact_media_requests", checksum: "sha256:drama-exact-media-requests-v102-20261111", apply: func(tx *gorm.DB) error {
+		for _, change := range []struct {
+			entity any
+			field  string
+		}{{&model.DramaEpisode{}, "VideoRequestsOnly"}, {&model.DramaProduction{}, "MediaRequestsOnly"}} {
+			if tx.Migrator().HasTable(change.entity) && !tx.Migrator().HasColumn(change.entity, change.field) {
+				if err := tx.Migrator().AddColumn(change.entity, change.field); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}},

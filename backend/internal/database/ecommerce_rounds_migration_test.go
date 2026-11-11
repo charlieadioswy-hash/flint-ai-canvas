@@ -60,8 +60,12 @@ func TestEcommerceRoundsUpgradeFrom100PreservesMigrationLedgerAndProjects(t *tes
 		if err := db.Order("version").Find(&all).Error; err != nil {
 			t.Fatal(err)
 		}
-		if len(all) != 101 || all[100].Version != 101 || all[100].Name != "ecommerce_round_history" || all[100].Checksum != "sha256:ecommerce-round-history-v93-20261109" {
-			t.Fatalf("round history must append migration 101 without renumbering: %+v", all[len(all)-1])
+		if len(all) < 101 || all[100].Version != 101 || all[100].Name != "ecommerce_round_history" || all[100].Checksum != "sha256:ecommerce-round-history-v93-20261109" {
+			t.Fatalf("round history must append migration 101 without renumbering: %+v", all)
+		}
+		status, err := ReadSchemaStatus(db)
+		if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || status.Expected != CurrentSchemaVersion {
+			t.Fatalf("upgrade must reach the current schema: %+v, %v", status, err)
 		}
 		if attempt == 0 {
 			applied = all

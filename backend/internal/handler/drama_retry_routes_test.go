@@ -23,10 +23,18 @@ func TestDramaRetryRouteKeepsExplicitEpisodeScope(t *testing.T) {
 		name, body string
 		want       int
 		global     bool
+		completed  bool
 	}{
 		{name: "legacy-no-body", want: http.StatusOK, global: true},
 		{name: "legacy-empty-object", body: `{}`, want: http.StatusOK, global: true},
 		{name: "episode", body: `{"episodeId":"episode"}`, want: http.StatusOK},
+		{name: "episode-text", body: `{"episodeId":"episode","target":"text"}`, want: http.StatusOK},
+		{name: "render-before-guide-complete", body: `{"episodeId":"episode","target":"render"}`, want: http.StatusBadRequest},
+		{name: "render-completed-guide", body: `{"episodeId":"episode","target":"render"}`, want: http.StatusOK, completed: true},
+		{name: "target-without-episode", body: `{"target":"render"}`, want: http.StatusBadRequest},
+		{name: "unknown-target", body: `{"episodeId":"episode","target":"video"}`, want: http.StatusBadRequest},
+		{name: "null-target", body: `{"episodeId":"episode","target":null}`, want: http.StatusBadRequest},
+		{name: "numeric-target", body: `{"episodeId":"episode","target":7}`, want: http.StatusBadRequest},
 		{name: "empty", body: `{"episodeId":""}`, want: http.StatusBadRequest},
 		{name: "blank", body: `{"episodeId":"   "}`, want: http.StatusBadRequest},
 		{name: "null-id", body: `{"episodeId":null}`, want: http.StatusBadRequest},
@@ -46,11 +54,15 @@ func TestDramaRetryRouteKeepsExplicitEpisodeScope(t *testing.T) {
 			if err := db.AutoMigrate(&model.User{}, &model.AuthSession{}, &model.Project{}, &model.DramaProduction{}, &model.DramaEpisode{}, &model.DramaSegment{}, &model.DramaCast{}, &model.DramaJob{}, &model.Task{}); err != nil {
 				t.Fatal(err)
 			}
+			guideStep := model.DramaGuideStory
+			if test.completed {
+				guideStep = model.DramaGuideCompleted
+			}
 			for _, row := range []any{
 				&model.User{ID: "owner", Username: "owner", Email: "owner@example.invalid", Role: model.UserRoleUser, Status: model.UserStatusActive},
 				&model.AuthSession{ID: "owner", UserID: "owner", TokenHash: auth.HashToken("test-token"), ExpiresAt: time.Now().Add(time.Hour)},
 				&model.Project{ID: "project", UserID: "owner", Name: "作品"},
-				&model.DramaProduction{ProjectID: "project", UserID: "owner", Status: model.DramaStatusRunning, GuideStep: model.DramaGuideStory, Revision: 1},
+				&model.DramaProduction{ProjectID: "project", UserID: "owner", Status: model.DramaStatusRunning, GuideStep: guideStep, Revision: 1},
 				&model.DramaEpisode{ID: "episode", ProjectID: "project", Number: 1, Stage: model.DramaEpisodeScript, Error: "剧本失败", Revision: 1},
 				&model.DramaCast{ID: "cast", ProjectID: "project", Kind: "character", ImageStatus: model.DramaMediaFailed},
 			} {

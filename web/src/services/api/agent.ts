@@ -70,7 +70,7 @@ export type AgentApproval = {
 };
 
 export type DramaAgentProposal = {
-    kind: "setup" | "source" | "cast" | "cast_create" | "cast_delete" | "shot" | "segment_prompt";
+    kind: "setup" | "source" | "cast" | "cast_create" | "cast_delete" | "shot" | "segment_prompt" | "media";
     targetId?: string;
     baseRevision: number;
     changes: Record<string, unknown>;
@@ -88,7 +88,7 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
     const result = detail.result as Record<string, unknown> | null;
     if (
         !result ||
-        !["setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt"].includes(String(result.kind)) ||
+        !["setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt", "media"].includes(String(result.kind)) ||
         !Number.isSafeInteger(result.baseRevision) ||
         Number(result.baseRevision) <= 0 ||
         !result.changes ||
@@ -99,6 +99,12 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
     if (result.kind === "cast_delete") {
         const changes = result.changes as Record<string, unknown>;
         if (typeof result.targetId !== "string" || !result.targetId.trim() || typeof changes.reason !== "string" || !changes.reason.trim()) return null;
+    }
+    if (result.kind === "media") {
+        const changes = result.changes as Record<string, unknown>;
+        if (typeof result.targetId !== "string" || !result.targetId.trim() || !["segment_video", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(changes.action))) return null;
+        if (!Number.isSafeInteger(changes.targetRevision) || Number(changes.targetRevision) < 0) return null;
+        if (changes.action !== "cast_image" && (typeof changes.episodeId !== "string" || !changes.episodeId.trim())) return null;
     }
     return {
         kind: result.kind as DramaAgentProposal["kind"],

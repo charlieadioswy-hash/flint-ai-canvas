@@ -14,8 +14,8 @@ afterAll(() => dom.happyDOM.abort());
 function summary(id: string, guideConversationId = `${id}-conversation`): DramaSummary {
     return { project: { id }, production: { guideStep: "completed", guideConversationId } } as DramaSummary;
 }
-function BoundStudio(props: { projectId: string; summary?: DramaSummary; unavailable?: boolean }) {
-    useStudioAgent(props.projectId, props.summary, Boolean(props.unavailable));
+function BoundStudio(props: { projectId: string; summary?: DramaSummary; unavailable?: boolean; onOpenStudio?: () => void }) {
+    useStudioAgent(props.projectId, props.summary, Boolean(props.unavailable), props.onOpenStudio);
     return null;
 }
 async function fixture() {
@@ -24,8 +24,8 @@ async function fixture() {
     document.body.append(host);
     const root = createRoot(host);
     return {
-        async render(projectId: string, current?: DramaSummary, unavailable = false) {
-            await act(async () => root.render(<BoundStudio projectId={projectId} summary={current} unavailable={unavailable} />));
+        async render(projectId: string, current?: DramaSummary, unavailable = false, onOpenStudio?: () => void) {
+            await act(async () => root.render(<BoundStudio projectId={projectId} summary={current} unavailable={unavailable} onOpenStudio={onOpenStudio} />));
         },
         async dispose() {
             await act(async () => root.unmount());
@@ -81,6 +81,22 @@ test("清理只移除本次发布的上下文，不覆盖另一个页面的新�
         useGlobalAgentStore.getState().setDrama(newer);
         await ui.render("first", undefined);
         expect(useGlobalAgentStore.getState().drama).toBe(newer);
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("详细制作台 Agent 入口返回简易界面，沿用原会话且不另开浮层", async () => {
+    const ui = await fixture();
+    let opened = 0;
+    try {
+        await ui.render("first", summary("first"), false, () => opened++);
+        const current = useGlobalAgentStore.getState();
+        expect(current.drama?.guideConversationId).toBe("first-conversation");
+        await act(async () => current.openAgent());
+        expect(opened).toBe(1);
+        expect(useGlobalAgentStore.getState().open).toBe(false);
+        expect(useGlobalAgentStore.getState().drama).toBe(current.drama);
     } finally {
         await ui.dispose();
     }

@@ -1,0 +1,38 @@
+/* 短剧制作壳：复用工作区导航和顶部真实入口，临时收起只影响当前项目。 */
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-link.is-collapsed .app-workspace-nav-title {
+    display: none !important;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-nav-main {
+    flex-direction: row;
+    gap: 0 !important;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension {
+    min-width: 0;
+    flex: 1 1 0;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) .app-workspace-topbar-breadcrumb {
+    display: none;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-actions {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+@media (max-width: 640px) {
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar {
+        height: auto !important;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        padding-block: var(--space-2);
+    }
+
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-actions {
+        width: 100%;
+        justify-content: flex-end;
+        order: 1;
+    }
+}

@@ -297,7 +297,7 @@ func (s *Service) ApproveDramaEpisode(userID, projectID, episodeID string) (Dram
 				return DramaEpisodeDetail{}, BadAuthRequest("所有剧情段视频提示词就绪后才能确认")
 			}
 		}
-		if err := s.repo.UpdateDramaEpisodeUser(episode.ID, map[string]any{"approved": true, "stage": model.DramaEpisodeVideo}); err != nil {
+		if err := s.repo.UpdateDramaEpisodeUser(episode.ID, map[string]any{"approved": true, "stage": model.DramaEpisodeVideo, "video_requests_only": false}); err != nil {
 			return DramaEpisodeDetail{}, err
 		}
 	}
@@ -400,13 +400,13 @@ func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDr
 	if len(fields) == 0 {
 		// Guided no-ops still consume the checked revision, just like other applied proposals.
 		if req.ExpectedRevision != nil || dramaGuideActive(p) {
-			if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(*repository.Repository) error { return nil }); err != nil {
+			if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(*repository.Repository) error { return nil }); err != nil {
 				return model.DramaShot{}, err
 			}
 		}
 		return *shot, nil
 	}
-	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+	if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
 		return tx.UpdateDramaShotScript(*shot, fields)
 	}); err != nil {
 		return model.DramaShot{}, err
@@ -458,9 +458,13 @@ func (s *Service) UpdateDramaCast(userID string, projectID string, castID string
 		if dramaGuideActive(p) && (req.Appearance != nil || req.Description != nil) && cast.ImageStatus != "" {
 			fields["image_status"] = model.DramaMediaStale
 		}
-		if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
+		if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
 			return tx.UpdateDramaCastFields(cast.ID, fields)
 		}); err != nil {
+			return model.DramaCast{}, err
+		}
+	} else if req.ExpectedRevision != nil || dramaGuideActive(p) {
+		if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, true, func(*repository.Repository) error { return nil }); err != nil {
 			return model.DramaCast{}, err
 		}
 	}
@@ -871,6 +875,48 @@ func (s *Service) RetryFailedDramaEpisode(userID, projectID, episodeID string) (
 	return map[string]any{"jobs": count}, err
 }
 
+// RetryFailedDramaEpisodeRender retries only assembly of the existing episode videos.
+func (s *Service) RetryFailedDramaEpisodeRender(userID, projectID, episodeID string) (map[string]any, error) {
+	episodeID = strings.TrimSpace(episodeID)
+	if episodeID == "" {
+		return nil, BadAuthRequest("请选择要重试成片的剧集")
+	}
+	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
+		return nil, err
+	}
+	var p *model.DramaProduction
+	count := 0
+	err := dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
+		var err error
+		p, err = tx.DramaProductionForUpdate(projectID)
+		if err != nil {
+			return err
+		}
+		if err := requireDramaGuideComplete(p); err != nil {
+			return err
+		}
+		count, err = tx.RetryDramaEpisodeRender(projectID, episodeID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return NewAppError(http.StatusNotFound, "剧集不存在或不属于当前短剧")
+		}
+		if err != nil || count == 0 {
+			return err
+		}
+		if err := tx.RestrictDramaImplicitMedia(projectID); err != nil {
+			return err
+		}
+		p.MediaRequestsOnly = true
+		return nil
+	}))
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		err = s.requestDramaWork(p)
+	}
+	return map[string]any{"jobs": count}, err
+}
+
 // RetryFailedDrama 把失败槽位重置为待生成，由调度循环重新派发。
 func (s *Service) RetryFailedDrama(userID, projectID string) (map[string]any, error) {
 	project, p, err := s.dramaForUser(userID, projectID)
@@ -1061,8 +1107,8 @@ func (s *Service) releaseDramaEpisodes(projectID string, episodeIDs []string) er
 		if err != nil {
 			return err
 		}
-		if !episode.MediaReleased {
-			if err := s.repo.UpdateDramaEpisodeUser(episode.ID, map[string]any{"media_released": true}); err != nil {
+		if !episode.MediaReleased || episode.VideoRequestsOnly {
+			if err := s.repo.UpdateDramaEpisodeUser(episode.ID, map[string]any{"media_released": true, "video_requests_only": false}); err != nil {
 				return err
 			}
 		}
@@ -1117,7 +1163,7 @@ func (s *Service) ReleaseDramaMedia(userID string, projectID string, req Release
 		for _, episode := range episodes {
 			ids = append(ids, episode.ID)
 		}
-		if err := s.repo.UpdateDramaProduction(project.ID, map[string]any{"assets_released": true}); err != nil {
+		if err := s.repo.UpdateDramaProduction(project.ID, map[string]any{"assets_released": true, "media_requests_only": false}); err != nil {
 			return DramaSummary{}, err
 		}
 		if err := s.releaseDramaEpisodes(project.ID, ids); err != nil {

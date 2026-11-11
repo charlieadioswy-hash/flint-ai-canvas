@@ -2,6 +2,42 @@ import { compactApiParams, http } from "@/services/api/request";
 import type { Project } from "@/services/api/projects";
 import type { ThinkingRequest } from "@/lib/text-thinking";
 
+export type DramaStudioAction = "segment_video" | "cast_image" | "segment_prompt" | "segment_reprocess";
+
+export type DramaStudioActionRequest = {
+    action: DramaStudioAction;
+    targetId: string;
+    episodeId?: string;
+    targetRevision?: number;
+    baseRevision?: number;
+    videoModel?: DramaModelChoice;
+    confirmationToken?: string;
+};
+
+export type DramaStudioActionPreflight = {
+    action: DramaStudioAction;
+    targetId: string;
+    episodeId?: string;
+    segmentIndex?: number;
+    targetRevision: number;
+    baseRevision: number;
+    ready: boolean;
+    reason?: string;
+    message: string;
+    confirmationToken: string;
+    missingCasts: { id: string; name: string }[];
+    warnings: string[];
+    canUseText: boolean;
+    reprocessable: boolean;
+    amountMicrocredits: number;
+    priced: boolean;
+    request?: DramaSegmentRequest;
+};
+
+export const preflightDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<DramaStudioActionPreflight>(`/dramas/${projectId}/actions/preflight`, request);
+
+export const executeDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<{ queued: number; action: DramaStudioAction; targetId: string }>(`/dramas/${projectId}/actions/execute`, request);
+
 // 短剧自动制作：章节只承载小说原文，集是剧本、分镜与成片的基石。编排全部在服务端完成。
 
 export type DramaModelChoice = {
@@ -591,9 +627,9 @@ export function pauseDrama(projectId: string) {
 }
 
 export function retryFailedDrama(projectId: string, episodeId?: undefined): Promise<{ segments: number; casts: number }>;
-export function retryFailedDrama(projectId: string, episodeId: string): Promise<{ jobs: number }>;
-export function retryFailedDrama(projectId: string, episodeId?: string) {
-    return http.post<{ segments: number; casts: number } | { jobs: number }>(`${base(projectId)}/retry-failed`, episodeId === undefined ? undefined : { episodeId });
+export function retryFailedDrama(projectId: string, episodeId: string, target?: "text" | "render"): Promise<{ jobs: number }>;
+export function retryFailedDrama(projectId: string, episodeId?: string, target?: "text" | "render") {
+    return http.post<{ segments: number; casts: number } | { jobs: number }>(`${base(projectId)}/retry-failed`, episodeId === undefined ? undefined : { episodeId, ...(target ? { target } : {}) });
 }
 
 export function listDramaJobs(projectId: string, limit = 60, signal?: AbortSignal) {

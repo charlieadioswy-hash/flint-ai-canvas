@@ -1,0 +1,272 @@
+.drama-project-topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    width: 100%;
+    color: var(--foreground);
+}
+.drama-project-topbar h1 {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+.drama-project-mode {
+    flex: none;
+    color: var(--muted-foreground);
+    font-size: var(--fs-tiny);
+}
+.drama-project-topbar-actions {
+    margin-left: auto;
+    flex: none;
+}
+.drama-simple {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+}
+.drama-simple-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: clamp(300px, 28%, 420px) minmax(0, 1fr);
+}
+.drama-simple-results {
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    padding: var(--space-5);
+    container: drama-story / inline-size;
+}
+.drama-simple-toolbar,
+.drama-simple-filters,
+.drama-simple-episode > header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+.drama-simple-toolbar {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    margin-bottom: var(--space-6);
+}
+.drama-simple-toolbar h2 {
+    font-size: var(--fs-heading);
+    font-weight: 600;
+}
+.drama-simple-toolbar p,
+.drama-simple-episode header p {
+    margin-top: var(--space-1);
+    font-size: var(--fs-tiny);
+    color: var(--drama-muted);
+}
+.drama-simple-filters {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+.drama-simple-filters .ant-select:first-child {
+    width: 170px;
+}
+.drama-simple-filters .ant-select:nth-child(2) {
+    width: 116px;
+}
+.drama-simple-episode {
+    margin-bottom: var(--space-7);
+}
+.drama-simple-episode > header {
+    margin-bottom: var(--space-3);
+}
+.drama-simple-episode-number {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 36px;
+    height: 36px;
+    background: var(--drama-sunken);
+    border-radius: var(--radius-md);
+    color: var(--drama-muted);
+    font-size: var(--fs-label);
+}
+.drama-simple-episode h3 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+.drama-simple-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+.drama-simple-card {
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+.drama-simple-card:focus-within,
+.drama-simple-card:hover {
+    border-color: var(--drama-line-strong);
+}
+.drama-simple-cover {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    background: var(--drama-sunken);
+    color: var(--drama-faint);
+    cursor: pointer;
+}
+.drama-simple-cover img,
+.drama-simple-cover video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.drama-simple-cover-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-micro);
+}
+.drama-simple-duration,
+.drama-simple-edit {
+    position: absolute;
+    bottom: var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--drama-muted);
+    font-size: var(--fs-micro);
+}
+.drama-simple-duration {
+    left: var(--space-2);
+}
+.drama-simple-edit {
+    right: var(--space-2);
+}
+.drama-simple-card-copy {
+    display: block;
+    padding: var(--space-3) var(--space-2) var(--space-2);
+    text-align: left;
+    cursor: pointer;
+}
+.drama-simple-card-copy strong,
+.drama-simple-card-copy p {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+.drama-simple-card-copy strong {
+    font-size: var(--fs-tiny);
+    font-weight: 600;
+    line-height: 1.5;
+    min-height: 3em;
+}
+.drama-simple-card-copy p {
+    margin-top: var(--space-2);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    line-height: 1.7;
+    min-height: 3.4em;
+}
+.drama-simple-card-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1);
+    padding: 0 var(--space-2) var(--space-2);
+    color: var(--drama-faint);
+    font-size: var(--fs-micro);
+}
+.drama-simple-card footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    justify-content: space-between;
+    margin-top: auto;
+    padding: var(--space-2);
+    border-top: 1px solid var(--drama-line);
+}
+.drama-simple-card footer .ant-btn {
+    padding-inline: var(--space-1);
+    font-size: var(--fs-tiny);
+}
+.drama-simple-expand {
+    margin-top: var(--space-2);
+}
+.drama-simple-error {
+    margin-bottom: var(--space-3);
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklab, var(--drama-err) 7%, var(--surface));
+    color: var(--drama-err);
+    font-size: var(--fs-label);
+}
+.drama-simple-error p {
+    margin-block: var(--space-2) var(--space-3);
+}
+.drama-simple-empty {
+    padding: var(--space-5);
+    color: var(--drama-muted);
+}
+@container drama-story (min-width: 1240px) {
+    .drama-simple-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+}
+@container drama-story (max-width: 820px) {
+    .drama-simple-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+@container drama-story (max-width: 640px) {
+    .drama-simple-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+@container drama-story (max-width: 480px) {
+    .drama-simple-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+@media (max-width: 800px) {
+    .drama-simple-layout {
+        display: flex;
+    }
+    .drama-simple-layout > * {
+        flex: 1;
+        width: 100%;
+    }
+    .drama-simple-layout.is-chat .drama-simple-results,
+    .drama-simple-layout.is-results .drama-guide-chat {
+        display: none;
+    }
+    .drama-simple-results {
+        padding: var(--space-3);
+    }
+    .drama-project-mode {
+        display: none;
+    }
+}
+@media (max-width: 480px) {
+    .drama-simple-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

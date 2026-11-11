@@ -1280,6 +1280,77 @@ func (r *Repository) UpdateDramaShotScript(shot model.DramaShot, fields map[stri
 	})
 }
 
+// RestrictDramaImplicitMedia preserves explicit releases and queued jobs, but stops newly inferred auto media.
+func (r *Repository) RestrictDramaImplicitMedia(projectID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Auto planning may have queued a job before setting its segment slot. Preserve that existing authorization.
+		queued := tx.Model(&model.DramaJob{}).Select("shot_id").Where("project_id = ? AND kind = ? AND status = ?", projectID, model.DramaJobSegmentVideo, model.DramaJobQueued)
+		if err := tx.Model(&model.DramaSegment{}).Where("project_id = ? AND video_status = ? AND id IN (?)", projectID, "", queued).Update("video_status", model.DramaMediaQueued).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("media_requests_only", true).Error
+	})
+}
+
+func (r *Repository) RequestDramaSegmentVideoExact(projectID, segmentID string, revision int64, modelJSON *string, invalidateLater bool) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var segment model.DramaSegment
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND id = ?", projectID, segmentID).First(&segment).Error; err != nil {
+			return err
+		}
+		if segment.Revision != revision || segment.VideoStatus == model.DramaMediaQueued || segment.VideoStatus == model.DramaMediaRunning {
+			return ErrDramaGuideChanged
+		}
+		fields := map[string]any{"video_status": model.DramaMediaQueued, "video_error": ""}
+		if modelJSON != nil {
+			fields["video_model_json"] = *modelJSON
+		}
+		return requestDramaSegmentExact(tx, segment, fields, false, invalidateLater)
+	})
+}
+
+func (r *Repository) RequestDramaSegmentPromptExact(projectID, segmentID string, revision int64, invalidateLater bool) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var segment model.DramaSegment
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND id = ?", projectID, segmentID).First(&segment).Error; err != nil {
+			return err
+		}
+		if segment.Revision != revision || segment.PromptStatus == "" || segment.PromptStatus == model.DramaMediaQueued || segment.PromptStatus == model.DramaMediaRunning || segment.VideoStatus == model.DramaMediaQueued || segment.VideoStatus == model.DramaMediaRunning {
+			return ErrDramaGuideChanged
+		}
+		fields := map[string]any{"prompt_status": "", "prompt_error": ""}
+		if segment.VideoStatus != "" {
+			fields["video_status"] = model.DramaMediaStale
+		}
+		return requestDramaSegmentExact(tx, segment, fields, true, invalidateLater)
+	})
+}
+
+// Exact requests retain independent queued jobs and successful media; continuity invalidation never enqueues descendants.
+func requestDramaSegmentExact(tx *gorm.DB, segment model.DramaSegment, fields map[string]any, prompt, invalidateLater bool) error {
+	fields["revision"], fields["updated_at"] = gorm.Expr("revision + 1"), time.Now()
+	changed := tx.Model(&model.DramaSegment{}).Where("id = ? AND revision = ?", segment.ID, segment.Revision).Updates(fields)
+	if changed.Error != nil {
+		return changed.Error
+	}
+	if changed.RowsAffected != 1 {
+		return ErrDramaGuideChanged
+	}
+	if invalidateLater {
+		if err := markLaterSegmentsStale(tx, segment.EpisodeID, segment.SegmentIndex); err != nil {
+			return err
+		}
+	}
+	stage := model.DramaEpisodeVideo
+	if prompt {
+		stage = model.DramaEpisodePrompts
+	}
+	if err := tx.Model(&model.DramaEpisode{}).Where("id = ?", segment.EpisodeID).Updates(map[string]any{"stage": stage, "video_requests_only": true, "approved": false, "final_stale": true, "error": "", "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.DramaJob{}).Where("episode_id = ? AND status = ? AND (shot_id = ? OR kind = ?)", segment.EpisodeID, model.DramaJobQueued, segment.ID, model.DramaJobRender).Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error
+}
+
 func (r *Repository) RequestDramaSegmentVideos(projectID, episodeID string, indexes []int, modelJSON *string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		for _, index := range indexes {
@@ -1298,7 +1369,7 @@ func (r *Repository) RequestDramaSegmentVideos(projectID, episodeID string, inde
 				return err
 			}
 		}
-		return tx.Model(&model.DramaEpisode{}).Where("id = ?", episodeID).Updates(map[string]any{"approved": true, "media_released": true}).Error
+		return tx.Model(&model.DramaEpisode{}).Where("id = ?", episodeID).Updates(map[string]any{"approved": true, "media_released": true, "video_requests_only": false}).Error
 	})
 }
 
@@ -1397,6 +1468,39 @@ func (r *Repository) RetryDramaEpisodeText(projectID, episodeID string) (int, er
 		return 0, nil
 	}
 	return len(retryIDs), r.retryDramaResultJobs(projectID, retryIDs)
+}
+
+// RetryDramaEpisodeRender only reopens the current episode's latest matching render failure.
+// Successful generated video and all other failed slots remain untouched.
+func (r *Repository) RetryDramaEpisodeRender(projectID, episodeID string) (int, error) {
+	episode, err := r.DramaEpisode(projectID, episodeID)
+	if err != nil {
+		return 0, err
+	}
+	if episode.Stage != model.DramaEpisodeRender || episode.Error == "" {
+		return 0, nil
+	}
+	var job model.DramaJob
+	err = r.db.Where("project_id = ? AND episode_id = ? AND kind = ?", projectID, episodeID, model.DramaJobRender).
+		Order("created_at desc, id desc").First(&job).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var payload struct {
+		Revision int64 `json:"revision"`
+	}
+	if job.Status != model.DramaJobFailed || json.Unmarshal([]byte(job.PayloadJSON), &payload) != nil || payload.Revision != episode.Revision {
+		return 0, nil
+	}
+	if applied, err := r.UpdateDramaEpisodeIfRevision(episode.ID, episode.Revision, map[string]any{"error": ""}); err != nil {
+		return 0, err
+	} else if !applied {
+		return 0, ErrDramaGuideChanged
+	}
+	return 1, r.retryDramaResultJobs(projectID, []string{job.ID})
 }
 
 // ReopenDramaSegmentVideoJob 把生成任务已成功、回写失败的段视频作业重新置为运行中，

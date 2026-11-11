@@ -21,7 +21,13 @@ description: 信封、错误码与 OpenAPI
 
 进行中的引导项目保存正文、设置、资产文字、镜头及剧情段提示词时，统一携带当前 `production.revision` 作为 `expectedRevision`；这些文字变更与异步文字结果落库递增该版本。版本变化返回冲突，刷新后重新审阅。相关文字任务仍在运行时拒绝覆盖其输入；实体 revision 继续保护异步结果，不另要求前端提交实体版本。纯会话绑定保留归属、首次绑定和传入版本校验，不递增内容版本；图片状态变化也不使文字版本变化。传统项目及引导完成后的制作台保持既有编辑合同。阶段确认不放行视频、成片或批量图片；单张参考图继续使用原设定重生接口，零图片可以完成引导。两个引导接口拒绝传统项目，不能隐式开启引导。
 
-引导中的有效建议写入成功后统一使版本增加一次；镜头文字实际无变化时也执行引导 CAS，不能用空修改绕过过期校验。携带引导 `expectedRevision` 的旧文字请求在引导结束后返回冲突，不降级为制作台写入。页面可在本地成功写入后、刷新确认恰好增加一个版本且步骤未变时，让同一轮同原版本的独立建议继续使用新的 `expectedRevision`；原工具 `baseRevision` 与回放身份保持不变。该接续只在当前页面生效，不放开服务端 CAS，不接续普通手动保存、外部修改或相互覆盖的建议。
+引导中的有效建议写入成功后统一使版本增加一次；镜头文字实际无变化时也执行引导 CAS，不能用空修改绕过过期校验。引导完成和传统项目的镜头、资产文字、段提示词修改也接受当前 `production.revision` 作为 `expectedRevision`，保存后递增版本；详细台不传版本的实际文字保存同样递增版本，使旧 Agent 建议失效。旧引导请求因完成阶段递增版本而返回冲突；正文和配置等引导专用版本请求不降级为制作台写入。页面可在本地成功写入后、刷新确认恰好增加一个版本且步骤未变时，让同一轮同原版本的独立建议继续使用新的 `expectedRevision`；原工具 `baseRevision` 与回放身份保持不变。该接续只在当前页面生效，不放开服务端 CAS，不接续普通手动保存、外部修改或相互覆盖的建议。
+
+### 简易制作台精确操作
+
+`POST /api/dramas/:id/actions/preflight` 接收 `{action,targetId,episodeId?,targetRevision?,baseRevision?,videoModel?}`。`action` 仅为 `segment_video`、`cast_image`、`segment_prompt`、`segment_reprocess`；`targetId` 必须是当前作品的真实段或资产 ID，集 ID 与目标不匹配时拒绝。返回 `ready/reason`、真实目标及制作版本、`message`、`missingCasts`、`canUseText`、`reprocessable`、`warnings`、实际视频请求预演 `request?`、报价 `priced/amountMicrocredits` 和 `confirmationToken`，不排队、不生成媒体。缺图是否阻塞按实际模型能力判断；顺序续接等待上一段尾帧，样片审批及正在生成的任务仍受保护。
+
+用户确认后调用 `POST /api/dramas/:id/actions/execute`，携带同一请求以及必需的 `targetRevision/baseRevision/confirmationToken`。服务端在制作行锁内重读目标、配置、依赖和报价；任一确认输入变化返回冲突，须重新预检。Token 是当前确认快照校验值，不是权限凭证，也不冻结模型路由或余额；执行及实际任务准入继续校验归属、模型、积分、预算和重复提交。仅排指定对象，不放行整集、不自动生成依赖图片、不重试其他失败资产或任务；作品进入精确媒体请求模式，阻止唤醒自动流程时隐式排入无关新任务，保留之前明确放行与排队的授权。尾帧续接重做已有视频会将后续旧视频标记待更新，保留资源且不自动重生成。`segment_reprocess` 仅重放最近一次已有成功任务的结果，不重新调用生成或重复扣费。详细制作台原整集放行接口保留原语义，「全部放行」可恢复原自动媒体模式。
 
 `POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。引导中只开放短剧上下文读取、结构化修改建议及必要提问；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
 
@@ -1105,7 +1111,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 | `GET /dramas/:id/draft` · `PUT /dramas/:id/draft` | 草稿回填与重存。`GET` 返回 `{ projectId, name, sourceFormat, settings, budgetMicrocredits, selectedChapters, chapterCount, form: { sourceText, styleId } }`；作品不是草稿或没有保存表单时返回 400。`PUT` 请求体同 `POST /dramas`，整体替换名称、原文章节、选章、设置与预算，`start=true` 时替换后直接开工；作品已开工返回 400，名称与其他作品重复返回 409。`POST /dramas` 在 `start=false` 时可带 `draft: { sourceText, styleId }`，作品列表项与 `production` 的 `hasDraftForm=true` 表示打开时回到创建页（`/projects/new?draft=<id>`）。保存草稿时请求体还带一份原始正文，`POST /dramas` 与 `PUT /dramas/:id/draft` 的请求体上限为 64 MiB |
 | `POST /dramas/:id/media/release` | 手动模式下放行生成：`target=assets` 只生成参考图，`episodes`（配合 `episodeIds`，最多 500）生成指定集的参考图与剧情段视频，`all` 全部开始 |
 | `POST /dramas/:id/start` · `/pause` | 继续 / 暂停制作 |
-| `POST /dramas/:id/retry-failed` | 不带请求体或传 `{}` 时重试项目失败任务，返回 `{ segments, casts }`。可传 `{ episodeId }`，只重试该集当前版本的失败剧本与段提示词，返回 `{ jobs }`，保留其他集、已有成功内容和媒体；指定的 `episodeId` 为空、`null` 或非字符串时拒绝，不退回项目级重试。成功任务的有效结果只重新处理，生成的脚本 JSON 不可解析时重新生成；定向重试不重做参考图或视频 |
+| `POST /dramas/:id/retry-failed` | 不带请求体或传 `{}` 时重试项目失败任务，返回 `{ segments, casts }`。可传 `{ episodeId }`，只重试该集当前版本的失败剧本与段提示词（等同 `target: "text"`）；传 `{ episodeId, target: "render" }` 则只恢复该集当前版本的失败成片合成作业，不重做参考图或段视频。定向重试返回 `{ jobs }`，保留其他集、已有成功内容和媒体；`jobs=0` 表示没有符合条件的失败任务，不能视为已提交重试。指定的 `episodeId` 为空、`null` 或非字符串时拒绝，`target` 不合法或缺少集 ID 时同样拒绝，不退回项目级重试。成功任务的有效结果只重新处理，生成的脚本 JSON 不可解析时重新生成 |
 
 暂停或已完成的作品仍会回收已派发任务的结果（段视频入库、抽尾帧、参考图），只是不再派发新工作；抽尾帧前读取段视频超过 3 分钟按“后处理失败”处理，可调用 `reprocess`。
 

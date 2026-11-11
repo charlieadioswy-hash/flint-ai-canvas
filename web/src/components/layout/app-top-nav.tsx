@@ -7,6 +7,7 @@ import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
 import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { readWorkspaceSidebarCollapsed, writeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
+import { useProjectSidebarIdle } from "@/components/layout/use-project-sidebar-idle";
 import { WorkspaceTopBarExtensionProvider } from "@/components/layout/workspace-top-bar-extension";
 import { WorkspaceStorageLimitNotice } from "@/components/layout/workspace-storage-limit-notice";
 import { WorkspaceWalletHost } from "@/components/layout/workspace-wallet-modal";
@@ -14,6 +15,8 @@ import { GenerationSuccessNotifier } from "@/components/layout/generation-succes
 import { useWorkspaceDocumentTitle } from "@/hooks/use-workspace-document-title";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
+
+import "./workspace-project-shell.css";
 
 const WorkspaceCommandPalette = lazy(() => import("@/components/layout/workspace-command-palette").then((module) => ({ default: module.WorkspaceCommandPalette })));
 
@@ -24,6 +27,8 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
     const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(readWorkspaceSidebarCollapsed);
     const [paletteOpen, setPaletteOpen] = useState(false);
+    const projectSidebar = useProjectSidebarIdle(pathname);
+    const sidebarCollapsed = projectSidebar.enabled ? projectSidebar.collapsed : desktopSidebarCollapsed;
     useWorkspaceDocumentTitle();
 
     const hideChrome = pathname.startsWith("/admin") || /^\/canvas\/[^/]+/.test(pathname);
@@ -85,22 +90,17 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     return (
         <>
             <WorkspaceTopBarExtensionProvider>
-                <div className={cn("app-workspace-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden", spatialWorkbench && "is-spatial", creationWorkspace && "is-creation-workspace")}>
+                <div className={cn("app-workspace-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden", spatialWorkbench && "is-spatial", creationWorkspace && "is-creation-workspace", projectSidebar.enabled && "is-project-workspace")}>
                     {!hideChrome && mobileSidebarExpanded ? <button type="button" className="app-workspace-sidebar-scrim lg:hidden" aria-label={t("shell.collapseSidebar")} onClick={() => setMobileSidebarExpanded(false)} /> : null}
 
                     {showGlobalTopBar ? <BannerAnnouncementsSlider /> : null}
 
                     <div className="app-workspace-main-row flex min-h-0 min-w-0 flex-1 overflow-hidden">
                         {!hideChrome ? (
-                            <aside
-                                className={cn(
-                                    "app-workspace-sidebar flex h-full shrink-0 flex-col overflow-hidden",
-                                    mobileSidebarExpanded && "is-mobile-expanded",
-                                    desktopSidebarCollapsed && "is-collapsed",
-                                )}
-                            >
+                            <aside className={cn("app-workspace-sidebar flex h-full shrink-0 flex-col overflow-hidden", mobileSidebarExpanded && "is-mobile-expanded", sidebarCollapsed && "is-collapsed")} {...projectSidebar.interactionProps}>
                                 <WorkspaceSidebarNav
-                                    collapsed={desktopSidebarCollapsed}
+                                    collapsed={sidebarCollapsed}
+                                    autoCollapse={projectSidebar.enabled}
                                     onNavigate={handleNavClick}
                                     onOpenSearch={() => setPaletteOpen(true)}
                                     onExpand={expandDesktopSidebar}
@@ -110,12 +110,16 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         ) : null}
 
                         <div className="app-workspace-stage relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                            {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={isMobileViewport() ? mobileSidebarExpanded : !desktopSidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
+                            {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={isMobileViewport() ? mobileSidebarExpanded : !sidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
                             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
                         </div>
                     </div>
 
-                    {paletteOpen ? <Suspense fallback={null}><WorkspaceCommandPalette open onClose={() => setPaletteOpen(false)} /></Suspense> : null}
+                    {paletteOpen ? (
+                        <Suspense fallback={null}>
+                            <WorkspaceCommandPalette open onClose={() => setPaletteOpen(false)} />
+                        </Suspense>
+                    ) : null}
                 </div>
             </WorkspaceTopBarExtensionProvider>
             <WorkspaceWalletHost />

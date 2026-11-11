@@ -48,7 +48,9 @@ func TestDramaGuideShotNoopUsesSharedRevision(t *testing.T) {
 		{name: "stale-guided", step: model.DramaGuideStory, expected: "stale", conflict: true},
 		{name: "missing-guided", step: model.DramaGuideStory, conflict: true},
 		{name: "busy-guided", step: model.DramaGuideStory, expected: "current", busy: true, conflict: true},
-		{name: "completed-guided-request", step: model.DramaGuideCompleted, expected: "current", conflict: true},
+		{name: "completed-current-request", step: model.DramaGuideCompleted, expected: "current", advance: true},
+		{name: "completed-stale-request", step: model.DramaGuideCompleted, expected: "stale", conflict: true},
+		{name: "traditional-current-request", step: "", expected: "current", advance: true},
 		{name: "traditional", step: ""},
 		{name: "completed-traditional", step: model.DramaGuideCompleted},
 	} {
@@ -107,6 +109,7 @@ func TestDramaGuideCompletedRejectsVersionedTextEdits(t *testing.T) {
 	fixture := newDramaGuideRevisionFixture(t, model.DramaGuideCompleted)
 	projectID := fixture.summary.Project.ID
 	revision := fixture.summary.Production.Revision
+	staleRevision := revision - 1
 	chapters, err := fixture.svc.repo.DramaChapters(projectID)
 	if err != nil || len(chapters) != 1 {
 		t.Fatalf("load chapters: %+v %v", chapters, err)
@@ -119,15 +122,15 @@ func TestDramaGuideCompletedRejectsVersionedTextEdits(t *testing.T) {
 		edit func() error
 	}{
 		{name: "shot", edit: func() error {
-			_, err := fixture.svc.UpdateDramaShot("usr-drama", projectID, fixture.shot.ID, UpdateDramaShotRequest{ExpectedRevision: &revision, Camera: &changed})
+			_, err := fixture.svc.UpdateDramaShot("usr-drama", projectID, fixture.shot.ID, UpdateDramaShotRequest{ExpectedRevision: &staleRevision, Camera: &changed})
 			return err
 		}},
 		{name: "cast", edit: func() error {
-			_, err := fixture.svc.UpdateDramaCast("usr-drama", projectID, fixture.cast.ID, UpdateDramaCastRequest{ExpectedRevision: &revision, Name: &changed})
+			_, err := fixture.svc.UpdateDramaCast("usr-drama", projectID, fixture.cast.ID, UpdateDramaCastRequest{ExpectedRevision: &staleRevision, Name: &changed})
 			return err
 		}},
 		{name: "segment-prompt", edit: func() error {
-			return fixture.svc.UpdateDramaSegment("usr-drama", projectID, fixture.shot.EpisodeID, 0, UpdateDramaSegmentRequest{ExpectedRevision: &revision, VideoPromptOverride: &changed})
+			return fixture.svc.UpdateDramaSegment("usr-drama", projectID, fixture.shot.EpisodeID, 0, UpdateDramaSegmentRequest{ExpectedRevision: &staleRevision, VideoPromptOverride: &changed})
 		}},
 		{name: "chapter", edit: func() error {
 			_, err := fixture.svc.UpdateDramaChapter("usr-drama", projectID, chapters[0].ID, UpdateDramaChapterRequest{ExpectedRevision: &revision, Text: &changed})
@@ -190,6 +193,67 @@ func TestDramaGuideSetupRechecksStepAfterValidation(t *testing.T) {
 	production, err := fixture.svc.repo.DramaProduction(projectID)
 	if err != nil || !changed || production.Revision != revision+1 || production.GuideStep != model.DramaGuideCompleted || parseDramaSettings(production.SettingsJSON).Language != fixture.summary.Production.Settings.Language {
 		t.Fatalf("setup must not cross guide completion: %+v changed=%v error=%v", production, changed, err)
+	}
+}
+
+func TestDramaProductionConversationTextEditsUseCurrentRevision(t *testing.T) {
+	for _, step := range []string{"", model.DramaGuideCompleted} {
+		for _, target := range []string{"shot", "cast", "segment"} {
+			t.Run(step+"/"+target, func(t *testing.T) {
+				fixture := newDramaGuideRevisionFixture(t, step)
+				projectID, revision := fixture.summary.Project.ID, fixture.summary.Production.Revision
+				changed := "制作阶段确认的修改"
+				apply := func(expected *int64) error {
+					switch target {
+					case "shot":
+						_, err := fixture.svc.UpdateDramaShot("usr-drama", projectID, fixture.shot.ID, UpdateDramaShotRequest{ExpectedRevision: expected, Camera: &changed})
+						return err
+					case "cast":
+						_, err := fixture.svc.UpdateDramaCast("usr-drama", projectID, fixture.cast.ID, UpdateDramaCastRequest{ExpectedRevision: expected, Name: &changed})
+						return err
+					default:
+						return fixture.svc.UpdateDramaSegment("usr-drama", projectID, fixture.shot.EpisodeID, 0, UpdateDramaSegmentRequest{ExpectedRevision: expected, VideoPromptOverride: &changed})
+					}
+				}
+				if err := apply(&revision); err != nil {
+					t.Fatal(err)
+				}
+				p, err := fixture.svc.repo.DramaProduction(projectID)
+				if err != nil || p.Revision != revision+1 || p.GuideStep != step {
+					t.Fatalf("production CAS = %+v, %v", p, err)
+				}
+				requireGuideConflict(t, apply(&revision))
+				if err := apply(nil); err != nil {
+					t.Fatal(err)
+				}
+				p, _ = fixture.svc.repo.DramaProduction(projectID)
+				// A no-op shot does not save; cast and prompt saves still consume revisions.
+				if target != "shot" && p.Revision != revision+2 {
+					t.Fatalf("detailed studio edit did not invalidate old proposals: %+v", p)
+				}
+				if len(fixture.fake.requests) != 0 {
+					t.Fatal("text edit submitted media")
+				}
+			})
+		}
+	}
+}
+
+func TestDramaProductionCastNoopStillChecksRevision(t *testing.T) {
+	for _, step := range []string{"", model.DramaGuideCompleted, model.DramaGuideAssets} {
+		fixture := newDramaGuideRevisionFixture(t, step)
+		revision := fixture.summary.Production.Revision
+		currentDescription := fixture.cast.Description
+		_, err := fixture.svc.UpdateDramaCast("usr-drama", fixture.summary.Project.ID, fixture.cast.ID, UpdateDramaCastRequest{ExpectedRevision: &revision, Description: &currentDescription})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = fixture.svc.UpdateDramaCast("usr-drama", fixture.summary.Project.ID, fixture.cast.ID, UpdateDramaCastRequest{ExpectedRevision: &revision, Description: &currentDescription})
+		requireGuideConflict(t, err)
+		cast, _ := fixture.svc.repo.DramaCast(fixture.summary.Project.ID, fixture.cast.ID)
+		if cast.Revision != fixture.cast.Revision {
+			t.Fatal("no-op changed cast")
+		}
 	}
 }
 

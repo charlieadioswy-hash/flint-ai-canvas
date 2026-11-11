@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
-import { ArrowLeft, ArrowRight, Check, CheckCheck, ChevronRight, MessageSquare, RefreshCw, Sparkles, X } from "lucide-react";
-import { Link, Navigate, useNavigate, useParams } from "react-router";
+import { ArrowRight, Check, ChevronRight, MessageSquare, RefreshCw, Settings2, Sparkles, X } from "lucide-react";
+import { Navigate, useNavigate, useParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
@@ -42,13 +42,15 @@ import { dramaGuideChange, dramaGuideChangesConflict, dramaGuideProposal, dramaP
 import { GuideSetupChoices, GuideStageChoices, type GuideStageChoice } from "./guide-setup-choices";
 import { CAST_KIND_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys, useDramaCast, useDramaEpisode, useDramaSummary } from "./studio/use-studio";
+import { DramaProjectTopbar } from "./studio/project-topbar";
 import "./drama.css";
 import "./guide.css";
+import "./simple-studio.css";
 
 const STEPS = [
     { key: "configuring", title: "创作方案", action: "确认配置，开始提取资产", hint: "确认视频配置、风格、语言与故事正文" },
     { key: "assets", title: "角色与场景", action: "确认资产，开始改编剧本与分镜", hint: "检查资产文字；参考图可在制作台再生成" },
-    { key: "story", title: "剧本与分镜", action: "确认并进入制作台", hint: "全部文字任务结束后进入现有短剧制作流程" },
+    { key: "story", title: "剧本与分镜", action: "确认并进入制作台", hint: "全部文字任务结束后在当前界面继续制作" },
     { key: "completed", title: "进入制作台", action: "进入制作台", hint: "引导已完成，后续图片与视频在制作台继续" },
 ] as const;
 type VisibleStep = Exclude<DramaGuideStep, "completed">;
@@ -414,7 +416,7 @@ export default function DramaGuidePage() {
                         { key: "adjust", title: "继续调整", detail: "让 Agent 继续补充或修改角色与场景设定。", input: true },
                     ]
                   : [
-                        { key: "confirm", title: "确认剧本与分镜，进入制作台", detail: "文字产物已完成，进入现有短剧制作流程。" },
+                        { key: "confirm", title: "确认剧本与分镜，进入制作台", detail: "文字产物已完成，在当前界面继续制作图片与视频。" },
                         { key: "adjust", title: "继续调整", detail: "让 Agent 根据你的要求继续修改剧本与分镜，暂不进入制作台。", input: true },
                     ];
         const title = step === "configuring" ? "下一步：提取资产" : step === "assets" ? "下一步：开始改编" : "下一步：剧本与分镜";
@@ -489,6 +491,7 @@ export default function DramaGuidePage() {
             </WorkspacePage>
         );
     if (!summary.production.guideStep) return <Navigate to={`/projects/${projectId}`} replace />;
+    if (summary.production.guideStep === "completed") return <Navigate to={`/projects/${projectId}`} replace />;
     const settings = settingsDraft?.value || summary.production.settings;
     const confirm = () => {
         if (step === "completed") {
@@ -539,51 +542,30 @@ export default function DramaGuidePage() {
     return (
         <WorkspacePage fluid scroll={false}>
             <div className="drama-root drama-guide">
-                <header className="drama-guide-header">
-                    <div className="drama-guide-title">
-                        <Link to="/projects">
-                            <Button type="text" icon={<ArrowLeft className="size-4" />} aria-label="返回短剧列表" />
-                        </Link>
-                        <div>
-                            <span className="drama-eyebrow">短剧创作引导</span>
-                            <h1>{summary.project.name}</h1>
-                        </div>
-                    </div>
-                    <div className="drama-guide-header-end">
-                        <span className="drama-guide-note">进度自动保存，可随时回来继续</span>
-                        <Button
-                            type="text"
-                            icon={<RefreshCw className="size-4" />}
-                            aria-label="刷新引导内容"
-                            loading={summaryQuery.isFetching}
-                            onClick={() => {
-                                void summaryQuery.refetch();
-                                void castQuery.refetch();
-                                if (episodeId) void episodeQuery.refetch();
-                                if (allEpisodesSelected) for (const query of allEpisodeQueries) void query.refetch();
-                            }}
-                        />
-                    </div>
-                </header>
-                <nav className="drama-guide-progress" aria-label="创作引导步骤">
-                    {STEPS.map((item, index) => (
-                        <button
-                            key={item.key}
-                            type="button"
-                            disabled={index > stepIndex || item.key === "completed"}
-                            aria-current={step === item.key ? "step" : undefined}
-                            aria-pressed={viewStep === item.key || (step === "completed" && item.key === "completed")}
-                            onClick={() => {
-                                if (item.key !== "completed") setViewStep(item.key);
-                                setMobilePane("results");
-                            }}
-                        >
-                            <span className="drama-guide-step-number">{index < stepIndex ? <Check className="size-3.5" /> : index + 1}</span>
-                            <span>{item.title}</span>
-                            {index < STEPS.length - 1 ? <ChevronRight className="size-3.5" /> : null}
-                        </button>
-                    ))}
-                </nav>
+                <DramaProjectTopbar name={summary.project.name} stage="创作引导">
+                    <Button
+                        type="text"
+                        icon={<Settings2 className="size-4" />}
+                        onClick={() => {
+                            setViewStep("configuring");
+                            setMobilePane("results");
+                        }}
+                    >
+                        创作配置
+                    </Button>
+                    <Button
+                        type="text"
+                        icon={<RefreshCw className="size-4" />}
+                        aria-label="刷新引导内容"
+                        loading={summaryQuery.isFetching}
+                        onClick={() => {
+                            void summaryQuery.refetch();
+                            void castQuery.refetch();
+                            if (episodeId) void episodeQuery.refetch();
+                            if (allEpisodesSelected) for (const query of allEpisodeQueries) void query.refetch();
+                        }}
+                    />
+                </DramaProjectTopbar>
                 <div className="drama-guide-mobile-switch">
                     <button type="button" aria-pressed={mobilePane === "chat"} onClick={() => setMobilePane("chat")}>
                         <MessageSquare className="size-4" />与 Agent 讨论
@@ -598,6 +580,25 @@ export default function DramaGuidePage() {
                         <div className="drama-guide-agent-host" ref={setHost} />
                     </aside>
                     <section className="drama-guide-results thin-scrollbar" aria-label="创作产物">
+                        <nav className="drama-guide-progress" aria-label="创作引导步骤">
+                            {STEPS.map((item, index) => (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    disabled={index > stepIndex || item.key === "completed"}
+                                    aria-current={step === item.key ? "step" : undefined}
+                                    aria-pressed={viewStep === item.key || (step === "completed" && item.key === "completed")}
+                                    onClick={() => {
+                                        if (item.key !== "completed") setViewStep(item.key);
+                                        setMobilePane("results");
+                                    }}
+                                >
+                                    <span className="drama-guide-step-number">{index < stepIndex ? <Check className="size-3.5" /> : index + 1}</span>
+                                    <span>{item.title}</span>
+                                    {index < STEPS.length - 1 ? <ChevronRight className="size-3.5" /> : null}
+                                </button>
+                            ))}
+                        </nav>
                         {summaryQuery.isError ? (
                             <p className="drama-guide-notice" role="alert">
                                 最新进度读取失败，当前展示上次保存的内容。请刷新后继续。
@@ -609,16 +610,6 @@ export default function DramaGuidePage() {
                                 <Button size="small" disabled={busy} onClick={() => perform(() => retryFailedDrama(projectId))}>
                                     重试失败任务
                                 </Button>
-                            </div>
-                        ) : null}
-                        {step === "completed" ? (
-                            <div className="drama-guide-complete">
-                                <CheckCheck className="size-6" />
-                                <div>
-                                    <h2>创作准备已完成</h2>
-                                    <p>文字产物已保存，进入制作台后可继续生成图片与视频。</p>
-                                </div>
-                                <Button onClick={confirm}>进入制作台</Button>
                             </div>
                         ) : null}
                         {viewStep === "configuring" ? (
@@ -866,7 +857,7 @@ function setupChoiceDescription(proposal: DramaAgentProposal) {
     );
 }
 function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: { proposal: DramaAgentProposal; target?: DramaCast; valid: boolean; busy: boolean; onApply: () => void; onDismiss: () => void }) {
-    const title = { setup: "创作配置建议", source: "故事正文草稿", cast: "资产设定调整", cast_create: "新增资产", cast_delete: "删除资产", shot: "镜头文字调整", segment_prompt: "段提示词调整" }[proposal.kind];
+    const title = { setup: "创作配置建议", source: "故事正文草稿", cast: "资产设定调整", cast_create: "新增资产", cast_delete: "删除资产", shot: "镜头文字调整", segment_prompt: "段提示词调整", media: "媒体操作确认" }[proposal.kind];
     const deleting = proposal.kind === "cast_delete";
     const chooseLabel = deleting ? "删除此资产" : proposal.kind === "cast_create" ? "新增此资产" : proposal.kind === "source" ? "采用这份正文" : proposal.kind === "cast" ? "保存资产设定" : proposal.kind === "shot" ? "保存分镜修改" : "保存段提示词";
     return (

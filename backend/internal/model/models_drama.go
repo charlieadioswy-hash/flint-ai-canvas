@@ -81,8 +81,9 @@ type DramaProduction struct {
 	PlanDone            bool   `json:"planDone"`
 	SampleApproved      bool   `json:"sampleApproved"`
 	// AssetsReleased 为 true 后才自动生成角色/场景参考图；手动生图模式下由用户确认资产后打开。
-	AssetsReleased bool   `json:"assetsReleased"`
-	PauseReason    string `json:"pauseReason" gorm:"size:500"`
+	AssetsReleased    bool   `json:"assetsReleased"`
+	MediaRequestsOnly bool   `json:"mediaRequestsOnly" gorm:"not null;default:false"`
+	PauseReason       string `json:"pauseReason" gorm:"size:500"`
 	// DraftJSON 是草稿的创建页表单（原始正文、画风 ID），只在 status=draft 时有值，开工时清空。
 	DraftJSON  string     `json:"-" gorm:"type:text"`
 	Revision   int64      `json:"revision"`
@@ -144,13 +145,15 @@ type DramaEpisode struct {
 	// Approved 表示用户已确认本集视频提示词（逐集确认模式下的审阅关口）。
 	Approved bool `json:"approved"`
 	// MediaReleased 为 true 后才为本集生成视频；手动模式下由用户确认剧本与提示词后打开。
-	MediaReleased   bool      `json:"mediaReleased"`
-	FinalResourceID string    `json:"finalResourceId,omitempty" gorm:"size:36"`
-	FinalStale      bool      `json:"finalStale"`
-	SubtitleSRT     string    `json:"subtitleSrt" gorm:"type:text"`
-	Revision        int64     `json:"revision"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	MediaReleased bool `json:"mediaReleased"`
+	// VideoRequestsOnly keeps exact studio actions from implicitly authorizing all episode media.
+	VideoRequestsOnly bool      `json:"videoRequestsOnly" gorm:"not null;default:false"`
+	FinalResourceID   string    `json:"finalResourceId,omitempty" gorm:"size:36"`
+	FinalStale        bool      `json:"finalStale"`
+	SubtitleSRT       string    `json:"subtitleSrt" gorm:"type:text"`
+	Revision          int64     `json:"revision"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // DramaEpisodeDefaultTitle 是没有填写标题时的集标题；插入或删除集导致集号顺延时，仍是默认标题的集随新集号改名。

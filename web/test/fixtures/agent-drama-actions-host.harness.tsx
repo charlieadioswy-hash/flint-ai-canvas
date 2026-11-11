@@ -46,6 +46,28 @@ const conversationDefaults = {
 
 afterAll(() => browser.happyDOM.abort());
 
+test("作品卡片请求把回复内确认带入视野，阅读旧消息后也可看到新确认", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const messages: CloudAgentChatMessage[] = [{ id: "old-reply", role: "assistant", text: "原会话内容" }];
+    const render = (focusLatestRequest?: number) => <AgentConversation {...conversationDefaults} guideMode messages={messages} focusLatestRequest={focusLatestRequest} />;
+    try {
+        await act(async () => root.render(render()));
+        const scroll = host.querySelector<HTMLElement>("[data-agent-conversation]")!;
+        Object.defineProperty(scroll, "scrollHeight", { configurable: true, value: 1000 });
+        Object.defineProperty(scroll, "clientHeight", { configurable: true, value: 100 });
+        scroll.scrollTop = 0;
+        await act(async () => scroll.dispatchEvent(new browser.Event("scroll", { bubbles: true }) as unknown as Event));
+        await act(async () => root.render(render(1)));
+        expect(scroll.scrollTop).toBe(1000);
+        expect(host.querySelector(".agent-back-to-bottom")).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 test("操作位于消息滚动区，稳定重渲染不反复设置 host，切换会话和项目后使用新 host", async () => {
     const container = document.createElement("div");
     document.body.append(container);

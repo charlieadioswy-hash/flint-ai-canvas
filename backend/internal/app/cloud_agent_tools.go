@@ -363,10 +363,10 @@ func cloudAgentAllToolSchemas() []map[string]any {
 		"chapterId":     str("可选：读取一章正文，最多16000字；只在短剧引导可用"),
 	})
 	add("drama_propose_changes", "提出短剧文字或资产新增、修改、删除的结构化候选，不保存、不推进阶段、不生成图片或视频。先用 drama_get_context 获取当前 production revision（guide.baseRevision）和真实目标ID，再调用。用户在对话中选择应用才会通过既有业务接口保存，无需去右侧应用；一次只操作一个对象，多个备选分别调用本工具，不用 ask_user 重复确认可保存方案。保存成功后重新读取最新上下文再继续建议；阶段推进由 Agent 回复内的明确阶段确认选项触发，回复末尾只列“1. 确认…”和“2. 继续调整”，确认使用当前阶段真实动作，界面将这些文字直接变为选项，不再重复展示独立卡片；选择确认直接调用既有确认流程，选择继续调整发送下一轮对话。setup 仅配置阶段，changes 可含 aspectRatio/styleName/stylePrompt/language/episodeSeconds/videoResolution；画幅与清晰度分开，videoResolution 取 guide.videoModel.videoResolutions 原值，空字符串为模型默认，不猜像素尺寸；失败按错误修正。source 为 chapters:[{title,text}] 和 sourceFormat；cast 修改 name/aliases/appearance/description/voiceInstructions；cast_create 新增资产，changes 必填 kind(character角色/scene场景/prop道具)、name(1–60字)，可含上述文字设定；cast_delete 删除资产，targetId 必填，changes 必填 reason 说明原因，由用户确认后删除，仍在使用或有进行中任务的资产可能被业务服务拒绝。资产新增/删除仅 assets/story 阶段可用。shot 可含 speaker/dialogue/action/shotSize/camera/imagePrompt/videoPrompt/transition/durationSeconds；segment_prompt 仅 videoPromptOverride。", map[string]any{
-		"kind":         map[string]any{"type": "string", "enum": []string{"setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt"}},
-		"targetId":     str("cast/cast_delete/shot/segment_prompt 必填真实对象 ID；setup/source/cast_create 省略"),
+		"kind":         map[string]any{"type": "string", "enum": []string{"setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt", "media"}},
+		"targetId":     str("cast/cast_delete/shot/segment_prompt/media 必填真实对象 ID；setup/source/cast_create 省略。media 使用资产或剧情段 ID"),
 		"baseRevision": map[string]any{"type": "integer", "minimum": 1, "description": "本次读取到的制作版本 guide.baseRevision"},
-		"changes":      map[string]any{"type": "object", "minProperties": 1, "description": "仅填本建议类型允许的字段"},
+		"changes":      map[string]any{"type": "object", "minProperties": 1, "description": "仅填本建议类型允许的字段。media 仅在引导完成后可用，必填 action(segment_video指定段生视频/cast_image指定资产生图/segment_prompt指定段提示词重写/segment_reprocess重处理已有结果)、targetRevision当前目标版本；段动作另必填真实episodeId。仅提出待确认动作，不生成，界面预检并由用户在回复内确认后精确执行。不得以一个动作放行整集或生成范围外的资产。"},
 		"explanation":  map[string]any{"type": "string", "maxLength": 1000, "description": "可选：此选项的推荐理由或适用情境，最多1000字；仅展示，不写入配置或资产"},
 	}, "kind", "baseRevision", "changes")
 	add("drama_adopt_canvas_media", "把画布上已就绪的图片或视频节点采用到关联短剧：图片设为某个设定（角色/道具/场景）的参考图并锁定；视频设为某集某剧情段的当前视频，默认只换本段。节点带短剧绑定时可省略目标；否则先用 drama_get_context 取 castId 或 episodeId+segmentIndex。总是先经用户审批，不提交收费任务。", map[string]any{

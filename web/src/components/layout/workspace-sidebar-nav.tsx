@@ -88,7 +88,19 @@ function buildNav(features: FeatureAvailability, t: TFunction): { groups: Worksp
     return { groups, footer: [] };
 }
 
-function WorkspaceSidebarProfile({ collapsed, user, onExpand, onCollapse }: { collapsed: boolean; user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null; onExpand: () => void; onCollapse: () => void }) {
+function WorkspaceSidebarProfile({
+    collapsed,
+    user,
+    onExpand,
+    onCollapse,
+    autoCollapse,
+}: {
+    collapsed: boolean;
+    user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null;
+    onExpand: () => void;
+    onCollapse: () => void;
+    autoCollapse: boolean;
+}) {
     const [menuOpen, setMenuOpen] = useState(false);
     const { t } = useTranslation();
     const userGroup = useUserStore((state) => state.userGroup);
@@ -133,13 +145,13 @@ function WorkspaceSidebarProfile({ collapsed, user, onExpand, onCollapse }: { co
                         ) : null}
                     </button>
                 </Popover>
-                {!collapsed ? (
+                {!collapsed && !autoCollapse ? (
                     <button type="button" className="app-workspace-sidebar-collapse-toggle" aria-label={t("shell.collapseSidebar")} title={t("shell.collapseSidebar")} onClick={onCollapse}>
                         <PanelLeftClose className="size-4" strokeWidth={1.7} />
                     </button>
                 ) : null}
             </div>
-            {collapsed ? (
+            {collapsed && !autoCollapse ? (
                 <button type="button" className="app-workspace-sidebar-collapse-toggle is-collapsed" aria-label={t("shell.expandSidebarMenu")} title={t("shell.expandSidebarMenu")} onClick={onExpand}>
                     <PanelLeftOpen className="size-4" strokeWidth={1.7} />
                 </button>
@@ -349,7 +361,21 @@ export function workspaceNavActiveId(pathname: string, section?: string | null) 
     return slug === "settings" && section ? `settings:${section}` : slug;
 }
 
-export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onOpenSearch: () => void; onExpand: () => void; onCollapse: () => void }) {
+export function WorkspaceSidebarNav({
+    collapsed,
+    onNavigate,
+    onOpenSearch,
+    onExpand,
+    onCollapse,
+    autoCollapse = false,
+}: {
+    collapsed: boolean;
+    onNavigate: () => void;
+    onOpenSearch: () => void;
+    onExpand: () => void;
+    onCollapse: () => void;
+    autoCollapse?: boolean;
+}) {
     const { pathname } = useLocation();
     const [searchParams] = useSearchParams();
     const features = useUserStore((state) => state.features);
@@ -397,7 +423,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
             </LayoutGroup>
 
             <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
-                <WorkspaceSidebarProfile collapsed={collapsed} user={user} onExpand={onExpand} onCollapse={onCollapse} />
+                <WorkspaceSidebarProfile collapsed={collapsed} user={user} onExpand={onExpand} onCollapse={onCollapse} autoCollapse={autoCollapse} />
                 {footer.length ? (
                     <div className="mt-2 flex flex-col gap-0.5">
                         {footer.map((item) => (

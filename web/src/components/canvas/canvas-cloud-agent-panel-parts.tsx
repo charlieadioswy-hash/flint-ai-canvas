@@ -690,10 +690,12 @@ export function AgentConversation({
     onRetryRun,
     retryingRun = false,
     guideMode = false,
+    dramaStudio = false,
     onActionsHost,
     setupChoices,
     proposalChoices,
     stageChoices,
+    focusLatestRequest,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -728,10 +730,13 @@ export function AgentConversation({
     onRetryRun?: () => void;
     retryingRun?: boolean;
     guideMode?: boolean;
+    dramaStudio?: boolean;
     onActionsHost?: (host: HTMLDivElement | null) => void;
     setupChoices?: AgentDramaContext["setupChoices"];
     proposalChoices?: AgentDramaContext["proposalChoices"];
     stageChoices?: AgentDramaContext["stageChoices"];
+    /** 用户在作品侧明确点选对象或操作时，将相应的对话确认带入视野。 */
+    focusLatestRequest?: number;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -838,6 +843,14 @@ export function AgentConversation({
         followRef.current = true;
     }, [lastUserId]);
     useLayoutEffect(() => {
+        if (!focusLatestRequest) return;
+        followRef.current = true;
+        setAwayFromBottom(false);
+        setUnseenCount(0);
+        const element = scrollRef.current;
+        if (element) element.scrollTop = element.scrollHeight;
+    }, [focusLatestRequest]);
+    useLayoutEffect(() => {
         const element = scrollRef.current;
         if (element && followRef.current) element.scrollTop = element.scrollHeight;
     }, [messages, busy, approval]);
@@ -870,7 +883,9 @@ export function AgentConversation({
                 {!messages.length ? (
                     guideMode ? (
                         <div className="px-5 py-8 text-sm leading-7" style={{ color: theme.node.muted }}>
-                            告诉我你希望调整的风格、视频配置或故事方向，我会结合当前作品提出建议。剧本、分镜和资产文字将逐步确认，图片可以稍后再生成。
+                            {dramaStudio
+                                ? "点击右侧分镜卡片的「AI 交流」引用这一段，我可以帮你调整分镜，检查参考图或视频的生成条件。"
+                                : "告诉我你希望调整的风格、视频配置或故事方向，我会结合当前作品提出建议。剧本、分镜和资产文字将逐步确认，图片可以稍后再生成。"}
                         </div>
                     ) : (
                         <AgentWelcome appearance={appearance} nodeCount={nodeCount} installedSkillCount={installedSkillCount} onChooseSkill={onChooseSkill} onOpenSkillRecommendations={onOpenSkillRecommendations} onDraftPrompt={onDraftPrompt} />

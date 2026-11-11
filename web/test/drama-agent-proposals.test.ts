@@ -46,4 +46,26 @@ describe("短剧 Agent 建议回放", () => {
         expect(dramaProposalFromToolDetail({ ...deletion, result: { ...deletion.result, changes: {} } })).toBeNull();
         expect(dramaProposalFromToolDetail({ ...deletion, result: { ...deletion.result, changes: { reason: " " } } })).toBeNull();
     });
+
+    test("媒体建议绑定真实目标与版本，仅接受首期有限动作", () => {
+        const detail = {
+            eventType: "tool_completed",
+            toolName: "drama_propose_changes",
+            runId: "run",
+            callId: "video",
+            result: { kind: "media", targetId: "segment", baseRevision: 8, changes: { action: "segment_video", episodeId: "episode", targetRevision: 3 } },
+        };
+        expect(dramaProposalFromToolDetail(detail)?.kind).toBe("media");
+        for (const changes of [
+            { action: "release_all", targetRevision: 3 },
+            { action: "segment_video", targetRevision: 3 },
+            { action: "segment_video", episodeId: "episode", targetRevision: -1 },
+            { action: "segment_video", episodeId: "episode", targetRevision: 1.5 },
+        ]) {
+            expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, changes } })).toBeNull();
+        }
+        expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: " " } })).toBeNull();
+        expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 2 } } })?.kind).toBe("media");
+        expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 0 } } })?.changes.targetRevision).toBe(0);
+    });
 });

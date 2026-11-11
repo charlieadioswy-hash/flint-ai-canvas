@@ -53,7 +53,7 @@ func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *m
 	switch {
 	case e.Stage == model.DramaEpisodeQueued || e.Stage == model.DramaEpisodeScript:
 		return "等待本集剧本完成"
-	case dramaMediaHeld(settings, e):
+	case dramaMediaHeld(settings, p, e) && segments[index].VideoStatus != model.DramaMediaQueued:
 		return "本集尚未放行生图"
 	case settings.ReviewMode == DramaReviewSample && !p.SampleApproved && e.Number != 1:
 		return "等待确认第 1 集样片"
@@ -65,7 +65,7 @@ func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *m
 		return "等待本段视频提示词撰写完成"
 	}
 	// 未生成的参考图在自动生图或已放行时会被调度排队，同样要等。
-	requested := settings.MediaMode != DramaMediaManual || p.AssetsReleased
+	requested := (settings.MediaMode != DramaMediaManual && !p.MediaRequestsOnly) || p.AssetsReleased
 	if names := dramaReferencesInProgress(segments[index].SegmentIndex, shots, lookup, requested); len(names) > 0 {
 		return "等待参考图生成：" + strings.Join(names, "、")
 	}
@@ -411,7 +411,7 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 		return nil, false, err
 	}
 	explicit := segment.VideoStatus == model.DramaMediaQueued && (episode.Stage == model.DramaEpisodePrompts || episode.Stage == model.DramaEpisodeReview)
-	if (episode.Stage != model.DramaEpisodeVideo && !explicit) || r.mediaHeld(episode) || r.sampleBlocked(episode) {
+	if (episode.Stage != model.DramaEpisodeVideo && !explicit) || (r.mediaHeld(episode) && segment.VideoStatus != model.DramaMediaQueued) || r.sampleBlocked(episode) {
 		return nil, true, nil
 	}
 	if !dramaPromptReady(*segment) {

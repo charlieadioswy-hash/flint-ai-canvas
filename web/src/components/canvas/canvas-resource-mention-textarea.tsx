@@ -55,6 +55,7 @@ export type MentionTextPart =
 
 export type CanvasResourceMentionTextareaActions = {
     insertTextAtSelection: (text: string) => boolean;
+    focus: () => void;
 };
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "onSubmit" | "value"> & {
@@ -326,7 +327,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     useLayoutEffect(() => {
         if (!actionsRef) return;
-        const actions = { insertTextAtSelection };
+        const actions = { insertTextAtSelection, focus: () => (editorRef.current ?? textareaRef.current)?.focus({ preventScroll: true }) };
         actionsRef.current = actions;
         return () => {
             if (actionsRef.current === actions) actionsRef.current = null;
