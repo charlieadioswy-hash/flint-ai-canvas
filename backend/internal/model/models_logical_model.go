@@ -75,7 +75,7 @@ type RouteAttempt struct {
 	ChannelID              string     `json:"channelId" gorm:"size:36;index"`
 	Status                 string     `json:"status" gorm:"size:32;index"`
 	DispatchState          string     `json:"dispatchState" gorm:"size:32;index"`
-	ProviderRequestID      string     `json:"providerRequestId" gorm:"size:160;index"`
+	ProviderRequestID      string     `json:"providerRequestId" gorm:"type:text;index"`
 	FailureCode            string     `json:"failureCode" gorm:"size:80"`
 	FailureMessage         string     `json:"failureMessage" gorm:"size:1000"`
 	StartedAt              time.Time  `json:"startedAt"`

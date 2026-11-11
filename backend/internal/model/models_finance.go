@@ -91,7 +91,7 @@ type BillingOrder struct {
 	UsageSource          string        `json:"usageSource,omitempty" gorm:"size:32;not null;default:''"`
 	UsageAvailable       bool          `json:"usageAvailable"`
 	Status               BillingStatus `json:"status" gorm:"index;size:24"`
-	ProviderRequestID    string        `json:"providerRequestId,omitempty" gorm:"index;size:160"`
+	ProviderRequestID    string        `json:"providerRequestId,omitempty" gorm:"index;type:text"`
 	Error                string        `json:"error,omitempty" gorm:"size:1000"`
 	ResolvedBy           string        `json:"resolvedBy,omitempty" gorm:"index;size:36"`
 	ResolutionNote       string        `json:"resolutionNote,omitempty" gorm:"size:500"`

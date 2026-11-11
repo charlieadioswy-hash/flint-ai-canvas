@@ -14,10 +14,13 @@ import (
 )
 
 func TestSiteTrafficMigrationIsAdditiveAndPreservesPublishedLedger(t *testing.T) {
-	if CurrentSchemaVersion != 108 {
-		t.Fatalf("schema version/plan = %d/%d", CurrentSchemaVersion, len(schemaMigrations))
+	var migration migration
+	for _, item := range schemaMigrations {
+		if item.version == 108 {
+			migration = item
+			break
+		}
 	}
-	migration := schemaMigrations[len(schemaMigrations)-1]
 	if migration.version != 108 || migration.name != "site_traffic_events" || migration.checksum != "sha256:site-traffic-events-v99-20261111" || migration.apply == nil {
 		t.Fatalf("unexpected traffic migration: %+v", migration)
 	}
@@ -34,9 +37,12 @@ func TestSiteTrafficMigrationIsAdditiveAndPreservesPublishedLedger(t *testing.T)
 	if err := db.AutoMigrate(&schemaMigration{}); err != nil {
 		t.Fatal(err)
 	}
-	// 仅登记当前分支此前的迁移身份，隔离验证流量迁移，不重跑历史业务转换。
+	// 登记其他迁移身份，隔离验证流量迁移，不重跑无关业务转换。
 	records := make([]schemaMigration, 0, len(schemaMigrations)-1)
-	for _, item := range schemaMigrations[:len(schemaMigrations)-1] {
+	for _, item := range schemaMigrations {
+		if item.version == migration.version {
+			continue
+		}
 		records = append(records, schemaMigration{
 			Version: item.version, Name: item.name, Checksum: item.checksum,
 			AppliedAt: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC),
@@ -67,7 +73,13 @@ func TestSiteTrafficMigrationIsAdditiveAndPreservesPublishedLedger(t *testing.T)
 	if err := db.Order("version").Find(&after).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before)+1 || !reflect.DeepEqual(after[:len(before)], before) {
+	preserved := make([]schemaMigration, 0, len(before))
+	for _, record := range after {
+		if record.Version != migration.version {
+			preserved = append(preserved, record)
+		}
+	}
+	if len(after) != len(before)+1 || !reflect.DeepEqual(preserved, before) {
 		t.Fatal("traffic migration changed published migration identities or applied timestamps")
 	}
 	if !db.Migrator().HasTable(&model.SiteTrafficEvent{}) {
