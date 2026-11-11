@@ -12,11 +12,21 @@ for (const [key, value] of Object.entries({
     document: dom.document,
     navigator: dom.navigator,
     HTMLElement: dom.HTMLElement,
+    HTMLButtonElement: dom.HTMLButtonElement,
+    HTMLInputElement: dom.HTMLInputElement,
+    HTMLTextAreaElement: dom.HTMLTextAreaElement,
+    HTMLSelectElement: dom.HTMLSelectElement,
     Element: dom.Element,
     Node: dom.Node,
     SVGElement: dom.SVGElement,
     ShadowRoot: dom.ShadowRoot,
     Event: dom.Event,
+    CustomEvent: dom.CustomEvent,
+    MouseEvent: dom.MouseEvent,
+    PointerEvent: dom.PointerEvent,
+    FocusEvent: dom.FocusEvent,
+    KeyboardEvent: dom.KeyboardEvent,
+    MutationObserver: dom.MutationObserver,
     ResizeObserver: dom.ResizeObserver,
     getComputedStyle: dom.getComputedStyle.bind(dom),
     requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
@@ -54,7 +64,11 @@ function layer(value: string) {
 function SelectedComposer() {
     const { bringToFront, zIndex } = useCanvasOverlayLayer("node-panel:video", "var(--z-modal-overlay)");
     useLayoutEffect(bringToFront, [bringToFront]);
-    return <div data-test-composer style={{ position: "absolute", zIndex }} onFocusCapture={bringToFront}><button>视频参数</button></div>;
+    return (
+        <div data-test-composer style={{ position: "absolute", zIndex }} onFocusCapture={bringToFront}>
+            <button>视频参数</button>
+        </div>
+    );
 }
 
 async function fixture() {
@@ -63,21 +77,49 @@ async function fixture() {
     const root = createRoot(host);
     const noop = () => {};
     let created = 0;
-    await act(async () => root.render(
-        <CanvasOverlayLayerProvider>
-            <CanvasToolbar
-                selectedCount={1} workspaceMode="professional" canvasTool="box-select" onToolChange={noop}
-                isProjectLinked={false} canUndo={false} canRedo={false}
-                appearance={canvasAppearanceForTheme("dark")} backgroundMode="dots" showImageInfo
-                onAddImage={noop} onAddVideo={() => created++} onAddAudio={noop} onAddText={noop} onChooseStyle={noop}
-                onAddScript={noop} onAddFrame={noop} onAddFolder={noop} onAddDrawing={noop} onAddExtensionNode={noop}
-                onAddWorkflow={noop} onOpenPrevis={noop} onUndo={noop} onRedo={noop} onUpload={noop} onDelete={noop}
-                onClear={noop} onDeselect={noop} onAppearanceChange={noop} onSaveAppearanceDefault={noop}
-                onBackgroundModeChange={noop} onShowImageInfoChange={noop} onOpenMyAssets={noop} onOpenProjectCharacters={noop}
-            />
-            <SelectedComposer />
-        </CanvasOverlayLayerProvider>,
-    ));
+    await act(async () =>
+        root.render(
+            <CanvasOverlayLayerProvider>
+                <CanvasToolbar
+                    selectedCount={1}
+                    workspaceMode="professional"
+                    canvasTool="box-select"
+                    onToolChange={noop}
+                    isProjectLinked={false}
+                    canUndo={false}
+                    canRedo={false}
+                    appearance={canvasAppearanceForTheme("dark")}
+                    backgroundMode="dots"
+                    showImageInfo
+                    onAddImage={noop}
+                    onAddVideo={() => created++}
+                    onAddAudio={noop}
+                    onAddText={noop}
+                    onChooseStyle={noop}
+                    onAddScript={noop}
+                    onAddFrame={noop}
+                    onAddFolder={noop}
+                    onAddDrawing={noop}
+                    onAddExtensionNode={noop}
+                    onAddWorkflow={noop}
+                    onOpenPrevis={noop}
+                    onUndo={noop}
+                    onRedo={noop}
+                    onUpload={noop}
+                    onDelete={noop}
+                    onClear={noop}
+                    onDeselect={noop}
+                    onAppearanceChange={noop}
+                    onSaveAppearanceDefault={noop}
+                    onBackgroundModeChange={noop}
+                    onShowImageInfoChange={noop}
+                    onOpenMyAssets={noop}
+                    onOpenProjectCharacters={noop}
+                />
+                <SelectedComposer />
+            </CanvasOverlayLayerProvider>,
+        ),
+    );
     const button = (label: string) => {
         const found = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.getAttribute("aria-label") === label || item.title === label || item.textContent?.trim() === label);
         if (!found) throw new Error(`Missing button ${label}`);
@@ -86,12 +128,25 @@ async function fixture() {
     const toolbar = host.querySelector<HTMLDivElement>("[data-canvas-no-zoom]")!;
     const composer = host.querySelector<HTMLDivElement>("[data-test-composer]")!;
     return {
-        button, toolbar, composer,
-        get created() { return created; },
-        get addOpen() { return button("添加节点").getAttribute("aria-expanded") === "true"; },
-        async click(label: string) { await act(async () => button(label).click()); },
-        async focus(label: string) { await act(async () => button(label).focus()); },
-        async dispose() { await act(async () => root.unmount()); host.remove(); },
+        button,
+        toolbar,
+        composer,
+        get created() {
+            return created;
+        },
+        get addOpen() {
+            return button("添加节点").getAttribute("aria-expanded") === "true";
+        },
+        async click(label: string) {
+            await act(async () => button(label).click());
+        },
+        async focus(label: string) {
+            await act(async () => button(label).focus());
+        },
+        async dispose() {
+            await act(async () => root.unmount());
+            host.remove();
+        },
     };
 }
 

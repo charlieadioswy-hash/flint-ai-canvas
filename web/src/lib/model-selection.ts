@@ -382,10 +382,11 @@ export function modelGenerationParamsForSwitch(config: AiConfig, model: string, 
     const values = resolveModelGenerationDefaults(config, model, capability, config);
     if (capability === "image") {
         const profile = modelCapabilityConfigFor(config, model).image;
-        if (profile?.size.parameter === "size" && profile.size.allowCustom && values.size?.includes(":")) {
+        const ratio = profile?.size.parameter === "size" && profile.size.allowCustom && !profile.parameters && !profile.resolution.supported && config.size?.includes(":") ? config.size : values.size;
+        if (profile?.size.parameter === "size" && profile.size.allowCustom && ratio?.includes(":")) {
             // Persist the same pixels the picker displays, so the task cannot remap an inherited ratio.
             try {
-                values.size = resolveImageRequestSize(profile, values.quality, values.size)?.value ?? profile.size.default;
+                values.size = resolveImageRequestSize(profile, values.quality, ratio)?.value ?? profile.size.default;
             } catch {
                 values.size = profile.size.default;
             }

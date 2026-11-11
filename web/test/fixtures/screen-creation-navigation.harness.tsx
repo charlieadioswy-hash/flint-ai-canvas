@@ -39,6 +39,8 @@ mock.module("react-i18next", () => ({ useTranslation: () => ({ t, i18n: { langua
 mock.module("motion/react", () => ({ LayoutGroup: ({ children }: { children: React.ReactNode }) => children, motion: { span: ({ className }: { className: string }) => <span className={className} /> }, useReducedMotion: () => true }));
 mock.module("../../src/hooks/use-workspace-logout", () => ({ useWorkspaceLogout: () => ({ handleLogout: noop }) }));
 mock.module("../../src/lib/workspace-route-modules", () => ({ preloadWorkspaceRoute: noop }));
+mock.module("../../src/services/site-traffic", () => ({ trackSiteTrafficAction: noop }));
+mock.module("../../src/components/layout/workspace-sidebar-history", () => ({ WorkspaceSidebarHistory: () => null }));
 mock.module("../../src/components/layout/workspace-account-card", () => ({ WorkspaceAccountCard: () => null }));
 mock.module("../../src/components/layout/workspace-sidebar-checkin", () => ({ WorkspaceSidebarCheckin: () => null }));
 mock.module("../../src/components/layout/workspace-sidebar-storage-meter", () => ({ WorkspaceSidebarStorageMeter: () => null }));

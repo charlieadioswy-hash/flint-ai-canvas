@@ -129,11 +129,14 @@ if (wantBackend) {
         console.error("✗ 有后端改动，但本机没有可用的 go；请安装 backend/go.mod 要求的 Go 版本。");
         process.exit(1);
     }
+    const backendGoFiles = lines(git(["ls-files", "--cached", "--others", "--exclude-standard", "--", "backend/"]))
+        .filter((file) => file.endsWith(".go"))
+        .map((file) => path.relative(BACKEND, path.join(ROOT, file)));
     tasks.push({
         name: "backend:gofmt",
         cwd: BACKEND,
         cmd: "gofmt",
-        args: ["-l", "."],
+        args: ["-l", ...backendGoFiles],
         weight: 5,
         check: (output) => (output.trim() ? `以下文件需要 gofmt -w：\n${output.trim()}` : ""),
     });

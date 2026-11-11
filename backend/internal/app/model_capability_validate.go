@@ -616,7 +616,7 @@ func validateImageTask(profile *ImageCapabilityConfig, input canvasGenerationInp
 		!containsCapabilityString(profile.Size.Values, input.Config.Size) && resolvedRatio == "" {
 		return newModelCapabilityArgumentError("size", "unsupported_value", BadAuthRequest("图片尺寸不在当前模型支持范围内"))
 	}
-	if profile.Parameters == nil && profile.Size.Parameter == "size" && profile.Size.AllowCustom && strings.HasPrefix(modelName, "gpt-image-2") && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
+	if profile.Size.Parameter == "size" && profile.Size.AllowCustom && strings.HasPrefix(modelName, "gpt-image-2") && !containsCapabilityString(profile.Size.Values, input.Config.Size) {
 		if err := validateGPTImage2CustomSize(input.Config.Size); err != nil {
 			return newModelCapabilityArgumentError("size", "unsupported_value", err)
 		}

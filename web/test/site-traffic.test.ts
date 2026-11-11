@@ -613,7 +613,7 @@ describe("site traffic explicit production wiring", () => {
 
     test("new-canvas explicit handlers count once and destination auto-create effects do not count", async () => {
         const canvas = await source("pages/canvas/index.tsx");
-        expect(canvas).toMatch(/const createAndEnter = \(\) => \{\s*trackSiteTrafficAction\("new_canvas"\);/);
+        expect(canvas).toMatch(/const createAndEnter = \([^)]*\) => \{\s*trackSiteTrafficAction\("new_canvas"\);/);
         expect(canvas.match(/trackSiteTrafficAction\(/g)).toHaveLength(1);
         expect(await source("pages/canvas/use-canvas-project-lifecycle.ts")).toMatch(/const createAndOpenProject = useCallback\(\(\) => \{\s*trackSiteTrafficAction\("new_canvas"\);/);
         expect(await source("pages/create/creation-recent-canvases.tsx")).toContain('trackSiteTrafficAction("new_canvas")');

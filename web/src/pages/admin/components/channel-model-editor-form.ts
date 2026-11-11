@@ -170,7 +170,7 @@ export function updateChannelModelUpstreamCapabilities(values: ChannelModelFormV
             const profile = normalizeModelCapabilityConfig(defaultModelCapabilityConfig(values.protocol, model));
             if (values.capability === "image" && profile.image) {
                 profile.image = normalizeLegacyImageResolutionConfig(values.protocol, profile.image);
-                if (definitions) profile.image = resolveImageParameters(profile.image, definitions, model);
+                if (definitions || profile.image.parameters || standardImageSizeEncoding(target?.create)) profile.image = resolveImageParameters(profile.image, definitions || [], model, values.protocol, target?.create);
             }
             return profile;
         };
@@ -189,7 +189,8 @@ export function updateChannelModelUpstreamCapabilities(values: ChannelModelFormV
         if (profile.image) {
             const fresh = profile.image.parameters?.length === 0;
             const resolved = resolveImageParameters(profile.image, definitions || [], values.providerModelKey?.trim() || values.modelKey.trim(), values.protocol, target?.create);
-            return { ...values, capabilityConfig: { ...profile, image: fresh ? initializeImageRatioDefaults(resolved, resolved.parameters!, undefined, undefined, values.protocol) : resolved } };
+            const image = fresh ? initializeImageRatioDefaults(resolved, resolved.parameters!, undefined, undefined, values.protocol) : resolved;
+            return JSON.stringify(image) === JSON.stringify(profile.image) ? values : { ...values, capabilityConfig: { ...profile, image } };
         }
     }
     if (values.capability !== "image" || values.protocol !== "cangyuan-midjourney-v82") return values;

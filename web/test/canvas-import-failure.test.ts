@@ -4,17 +4,19 @@ import { runInNewContext } from "node:vm";
 import { createDefaultModel3DState } from "@/lib/canvas/model3d";
 import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
 import { repairMissingCanvasAssets } from "@/services/canvas-asset-repair";
-import { useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { canvasDraftNavigationState, useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore, withAssetStorePersistenceSuppressed, type Asset } from "@/stores/use-asset-store";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const require = createRequire(import.meta.url);
-const builds = await Promise.all(["pages/canvas/index.tsx", "services/project-asset-sync.ts"].map(async (path) => {
-    const build = await Bun.build({ entrypoints: [new URL(`../src/${path}`, import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
-    if (!build.success) throw new Error(build.logs.map(String).join("\n"));
-    return build.outputs[0].text();
-}));
+const builds = await Promise.all(
+    ["pages/canvas/index.tsx", "services/project-asset-sync.ts"].map(async (path) => {
+        const build = await Bun.build({ entrypoints: [new URL(`../src/${path}`, import.meta.url).pathname], target: "node", format: "cjs", external: ["*"] });
+        if (!build.success) throw new Error(build.logs.map(String).join("\n"));
+        return build.outputs[0].text();
+    }),
+);
 const initialProjects = useCanvasStore.getState().projects;
 const initialAssets = useAssetStore.getState().assets;
 afterEach(() => {
@@ -26,9 +28,28 @@ function fixture() {
     const state = createDefaultModel3DState();
     state.result = { assetId: "original-asset", resourceId: "original", storageKey: "resource:original", url: "/api/resources/original/file", fileName: "toy.glb", mimeType: "model/gltf-binary", bytes: 12, format: "glb" };
     state.run = { taskId: "original-task", requestId: "original-request", status: "succeeded", sourceFingerprint: "original-fingerprint", snapshot: structuredClone(state.draft) };
-    const model: CanvasNodeData = { id: "model", type: CanvasNodeType.Model3D, title: "toy.glb", position: { x: 0, y: 0 }, width: 520, height: 420, metadata: { storageKey: state.result.storageKey, content: state.result.url, assetId: state.result.assetId, taskId: "original-task", model3d: state } };
+    const model: CanvasNodeData = {
+        id: "model",
+        type: CanvasNodeType.Model3D,
+        title: "toy.glb",
+        position: { x: 0, y: 0 },
+        width: 520,
+        height: 420,
+        metadata: { storageKey: state.result.storageKey, content: state.result.url, assetId: state.result.assetId, taskId: "original-task", model3d: state },
+    };
     const text: CanvasNodeData = { id: "text", type: CanvasNodeType.Text, title: "note", position: { x: 600, y: 0 }, width: 200, height: 100, metadata: { content: "keep my draft", fontSize: 16 } };
-    const source: CanvasProject = { id: "original-canvas", title: "Source", createdAt: "", updatedAt: "", nodes: [model, text], connections: [{ id: "edge", from: "model", to: "text" }], chatSessions: [], activeChatId: null, viewport: { x: 0, y: 0, k: 1 }, timeline: { clips: [] } };
+    const source: CanvasProject = {
+        id: "original-canvas",
+        title: "Source",
+        createdAt: "",
+        updatedAt: "",
+        nodes: [model, text],
+        connections: [{ id: "edge", from: "model", to: "text" }],
+        chatSessions: [],
+        activeChatId: null,
+        viewport: { x: 0, y: 0, k: 1 },
+        timeline: { clips: [] },
+    };
     const asset = { ...canvasNodeToAsset(model, { canvasId: source.id, source: "canvas-upload" }), id: "original-asset", createdAt: "", updatedAt: "" } as Asset;
     const archive: CanvasExportFile = { app: "yingce", version: 4, exportedAt: "", projects: [{ project: source, files: [{ storageKey: "resource:original", path: "media/toy.glb", mimeType: "model/gltf-binary", bytes: 12 }] }] };
     return { source, asset, archive };
@@ -46,23 +67,32 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     const notices: Array<{ kind: string; content: unknown }> = [];
     let syncRetries = 0;
     let finish!: () => void;
-    const completed = new Promise<void>((resolve) => { finish = resolve; });
-    const notice = (kind: string) => (content: unknown) => { notices.push({ kind, content }); finish(); };
+    const completed = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    const notice = (kind: string) => (content: unknown) => {
+        notices.push({ kind, content });
+        finish();
+    };
     const message = { loading: () => () => undefined, success: notice("success"), warning: notice("warning"), error: notice("error") };
     const canvasState = () => ({
-        ...useCanvasStore.getState(), hydrated: true,
-        importProject: (input: Partial<CanvasProject>) => withCanvasStorePersistenceSuppressed(() => {
-            const id = useCanvasStore.getState().importProject(input);
-            created.push(structuredClone(useCanvasStore.getState().projects.find((item) => item.id === id)!));
-            return id;
-        }),
+        ...useCanvasStore.getState(),
+        hydrated: true,
+        importProject: (input: Partial<CanvasProject>) =>
+            withCanvasStorePersistenceSuppressed(() => {
+                const id = useCanvasStore.getState().importProject(input);
+                created.push(structuredClone(useCanvasStore.getState().projects.find((item) => item.id === id)!));
+                return id;
+            }),
         updateProject: (id: string, patch: Partial<CanvasProject>) => withCanvasStorePersistenceSuppressed(() => useCanvasStore.getState().updateProject(id, patch)),
     });
     const canvasStore = Object.assign((selector: (state: ReturnType<typeof canvasState>) => unknown) => selector(canvasState()), { getState: canvasState });
-    const assetStore = { getState: () => ({
-        ...useAssetStore.getState(),
-        addAsset: (input: Parameters<ReturnType<typeof useAssetStore.getState>["addAsset"]>[0]) => withAssetStorePersistenceSuppressed(() => useAssetStore.getState().addAsset(input)),
-    }) };
+    const assetStore = {
+        getState: () => ({
+            ...useAssetStore.getState(),
+            addAsset: (input: Parameters<ReturnType<typeof useAssetStore.getState>["addAsset"]>[0]) => withAssetStorePersistenceSuppressed(() => useAssetStore.getState().addAsset(input)),
+        }),
+    };
     const sync = {
         hasRemoteUserDataSyncSession: () => true,
         subscribeRemoteUserDataReady: () => () => undefined,
@@ -71,8 +101,12 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
             if (options.failAssetSync === "permanent") throw Object.assign(new Error("Asset sync rejected"), { permanent: true });
             if (options.failAssetSync !== false) throw new Error("Network Error");
         },
-        scheduleRemoteUserDataSync: () => { syncRetries += 1; },
-        loadAssetsForUse: async () => { throw new Error("Import must not load the source asset"); },
+        scheduleRemoteUserDataSync: () => {
+            syncRetries += 1;
+        },
+        loadAssetsForUse: async () => {
+            throw new Error("Import must not load the source asset");
+        },
     };
     const baseRequire = (name: string): any => {
         if (name === "@/services/user-data-sync") return sync;
@@ -90,22 +124,56 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
     const ui = new Proxy({}, { get: (_, name) => String(name) });
     const pageModule = { exports: {} as { default(): any } };
     runInNewContext(builds[0], {
-        module: pageModule, exports: pageModule.exports, crypto, Error, console: { warn() {}, error() {} },
+        module: pageModule,
+        exports: pageModule.exports,
+        crypto,
+        Error,
+        console: { warn() {}, error() {} },
         window: { requestAnimationFrame: (callback: () => void) => callback() },
         require(name: string): any {
-            if (name === "react") return { lazy: () => "Lazy", Suspense: "Suspense", useState: (value: unknown) => [value, () => undefined], useRef: (current: unknown) => ({ current }), useMemo: (fn: () => unknown) => fn(), useCallback: (fn: unknown) => fn, useEffect() {} };
+            if (name === "react")
+                return {
+                    lazy: () => "Lazy",
+                    Suspense: "Suspense",
+                    useState: (value: unknown) => [value, () => undefined],
+                    useRef: (current: unknown) => ({ current }),
+                    useMemo: (fn: () => unknown) => fn(),
+                    useCallback: (fn: unknown) => fn,
+                    useEffect() {},
+                };
             if (name === "react-router") return { useNavigate: () => (path: string) => navigations.push(path), useSearchParams: () => [new URLSearchParams()] };
             if (name === "@tanstack/react-query") return { useInfiniteQuery: () => ({ data: { pages: [{ projects: [], total: 0 }] }, isSuccess: true }), useQuery: () => ({ data: { projects: [] } }) };
             if (name === "antd") return { ...ui, App: { useApp: () => ({ message }) }, Button: "Button", Modal: "Modal", Input: "Input", Dropdown: "Dropdown" };
             if (name.startsWith("@/components/") || name === "lucide-react") return ui;
-            if (name === "@/stores/canvas/use-canvas-store") return { useCanvasStore: canvasStore, flushCanvasStorePersistence: async () => { persisted.push(structuredClone(useCanvasStore.getState().projects)); } };
+            if (name === "@/stores/canvas/use-canvas-store")
+                return {
+                    canvasDraftNavigationState,
+                    useCanvasStore: canvasStore,
+                    flushCanvasStorePersistence: async () => {
+                        persisted.push(structuredClone(useCanvasStore.getState().projects));
+                    },
+                };
             if (name === "@/stores/canvas/use-canvas-ui-store") return { useCanvasUiStore: (selector: (state: unknown) => unknown) => selector({ selectedProjectIds: [], deleteProjectIds: [] }) };
             if (name === "@/stores/use-user-store") return { useUserStore: (selector: (state: unknown) => unknown) => selector({ user: { id: "test-user" }, hydrated: true, features: {} }) };
             if (name === "@/stores/use-appearance-store") return { useAppearanceStore: (selector: (state: unknown) => unknown) => selector({ appearance: { brandName: "Test" } }) };
             if (name === "@/stores/use-sync-progress-store") return { useSyncProgressStore: { getState: () => ({ setProjectProgress() {}, incrementProjectCompleted() {} }) } };
-            if (name === "@/lib/zip") return { readZip: async () => new Map([["projects.json", new Blob([JSON.stringify(archive)])], ["media/toy.glb", new Blob(["model bytes"]) ]]) };
+            if (name === "@/lib/zip")
+                return {
+                    readZip: async () =>
+                        new Map([
+                            ["projects.json", new Blob([JSON.stringify(archive)])],
+                            ["media/toy.glb", new Blob(["model bytes"])],
+                        ]),
+                };
             if (name === "@/lib/workspace-route-modules") return { loadCanvasProjectPage: async () => undefined };
-            if (name === "@/services/api/resources") return { ...baseRequire(name), uploadResourceFile: async () => { if (options.failUpload !== false) throw new Error("Offline upload"); return { id: "imported-resource" }; } };
+            if (name === "@/services/api/resources")
+                return {
+                    ...baseRequire(name),
+                    uploadResourceFile: async () => {
+                        if (options.failUpload !== false) throw new Error("Offline upload");
+                        return { id: "imported-resource" };
+                    },
+                };
             if (name === "@/services/resource-blob-cache") return { primeResourceBlobCache: async () => "" };
             if (name === "@/services/file-storage") return { setMediaBlob: saveBlob };
             if (name === "@/services/image-storage") return { setImageBlob: saveBlob };
@@ -119,7 +187,14 @@ function harness(options: { failLocalSave?: boolean; failUpload?: boolean; failA
         return (Array.isArray(value) ? value : Object.values(value.props || {})).map(findInput).find(Boolean);
     };
     return {
-        source, asset, persisted, created, navigations, writes, remoteSnapshots, notices,
+        source,
+        asset,
+        persisted,
+        created,
+        navigations,
+        writes,
+        remoteSnapshots,
+        notices,
         retries: () => syncRetries,
         async run() {
             findInput(pageModule.exports.default()).props.onChange({ target: { files: [new File([], "canvas.zip")] } });

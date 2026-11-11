@@ -170,6 +170,7 @@ export function useCanvasProjectLifecycle({
             const store = useCanvasStore.getState();
             if (!store.openProject(projectId) && draftIntent?.id === projectId && draftIntent.scope === getActiveUserScope() && typeof draftIntent.title === "string") {
                 store.createDraftProject(draftIntent.title, projectId);
+                if (draftIntent.starterMode === "guided" || draftIntent.starterMode === "freeform") store.updateProject(projectId, { starterMode: draftIntent.starterMode });
             }
             const draft = store.getDraftProject(projectId);
             if (draft) {

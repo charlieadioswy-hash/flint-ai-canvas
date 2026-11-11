@@ -151,8 +151,11 @@ func TestGroupedProtocolPreservesCommonImageConfiguration(t *testing.T) {
 			continue
 		}
 		profile, err := DecodeModelCapabilityConfig(row.CapabilityConfigJSON)
-		if err != nil || !reflect.DeepEqual(profile.Image.Quality, config.Image.Quality) || !reflect.DeepEqual(profile.Image.Resolution, config.Image.Resolution) || !reflect.DeepEqual(profile.Image.Size.Presets, config.Image.Size.Presets) {
-			t.Fatalf("common capabilities changed: %#v %v", profile, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(profile.Image.Quality, config.Image.Quality) || !reflect.DeepEqual(profile.Image.Resolution, config.Image.Resolution) || !reflect.DeepEqual(profile.Image.Size.Presets, config.Image.Size.Presets) {
+			t.Fatalf("common capabilities changed: got=%+v want=%+v err=%v", profile.Image, config.Image, err)
 		}
 	}
 }

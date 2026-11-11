@@ -8,7 +8,7 @@ import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { canvasModelConfigPatch } from "../src/components/canvas/canvas-node-prompt-config";
 import { applyNodeConfigPatch } from "../src/lib/canvas/canvas-project-domain";
 import { modelGenerationParameterError, modelGenerationParamsForSwitch } from "../src/lib/model-selection";
-import { modelQuoteRequest } from "../src/lib/model-pricing";
+import { modelQuoteRequest, systemModelQuoteRequest } from "../src/lib/model-pricing";
 
 function configForImage(): AiConfig {
     const capabilityConfig = defaultModelCapabilityConfig();
@@ -71,9 +71,19 @@ test("video ranges preserve declared zero and fractional steps", () => {
     expect(videoDurationAllowed(profile, 0)).toBe(true);
 });
 
-test.each([{ size: "4000x3000" }, { count: "3" }, { imageResolution: "4k" }])("task config rejects stale image parameters before sending: %o", (patch) => {
+test.each([{ size: "4000x3000" }, { imageResolution: "4k" }])("task config adapts stale image parameters before sending: %o", (patch) => {
     const config = configForImage();
-    expect(() => backendProviderConfig({ ...config, ...patch }, "image")).toThrow();
+    const current = { ...config, ...patch };
+    expect(modelGenerationParameterError(current, current.model, "image")).not.toBe("");
+    const submitted = backendProviderConfig(current, "image");
+    const quote = systemModelQuoteRequest(current, current.model, "image")!;
+    expect(submitted.size).toBe("512x512");
+    expect(submitted.imageResolution).toBe("1k");
+    expect(quote.intent.options).toMatchObject({ size: submitted.size, imageResolution: submitted.imageResolution });
+});
+
+test("task config rejects unsplit image task counts beyond the model output limit", () => {
+    expect(() => backendProviderConfig({ ...configForImage(), count: "3" }, "image")).toThrow(/数量|张数/);
 });
 
 test("canvas submission preserves independent task count beyond the model output limit", () => {

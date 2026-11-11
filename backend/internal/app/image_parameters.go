@@ -107,6 +107,14 @@ func resolveImageCapabilityParameters(image *ImageCapabilityConfig, definitions 
 			case "size":
 				enabled = image.Size.Parameter != "none"
 				values, initial = image.Size.Values, image.Size.Default
+				if image.Size.AllowCustom {
+					// Legacy values are suggestions when custom input is enabled,
+					// not an enum restricting the imported parameter contract.
+					values, p.Values = nil, nil
+					if initial != "" {
+						p.Default = initial
+					}
+				}
 			case "imageResolution":
 				enabled = image.Resolution.Supported
 				values, initial = image.Resolution.Values, image.Resolution.Default
@@ -226,7 +234,7 @@ func projectImageParameters(image *ImageCapabilityConfig) error {
 		image.Size = ImageSizeConfig{Parameter: "none", Default: "auto", Values: []string{}}
 	}
 	if sizeEnabled {
-		presets := make([]ImageSizePreset, 0, len(image.Size.Presets))
+		var presets []ImageSizePreset
 		for _, preset := range image.Size.Presets {
 			value := preset.Ratio
 			if image.Size.Parameter == "size" {
@@ -423,6 +431,10 @@ func resolveImageParameterValues(parameters []protocol.ImageParameter, values ma
 	for _, p := range parameters {
 		if p.IsEnabled() && p.Required && (result[p.Name] == nil || result[p.Name] == "") {
 			return nil, imageParameterAdmissionError(p.Name, "required", "请填写图片参数："+p.Label)
+		}
+		value := result[p.Name]
+		if p.IsEnabled() && p.Name == "size" && len(p.Values) == 0 && value != nil && value != "" && !strings.EqualFold(fmt.Sprint(value), "auto") && !validCustomImageSize(fmt.Sprint(value)) {
+			return nil, imageParameterAdmissionError(p.Name, "unsupported_value", "自定义图片尺寸必须是有效的正数宽高或比例")
 		}
 	}
 	return result, nil

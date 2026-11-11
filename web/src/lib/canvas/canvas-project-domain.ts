@@ -344,13 +344,15 @@ function adaptNodeModelSettings(node: CanvasNodeData, config: AiConfig, model: s
 // 媒体节点保留设置供目标能力适配；没有模型目录的纯结构编辑不猜测能力。
 // 音频/文本节点继续使用既有重置规则。
 function resetGenerationParamsOnModelSwitch(node: CanvasNodeData, patch: Partial<CanvasNodeMetadata>): Partial<CanvasNodeMetadata> {
-    if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || (node.type === CanvasNodeType.Config && node.metadata?.generationMode !== "audio" && node.metadata?.generationMode !== "text")) return patch;
     if (typeof patch.model !== "string" || patch.model === node.metadata?.model) {
         return patch;
     }
     const reset: Partial<CanvasNodeMetadata> = {};
-    for (const key of NODE_MODEL_GENERATION_PARAMS) {
-        reset[key] = undefined;
+    const mediaNode = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || (node.type === CanvasNodeType.Config && node.metadata?.generationMode !== "audio" && node.metadata?.generationMode !== "text");
+    if (!mediaNode) {
+        for (const key of NODE_MODEL_GENERATION_PARAMS) {
+            reset[key] = undefined;
+        }
     }
     const controls = node.metadata?.generationSpec?.options.controlNet || node.metadata?.controlNet;
     if (controls) reset.controlNet = controls.map((unit) => ({ ...unit, parameters: { ...unit.parameters, model: "" } }));

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,105 @@ func TestImageParameterResolutionCanonicalizesDeclaredCasing(t *testing.T) {
 	}
 	if selector["imageResolution"] != "2K" {
 		t.Fatalf("price selector kept lowercase: %v", selector)
+	}
+}
+
+func TestImageParametersLegacyCustomSizeImport(t *testing.T) {
+	for _, tc := range []struct {
+		protocol, model, size string
+	}{
+		{protocol.LiblibImageProtocolID, verifiedLiblibSDCheckpoint, "768x1024"},
+		{"wangsu-images", "gpt-image-2", "1600x1024"},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			profile := DefaultImageCapabilityConfig(tc.protocol, tc.model)
+			profile.Size.Default = tc.size
+			size, _ := protocol.CommonImageParameter("size")
+			size.Encoding, size.Values, size.Default = "pixels", []any{"1024x1024"}, "1024x1024"
+			if err := resolveImageCapabilityParameters(profile, []protocol.ImageParameter{size}, tc.model, ""); err != nil {
+				t.Fatal(err)
+			}
+			if !profile.Size.AllowCustom || profile.Size.Default != tc.size {
+				t.Fatalf("legacy custom size lost: %+v", profile.Size)
+			}
+			config := providerConfig{InterfaceType: tc.protocol, Model: tc.model, Size: tc.size}
+			if err := applyImageParameterValues(&config, profile); err != nil {
+				t.Fatalf("legacy native pixels rejected: %v", err)
+			}
+			if err := validateImageTask(profile, canvasGenerationInput{Config: config}); err != nil {
+				t.Fatal(err)
+			}
+			if config.Size != tc.size || config.ImageParameters["size"] != tc.size {
+				t.Fatalf("native pixel encoding drifted: %+v", config)
+			}
+		})
+	}
+}
+
+func TestImageParametersExplicitSizeEnumOverridesLegacyCustomFlag(t *testing.T) {
+	profile := DefaultImageCapabilityConfig("openai-image", "gpt-image-2")
+	profile.Parameters = []protocol.ImageParameter{{Name: "size", Values: []any{"1024x1024"}, Default: "1024x1024"}}
+	size, _ := protocol.CommonImageParameter("size")
+	if err := resolveImageCapabilityParameters(profile, []protocol.ImageParameter{size}, "gpt-image-2", "/v1/images/generations"); err != nil {
+		t.Fatal(err)
+	}
+	if profile.Size.AllowCustom {
+		t.Fatal("explicit enum inherited the legacy custom flag")
+	}
+	config := providerConfig{Size: "1600x1024"}
+	if err := applyImageParameterValues(&config, profile); err == nil {
+		t.Fatal("undeclared custom size accepted by explicit enum")
+	}
+}
+
+func TestImageParametersCustomSizeKeepsFormatAndModelLimits(t *testing.T) {
+	profile := DefaultImageCapabilityConfig("wangsu-images", "gpt-image-2")
+	if err := resolveImageCapabilityParameters(profile, nil, "gpt-image-2", "/v1/images/generations"); err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []string{"wide", "0x1024", "-1x1024", "1e3x1024", "16:9", "1601x1024", "4096x2048", "3200x800", "512x512"} {
+		t.Run(size, func(t *testing.T) {
+			input := canvasGenerationInput{Config: providerConfig{InterfaceType: "wangsu-images", Model: "gpt-image-2", Size: size}}
+			if err := validateImageTaskWithResolvedSize(map[string]any{}, &input, profile); err == nil {
+				t.Fatalf("invalid custom size %q accepted", size)
+			}
+		})
+	}
+	if _, err := resolveImageParameterValues(profile.Parameters, map[string]any{"size": "wide"}); err == nil {
+		t.Fatal("logical admission accepted a malformed free size")
+	}
+	for _, value := range []string{"wide", "auto"} {
+		for i := range profile.Parameters {
+			if profile.Parameters[i].Name == "size" {
+				profile.Parameters[i].Default = value
+			}
+		}
+		_, err := resolveImageParameterValues(profile.Parameters, nil)
+		if (err == nil) != (value == "auto") {
+			t.Fatalf("unexpected free size default admission for %q: %v", value, err)
+		}
+	}
+}
+
+func TestImageParametersEmptyPresetsStayStableAcrossJSON(t *testing.T) {
+	for _, presets := range [][]ImageSizePreset{nil, {}} {
+		profile := DefaultImageCapabilityConfig("openai-image", "model")
+		profile.Parameters = []protocol.ImageParameter{{Name: "size", Label: "Size", Type: "string", Default: "1024x1024", Binding: "aspectRatio", Encoding: "pixels"}}
+		profile.Size.Presets = presets
+		if err := projectImageParameters(profile); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored ImageCapabilityConfig
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(restored, *profile) {
+			t.Fatalf("normalized image contract changed after persistence: got=%+v want=%+v", restored, *profile)
+		}
 	}
 }
 

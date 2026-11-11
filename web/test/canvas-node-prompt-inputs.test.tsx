@@ -6,6 +6,7 @@ import * as resourceReferences from "../src/lib/canvas/canvas-resource-reference
 import * as modelSelection from "../src/lib/model-selection";
 import * as modelPricing from "../src/lib/model-pricing";
 import * as modelCapabilities from "../src/lib/model-capabilities";
+import * as mediaSettings from "../src/lib/media-settings";
 import * as configStore from "../src/stores/use-config-store";
 import * as promptConfig from "../src/components/canvas/canvas-node-prompt-config";
 import * as promptResize from "../src/components/canvas/canvas-node-prompt-resize";
@@ -216,6 +217,7 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         "@/lib/canvas/liblib-lora-quote": loraQuote,
         "@/lib/model-selection": modelSelection,
         "@/lib/model-capabilities": modelCapabilities,
+        "@/lib/media-settings": mediaSettings,
         "@/lib/model-pricing": modelPricing,
         "@/lib/generation-batch-limit": { useGenerationBatchLimit: currentGenerationBatchLimit },
         "@/constant/credits": { CreditSymbol: "CreditSymbol", requestCreditCost: modelPricing.requestCreditCost },

@@ -42,6 +42,7 @@ let renderSetupChoices: (() => void) | null = null;
 let settingsWrites: Array<{ projectId: string; input: { settings: DramaSettings; expectedRevision: number } }> = [];
 let notices: string[] = [];
 let otherWrites = 0;
+let redirects: string[] = [];
 const silent = () => {};
 const forbidden = async () => {
     otherWrites++;
@@ -76,7 +77,15 @@ mock.module("antd", () => ({
         </select>
     ),
 }));
-mock.module("react-router", () => ({ useParams: () => ({ projectId: "project" }), useNavigate: () => silent, Link: ({ children }: any) => children, Navigate: () => null }));
+mock.module("react-router", () => ({
+    useParams: () => ({ projectId: "project" }),
+    useNavigate: () => silent,
+    Link: ({ children }: any) => children,
+    Navigate: ({ to }: { to: string }) => {
+        redirects.push(to);
+        return null;
+    },
+}));
 mock.module("@/components/layout/workspace-page", () => ({ WorkspacePage: ({ children }: any) => <div>{children}</div> }));
 mock.module("@/components/layout/workspace-state", () => ({ WorkspaceErrorState: () => <div>读取失败</div>, WorkspaceLoadingState: () => <div>读取中</div> }));
 mock.module("@/components/ui/product/app-modal", () => ({ AppModal: () => null }));
@@ -157,6 +166,7 @@ async function withGuide(
     settingsWrites = [];
     notices = [];
     otherWrites = 0;
+    redirects = [];
     dramaContext = null;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
     client.setQueryData(dramaKeys.summary("project"), structuredClone(summary));
@@ -192,13 +202,19 @@ async function withGuide(
             await settle();
         });
         await act(settle);
-        expect(dramaContext?.onProposal).toBeFunction();
-        expect(dramaContext?.onActionsHost).toBeFunction();
-        container.querySelector(".drama-guide-agent-host")!.append(chatHost);
-        await act(async () => {
-            dramaContext!.onActionsHost!(actionsHost);
-            await settle();
-        });
+        if (production.guideStep === "completed") {
+            expect(redirects).toContain("/projects/project");
+            expect(dramaContext).toBeNull();
+            expect(container.querySelector(".drama-guide-agent-host")).toBeNull();
+        } else {
+            expect(dramaContext?.onProposal).toBeFunction();
+            expect(dramaContext?.onActionsHost).toBeFunction();
+            container.querySelector(".drama-guide-agent-host")!.append(chatHost);
+            await act(async () => {
+                dramaContext!.onActionsHost!(actionsHost);
+                await settle();
+            });
+        }
         await check({
             container,
             chatHost,

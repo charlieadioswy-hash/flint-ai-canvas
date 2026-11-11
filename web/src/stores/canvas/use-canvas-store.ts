@@ -82,6 +82,7 @@ function emptyCanvasProject(id: string, title: string, projectId?: string): Canv
         connections: [],
         chatSessions: [],
         activeChatId: null,
+        starterMode: "freeform",
         appearance: appearanceDefault?.appearance ?? canvasAppearanceForPreset(useThemeStore.getState().theme),
         backgroundMode: appearanceDefault?.backgroundMode || NEW_CANVAS_BACKGROUND_MODE,
         showImageInfo: false,
@@ -94,7 +95,7 @@ function emptyCanvasProject(id: string, title: string, projectId?: string): Canv
 // out of persistence until content or an explicit save materializes this ID.
 export function canvasDraftNavigationState(id: string) {
     const project = useCanvasStore.getState().getDraftProject(id);
-    return project ? { canvasDraft: { id, title: project.title, scope: getActiveUserScope() } } : undefined;
+    return project ? { canvasDraft: { id, title: project.title, scope: getActiveUserScope(), starterMode: project.starterMode === "guided" ? "guided" : "freeform" } } : undefined;
 }
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 type QueuedCanvasPersist = {

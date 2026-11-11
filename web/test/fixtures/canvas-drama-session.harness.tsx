@@ -27,7 +27,6 @@ const { setActiveUserScope } = await import("../../src/lib/user-scope");
 const { useCanvasDrama } = await import("../../src/pages/canvas/use-canvas-drama");
 import type { DramaCast, DramaEpisodeDetail, DramaSummary } from "../../src/services/api/drama";
 import type { CanvasNodeData } from "../../src/types/canvas";
-import type { TimelineProject } from "../../src/types/timeline";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -73,15 +72,14 @@ async function mount() {
     setActiveUserScope("account-a");
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     const nodesRef = { current: [] as CanvasNodeData[] };
-    const writes: Array<{ canvasId: string; timeline: TimelineProject }> = [];
+    const writes: Array<{ canvasId: string; nodeIds: string[] }> = [];
     let controller!: ReturnType<typeof useCanvasDrama>;
     const host = document.createElement("div");
     const root = createRoot(host);
-    function Harness({ canvasId, dramaId, timeline }: { canvasId: string; dramaId: string; timeline?: TimelineProject }) {
+    function Harness({ canvasId, dramaId }: { canvasId: string; dramaId: string }) {
         controller = useCanvasDrama({
             canvasId,
             dramaId,
-            timeline,
             projectLoaded: true,
             nodes: nodesRef.current,
             nodesRef,
@@ -89,21 +87,19 @@ async function mount() {
                 nodesRef.current = typeof update === "function" ? update(nodesRef.current) : update;
             },
             setConnections() {},
-            saveTimeline: (value) => {
-                writes.push({ canvasId, timeline: value });
+            focusNodes(nodeIds) {
+                writes.push({ canvasId, nodeIds });
             },
-            openTimeline() {},
-            focusNodes() {},
             searchParams: new URLSearchParams(),
             setSearchParams() {},
         });
         return null;
     }
-    const render = async (canvasId: string, dramaId: string, timeline?: TimelineProject) => {
+    const render = async (canvasId: string, dramaId: string) => {
         await act(async () => {
             root.render(
                 <QueryClientProvider client={queryClient}>
-                    <Harness canvasId={canvasId} dramaId={dramaId} timeline={timeline} />
+                    <Harness canvasId={canvasId} dramaId={dramaId} />
                 </QueryClientProvider>,
             );
         });
@@ -117,24 +113,50 @@ async function mount() {
     return { render, nodesRef, writes, controller: () => controller };
 }
 
-test("载入 A 的剪辑期间切到 B，不覆盖 B 的已有时间线或添加 A 的节点", async () => {
+test("读取 A 的成片期间切到 B，不登记旧媒体或添加节点，不改变 B 的定位", async () => {
     const finalRead = deferred<DramaEpisodeDetail>();
     let episodeReads = 0;
-    episodeSpy.mockImplementation(async () => (++episodeReads === 1 ? episode : finalRead.promise));
+    episodeSpy.mockImplementation(async () => {
+        episodeReads += 1;
+        return finalRead.promise;
+    });
     mediaSpy.mockImplementation(async () => new Map([["video-a", "asset-video-a"]]));
+    const mediaCalls = mediaSpy.mock.calls.length;
     const view = await mount();
     let pending!: Promise<void>;
     await act(async () => {
-        pending = view.controller().openEpisodeCut("episode-a");
+        pending = view.controller().projectFinal("episode-a");
     });
     await settle();
-    expect(episodeReads).toBe(2);
+    expect(episodeReads).toBe(1);
     const bNodes = [{ id: "node-b" }] as CanvasNodeData[];
     view.nodesRef.current = bNodes;
-    const bTimeline = { version: 2, clips: [{ id: "existing-b" }], tracks: [], durationMs: 1000 } as unknown as TimelineProject;
-    await view.render("canvas-b", "drama-b", bTimeline);
+    await view.render("canvas-b", "drama-b");
     await act(async () => {
-        finalRead.resolve(episode);
+        finalRead.resolve({ ...episode, episode: { ...episode.episode, finalResourceId: "video-a" } });
+        await pending;
+    });
+    expect(view.nodesRef.current).toBe(bNodes);
+    expect(view.writes).toEqual([]);
+    expect(mediaSpy.mock.calls).toHaveLength(mediaCalls);
+    expect(view.controller().busyKey).toBeNull();
+});
+
+test("登记 A 的成片媒体期间切到 B，迟到回执不添加旧节点或抢走定位", async () => {
+    const registration = deferred<Map<string, string>>();
+    episodeSpy.mockImplementation(async () => ({ ...episode, episode: { ...episode.episode, finalResourceId: "video-a" } }));
+    mediaSpy.mockImplementation(async () => registration.promise);
+    const view = await mount();
+    let pending!: Promise<void>;
+    await act(async () => {
+        pending = view.controller().projectFinal("episode-a");
+    });
+    await settle();
+    const bNodes = [{ id: "node-b" }] as CanvasNodeData[];
+    view.nodesRef.current = bNodes;
+    await view.render("canvas-b", "drama-b");
+    await act(async () => {
+        registration.resolve(new Map([["video-a", "asset-video-a"]]));
         await pending;
     });
     expect(view.nodesRef.current).toBe(bNodes);

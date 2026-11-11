@@ -158,7 +158,7 @@ export function preserveImageSettings(profile: ImageCapabilityConfig, value: Ima
             : !profile.resolution.supported && profile.size.presets?.some((p) => p.tier === result.quality)
               ? result.quality
               : defaults.quality;
-        result.imageResolution = profile.resolution.supported ? choose(result.imageResolution, profile.resolution.default, (v) => !profile.resolution.values.length || profile.resolution.values.includes(v)) : "";
+        result.imageResolution = profile.resolution.supported ? choose(result.imageResolution, profile.resolution.default, (v) => !profile.resolution.values.length || profile.resolution.values.includes(v)) : "auto";
         if (/^-?\d+$/.test(result.count) && (Number(result.count) < 1 || Number(result.count) > profile.maxOutputs)) result.count = "1";
         result.transparentBackground = preserveVideoBoolean(profile.transparentBackground.supported, profile.transparentBackground.default, result.transparentBackground);
         if (!malformed) result.imageParameters = "{}";

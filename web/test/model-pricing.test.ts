@@ -81,6 +81,10 @@ describe("model request pricing", () => {
             ],
         });
         const requirements: ModelRequirements = { capability: "image", options: { size: "16:9", quality: "high", imageResolution: "4K" } };
+        const capabilityConfig = defaultModelCapabilityConfig("gemini-image");
+        capabilityConfig.image!.quality = { supported: true, values: ["low", "high"], default: "low" };
+        capabilityConfig.image!.resolution = { supported: true, values: ["1k", "2k", "4k"], default: "1k" };
+        config.channels[0]!.modelCosts![0]!.capabilityConfig = capabilityConfig;
         expect(requestCreditCost({ channelMode: "remote", modelCosts: resolveModelChannel(config, config.model).modelCosts, model: "image-model", capability: "image", config, requirements, count: 1 })).toBe(4);
         const profile = defaultImageCapabilityConfig("gemini-image");
         profile.quality = { supported: true, values: ["low", "high"], default: "low" };
