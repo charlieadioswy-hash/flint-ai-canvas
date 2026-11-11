@@ -106,6 +106,7 @@ export default function PrevisReproLab() {
                     onClose={() => setWorkbenchOpen(false)}
                     onChange={onChange}
                     onApply={onApply}
+                    onAddToCanvas={onApply}
                     onDeleteImageNode={() => undefined}
                     onFlush={onFlush}
                 />

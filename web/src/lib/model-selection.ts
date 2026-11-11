@@ -1,20 +1,11 @@
-import {
-    defaultImageCapabilityConfig,
-    imageSizeAllowed,
-    modelCapabilityConfigFor,
-    normalizeImageValue,
-    normalizeVideoValue,
-    STANDARD_IMAGE_SIZE_VALUES,
-    videoDurationAllowed,
-    videoResolutionRequest,
-    type ImageCapabilityConfig,
-} from "@/lib/model-capabilities";
+import { defaultImageCapabilityConfig, imageSizeAllowed, modelCapabilityConfigFor, STANDARD_IMAGE_SIZE_VALUES, videoDurationAllowed, videoResolutionRequest, type ImageCapabilityConfig } from "@/lib/model-capabilities";
+import { preserveImageSettings, preserveVideoSettings, preserveVideoBoolean, resolvedMediaConfig } from "@/lib/media-settings";
 import { videoResolutionComparisonKey } from "@/lib/video-generation-options";
 import { imageParameterRequest, imageParameterDefaults, imageParameterAccepts } from "./image-parameters";
 import { imageSizePresets } from "@/lib/image-size-presets";
 import { resolveImageRequestSize } from "@/services/api/image-validation";
 import { currentGenerationBatchLimit } from "./generation-batch-limit";
-import { modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { modelOptionName, PUBLIC_MODEL_CATALOG_ID, resolveModelChannel, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 export type ModelInputSummary = {
     textCount: number;
@@ -207,19 +198,31 @@ export function modelPromptLengthError(config: AiConfig, model: string, capabili
 }
 
 export function modelRequestOptions(config: AiConfig, capability: ModelCapability): Record<string, unknown> {
+    config = resolvedMediaConfig(config, capability, config.model || (capability === "image" ? config.imageModel : config.videoModel));
     switch (capability) {
-        case "image":
+        case "image": {
+            const image = modelCapabilityConfigFor(config, config.model || config.imageModel).image!;
+            const explicit = (value: string | undefined) => Boolean(value?.trim() && !["auto", "any"].includes(value.trim().toLowerCase()));
             return (
-                imageParameterRequest(modelCapabilityConfigFor(config, config.model || config.imageModel).image!, config) ?? {
-                    size: config.size,
-                    imageResolution: config.imageResolution,
-                    quality: config.quality,
-                    transparentBackground: config.transparentBackground === "true",
+                imageParameterRequest(image, config) ?? {
+                    ...(image.size.parameter !== "none" ? { size: config.size } : {}),
+                    ...(explicit(config.imageResolution) ? { imageResolution: config.imageResolution } : {}),
+                    ...(explicit(config.quality) ? { quality: config.quality } : {}),
+                    ...(image.transparentBackground.supported ? { transparentBackground: config.transparentBackground === "true" } : {}),
                     count: Number(config.count),
                 }
             );
-        case "video":
-            return { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" };
+        }
+        case "video": {
+            const video = modelCapabilityConfigFor(config, config.model).video!;
+            return {
+                ...(video.ratios.length ? { size: config.size } : {}),
+                ...(video.durationSupported !== false ? { videoSeconds: Number(config.videoSeconds) } : {}),
+                ...(video.resolutions.length ? { vquality: config.vquality } : {}),
+                ...(video.generateAudio.supported ? { videoGenerateAudio: config.videoGenerateAudio === "true" } : {}),
+                ...(video.watermark.supported ? { videoWatermark: config.videoWatermark === "true" } : {}),
+            };
+        }
         case "audio":
             return {
                 audioVoice: config.audioVoice,
@@ -331,6 +334,7 @@ export function compatibleModelInGroup(config: AiConfig, models: string[], requi
 
 export function resolveCompatibleModel(config: AiConfig, selected: string, requirements?: ModelRequirements) {
     if (!requirements?.capability) return selected;
+    if (selected && (requirements.capability === "image" || requirements.capability === "video")) return selected;
     const options = selectableModelsByCapability(config, requirements.capability);
     if (!options.length) return selected;
     const selectedGroup = groupModelsByDisplayName(config, options).find((group) => group.models.includes(selected));
@@ -440,7 +444,7 @@ export function resolveModelGenerationDefaults(
     const profile = modelCapabilityConfigFor(config, model);
 
     if (capability === "image" && profile.image) {
-        const normalized = normalizeImageValue(
+        const normalized = preserveImageSettings(
             profile.image,
             {
                 size: source("size"),
@@ -450,27 +454,33 @@ export function resolveModelGenerationDefaults(
                 count: source("count"),
                 transparentBackground: source("transparentBackground"),
             },
-            cost?.protocol,
+            resolveModelRequestConfig(config, model).interfaceType,
         );
+        const requestedCount = source("count") ?? normalized.count;
         return {
             ...normalized,
             // 画布与创作页的张数是拆单数，不能被单模型 maxOutputs(=1) 压回 1。
-            count: String(Math.max(1, Math.min(currentGenerationBatchLimit(), Math.floor(Math.abs(Number(source("count") ?? normalized.count)) || 1)))),
+            count: /^-?\d+$/.test(requestedCount) ? String(Math.max(1, Math.min(currentGenerationBatchLimit(), Number(requestedCount)))) : requestedCount,
         };
     }
 
     if (capability === "video" && profile.video) {
-        const normalized = normalizeVideoValue(profile.video, {
-            seconds: source("videoSeconds"),
-            ratio: source("size"),
-            resolution: source("vquality"),
-        });
+        const protocol = resolveModelRequestConfig(config, model).interfaceType;
+        const normalized = preserveVideoSettings(
+            profile.video,
+            {
+                seconds: source("videoSeconds"),
+                ratio: source("size"),
+                resolution: source("vquality"),
+            },
+            protocol,
+        );
         return {
             videoSeconds: normalized.seconds,
             size: normalized.ratio,
             vquality: normalized.resolution.replace(/p$/i, ""),
-            videoGenerateAudio: source("videoGenerateAudio") ?? String(profile.video.generateAudio.default),
-            videoWatermark: source("videoWatermark") ?? String(profile.video.watermark.default),
+            videoGenerateAudio: preserveVideoBoolean(profile.video.generateAudio.supported, profile.video.generateAudio.default, source("videoGenerateAudio")),
+            videoWatermark: preserveVideoBoolean(profile.video.watermark.supported, profile.video.watermark.default, source("videoWatermark")),
         };
     }
 
@@ -481,8 +491,8 @@ export function resolveModelVideoBooleanOptions(config: AiConfig, model: string,
     const profile = modelCapabilityConfigFor(config, model).video!;
     const defaults = resolveModelGenerationDefaults(config, model, "video", explicit, fallback);
     return {
-        videoGenerateAudio: profile.generateAudio.supported ? (defaults.videoGenerateAudio ?? String(profile.generateAudio.default)) : "false",
-        videoWatermark: profile.watermark.supported ? (defaults.videoWatermark ?? String(profile.watermark.default)) : "false",
+        videoGenerateAudio: defaults.videoGenerateAudio ?? String(profile.generateAudio.supported && profile.generateAudio.default),
+        videoWatermark: defaults.videoWatermark ?? String(profile.watermark.supported && profile.watermark.default),
     };
 }
 

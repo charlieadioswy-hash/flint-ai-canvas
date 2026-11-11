@@ -100,7 +100,7 @@ describe("逻辑模型选择", () => {
         expect(generation.count).toBe("3");
     });
 
-    test("generationSpec 的显式 false 和 0 覆盖陈旧镜像及全局默认", () => {
+    test("generationSpec 的显式 false 和合法 0 时长覆盖陈旧镜像及全局默认", () => {
         const config = policyConfig();
         config.channels[0]!.modelCosts![0]!.capabilityConfig!.video!.duration.min = 0;
         config.videoSeconds = "9";
@@ -131,6 +131,26 @@ describe("逻辑模型选择", () => {
         expect(generation.videoSeconds).toBe("0");
         expect(generation.videoGenerateAudio).toBe("false");
         expect(generation.videoWatermark).toBe("false");
+    });
+
+    test("generationSpec 越界 0 时长适配模型默认", () => {
+        const config = policyConfig();
+        const videoNode: CanvasNodeData = {
+            ...node("video", CanvasNodeType.Video),
+            metadata: {
+                model: "relay::cinema-text",
+                generationSpec: {
+                    version: 1,
+                    mode: "video",
+                    prompt: "canonical prompt",
+                    modelSelection: { kind: "channel", channelId: "relay", modelKey: "cinema-text" },
+                    options: { durationSeconds: 0 },
+                    referenceBindings: [],
+                    textInputMode: "prompt-only",
+                },
+            },
+        };
+        expect(buildGenerationConfig(config, videoNode, "video").videoSeconds).toBe("6");
     });
 
     test("编辑兼容字段时原子更新 canonical 合同和全部镜像", () => {
@@ -452,7 +472,7 @@ describe("逻辑模型选择", () => {
         expect(groups[0]?.models).toHaveLength(3);
     });
 
-    test("根据参考图自动切换到图生视频细分模型", () => {
+    test("参考图不自动更换已选模型，不支持的素材仍报错", () => {
         const config = policyConfig();
         const resolved = resolveCompatibleModel(config, "relay::cinema-text", {
             capability: "video",
@@ -460,7 +480,8 @@ describe("逻辑模型选择", () => {
             videoOperation: "text_to_video",
             videoSeconds: "6",
         });
-        expect(resolved).toBe("relay::cinema-image");
+        expect(resolved).toBe("relay::cinema-text");
+        expect(modelCompatibilityError(config, resolved, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } })).toContain("参考图");
     });
 
     test("音频输入只匹配支持音频的细分模型", () => {
@@ -470,7 +491,7 @@ describe("逻辑模型选择", () => {
             input: { textCount: 1, imageCount: 0, videoCount: 0, audioCount: 1, characterCount: 0 },
             videoSeconds: "6",
         };
-        expect(resolveCompatibleModel(config, "relay::cinema-text", requirements)).toBe("relay::cinema-audio");
+        expect(resolveCompatibleModel(config, "relay::cinema-text", requirements)).toBe("relay::cinema-text");
         expect(modelCompatibilityError(config, "relay::cinema-image", requirements)).toContain("参考音频");
     });
 
@@ -493,7 +514,7 @@ describe("逻辑模型选择", () => {
         };
 
         expect(modelCompatibilityError(config, imageModel, requirements)).toBe("");
-        expect(resolveCompatibleModel(config, "relay::cinema-text", requirements)).toBe(imageModel);
+        expect(resolveCompatibleModel(config, "relay::cinema-text", requirements)).toBe("relay::cinema-text");
     });
 
     test("逻辑视频模型将 720 与 720p 视为同一分辨率", () => {

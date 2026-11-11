@@ -13,6 +13,9 @@ type (
 	UpdateDramaCastRequest        = app.UpdateDramaCastRequest
 	CreateDramaCastRequest        = app.CreateDramaCastRequest
 	DeleteDramaCastRequest        = app.DeleteDramaCastRequest
+	DramaCastImagePromptRequest   = app.DramaCastImagePromptRequest
+	ImportDramaCastRequest        = app.ImportDramaCastRequest
+	ImportDramaCastResult         = app.ImportDramaCastResult
 	SetDramaCastVoiceRequest      = app.SetDramaCastVoiceRequest
 	DramaCastLookRequest          = app.DramaCastLookRequest
 	DramaEstimateRequest          = app.DramaEstimateRequest
@@ -31,5 +34,6 @@ type (
 	DramaCanvasAssetsRequest      = app.DramaCanvasAssetsRequest
 	DramaArchive                  = app.DramaArchive
 	DramaJianyingDraftRequest     = app.DramaJianyingDraftRequest
+	DramaJianyingDraftPreview     = app.DramaJianyingDraftPreview
 	DramaAssetPackageRequest      = app.DramaAssetPackageRequest
 )

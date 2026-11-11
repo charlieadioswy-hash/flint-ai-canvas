@@ -17,7 +17,7 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
     if (target.type === CanvasNodeType.Model3D) {
         const source = nodes.find((node) => node.id === candidate.fromNodeId);
         const mode = readModel3DState(target).draft.mode;
-        if (mode === "text") return source?.type === CanvasNodeType.Text || source?.type === CanvasNodeType.Markdown ? "" : "文本模式只接受文字节点，请先切换单图或多视图模式。";
+        if (mode === "text") return source?.type === CanvasNodeType.Text ? "" : "文本模式只接受文字节点，请先切换单图或多视图模式。";
         if (source?.type !== CanvasNodeType.Image) return "单图或多视图模式只接受图片节点。";
         const count = new Set([...connections, candidate].filter((connection) => connection.toNodeId === target.id).map((connection) => connection.fromNodeId)).size;
         if (count > (mode === "image" ? 1 : 4)) return mode === "image" ? "单图模式最多连接一张图片。" : "多视图模式最多连接四张图片，请明确分配视角。";
@@ -29,9 +29,7 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         const source = nodes.find((node) => node.id === candidate.fromNodeId);
         const sourceKind = source ? getNodeInputKind(source.type) : undefined;
         const isMediaConversion = target.type === CanvasNodeType.MediaConversion;
-        const hasAcceptedSource = isMediaConversion
-            ? source?.type === CanvasNodeType.Image || source?.type === CanvasNodeType.Video
-            : Boolean(sourceKind && acceptedInputKinds.includes(sourceKind));
+        const hasAcceptedSource = isMediaConversion ? source?.type === CanvasNodeType.Image || source?.type === CanvasNodeType.Video : Boolean(sourceKind && acceptedInputKinds.includes(sourceKind));
         if (!sourceKind || !hasAcceptedSource) {
             const labels = acceptedInputKinds.map(acceptedInputKindLabel).join("或");
             const targetLabel = isMediaConversion ? "转换" : target.type === CanvasNodeType.BatchTable ? "批量创作表" : labels;
@@ -39,11 +37,7 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         }
         const maxInputCount = getNodeMaxInputCount(target.type);
         if (maxInputCount) {
-            const inputCount = new Set(
-                [...connections, { id: "candidate", ...candidate }]
-                    .filter((connection) => connection.toNodeId === target.id)
-                    .map((connection) => connection.fromNodeId),
-            ).size;
+            const inputCount = new Set([...connections, { id: "candidate", ...candidate }].filter((connection) => connection.toNodeId === target.id).map((connection) => connection.fromNodeId)).size;
             if (inputCount > maxInputCount) return `${isMediaConversion ? "转换" : "当前"}节点最多连接 ${maxInputCount} 个输入`;
         }
     }

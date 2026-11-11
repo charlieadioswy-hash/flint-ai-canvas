@@ -80,7 +80,7 @@ func TestDramaCastCreateRejectsInvalidOrUnavailableEdits(t *testing.T) {
 	if _, err := svc.CreateDramaCast("other-user", projectID, request); err == nil {
 		t.Fatal("another user must not create assets")
 	}
-	for _, step := range []string{"", model.DramaGuideConfiguring, model.DramaGuideCompleted} {
+	for _, step := range []string{model.DramaGuideConfiguring} {
 		if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
 			t.Fatal(err)
 		}

@@ -93,19 +93,20 @@ type Config struct {
 }
 
 type Media struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	DataURL    string `json:"dataUrl"`
-	URL        string `json:"url"`
-	StorageKey string `json:"storageKey"`
-	Role       string `json:"role,omitempty"`
-	SlotKey    string `json:"slotKey,omitempty"`
-	MimeType   string `json:"mimeType"`
-	Bytes      int64  `json:"bytes"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
-	DurationMs int64  `json:"durationMs"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	DataURL          string `json:"dataUrl"`
+	URL              string `json:"url"`
+	StorageKey       string `json:"storageKey"`
+	SourceResourceID string `json:"sourceResourceId,omitempty"`
+	Role             string `json:"role,omitempty"`
+	SlotKey          string `json:"slotKey,omitempty"`
+	MimeType         string `json:"mimeType"`
+	Bytes            int64  `json:"bytes"`
+	Width            int    `json:"width"`
+	Height           int    `json:"height"`
+	DurationMs       int64  `json:"durationMs"`
 }
 
 // WorkflowField 是云端工作流字段描述。完整工作流执行仍在 service。

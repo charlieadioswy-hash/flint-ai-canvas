@@ -102,6 +102,7 @@ export type ImageCapabilityConfig = {
         allowCustom: boolean;
         presets?: ImageResolutionOption[];
         defaultTier?: string;
+        defaultRatio?: string;
     };
     resolution: { supported: boolean; values: string[]; default: string };
     quality: {

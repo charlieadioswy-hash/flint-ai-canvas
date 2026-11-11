@@ -67,16 +67,17 @@ type Props = {
     workflows?: ModelProtocolWorkflow[];
     imageParameters?: ImageParameter[];
     disabled?: boolean;
+    templateEditing?: boolean;
     section?: "all" | "protocol" | "references";
     supportsControlNet?: boolean;
 };
 
-export function ModelCapabilityEditor({ value, onChange, protocol, capability = "video", model = "", workflows = [], imageParameters, disabled = false, section = "all", supportsControlNet = false }: Props) {
+export function ModelCapabilityEditor({ value, onChange, protocol, capability = "video", model = "", workflows = [], imageParameters, disabled = false, templateEditing = false, section = "all", supportsControlNet = false }: Props) {
     if (capability === "text") {
         return <TextCapabilityEditor value={value} onChange={onChange} protocol={protocol} disabled={disabled} section={section} />;
     }
     if (capability === "image") {
-        return <ImageCapabilityEditor value={value} onChange={onChange} protocol={protocol} model={model} imageParameters={imageParameters} disabled={disabled} section={section} supportsControlNet={supportsControlNet} />;
+        return <ImageCapabilityEditor value={value} onChange={onChange} protocol={protocol} model={model} imageParameters={imageParameters} disabled={disabled} templateEditing={templateEditing} section={section} supportsControlNet={supportsControlNet} />;
     }
     const workflow = findProtocolWorkflow(workflows, protocol, model);
     const storedProfile = normalizeModelCapabilityConfig(value || defaultModelCapabilityConfig(protocol, model)).video!;
@@ -620,11 +621,12 @@ function ImageCapabilityEditor({
     model,
     imageParameters,
     disabled,
+    templateEditing,
     section,
     supportsControlNet,
-}: Required<Pick<Props, "model" | "disabled">> & Pick<Props, "value" | "onChange" | "protocol" | "section" | "imageParameters" | "supportsControlNet">) {
+}: Required<Pick<Props, "model" | "disabled">> & Pick<Props, "value" | "onChange" | "protocol" | "section" | "imageParameters" | "templateEditing" | "supportsControlNet">) {
     const stored = normalizeModelCapabilityConfig(value || { version: 1, image: defaultImageCapabilityConfig(protocol, model) }).image!;
-    const profile = imageParameters ? resolveImageParameters(stored, imageParameters, model) : stored;
+    const profile = imageParameters ? resolveImageParameters(stored, imageParameters, model, protocol) : stored;
     const update = (patch: Partial<ImageCapabilityConfig>) => onChange?.({ version: 1, image: { ...profile, ...patch } });
     const updateReferences = (patch: Partial<ImageCapabilityConfig["references"]>) => update({ references: { ...profile.references, ...patch } });
     const updateSize = (patch: Partial<ImageCapabilityConfig["size"]>) => update({ size: { ...profile.size, ...patch } });
@@ -638,7 +640,9 @@ function ImageCapabilityEditor({
     const controlFields = <ControlNetCapabilityFields value={profile.controlNet} available={supportsControlNet === true} disabled={disabled} onChange={(controlNet) => update({ controlNet })} />;
 
     if (section !== "references" && profile.parameters) {
-        const definitions = imageParameters || profile.parameters;
+        // 模板声明的是可编辑范围，不能反过来成为编辑器的固定上限。
+        // 只使用参数身份和类型；实际协议的约束留到目标模型应用/保存时检查。
+        const definitions = templateEditing ? profile.parameters.map(({ name, label, type, binding, encoding, pricing, description }) => ({ name, label, type, binding, encoding, pricing, description })) : imageParameters || profile.parameters;
         const size = profile.parameters.find((p) => p.name === "size");
         return (
             <div className="space-y-4">
@@ -653,11 +657,12 @@ function ImageCapabilityEditor({
                                 profile,
                                 profile.parameters!.map((p) => parameters.find((next) => next.name === p.name) || p),
                                 definitions,
+                                protocol,
                             ),
                         })
                     }
                 />
-                {size ? <ImageParameterSizeEditor profile={profile} definition={definitions.find((p) => p.name === "size") || size} disabled={disabled} onChange={(image) => onChange?.({ version: 1, image })} /> : null}
+                {size ? <ImageParameterSizeEditor profile={profile} protocol={protocol} definition={definitions.find((p) => p.name === "size") || size} disabled={disabled} onChange={(image) => onChange?.({ version: 1, image })} /> : null}
                 <ImageParameterSchemaEditor
                     definitions={definitions}
                     parameters={profile.parameters.filter((p) => p.name !== "size" && p.name !== "imageResolution")}

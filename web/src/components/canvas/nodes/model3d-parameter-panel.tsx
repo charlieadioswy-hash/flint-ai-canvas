@@ -94,11 +94,11 @@ export function Model3DParameterPanel({ node, theme, nodes, inputNodes, capabili
                 {draft.mode === "text" ? (
                     <Field label="模型描述">
                         <Input.TextArea value={draft.prompt} rows={4} placeholder="描述物体形状、材质、颜色与细节" onChange={(event) => onChange((current) => ({ ...current, prompt: event.target.value }))} />
-                        {inputNodes.some((item) => item.type === CanvasNodeType.Text || item.type === CanvasNodeType.Markdown) ? (
+                        {inputNodes.some((item) => item.type === CanvasNodeType.Text) ? (
                             <p className="mt-2 text-xs leading-relaxed" style={{ color: theme.node.muted }}>
                                 已连接文字将追加到本次描述：
                                 {inputNodes
-                                    .filter((item) => item.type === CanvasNodeType.Text || item.type === CanvasNodeType.Markdown)
+                                    .filter((item) => item.type === CanvasNodeType.Text)
                                     .map((item) => item.title)
                                     .join("、")}
                             </p>

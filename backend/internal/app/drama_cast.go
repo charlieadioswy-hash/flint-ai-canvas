@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"yingce/backend/internal/model"
@@ -21,15 +22,31 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 	if err != nil {
 		return model.DramaCast{}, err
 	}
-	if err := requireDramaGuideAssetEdit(p); err != nil {
-		return model.DramaCast{}, err
+	if dramaGuideActive(p) {
+		if err := requireDramaGuideAssetEdit(p); err != nil {
+			return model.DramaCast{}, err
+		}
 	}
-	if req.Kind != "character" && req.Kind != "scene" && req.Kind != "prop" {
+	req.Kind = strings.TrimSpace(req.Kind)
+	if !validDramaCastKind(req.Kind) {
 		return model.DramaCast{}, BadAuthRequest("资产类型必须为角色、场景或道具")
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" || utf8.RuneCountInString(name) > 60 {
 		return model.DramaCast{}, BadAuthRequest("名称需为 1 到 60 字")
+	}
+	for _, field := range []struct {
+		value, label string
+		limit        int
+		required     bool
+	}{
+		{strings.TrimSpace(req.Appearance), "外观描述", 1000, !dramaGuideActive(p)},
+		{strings.TrimSpace(req.Description), "说明", 1000, false},
+		{strings.TrimSpace(req.VoiceInstructions), "声音说明", 500, false},
+	} {
+		if err := validateDramaCastText(field.value, field.label, field.limit, field.required); err != nil {
+			return model.DramaCast{}, err
+		}
 	}
 	aliases := []string{}
 	for _, alias := range req.Aliases {
@@ -43,14 +60,23 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 		Appearance:        truncateRunes(strings.TrimSpace(req.Appearance), 1000),
 		Description:       truncateRunes(strings.TrimSpace(req.Description), 1000),
 		VoiceInstructions: truncateRunes(strings.TrimSpace(req.VoiceInstructions), 500),
+		ImageStatus:       model.DramaMediaDraft, Revision: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	err = s.withDramaGuideEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
+	if dramaGuideActive(p) {
+		cast.ImageStatus = ""
+	}
+	if _, err := applyDramaCastImageFields(&cast, &req.ImagePrompt, &req.ImageStyleID, &req.ImageStyleName, &req.ImageStylePrompt); err != nil {
+		return model.DramaCast{}, err
+	}
+	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
 		current, err := tx.DramaProduction(project.ID)
 		if err != nil {
 			return err
 		}
-		if err := requireDramaGuideAssetEdit(current); err != nil {
-			return err
+		if dramaGuideActive(current) {
+			if err := requireDramaGuideAssetEdit(current); err != nil {
+				return err
+			}
 		}
 		casts, err := tx.DramaCasts(project.ID)
 		if err != nil {
@@ -60,7 +86,7 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 			if existing.Kind != req.Kind {
 				continue
 			}
-			if existing.ParentID == "" && strings.EqualFold(strings.TrimSpace(existing.Name), name) {
+			if existing.ParentID == "" && strings.EqualFold(strings.TrimSpace(existing.Name), name) && (dramaGuideActive(current) || req.ExpectedRevision != nil) {
 				return dramaGuideConflict("同类型资产中已存在这个名称，请修改后重试")
 			}
 			if existing.Position >= cast.Position {
@@ -124,7 +150,7 @@ func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDr
 			}
 		}
 		// Keep a legacy current image in the take ledger so resource cleanup retains it.
-		if err := tx.PreserveDramaCastImage(*cast, newID()); err != nil {
+		if err := tx.PreserveDramaCastImage(*cast); err != nil {
 			return err
 		}
 		return tx.DeleteDramaCastCatalog(project.ID, castID)

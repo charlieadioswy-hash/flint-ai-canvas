@@ -91,20 +91,6 @@ func (r *Repository) DramaCastDeleteReferences(userID, projectID, castID string)
 	return refs, nil
 }
 
-func (r *Repository) PreserveDramaCastImage(cast model.DramaCast, takeID string) error {
-	if cast.ImageResourceID == "" {
-		return nil
-	}
-	var count int64
-	if err := r.db.Model(&model.DramaTake{}).Where("project_id = ? AND owner_id = ? AND kind = ? AND resource_id = ?", cast.ProjectID, cast.ID, "cast", cast.ImageResourceID).Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-	return r.CreateDramaTake(&model.DramaTake{ID: takeID, ProjectID: cast.ProjectID, OwnerID: cast.ID, Kind: "cast", ResourceID: cast.ImageResourceID})
-}
-
 // Only the catalog row is deleted. Media, takes, and submitted task history remain.
 func (r *Repository) DeleteDramaCastCatalog(projectID, castID string) error {
 	if err := r.db.Model(&model.DramaJob{}).Where("project_id = ? AND cast_id = ? AND status = ? AND COALESCE(task_id, '') = ''", projectID, castID, model.DramaJobQueued).

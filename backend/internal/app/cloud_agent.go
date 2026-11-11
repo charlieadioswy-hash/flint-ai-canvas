@@ -415,6 +415,16 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if userID == "" {
 		return nil, kernel.Unauthorized("请先登录")
 	}
+	// Explicit snapshots make an accepted request independently replayable after
+	// profile edits or canvas deletion. Compare the entire frozen request before
+	// bypassing mutable admission checks; a changed model/body still conflicts.
+	req.VisionEnabled, req.DramaLinked, req.SkillsEnabled, req.MemoryMode = false, false, false, ""
+	explicitProfile := req.ProfileRevision != ""
+	if explicitProfile {
+		if replay, found, err := s.replayCloudAgentRequest(userID, req, parentID); found || err != nil {
+			return replay, err
+		}
+	}
 	// 画布是可选绑定：有画布时必须属于当前用户且已保存；无画布时是平台级对话。
 	var canvas *model.CanvasProject
 	if req.CanvasID != "" {
@@ -443,23 +453,11 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if req.ProfileRevision == "" {
 		req.ProfileRevision = profile.Revision
 	}
-	// 下面这些字段由服务端推导，客户端传入值不参与幂等指纹。
-	req.VisionEnabled, req.DramaLinked, req.SkillsEnabled, req.MemoryMode = false, false, false, ""
 	id := cloudAgentID(userID, req.IdempotencyKey)
 	fingerprint := cloudAgentFingerprint(req, parentID)
-	if existing, state, lookupErr := s.cloudAgentTask(userID, id); lookupErr == nil {
-		if state.Fingerprint == "" || state.Fingerprint != fingerprint {
-			return nil, s.cloudAgentIdempotencyConflict(userID, existing, state, req, parentID)
-		}
-		run, runErr := s.CloudAgentRun(userID, existing.ID)
-		if runErr == nil && !cloudAgentRunTerminal(run.Status) {
-			s.startCloudAgentPi(userID, existing.ID)
-		}
-		return run, runErr
-	} else {
-		var appErr *AppError
-		if !errors.As(lookupErr, &appErr) || appErr.Status != 404 {
-			return nil, lookupErr
+	if !explicitProfile {
+		if replay, found, err := s.replayCloudAgentRequest(userID, req, parentID); found || err != nil {
+			return replay, err
 		}
 	}
 	// A same-key replay belongs to its frozen profile, even after preferences
@@ -655,6 +653,25 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	s.startCloudAgentPi(userID, task.ID)
 	return run, nil
+}
+
+func (s *Service) replayCloudAgentRequest(userID string, req CloudAgentRequest, parentID string) (*CloudAgentRun, bool, error) {
+	existing, state, err := s.cloudAgentTask(userID, cloudAgentID(userID, req.IdempotencyKey))
+	if err != nil {
+		var appErr *AppError
+		if errors.As(err, &appErr) && appErr.Status == 404 {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if state.Fingerprint == "" || state.Fingerprint != cloudAgentFingerprint(req, parentID) {
+		return nil, true, s.cloudAgentIdempotencyConflict(userID, existing, state, req, parentID)
+	}
+	run, err := s.CloudAgentRun(userID, existing.ID)
+	if err == nil && !cloudAgentRunTerminal(run.Status) {
+		s.startCloudAgentPi(userID, existing.ID)
+	}
+	return run, true, err
 }
 
 // 旧运行记录没有单独保存历史；只从模型请求中当前用户消息之前的严格交替前缀恢复。

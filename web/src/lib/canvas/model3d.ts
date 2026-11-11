@@ -125,7 +125,7 @@ export function resolveModel3DImage(binding: Model3DImageBinding | undefined, no
 }
 
 export function model3DPrompt(draft: Model3DDraft, inputNodes: CanvasNodeData[]) {
-    return [draft.prompt.trim(), ...inputNodes.filter((node) => node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Markdown).map((node) => (node.metadata?.content || node.metadata?.prompt || "").trim())].filter(Boolean).join("\n\n");
+    return [draft.prompt.trim(), ...inputNodes.filter((node) => node.type === CanvasNodeType.Text).map((node) => (node.metadata?.content || node.metadata?.prompt || "").trim())].filter(Boolean).join("\n\n");
 }
 
 function imageIdentity(binding?: Model3DImageBinding) {
@@ -195,7 +195,17 @@ export function applyModel3DTask(node: CanvasNodeData, task: Model3DTaskView, ca
             ...(result ? { content: result.url, storageKey: result.storageKey, assetId: result.assetId, bytes: result.bytes, mimeType: result.mimeType, model3dFormat: result.format, status: "success" as const } : {}),
             model3d: {
                 ...state,
-                run: { ...state.run, taskId: task.id, status: task.status, stage: task.stage, progress: task.progress, providerProgress: task.providerProgress, submissionOutcome: task.submissionOutcome, error: task.error?.message, canRetryStorage: task.canRetryStorage },
+                run: {
+                    ...state.run,
+                    taskId: task.id,
+                    status: task.status,
+                    stage: task.stage,
+                    progress: task.progress,
+                    providerProgress: task.providerProgress,
+                    submissionOutcome: task.submissionOutcome,
+                    error: task.error?.message,
+                    canRetryStorage: task.canRetryStorage,
+                },
                 ...(result ? { result, resultFingerprint: state.run.sourceFingerprint } : {}),
             },
         },

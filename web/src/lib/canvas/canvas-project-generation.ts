@@ -1,3 +1,4 @@
+import { resolvedMediaConfig } from "@/lib/media-settings";
 import { type GenerationTask } from "@/services/api/task-center";
 import { backendProviderConfig, logicalModelIDForConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
 import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionValue, normalizeRunningHubCapability, type AiConfig, type WorkflowFieldMapping } from "@/stores/use-config-store";
@@ -8,7 +9,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { generationTaskProgress } from "@/lib/generation-task-display";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { modelCapabilityConfigFor, workflowFieldCurrentValue, workflowFieldHasStoredValue, workflowFieldKey, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowOutputSizeValue, workflowVideoFieldsFromJson } from "@/lib/model-capabilities";
-import { modelGenerationParameterError, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
+import { modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, resolveVideoOperation, type ModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
 import { currentGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
@@ -517,21 +518,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                   },
               )
             : {};
-    if (!displayOnly && workflowProvider === "model" && node && (mode === "image" || mode === "video")) {
-        const explicit =
-            mode === "image"
-                ? {
-                      size: node.metadata?.size,
-                      quality: node.metadata?.quality,
-                      imageResolution: node.metadata?.imageResolution,
-                      imageParameters: node.metadata?.imageParameters,
-                      count: node.metadata?.count === undefined ? undefined : String(node.metadata.count),
-                  }
-                : { size: node.metadata?.size, videoSeconds: node.metadata?.seconds, vquality: node.metadata?.vquality };
-        const values = { ...generationDefaults, ...Object.fromEntries(Object.entries(explicit).filter(([, value]) => value !== undefined)) };
-        const parameterError = modelGenerationParameterError(config, model, mode, mode === "image" ? { ...values, count: "1" } : values);
-        if (parameterError) throw new Error(parameterError);
-    }
     const modeCapability = mode === "video" || mode === "audio" ? mode : "image";
     const runningHubCapability = normalizeRunningHubCapability(selectedRunningHubWorkflow?.capability, normalizeRunningHubCapability(config.runningHub.capability));
     const runningHub = {
@@ -549,13 +535,13 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                   )
                 : config.runningHub.workflows,
     };
-    return {
+    const result: AiConfig = {
         ...requestedConfig,
         taskWorkflowProvider: workflowProvider,
         runningHub,
         model,
-        quality: generationDefaults.quality || requestedConfig.quality,
-        imageResolution: generationDefaults.imageResolution || requestedConfig.imageResolution,
+        quality: generationDefaults.quality ?? requestedConfig.quality,
+        imageResolution: generationDefaults.imageResolution ?? requestedConfig.imageResolution,
         imageParameters: generationDefaults.imageParameters ?? requestedConfig.imageParameters,
         size: generationDefaults.size ?? requestedConfig.size,
         transparentBackground: generationDefaults.transparentBackground || (requestedConfig.transparentBackground === "true" ? "true" : "false"),
@@ -566,6 +552,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoArkPrivateAssetUpload: requestedConfig.videoArkPrivateAssetUpload,
         count: generationDefaults.count || requestedConfig.count,
     };
+    return workflowProvider === "model" ? resolvedMediaConfig(result, mode) : result;
 }
 
 export function resolveCanvasGenerationModel(config: AiConfig, model: string | undefined, mode: CanvasNodeGenerationMode): string {

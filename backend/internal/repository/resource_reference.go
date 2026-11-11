@@ -149,6 +149,11 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, dramaReferences...)
+	logReferences, err := r.APICallLogResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, logReferences...)
 	var leases []model.CloudAgentResourceLease
 	if err := r.db.Where("user_id = ? AND resource_id IN ? AND expires_at > ?", userID, resourceIDs, time.Now()).Find(&leases).Error; err != nil {
 		return snapshot, err
@@ -494,6 +499,13 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, 
 			if err := New(tx).RequireNoImageModerationReferences(resourceIDs); err != nil {
 				return err
 			}
+		}
+		logReferences, err := New(tx).APICallLogResourceReferences(userID, resourceIDs)
+		if err != nil {
+			return err
+		}
+		if len(logReferences) > 0 {
+			return ErrAdminResourceStillReferenced
 		}
 		var ownedAssets []model.Asset
 		query := tx.Where("user_id = ? AND id IN ?", userID, assetIDs).Order("id")
