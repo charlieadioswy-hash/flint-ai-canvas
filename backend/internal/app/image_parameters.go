@@ -206,6 +206,15 @@ func projectImageParameters(image *ImageCapabilityConfig) error {
 					}
 				}
 			}
+			if len(p.Values) == 0 {
+				// Free input retains exact native suggestions. They are not an
+				// enum, but need not satisfy rules for a newly typed custom size.
+				for _, value := range image.Size.Values {
+					if value == "auto" || image.Size.Parameter == "size" && strings.Contains(value, "x") || image.Size.Parameter == "aspect_ratio" && strings.Contains(value, ":") {
+						values = append(values, value)
+					}
+				}
+			}
 			image.Size.Values, image.Size.Default = values, initial
 			image.Size.AllowCustom = len(p.Values) == 0
 		case "imageResolution":

@@ -111,6 +111,40 @@ func TestImageParametersExplicitSizeEnumOverridesLegacyCustomFlag(t *testing.T) 
 	}
 }
 
+func TestImageParametersFreeSizePreservesNativePixelsAcrossPersistence(t *testing.T) {
+	profile := DefaultImageCapabilityConfig("openai-image", "gpt-image-2")
+	profile.Size.Values = []string{"1024x1024", "2048x878"}
+	if err := resolveImageCapabilityParameters(profile, nil, "gpt-image-2", "/v1/images/generations"); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored ImageCapabilityConfig
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if err := projectImageParameters(&restored); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		size    string
+		allowed bool
+	}{
+		{"2048x878", true},
+		{"1600x1024", true},
+		{"2048x879", false},
+		{"4096x2048", false},
+	} {
+		input := canvasGenerationInput{Config: providerConfig{InterfaceType: "openai-image", Model: "gpt-image-2", Size: tc.size}}
+		err := validateImageTaskWithResolvedSize(map[string]any{}, &input, &restored)
+		if (err == nil) != tc.allowed {
+			t.Fatalf("size %q admission=%v, want allowed=%t", tc.size, err, tc.allowed)
+		}
+	}
+}
+
 func TestImageParametersCustomSizeKeepsFormatAndModelLimits(t *testing.T) {
 	profile := DefaultImageCapabilityConfig("wangsu-images", "gpt-image-2")
 	if err := resolveImageCapabilityParameters(profile, nil, "gpt-image-2", "/v1/images/generations"); err != nil {

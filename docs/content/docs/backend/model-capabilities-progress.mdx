@@ -20,7 +20,7 @@ description: 已配置模型、协议参数、覆盖顺序、供应商进度与�
 | 节点选择                    | 用户显式值必须属于当前有效能力。切换模型时只保留仍合法的值，缺省值取当前模型默认；提交前仍须严格校验。                                                                                         |
 | 服务端准入与协议            | 服务端重新检查能力、输入素材及组合限制，随后按插件绑定编码请求。界面可选不等于协议已经接受，更不等于供应商已生成成功。                                                                         |
 
-旧尺寸能力声明 `allowCustom=true` 时，常用尺寸只是建议，首次投影到参数 schema 仍保留自定义输入能力与默认值；已经明确声明的参数枚举不放宽。自由尺寸继续校验正数宽高或比例格式，GPT Image 2 等模型还会执行自身的像素、步长和比例边界。
+旧尺寸能力声明 `allowCustom=true` 时，常用尺寸只是建议，首次投影到参数 schema 仍保留自定义输入能力与默认值；已经明确声明的参数枚举不放宽。模型明确声明的原生像素预设按其合同保留，不套用自由尺寸的对齐要求。自由尺寸继续校验正数宽高或比例格式，GPT Image 2 等模型还会执行自身的像素、步长和比例边界。
 
 配置解析入口为 `web/src/lib/model-capabilities.ts:modelCapabilityConfigFor`、`web/src/lib/image-parameters.ts`，服务端对应 `backend/internal/app/model_capability.go:NormalizeModelCapabilityConfigForModel`、`backend/internal/app/image_parameters.go` 和 `backend/internal/protocol/image_parameters.go:ResolveImageParameters`。
 
