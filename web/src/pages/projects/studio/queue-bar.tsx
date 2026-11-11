@@ -11,7 +11,7 @@ import { dramaKeys } from "./use-studio";
 
 type JobFilter = "all" | "active" | "failed";
 
-export function QueueBar({ projectId, summary, retrying, onRetry, onJump }: { projectId: string; summary: DramaSummary; retrying: boolean; onRetry: () => void; onJump: (job: DramaJob) => void }) {
+export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump }: { projectId: string; summary: DramaSummary; retrying?: boolean; onRetry?: () => void; onJump: (job: DramaJob) => void }) {
     const [open, setOpen] = useState(false);
     const [filter, setFilter] = useState<JobFilter>("all");
     const [detailJob, setDetailJob] = useState<DramaJob>();
@@ -45,7 +45,7 @@ export function QueueBar({ projectId, summary, retrying, onRetry, onJump }: { pr
                         待重试 <b>{failedItems}</b>
                     </span>
                 ) : null}
-                {failedItems ? (
+                {failedItems && onRetry ? (
                     <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} loading={retrying} onClick={onRetry}>
                         全部重试
                     </Button>

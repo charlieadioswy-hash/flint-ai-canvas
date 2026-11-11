@@ -652,7 +652,8 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "configuring", expectedRevision: 8, settings: { ...originalSettings, language: "粤语", mediaMode: "manual" } } }]);
         expect(summary.production.guideStep).toBe("assets");
         expect(dramaContext?.prefillRequest).toBeNull();
-        expect(chatHost.textContent).toContain("确认资产，开始改编剧本与分镜");
+        expect(findButton(chatHost, "确认资产，开始改编剧本与分镜")).toBeUndefined();
+        expect(chatHost.querySelector(".drama-guide-footer")).toBeNull();
         expect(unexpectedWrites).toBe(0);
         expect(errors).toEqual([]);
     });
@@ -674,8 +675,15 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
 
 test("剧本与分镜阶段在对话内提供确认选项，确认后进入制作台", async () => {
     await withGuide("story", async ({ refresh, click, chatHost, container }) => {
+        summary.guide!.blockingReason = "文字任务正在进行，请稍候";
+        await refresh();
+        const blocker = chatHost.querySelector(".drama-guide-footer");
+        expect(blocker?.textContent).toContain(summary.guide!.blockingReason);
+        expect(blocker?.querySelector("button")).toBeNull();
+        expect(findButton(chatHost, "确认并进入制作台")).toBeUndefined();
         allowGuideConfirm = true;
         summary.guide!.canConfirm = true;
+        summary.guide!.blockingReason = "";
         await refresh();
 
         const confirm = findButton(chatHost, "确认剧本与分镜，进入制作台");
@@ -692,15 +700,15 @@ test("剧本与分镜阶段在对话内提供确认选项，确认后进入制�
     });
 });
 
-test("刷新失败时阶段确认选项保持禁用", async () => {
-    await withGuide("configuring", async ({ refresh, chatHost }) => {
+test("刷新失败时不显示独立确认按钮，且不能推进阶段", async () => {
+    await withGuide("configuring", async ({ refresh, chatHost, container }) => {
         summary.guide!.canConfirm = true;
         readsFail = true;
         await refresh();
 
         const confirm = findButton(chatHost, "确认配置，开始提取资产");
-        expect(confirm).toBeDefined();
-        expect(confirm?.disabled).toBe(true);
+        expect(confirm).toBeUndefined();
+        expect(container.textContent).toContain("最新进度读取失败");
         expect(guideConfirms).toEqual([]);
     });
 });

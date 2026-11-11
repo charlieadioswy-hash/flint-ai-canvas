@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
-import { ArrowRight, Check, ChevronRight, MessageSquare, RefreshCw, Settings2, Sparkles, X } from "lucide-react";
+import { Check, ChevronRight, MessageSquare, RefreshCw, Settings2, Sparkles, X } from "lucide-react";
 import { Navigate, useNavigate, useParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
@@ -48,10 +48,10 @@ import "./guide.css";
 import "./simple-studio.css";
 
 const STEPS = [
-    { key: "configuring", title: "创作方案", action: "确认配置，开始提取资产", hint: "确认视频配置、风格、语言与故事正文" },
-    { key: "assets", title: "角色与场景", action: "确认资产，开始改编剧本与分镜", hint: "检查资产文字；参考图可在制作台再生成" },
-    { key: "story", title: "剧本与分镜", action: "确认并进入制作台", hint: "全部文字任务结束后在当前界面继续制作" },
-    { key: "completed", title: "进入制作台", action: "进入制作台", hint: "引导已完成，后续图片与视频在制作台继续" },
+    { key: "configuring", title: "创作方案" },
+    { key: "assets", title: "角色与场景" },
+    { key: "story", title: "剧本与分镜" },
+    { key: "completed", title: "进入制作台" },
 ] as const;
 type VisibleStep = Exclude<DramaGuideStep, "completed">;
 type Operation = { work: () => Promise<unknown>; after?: (summary: DramaSummary | undefined) => void; requireFreshSummary?: boolean };
@@ -683,23 +683,14 @@ export default function DramaGuidePage() {
                                       {appliedNotice}
                                   </p>
                               ) : null}
-                              {stageChoices ? null : (
+                              {!stageChoices && summary.guide?.blockingReason ? (
                                   <footer className="drama-guide-footer">
                                       <div>
                                           <strong>{currentStep.title}</strong>
-                                          <p role="status">{summary.guide?.blockingReason || currentStep.hint}</p>
+                                          <p role="status">{summary.guide.blockingReason}</p>
                                       </div>
-                                      <Button
-                                          type="primary"
-                                          icon={step === "completed" ? <ArrowRight className="size-4" /> : <Check className="size-4" />}
-                                          loading={busy}
-                                          disabled={busy || stale || summaryQuery.isError || (step !== "completed" && !summary.guide?.canConfirm)}
-                                          onClick={confirm}
-                                      >
-                                          {currentStep.action}
-                                      </Button>
                                   </footer>
-                              )}
+                              ) : null}
                           </section>,
                           chatActionsHost,
                       )

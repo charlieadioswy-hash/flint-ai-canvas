@@ -11,7 +11,7 @@ export { dramaKeys };
 
 function summaryActive(summary?: DramaSummary) {
     if (!summary) return false;
-    return summary.production.status === "running" || (summary.jobCounts.running || 0) > 0;
+    return summary.production.status === "running" || (summary.jobCounts.running || 0) + (summary.jobCounts.queued || 0) > 0;
 }
 
 export function useDramaSummary(projectId: string) {

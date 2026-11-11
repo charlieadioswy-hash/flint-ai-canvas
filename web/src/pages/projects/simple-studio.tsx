@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Select } from "antd";
 import { ChevronDown, Clapperboard, Film, MessageSquare, Pencil, Play, RefreshCw, Settings2, Sparkles } from "lucide-react";
-import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
@@ -12,6 +12,8 @@ import { MediaThumb, mediaBusy, useResourceMediaUrl } from "./drama-shared";
 import { dramaKeys, useDramaCast, useDramaInvalidate, useDramaSummary } from "./studio/use-studio";
 import { SegmentStatus, secondsLabel, segmentState } from "./studio/segment-parts";
 import { DramaProjectTopbar } from "./studio/project-topbar";
+import { QueueBar } from "./studio/queue-bar";
+import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { SimpleStudioSegmentEditor } from "./simple-studio-segment-editor";
 import { dramaStudioPath } from "./studio/studio-route";
 import { useDramaMediaAgent } from "./studio/use-drama-media-agent";
@@ -75,6 +77,7 @@ export function SimpleSegmentCard({ segment, shots, onOpen, onReference, onGener
 export default function SimpleStudioPage() {
     const { projectId = "", episodeId: routeEpisodeId = "" } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const [search, setSearch] = useSearchParams();
     const { message } = App.useApp();
     const summaryQuery = useDramaSummary(projectId);
@@ -84,6 +87,17 @@ export default function SimpleStudioPage() {
     const [host, setHost] = useState<HTMLDivElement | null>(null);
     const [mobilePane, setMobilePane] = useState<"chat" | "results">("results");
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+    const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
+    const jumpRequest = useRef(0);
+    const jumpScope = useRef({ projectId, locationKey: location.key });
+    jumpScope.current = { projectId, locationKey: location.key };
+    useEffect(
+        () => () => {
+            jumpRequest.current += 1;
+        },
+        [projectId, location.key],
+    );
+    useEffect(() => setCastSelection(undefined), [projectId, location.key]);
     const jobsActive = Boolean((summary?.jobCounts.queued || 0) + (summary?.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary?.production.revision);
     const onChanged = useCallback(
@@ -357,6 +371,39 @@ export default function SimpleStudioPage() {
                         ) : null}
                     </section>
                 </div>
+                <QueueBar
+                    key={projectId}
+                    projectId={projectId}
+                    summary={summary}
+                    onJump={async (job) => {
+                        const episodeId = job.episodeId;
+                        if (!episodeId) return;
+                        const request = ++jumpRequest.current;
+                        const isCurrent = () => request === jumpRequest.current && jumpScope.current.projectId === projectId && jumpScope.current.locationKey === location.key;
+                        const next = new URLSearchParams(search);
+                        next.delete("scope");
+                        next.delete("segment");
+                        next.delete("shot");
+                        next.delete("status");
+                        if (job.shotId && (job.kind === "segment_video" || job.kind === "segment_prompt")) {
+                            try {
+                                const detail = await queryClient.fetchQuery({ queryKey: dramaKeys.episode(projectId, episodeId), queryFn: ({ signal }) => getDramaEpisode(projectId, episodeId, signal), staleTime: 0 });
+                                if (!isCurrent()) return;
+                                // 段任务的 shotId 存放段 ID；不能当作镜头 ID 或段序号使用。
+                                const segment = detail.segments.find((item) => item.id === job.shotId);
+                                if (segment) next.set("segment", String(segment.index));
+                                else message.info("任务对应的剧情段已变更，已打开本集分镜");
+                            } catch (error) {
+                                if (isCurrent()) message.error(error instanceof Error ? error.message : "读取目标分镜失败，请重试");
+                                return;
+                            }
+                        }
+                        if (!isCurrent()) return;
+                        setExpanded((value) => new Set(value).add(episodeId));
+                        setMobilePane("results");
+                        navigate(dramaStudioPath(projectId, episodeId, next, "simple"));
+                    }}
+                />
                 <SimpleStudioSegmentEditor
                     summary={summary}
                     detail={openDetail}
@@ -374,15 +421,11 @@ export default function SimpleStudioPage() {
                             void mediaAgent.requestVideo(currentEpisode, segment, model);
                         }
                     }}
-                    onOpenAdvancedCast={(id) => {
-                        const next = new URLSearchParams(search);
-                        next.set("view", "cast");
-                        next.set("cast", id);
-                        next.delete("segment");
-                        next.delete("shot");
-                        navigate(dramaStudioPath(projectId, routeEpisodeId, next, "advanced"));
-                    }}
+                    onOpenCast={(id) => setCastSelection({ projectId, id })}
                 />
+                {castSelection?.projectId === projectId ? (
+                    <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => onChanged()} />
+                ) : null}
             </div>
         </WorkspacePage>
     );

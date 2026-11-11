@@ -80,7 +80,7 @@ async function fixture() {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    let props: EditorProps = { summary: summary(), detail: detail(), episodeId: "episode-a", segmentIndex: 0, castById: new Map(), onClose: () => {}, onNavigate: navigate, onGenerate: generate, onOpenAdvancedCast: openCast };
+    let props: EditorProps = { summary: summary(), detail: detail(), episodeId: "episode-a", segmentIndex: 0, castById: new Map(), onClose: () => {}, onNavigate: navigate, onGenerate: generate, onOpenCast: openCast };
     const render = async (patch: Partial<EditorProps> = {}) => {
         props = { ...props, ...patch };
         await act(() =>
@@ -142,7 +142,7 @@ test("提示词与镜头复用旧写入，完成引导后不发送引导版本�
     }
 });
 
-test("编辑器生成仅委托父级预检，资产入口交父级路由处理", async () => {
+test("编辑器生成仅委托父级预检，资产入口交父级弹窗处理", async () => {
     const view = await fixture();
     try {
         const changed = { ...detail().segments[0], revision: 8 };

@@ -35,7 +35,7 @@ export type SimpleStudioSegmentEditorProps = {
     onNavigate: (segmentIndex: number, shotId?: string) => void;
     /** 只进入父页面的 Agent 预检与确认，不在编辑器内放行媒体。 */
     onGenerate: (segment: DramaSegment, model?: DramaModelChoice) => void;
-    onOpenAdvancedCast: (castId: string) => void;
+    onOpenCast: (castId: string) => void;
 };
 
 /** 简易台复用详细制作台的真实段编辑器，切换作品时隔离在途写入。 */
@@ -46,7 +46,7 @@ export function SimpleStudioSegmentEditor(props: SimpleStudioSegmentEditorProps)
 type SegmentTarget = { episodeId: string; segment: DramaSegment };
 type ShotTarget = { episodeId: string; segmentIndex: number; shot: DramaShot };
 
-function SegmentEditorSession({ summary, detail, episodeId, segmentIndex, shotId, castById, busy = false, onClose, onNavigate, onGenerate, onOpenAdvancedCast }: SimpleStudioSegmentEditorProps) {
+function SegmentEditorSession({ summary, detail, episodeId, segmentIndex, shotId, castById, busy = false, onClose, onNavigate, onGenerate, onOpenCast }: SimpleStudioSegmentEditorProps) {
     const projectId = summary.project.id;
     const { message } = App.useApp();
     const invalidate = useDramaInvalidate(projectId);
@@ -163,7 +163,7 @@ function SegmentEditorSession({ summary, detail, episodeId, segmentIndex, shotId
             onReprocess={(segment) => withSegment(segment, (target) => reprocess.mutate(target))}
             defaultVideoModel={summary.production.settings.models.video}
             videoResolution={summary.production.settings.videoResolution}
-            onOpenCast={onOpenAdvancedCast}
+            onOpenCast={onOpenCast}
             onOpenCanvas={(segment) => withSegment(segment, (target) => void canvas.open({ kind: "segment", episodeId: target.episodeId, segmentIndex: target.segment.index }))}
             canvasOpening={Boolean(canvas.opening?.startsWith("segment:"))}
         />

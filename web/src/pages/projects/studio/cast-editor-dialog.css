@@ -1,0 +1,26 @@
+.drama-cast-dialog {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 64px);
+    min-height: 0;
+}
+.drama-cast-dialog-head {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--drama-line);
+}
+.drama-cast-dialog-head h2 {
+    min-width: 0;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.drama-cast-dialog-body {
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-4);
+}

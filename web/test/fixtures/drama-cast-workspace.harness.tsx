@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { ReactNode } from "react";
-import type { DramaCast, DramaListPage } from "../../src/services/api/drama";
+import type { DramaCast, DramaListPage, DramaSummary } from "../../src/services/api/drama";
 import type { CastImageFieldsValue } from "../../src/pages/projects/studio/cast-image-fields";
 
 const dom = new Window({ url: "http://localhost/projects/current" });
@@ -29,8 +29,10 @@ for (const [key, value] of Object.entries({
 const { act, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+const { MemoryRouter, useLocation } = await import("react-router");
 const { App } = await import("antd");
 const { CastPanel } = await import("../../src/pages/projects/studio/panels");
+const { CastEditorDialog } = await import("../../src/pages/projects/studio/cast-editor-dialog");
 const { CastCreateDialog } = await import("../../src/pages/projects/studio/cast-create-dialog");
 const { CastProjectImport } = await import("../../src/pages/projects/studio/cast-project-import");
 const { CastImageFields } = await import("../../src/pages/projects/studio/cast-image-fields");
@@ -91,7 +93,9 @@ async function render(children: ReactNode) {
     await act(async () =>
         root.render(
             <QueryClientProvider client={client}>
-                <App>{children}</App>
+                <MemoryRouter initialEntries={["/projects/current/e/episode-a?mode=simple&segment=7&shot=shot-8"]}>
+                    <App>{children}</App>
+                </MemoryRouter>
             </QueryClientProvider>,
         ),
     );
@@ -175,6 +179,111 @@ function PanelHarness({ onFocus = () => {}, items = [hero, evening, childhood] }
         />
     );
 }
+
+const dialogSummary = { project: { id: "current", name: "当前作品" }, production: { settings: { assets: { characterRatio: "16:9" } } } } as DramaSummary;
+const room = castFixture("room", "秦家卧室", { kind: "scene", imageStatus: "ready", imageResourceId: "room-image" });
+function DialogHarness({ castId, items, onChanged = () => {}, onClose = () => {} }: { castId: string; items: DramaCast[]; onChanged?: () => void; onClose?: () => void }) {
+    const [open, setOpen] = useState(true);
+    const location = useLocation();
+    return (
+        <>
+            <output data-dialog-route>{location.pathname + location.search}</output>
+            <CastEditorDialog
+                summary={dialogSummary}
+                cast={items}
+                castId={open ? castId : undefined}
+                onChanged={onChanged}
+                onClose={() => {
+                    setOpen(false);
+                    onClose();
+                }}
+            />
+        </>
+    );
+}
+
+function expectDialogName(dialog: Element, expectedTitle: string) {
+    const titleId = dialog.getAttribute("aria-labelledby");
+    expect(titleId?.trim()).toBeTruthy();
+    const title = document.getElementById(titleId!);
+    expect(title).not.toBeNull();
+    expect(title?.textContent?.trim()).toBe(expectedTitle);
+}
+
+for (const [target, appearanceLabel, expectedTitle] of [
+    [hero, "外貌描述", "林溪 · 角色设定"],
+    [room, "环境描述", "秦家卧室 · 场景设定"],
+] as const) {
+    test(`${target.kind} reference opens its own editor dialog and saves without leaving the segment`, async () => {
+        const changed = mock();
+        const closed = mock();
+        const save = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: target });
+        const generation = spyGeneration();
+        await render(<DialogHarness castId={target.id} items={[hero, room]} onChanged={changed} onClose={closed} />);
+        const dialog = document.querySelector('[role="dialog"]')!;
+        const originalRoute = host.querySelector("[data-dialog-route]")!.textContent;
+        expect(dialog).not.toBeNull();
+        expectDialogName(dialog, expectedTitle);
+        expect(dialog.querySelector("h2")?.textContent).toContain(target.name);
+        expect(dialog.querySelector<HTMLInputElement>('[aria-label="名称"]')?.value).toBe(target.name);
+        expect(dialog.querySelector<HTMLTextAreaElement>(`[aria-label="${appearanceLabel}"]`)?.value).toBe(target.appearance);
+        expect(dialog.querySelector(".drama-cast-grid")).toBeNull();
+        await fill(appearanceLabel, `${target.appearance}，保留标志性细节`, dialog);
+        await fill("参考图生成提示词", "暖色侧光，完整保留设定细节", dialog);
+        await click("保存设定", dialog);
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(save).toHaveBeenCalledWith("current", target.id, expect.objectContaining({ name: target.name, appearance: `${target.appearance}，保留标志性细节`, imagePrompt: "暖色侧光，完整保留设定细节" }));
+        expect(changed).toHaveBeenCalledTimes(1);
+        expect(closed).not.toHaveBeenCalled();
+        expect(host.querySelector("[data-dialog-route]")?.textContent).toBe(originalRoute);
+        await click("关闭资产设定", dialog);
+        expect(closed).toHaveBeenCalledTimes(1);
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+        expect(host.querySelector("[data-dialog-route]")?.textContent).toBe(originalRoute);
+        expectNoGeneration(generation);
+    });
+}
+
+for (const target of ["missing", "foreign"]) {
+    test(`${target} reference does not fall back to another asset in the dialog`, async () => {
+        const generation = spyGeneration();
+        const save = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: hero });
+        const foreign = { ...room, id: "foreign", projectId: "another-project" };
+        await render(<DialogHarness castId={target} items={[hero, foreign]} />);
+        const dialog = document.querySelector('[role="dialog"]')!;
+        expectDialogName(dialog, "资产设定");
+        expect(dialog.textContent).toContain("此资产已不存在或暂时无法读取");
+        expect(dialog.querySelector(".drama-editor")).toBeNull();
+        expect(dialog.querySelector('[aria-label="名称"]')).toBeNull();
+        expect(save).not.toHaveBeenCalled();
+        expectNoGeneration(generation);
+    });
+}
+
+test("reference dialog polling preserves draft fields and closing discards them for reopening", async () => {
+    const changed = mock();
+    const save = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: room });
+    const generation = spyGeneration();
+    await render(<DialogHarness castId={room.id} items={[hero, room]} onChanged={changed} />);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    await fill("环境描述", "尚未保存的落地窗与破损地板", dialog);
+    await fill("参考图生成提示词", "保留我手工输入的晨光", dialog);
+    const originalInput = dialog.querySelector<HTMLTextAreaElement>('[aria-label="环境描述"]');
+    for (const patch of [{ imageStatus: "queued" }, { imageStatus: "ready", imageVersion: 2, imageResourceId: "room-new-image", locked: true }] as const) {
+        await render(<DialogHarness castId={room.id} items={[hero, { ...room, ...patch }]} onChanged={changed} />);
+        expect(dialog.querySelector('[aria-label="环境描述"]')).toBe(originalInput);
+        expect(originalInput?.value).toBe("尚未保存的落地窗与破损地板");
+        expect(dialog.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("保留我手工输入的晨光");
+    }
+    await click("关闭资产设定", dialog);
+    await render(<DialogHarness key="reopened" castId={room.id} items={[hero, room]} onChanged={changed} />);
+    const reopened = document.querySelector('[role="dialog"]')!;
+    expect(reopened.querySelector<HTMLTextAreaElement>('[aria-label="环境描述"]')?.value).toBe(room.appearance);
+    expect(reopened.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("");
+    expect(save).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+    expectNoGeneration(generation);
+});
 
 test("character thumbnails select the look id and save only that look from the side editor", async () => {
     const focused = mock();

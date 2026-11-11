@@ -248,7 +248,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                 if (result.submitted) {
                     setDismissed((previous) => new Set(previous).add(key));
                     if (current()) {
-                        void message.success("已提交，请查看分镜中的实时任务状态");
+                        void message.success("已提交，请查看底部制作队列中的状态与进度");
                         await changed.current();
                     }
                 }
@@ -276,7 +276,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                               return (
                                   <div key={key} className="drama-guide-proposal" aria-live="polite">
                                       {state?.submitted ? (
-                                          <p role="status">{media ? "已提交，请查看分镜中的实时任务状态。" : "已保存本次修改。"}</p>
+                                          <p role="status">{media ? "已提交，请查看底部制作队列中的状态与进度。" : "已保存本次修改。"}</p>
                                       ) : (
                                           <>
                                               {preview ? (

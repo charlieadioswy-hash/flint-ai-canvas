@@ -37,6 +37,10 @@
     display: grid;
     grid-template-columns: clamp(300px, 28%, 420px) minmax(0, 1fr);
 }
+.drama-simple > .drama-queue {
+    flex: none;
+    min-width: 0;
+}
 .drama-simple-results {
     min-height: 0;
     min-width: 0;

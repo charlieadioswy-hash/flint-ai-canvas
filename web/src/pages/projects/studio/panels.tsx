@@ -95,6 +95,11 @@ function castRatio(kind: DramaCastKind, ratios: CastRatios) {
 
 export type CastRatios = { character: string };
 
+/** 媒体轮询不重置输入，切换设定或服务端表单内容变化时重新回填。 */
+export function castEditorFormKey(cast: DramaCast) {
+    return JSON.stringify([cast.id, cast.name, cast.lookName, cast.appearance, cast.aliasesJson, cast.voiceInstructions, cast.imagePrompt, cast.imageStyleId, cast.imageStyleName, cast.imageStylePrompt, cast.lookFromChapter, cast.lookToChapter]);
+}
+
 const castImageLoading = <span className="drama-cast-media-state is-loading" role="status" aria-label="参考图加载中" />;
 const castImageFailed = (
     <span className="drama-cast-media-state">
@@ -163,23 +168,7 @@ export function CastPanel({
     const active = focused && (kind === "look" ? focused.parentId : focused.kind === kind) ? focused : list[0];
     const kindRatio = castRatio(kind === "look" ? "character" : kind, ratios);
     const tabLabel = (value: CastTab) => (value === "look" ? "造型" : CAST_KIND_LABEL[value]);
-    // 导入或外部保存后回填新设定；媒体轮询和锁定状态变化不打断正在输入的表单。
-    const activeFormKey = active
-        ? JSON.stringify([
-              active.id,
-              active.name,
-              active.lookName,
-              active.appearance,
-              active.aliasesJson,
-              active.voiceInstructions,
-              active.imagePrompt,
-              active.imageStyleId,
-              active.imageStyleName,
-              active.imageStylePrompt,
-              active.lookFromChapter,
-              active.lookToChapter,
-          ])
-        : "";
+    const activeFormKey = active ? castEditorFormKey(active) : "";
     return (
         <div className="drama-view drama-cast-layout">
             <section className="drama-view-main">
@@ -335,7 +324,7 @@ export function CastPanel({
     );
 }
 
-function CastEditor({
+export function CastEditor({
     projectId,
     cast,
     parent,
