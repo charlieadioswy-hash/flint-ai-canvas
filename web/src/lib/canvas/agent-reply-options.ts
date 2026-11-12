@@ -17,6 +17,8 @@ export type AgentReplyOption = {
     /** 卡片主标题；选项写成“标题：说明”时拆开显示。 */
     title: string;
     detail?: string;
+    /** 从重复候选中保留的说明，仅展示，不参与回复内容或输入类型判定。 */
+    notes?: string;
     /** 点击后发给 Agent 的文本：去掉 Markdown 标记的整条选项。 */
     text: string;
     /** 明确要求用户填写的选项，提交填写内容而不是选项标签。 */
@@ -187,7 +189,14 @@ function isReplyInstruction(line: string) {
 }
 
 function insideCodeFence(lines: readonly string[]) {
-    return lines.filter((line) => /^\s*(```|~~~)/.test(line)).length % 2 === 1;
+    let fence = "";
+    for (const line of lines) {
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+        if (!marker) continue;
+        if (!fence) fence = marker[1];
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = "";
+    }
+    return Boolean(fence);
 }
 
 function joinBody(lines: readonly string[], tail: string | undefined) {
@@ -267,12 +276,162 @@ function extractInlineOptions(lines: readonly string[], last: number): AgentRepl
     return { body: joinBody(before, tail), options };
 }
 
+const REPEATED_ACTION_HEADING =
+    /^(?:(?:我|我们)的)?(?:(?:建议|推荐)(?:的)?(?:(?:修正|修复|调整|优化|改进|处理)(?:的)?)?优先级|(?:下一步|接下来|后续)(?:的)?(?:建议|推荐|选项|可选操作)|(?:建议|推荐)(?:的)?(?:修正|修复|调整|处理|操作|行动|改进)(?:方案|方向|选项|顺序)?|可选(?:的)?(?:操作|行动|方案|方向|选项))$/u;
+
+function normalizedChoice(text: string) {
+    return stripInlineMarkdown(text)
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[\s"'“”‘’「」『』]/gu, "")
+        .replace(/[。！？!?]+$/u, "");
+}
+
+function choiceReferences(text: string) {
+    const references = new Map<string, Set<string>>();
+    for (const match of stripInlineMarkdown(text)
+        .normalize("NFKC")
+        .matchAll(/第\s*(\d+)\s*(集|段|镜头|镜)/gu)) {
+        const kind = match[2] === "镜头" ? "镜" : match[2];
+        const values = references.get(kind) || new Set<string>();
+        values.add(String(Number(match[1])));
+        references.set(kind, values);
+    }
+    return references;
+}
+
+function matchesRepeatedChoice(candidate: AgentReplyOption, option: AgentReplyOption) {
+    const candidateInput = agentReplyOptionNeedsInput(candidate.title);
+    if (candidateInput !== agentReplyOptionIsInput(option)) return false;
+    if (candidateInput) return normalizedChoice(candidate.title) === normalizedChoice(option.title);
+    const candidateReferences = choiceReferences(candidate.text);
+    const optionReferences = choiceReferences(option.text);
+    let sharedReference = false;
+    for (const [kind, values] of candidateReferences) {
+        const other = optionReferences.get(kind);
+        if (!other) continue;
+        if (values.size !== other.size || [...values].some((value) => !other.has(value))) return false;
+        sharedReference = true;
+    }
+    if ((candidateReferences.size || optionReferences.size) && !sharedReference) return false;
+    if (candidate.detail && option.detail && normalizedChoice(candidate.detail) !== normalizedChoice(option.detail)) return false;
+    if (normalizedChoice(candidate.title) === normalizedChoice(option.title)) return true;
+    if ([...candidateReferences.values(), ...optionReferences.values()].some((values) => values.size > 1)) return false;
+    const qualifiers = (text: string) =>
+        text
+            .normalize("NFKC")
+            .match(/\([^()]*\)/gu)
+            ?.map(normalizedChoice)
+            .join("") || "";
+    const candidateQualifiers = qualifiers(candidate.text);
+    const optionQualifiers = qualifiers(option.text);
+    if ((candidateQualifiers || optionQualifiers) && !sharedReference) return false;
+    if (candidateQualifiers && optionQualifiers && candidateQualifiers !== optionQualifiers) return false;
+    // 只匹配完整动作短句，不按词语相似度猜测；额外镜头限定与括号说明会保留到 notes。
+    const action = (text: string) =>
+        normalizedChoice(
+            text
+                .normalize("NFKC")
+                .replace(/\([^()]*\)/gu, "")
+                .replace(/第\s*\d+\s*(?:集|段|镜头|镜)|的/gu, ""),
+        );
+    const candidateAction = action(candidate.title);
+    return (
+        candidateAction.length >= 4 &&
+        stripInlineMarkdown(option.text)
+            .split(/[，,；;]/u)
+            .some((clause) => action(clause) === candidateAction)
+    );
+}
+
+/** 只合并能唯一对应到按钮的候选，保留未匹配内容和每项的附带说明。 */
+function withoutRepeatedActionLists(body: string, originalOptions: AgentReplyOption[]): AgentReplyOptions {
+    const lines = body.split("\n");
+    const replacements: Array<{ start: number; end: number; lines: string[] }> = [];
+    const options = originalOptions.map((option) => ({ ...option }));
+    let fence = "";
+    for (let index = 0; index < lines.length; index++) {
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(lines[index]);
+        if (marker) {
+            if (!fence) fence = marker[1];
+            else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = "";
+            continue;
+        }
+        const heading = plainLeadIn(lines[index]).replace(/[：:]$/u, "");
+        if (fence || /^\s*>|^(?: {4,}|\t)/u.test(lines[index]) || !REPEATED_ACTION_HEADING.test(heading)) continue;
+        let cursor = index + 1;
+        const items: Array<ParsedItem & { lines: string[]; continuation: string[] }> = [];
+        let nested = false;
+        let indentation = 0;
+        while (cursor < lines.length) {
+            const line = lines[cursor];
+            if (!line.trim()) {
+                let next = cursor + 1;
+                while (next < lines.length && !lines[next].trim()) next++;
+                if (next < lines.length && (parseListItem(lines[next]) || (items.length && /^(?: {2,}|\t)\S/u.test(lines[next])))) {
+                    cursor = next;
+                    continue;
+                }
+                break;
+            }
+            const item = parseListItem(line);
+            if (item) {
+                const currentIndentation = line.length - line.trimStart().length;
+                if (items.length && currentIndentation > indentation) {
+                    nested = true;
+                    break;
+                }
+                indentation = currentIndentation;
+                items.push({ ...item, lines: [line], continuation: [] });
+            } else if (items.length && /^(?: {2,}|\t)\S/u.test(line)) {
+                // 嵌套列表、引用或代码有独立内容，不当作候选项的说明删除。
+                if (/^\s*(?:[-*+>]\s|\d+[.)、]\s|`{3,}|~{3,})/u.test(line)) {
+                    nested = true;
+                    break;
+                }
+                items.at(-1)!.lines.push(line);
+                items.at(-1)!.continuation.push(line.trimStart());
+            } else break;
+            cursor++;
+        }
+        const candidates = toOptions(items, MAX_OPTION_CHARS);
+        const laterSection = lines.slice(cursor).some((line) => /^ {0,3}#{1,6}\s/u.test(line) && !REPEATED_ACTION_HEADING.test(plainLeadIn(line).replace(/[：:]$/u, "")));
+        if (!nested && !laterSection && candidates) {
+            const matches = candidates.map((candidate) => {
+                const exact = options.flatMap((option, optionIndex) => (normalizedChoice(candidate.text) === normalizedChoice(option.text) ? [optionIndex] : []));
+                return exact.length ? exact : options.flatMap((option, optionIndex) => (matchesRepeatedChoice(candidate, option) ? [optionIndex] : []));
+            });
+            const uniqueMatches = matches.map((matchesForItem) => (matchesForItem.length === 1 && matches.filter((other) => other.includes(matchesForItem[0])).length === 1 ? matchesForItem[0] : -1));
+            if (uniqueMatches.every((match) => match === -1)) continue;
+            const remainingItems = items.flatMap((item, itemIndex) => {
+                const match = uniqueMatches[itemIndex];
+                if (match === -1) return [item.lines.join("\n")];
+                const candidate = candidates[itemIndex];
+                const option = options[match];
+                const annotation = normalizedChoice(candidate.title) !== normalizedChoice(option.title) ? candidate.text : candidate.detail && normalizedChoice(candidate.detail) !== normalizedChoice(option.detail || "") ? candidate.detail : "";
+                option.notes = [...new Set([option.notes, annotation, ...item.continuation].filter(Boolean))].join("\n") || undefined;
+                return [];
+            });
+            replacements.push({ start: index, end: cursor, lines: remainingItems.length ? [lines[index], "", remainingItems.join("\n\n")] : [] });
+            index = cursor - 1;
+        }
+    }
+    let remaining = lines;
+    for (const { start, end, lines: replacement } of replacements.reverse()) {
+        const before = remaining.slice(0, start).join("\n").trimEnd();
+        const after = remaining.slice(end).join("\n").trimStart();
+        remaining = [before, replacement.join("\n"), after].filter(Boolean).join("\n\n").split("\n");
+    }
+    return { body: remaining.join("\n"), options };
+}
+
 export function extractAgentReplyOptions(markdown: string): AgentReplyOptions | null {
     const source = markdown.replace(/\r\n?/g, "\n").trimEnd();
     if (!source || source.length > MAX_SOURCE_CHARS) return null;
     const lines = source.split("\n");
     const last = lines.length - 1;
-    return extractBlockOptions(lines, last) || extractInlineOptions(lines, last);
+    const result = extractBlockOptions(lines, last) || extractInlineOptions(lines, last);
+    return result ? withoutRepeatedActionLists(result.body, result.options) : null;
 }
 /** 仅在当前登录会话内保存选择水位，跨制作视图返回时不重新开放历史操作。 */
 export function createAgentChoiceHistory() {

@@ -72,6 +72,7 @@ function ReplyOptionInput({ option, value, disabled, onChange, onSelect }: { opt
                         submit();
                     }}
                 />
+                {option.notes ? <span className="agent-reply-option-detail">{option.notes}</span> : null}
             </label>
             <button type="submit" className="agent-reply-option-send" disabled={disabled || !value.trim()} aria-label={`发送${option.title}`}>
                 <ArrowRight className="agent-reply-option-arrow" aria-hidden="true" />
@@ -119,6 +120,7 @@ export function AgentReplyOptionCards({ options, onSelect, disabled = false, lab
                         <span className="agent-reply-option-copy">
                             <span className="agent-reply-option-title">{option.title}</span>
                             {option.detail ? <span className="agent-reply-option-detail">{option.detail}</span> : null}
+                            {option.notes ? <span className="agent-reply-option-detail">{option.notes}</span> : null}
                         </span>
                         <ArrowRight className="agent-reply-option-arrow" aria-hidden="true" />
                     </button>

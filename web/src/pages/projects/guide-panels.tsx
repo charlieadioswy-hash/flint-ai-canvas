@@ -71,7 +71,9 @@ export function GuideConfiguration({
                 {summary.production.creativeBrief ? (
                     <div className="drama-guide-brief">
                         <strong>你的创作想法</strong>
-                        <p>{summary.production.creativeBrief}</p>
+                        <p className="drama-guide-text-preview thin-scrollbar" role="region" aria-label="创作想法全文" tabIndex={0}>
+                            {summary.production.creativeBrief}
+                        </p>
                     </div>
                 ) : null}
                 <fieldset disabled={!editable || busy} inert={!editable || busy} className="drama-guide-configuration">
@@ -269,7 +271,9 @@ function GuideSourcePreview({ projectId }: { projectId: string }) {
                             </Button>
                         </p>
                     ) : (
-                        <p className="drama-guide-prompt">{source.isLoading ? "正在读取正文…" : source.data?.chapter.sourceText || "暂无正文"}</p>
+                        <p className="drama-guide-prompt drama-guide-text-preview thin-scrollbar" role="region" aria-label="已保存的故事正文" tabIndex={0}>
+                            {source.isLoading ? "正在读取正文…" : source.data?.chapter.sourceText || "暂无正文"}
+                        </p>
                     )}
                 </div>
             ) : null}

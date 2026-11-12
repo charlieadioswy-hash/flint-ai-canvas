@@ -93,10 +93,19 @@ async function messageFixture() {
     document.body.append(host);
     const root = createRoot(host);
     const selected: string[] = [];
-    const render = async (settings: { id?: string; disabled?: boolean; choices?: AgentReplyOptions | null } = {}) => {
-        const item: CloudAgentChatMessage = { id: settings.id || "reply", runId: "test-run", role: "assistant", text: source };
+    const render = async (settings: { id?: string; text?: string; disabled?: boolean; choices?: AgentReplyOptions | null } = {}) => {
+        const text = settings.text ?? source;
+        const item: CloudAgentChatMessage = { id: settings.id || "reply", runId: "test-run", role: "assistant", text };
         await act(async () =>
-            root.render(<AgentChatMessage item={item} theme={canvasThemes.light} replyOptions={settings.choices === undefined ? options : settings.choices} replyOptionsDisabled={settings.disabled} onReplyOption={(text) => selected.push(text)} />),
+            root.render(
+                <AgentChatMessage
+                    item={item}
+                    theme={canvasThemes.light}
+                    replyOptions={settings.choices === undefined ? extractAgentReplyOptions(text) : settings.choices}
+                    replyOptionsDisabled={settings.disabled}
+                    onReplyOption={(text) => selected.push(text)}
+                />,
+            ),
         );
     };
     await render();
@@ -139,6 +148,42 @@ test("模型回复输入项在原位置填写，点击不提交标签，回车�
         expect(ui.selected).toEqual(["第九集为何没有生成分镜？"]);
         await act(async () => (items[0] as HTMLButtonElement).click());
         expect(ui.selected).toEqual(["第九集为何没有生成分镜？", "查看角色"]);
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("重复候选说明留在对应选项中，不改变按钮身份、回复文本或自填提交", async () => {
+    const ui = await messageFixture();
+    const text = [
+        "### 下一步建议",
+        "1. 修改第1段提示词：保留原对白，只调整光照。",
+        "   若有额外要求，请填写具体镜头范围。",
+        "2. 查看角色",
+        "3. 其他要求（请填写）",
+        "   不填写不会提交。",
+        "",
+        "需要我做什么？",
+        "1. 修改第1段提示词",
+        "2. 查看角色",
+        "3. 其他要求（请填写）",
+    ].join("\n");
+    try {
+        await ui.render({ text });
+        expect(ui.host.querySelector("ol")).toBeNull();
+        expect(ui.host.querySelectorAll(".agent-reply-option")).toHaveLength(3);
+        const buttons = [...ui.host.querySelectorAll<HTMLButtonElement>("button.agent-reply-option")];
+        expect(buttons).toHaveLength(2);
+        expect(buttons[0].textContent).toContain("保留原对白，只调整光照。");
+        expect(buttons[0].textContent).toContain("若有额外要求，请填写具体镜头范围。");
+        expect(ui.host.querySelectorAll("input")).toHaveLength(1);
+        const input = ui.host.querySelector<HTMLInputElement>("input")!;
+        expect(input.closest("form")?.textContent).toContain("不填写不会提交。");
+        await act(async () => buttons[0].click());
+        expect(ui.selected).toEqual(["修改第1段提示词"]);
+        await fill(input, "  保留角色原文  ");
+        await enter(input);
+        expect(ui.selected).toEqual(["修改第1段提示词", "保留角色原文"]);
     } finally {
         await ui.dispose();
     }
