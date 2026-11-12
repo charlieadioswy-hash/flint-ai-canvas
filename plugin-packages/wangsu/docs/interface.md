@@ -59,6 +59,8 @@ Gemini 与 Chat 图片中的分辨率取独立 `resolution`，只接受字面 `1
 
 创建返回的 `id` 用于后续查询；不校验 `object` 必须是 `video`，因为部分型号返回 `video_generation`。识别 `created/queued/in_progress/processing/completed/failed/expired`，错误保留真实失败语义。下载与轮询不会再次提交生成任务。
 
+两种视频协议的结果下载均保留 Bearer 鉴权，不显式设置 `Accept`，按响应的 `Content-Type` 读取媒体。网宿兼容视频接口实测在 `Accept: video/mp4` 下对已完成任务返回 HTTP 400 `invalid_video_id`，省略该头可正常返回 `video/mp4`；`video/*` 和 `application/octet-stream` 也会触发相同拒绝。此兼容处理仅作用于网宿的视频结果下载，不改变创建、轮询及其他插件的请求头；HTTP 错误仍按失败处理。
+
 网宿未声明生成取消合同，本插件不提供取消操作，也不把删除资源当作取消。Seedance 的上游 `seconds:-1` 在适配器中保留；平台现有时长合同和计费要求正数，UI 当前只提供固定秒数。
 
 ## 音频与边界
@@ -93,7 +95,7 @@ Gemini 与 Chat 图片中的分辨率取独立 `resolution`，只接受字面 `1
   "apiVersion": "yingce.plugin/v2",
   "id": "wangsu",
   "name": "Wangsu 网宿 AI 网关",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "Wangsu / 影策",
   "description": "网宿系统渠道专用的文本、图片、视频和语音合成协议。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -4411,9 +4413,6 @@ Gemini 与 Chat 图片中的分辨率取独立 `resolution`，只接受字面 `1
         "result": {
           "method": "GET",
           "path": "/videos/{{taskId}}/content",
-          "headers": {
-            "Accept": "video/mp4"
-          },
           "basePath": true
         },
         "response": {
@@ -5314,9 +5313,6 @@ Gemini 与 Chat 图片中的分辨率取独立 `resolution`，只接受字面 `1
         "result": {
           "method": "GET",
           "path": "/openai/videos/{{taskId}}/content",
-          "headers": {
-            "Accept": "video/mp4"
-          },
           "basePath": true
         },
         "response": {

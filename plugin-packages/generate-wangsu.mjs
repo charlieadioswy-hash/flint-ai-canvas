@@ -222,11 +222,18 @@ nativeVideo.validations = [
   { assert: and(eq(len(mask), 0), eq(len(roleImages(["last_frame"])), 0), eq(len(ref("request.videos")), 0), eq(len(ref("request.audios")), 0)), message: "OpenAI 视频直连不支持尾帧、蒙版、参考视频或参考音频" },
 ];
 
+// Wangsu misroutes completed video downloads with a restrictive Accept header.
+// Omit it on the result request; the response still declares its media type.
+for (const provider of [video, nativeVideo]) {
+  delete provider.result.headers.Accept;
+  if (Object.keys(provider.result.headers).length === 0) delete provider.result.headers;
+}
+
 await cloneProvider("openai-audio", "openai-audio", "wangsu-audio", "语音合成兼容");
 await cloneProvider("openai-audio", "openai-audio", "wangsu-openai-audio", "OpenAI 语音合成直连", "/openai");
 
 const manifest = {
-  apiVersion: "yingce.plugin/v2", id: "wangsu", name: "Wangsu 网宿 AI 网关", version: "1.0.1", author: "Wangsu / 影策",
+  apiVersion: "yingce.plugin/v2", id: "wangsu", name: "Wangsu 网宿 AI 网关", version: "1.0.2", author: "Wangsu / 影策",
   description: "网宿系统渠道专用的文本、图片、视频和语音合成协议。",
   documentation: "接口说明见 README.md 与 docs/interface.md。",
   permissions: ["generation.run", "media.read"],

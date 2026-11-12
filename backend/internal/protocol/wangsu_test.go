@@ -348,7 +348,7 @@ func TestWangsuVideoLifecycleAndAuthenticatedDownload(t *testing.T) {
 			t.Fatalf("%s missing authenticated result operation", tt.id)
 		}
 		result, err := resultAdapter.BuildResult(context.Background(), pollContext)
-		if err != nil || result.Method != "GET" || result.Path != tt.prefix+"/videos/video-1/content" || !result.BasePath || result.OriginPath || result.Auth.Type != "bearer" || result.Headers["Accept"] != "video/mp4" {
+		if err != nil || result.Method != "GET" || result.Path != tt.prefix+"/videos/video-1/content" || !result.BasePath || result.OriginPath || result.Auth.Type != "bearer" || result.Headers["Accept"] != "" {
 			t.Errorf("%s result = %#v / %v", tt.id, result, err)
 		}
 	}
