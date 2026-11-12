@@ -24,6 +24,25 @@
     margin-left: auto;
     flex: none;
 }
+.drama-project-topbar.has-controls h1 {
+    max-width: clamp(120px, 18vw, 280px);
+}
+.drama-project-topbar.has-controls > a {
+    flex: none;
+}
+.drama-project-topbar-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    flex: 0 0 auto;
+}
+.drama-project-topbar-controls h2 {
+    flex: none;
+    white-space: nowrap;
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
 .drama-simple {
     height: 100%;
     min-height: 0;
@@ -48,37 +67,59 @@
     padding: var(--space-5);
     container: drama-story / inline-size;
 }
-.drama-simple-toolbar,
 .drama-simple-filters,
 .drama-simple-episode > header {
     display: flex;
     align-items: center;
     gap: var(--space-3);
 }
-.drama-simple-toolbar {
-    justify-content: space-between;
-    flex-wrap: wrap;
-    margin-bottom: var(--space-6);
-}
-.drama-simple-toolbar h2 {
-    font-size: var(--fs-heading);
-    font-weight: 600;
-}
-.drama-simple-toolbar p,
 .drama-simple-episode header p {
     margin-top: var(--space-1);
     font-size: var(--fs-tiny);
     color: var(--drama-muted);
 }
 .drama-simple-filters {
-    flex-wrap: wrap;
+    min-width: 0;
     gap: var(--space-2);
 }
-.drama-simple-filters .ant-select:first-child {
-    width: 170px;
+.drama-simple-filters .drama-simple-episode-filter {
+    width: 160px;
 }
-.drama-simple-filters .ant-select:nth-child(2) {
-    width: 116px;
+.drama-simple-filters .drama-simple-status-filter {
+    width: 112px;
+}
+.drama-simple-filters > button {
+    flex: none;
+}
+@container drama-project-header (max-width: 760px) {
+    .drama-project-topbar.has-controls {
+        flex-wrap: wrap;
+    }
+    .drama-project-topbar.has-controls h1 {
+        flex: 1 1 0;
+    }
+    .drama-project-topbar-controls {
+        order: 1;
+        flex: 1 0 100%;
+    }
+    .drama-simple-filters {
+        flex: 1;
+    }
+    .drama-simple-filters .drama-simple-episode-filter {
+        flex: 0 1 160px;
+        min-width: 0;
+    }
+    .drama-simple-filters .drama-simple-status-filter {
+        flex: 0 0 112px;
+    }
+}
+@container drama-project-header (max-width: 280px) {
+    .drama-project-topbar-controls {
+        flex-wrap: wrap;
+    }
+    .drama-simple-filters {
+        flex-basis: 100%;
+    }
 }
 .drama-simple-episode {
     margin-bottom: var(--space-7);

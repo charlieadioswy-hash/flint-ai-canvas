@@ -379,7 +379,8 @@ test.each([false, true])("短剧上下文=%s 时普通创意编号选项仍可�
             ),
         );
         const buttons = container.querySelectorAll<HTMLButtonElement>(".agent-reply-option");
-        expect(buttons).toHaveLength(2);
+        expect(buttons).toHaveLength(guideMode ? 3 : 2);
+        expect(container.querySelectorAll(".agent-reply-option-input")).toHaveLength(guideMode ? 1 : 0);
         expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
         await act(async () => buttons[1].click());
         expect(selected).toEqual(["补充森林环境"]);
@@ -400,11 +401,217 @@ test("制作台的确认对白与修改镜头是普通选择，仍能直接点�
             root.render(<AgentConversation {...conversationDefaults} messages={[{ id: "dialogue-options", role: "assistant", text: `请选择对白处理方式：\n\n1. ${labels[0]}\n2. ${labels[1]}` }]} guideMode onReplyOption={(text) => selected.push(text)} />),
         );
         const buttons = container.querySelectorAll<HTMLButtonElement>(".agent-reply-option");
-        expect(buttons).toHaveLength(2);
+        expect(buttons).toHaveLength(3);
+        expect(container.querySelectorAll(".agent-reply-option-input")).toHaveLength(1);
         expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
         await act(async () => buttons[0].click());
         await act(async () => buttons[1].click());
         expect(selected).toEqual(labels);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("旧轮媒体提案按原身份保留，最新四条创作选项和唯一自定义输入仍可直接回复", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const labels = ["先补齐缺少的参考图", "调整第 1 段对白", "检查剩余剧情段", "继续生成下一段"];
+    const media: DramaAgentProposal = { kind: "media", runId: "old-media-run", toolCallId: "media-call", baseRevision: 8, targetId: "segment-one", changes: { action: "segment_video", episodeId: "episode-one", targetRevision: 3 } };
+    const saved: DramaAgentProposal[] = [];
+    const selected: string[] = [];
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={[
+                        { id: "old-media-reply", runId: "old-media-run", role: "assistant", text: "已检查第 1 段，等待确认当前操作。" },
+                        { id: "user", role: "user", text: "接下来应该做什么？" },
+                        { id: "latest", runId: "new-run", role: "assistant", text: `请选择下一步：\n\n${labels.map((label, index) => `${index + 1}. ${label}`).join("\n")}` },
+                    ]}
+                    proposalChoices={{
+                        proposals: [media],
+                        render: (proposals) => (
+                            <button type="button" data-old-media-confirm onClick={() => saved.push(proposals[0])}>
+                                确认生成本段视频
+                            </button>
+                        ),
+                    }}
+                    onReplyOption={(text) => selected.push(text)}
+                />,
+            ),
+        );
+        const old = container.querySelector<HTMLButtonElement>("[data-old-media-confirm]")!;
+        expect(old.closest(".agent-message-body")?.textContent).toContain("已检查第 1 段");
+        const replies = container.querySelector<HTMLElement>(".agent-reply-options")!;
+        expect(replies).toBeTruthy();
+        expect(replies.closest(".agent-message-body")?.querySelector("ol")).toBeNull();
+        expect(replies.contains(old)).toBe(false);
+        const options = replies.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
+        expect(options).toHaveLength(4);
+        expect([...options].map((option) => option.querySelector(".agent-reply-option-title")?.textContent)).toEqual(labels);
+        expect(replies.querySelectorAll(".agent-reply-option-input")).toHaveLength(1);
+        expect(replies.querySelectorAll("input")).toHaveLength(1);
+        await act(async () => options[2].click());
+        expect(selected).toEqual([labels[2]]);
+        expect(saved).toEqual([]);
+        const input = replies.querySelector<HTMLInputElement>("input")!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "  先核对角色原文说明  ");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+        });
+        await act(async () => input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" })));
+        expect(selected).toEqual([labels[2], "先核对角色原文说明"]);
+        await act(async () => old.click());
+        expect(saved).toHaveLength(1);
+        expect(saved[0]).toBe(media);
+        expect(selected).toHaveLength(2);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each([
+    ["只生成第 1 段视频", "先补齐缺失参考图", "重新撰写当前段提示词", "检查所有剧情段"],
+    ["确认不生成视频，先调整对白", "先检查第 2 段提示词"],
+])("制作台同轮选择方向时不猜测媒体确认，原引导场景保留结构化建议：%s", async (...labels) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const media: DramaAgentProposal = { kind: "media", runId: "same-run", toolCallId: "media-call", baseRevision: 8, targetId: "segment-one", changes: { action: "segment_video", episodeId: "episode-one", targetRevision: 3 } };
+    const selected: string[] = [];
+    const saved: DramaAgentProposal[] = [];
+    let renderedMedia = 0;
+    const render = (dramaStudio: boolean) => (
+        <AgentConversation
+            {...conversationDefaults}
+            guideMode
+            dramaStudio={dramaStudio}
+            messages={[{ id: "same-run-reply", runId: "same-run", role: "assistant", text: `请选择接下来的方向：\n\n${labels.map((label, index) => `${index + 1}. ${label}`).join("\n")}` }]}
+            proposalChoices={{
+                proposals: [media],
+                render: (proposals) => {
+                    renderedMedia++;
+                    return (
+                        <button type="button" data-same-run-media-confirm onClick={() => saved.push(proposals[0])}>
+                            确认生成本段视频
+                        </button>
+                    );
+                },
+            }}
+            onReplyOption={(text) => selected.push(text)}
+        />
+    );
+    try {
+        await act(async () => root.render(render(true)));
+        expect(renderedMedia).toBe(0);
+        expect(container.querySelector("[data-same-run-media-confirm]")).toBeNull();
+        expect(container.textContent).not.toContain("确认生成本段视频");
+        expect(container.querySelector("ol")).toBeNull();
+        const options = container.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
+        expect(options).toHaveLength(labels.length);
+        expect([...options].map((option) => option.querySelector(".agent-reply-option-title")?.textContent)).toEqual(labels);
+        expect(container.querySelectorAll(".agent-reply-option-input")).toHaveLength(1);
+        await act(async () => options[0].click());
+        expect(selected).toEqual([labels[0]]);
+        expect(saved).toEqual([]);
+        await act(async () => root.render(render(false)));
+        const confirmation = container.querySelector<HTMLButtonElement>("[data-same-run-media-confirm]")!;
+        expect(confirmation).toBeTruthy();
+        expect(container.querySelector(".agent-reply-options")).toBeNull();
+        await act(async () => confirmation.click());
+        expect(saved).toHaveLength(1);
+        expect(saved[0]).toBe(media);
+        expect(selected).toHaveLength(1);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each(["确认生成本段视频", "是，按当前报价生成本段视频", "使用当前费用执行本段生成"])("制作台按明确选项关联保留真实预检与回调，不依赖确认措辞：%s", async (confirmationOption) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const media: DramaAgentProposal = { kind: "media", runId: "confirm-run", toolCallId: "media-call", baseRevision: 8, targetId: "segment-one", confirmationOption, changes: { action: "segment_video", episodeId: "episode-one", targetRevision: 3 } };
+    const unrelated: DramaAgentProposal = { ...media, toolCallId: "unrelated-media-call", targetId: "segment-two", confirmationOption: "确认另一段视频" };
+    const saved: DramaAgentProposal[] = [];
+    const selected: string[] = [];
+    let presented: DramaAgentProposal[] = [];
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    dramaStudio
+                    messages={[{ id: "confirmation", runId: "confirm-run", role: "assistant", text: `当前对象和费用已检查，请选择：\n\n1. ${confirmationOption}\n2. 暂不生成，继续修改` }]}
+                    proposalChoices={{
+                        proposals: [unrelated, media],
+                        render: (proposals) => {
+                            presented = proposals;
+                            return (
+                                <>
+                                    <p>仅生成本段视频 · 预计 19.5 积分</p>
+                                    <button type="button" data-execute-media-confirm onClick={() => saved.push(proposals[0])}>
+                                        确认生成本段视频
+                                    </button>
+                                </>
+                            );
+                        },
+                    }}
+                    onReplyOption={(text) => selected.push(text)}
+                />,
+            ),
+        );
+        const confirmation = container.querySelector<HTMLButtonElement>("[data-execute-media-confirm]")!;
+        expect(confirmation).toBeTruthy();
+        expect(presented).toEqual([media]);
+        expect(container.textContent).toContain("预计 19.5 积分");
+        expect(container.querySelector("ol")).toBeNull();
+        expect(container.querySelector(".agent-reply-options")).toBeNull();
+        expect(container.querySelector(".agent-reply-option-input")).toBeNull();
+        await act(async () => confirmation.click());
+        expect(saved).toHaveLength(1);
+        expect(saved[0]).toBe(media);
+        expect(selected).toEqual([]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each([
+    { option: "其他，自己填写", title: "其他，自己填写" },
+    { option: "继续调整：填写想修改的内容", title: "继续调整" },
+    { option: "继续调整：请直接描述你的要求", title: "继续调整" },
+])("短剧模型已给自定义填写选项时只展示一个输入项：$option", async ({ option, title }) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation {...conversationDefaults} guideMode messages={[{ id: "creative-options", role: "assistant", text: `请选择下一步：\n\n1. 检查人物小传\n2. 补充场景设定\n3. ${option}` }]} onReplyOption={(text) => selected.push(text)} />,
+            ),
+        );
+        expect(container.querySelectorAll("button.agent-reply-option")).toHaveLength(2);
+        expect(container.querySelectorAll(".agent-reply-option-input")).toHaveLength(1);
+        expect(container.querySelectorAll(".agent-reply-option")).toHaveLength(3);
+        expect(container.querySelector("ol")).toBeNull();
+        const input = container.querySelector<HTMLInputElement>(".agent-reply-option-input input")!;
+        expect(input.getAttribute("aria-label")).toBe(title);
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "保留当前对白，先改镜头顺序");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+        });
+        await act(async () => input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" })));
+        expect(selected).toEqual(["保留当前对白，先改镜头顺序"]);
     } finally {
         await act(async () => root.unmount());
         container.remove();

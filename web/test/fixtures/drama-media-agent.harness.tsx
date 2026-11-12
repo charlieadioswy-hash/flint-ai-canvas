@@ -293,6 +293,78 @@ test("往返视图恢复待确认操作，已应用或忽略的建议不再出�
     expect(executions).toHaveLength(0);
 });
 
+test("继续对话只清理发送前的媒体快照，文字建议与随后新增媒体保留", async () => {
+    act(() => controls.onProposal(shotProposal("shot-one")));
+    await act(async () => {
+        await controls.requestVideo(episode, segment);
+    });
+    const previousMedia = controls.proposalChoices!.proposals.find((proposal) => proposal.kind === "media")!;
+    const continueConversation = controls.proposalChoices!.onContinueConversation;
+    expect(typeof continueConversation).toBe("function");
+    const second = { ...segment, id: "segment-two", index: 2, revision: 4 };
+    await act(async () => {
+        await controls.requestVideo(episode, second);
+    });
+    await act(async () => continueConversation!());
+    const remaining = controls.proposalChoices!.proposals;
+    expect(remaining.map((proposal) => [proposal.kind, proposal.targetId])).toEqual([
+        ["shot", "shot-one"],
+        ["media", "segment-two"],
+    ]);
+    expect(executions).toHaveLength(0);
+    await remount();
+    act(() => controls.onProposal(previousMedia));
+    expect(controls.proposalChoices!.proposals.map((proposal) => proposal.targetId)).toEqual(["shot-one", "segment-two"]);
+    expect(preflightCalls).toHaveLength(2);
+    expect(container.textContent).toContain("确认保存分镜修改");
+    await click("确认生成本段视频");
+    expect(executions).toHaveLength(1);
+    expect(executions[0]!.request).toMatchObject({ targetId: "segment-two", episodeId: "episode-one", targetRevision: 4 });
+    await click("确认保存分镜修改");
+    expect(writes).toEqual([["project", "shot-one", { dialogue: "别怕", expectedRevision: 8 }]]);
+    expect(controls.proposalChoices).toBeUndefined();
+    await remount();
+    expect(controls.proposalChoices).toBeUndefined();
+});
+
+test("继续对话后迟到的旧媒体预检与会话重放不恢复确认，新请求仍可用", async () => {
+    let finishPreview!: () => void;
+    delay = new Promise<void>((resolve) => {
+        finishPreview = resolve;
+    });
+    let pendingPreview!: Promise<void>;
+    act(() => {
+        pendingPreview = controls.requestVideo(episode, segment);
+    });
+    const previousMedia = controls.proposalChoices!.proposals[0]!;
+    const continueConversation = controls.proposalChoices!.onContinueConversation;
+    expect(typeof continueConversation).toBe("function");
+    expect(container.textContent).toContain("正在检查当前对象");
+    await act(async () => continueConversation!());
+    expect(controls.proposalChoices).toBeUndefined();
+    await remount();
+    expect(controls.proposalChoices).toBeUndefined();
+    await act(async () => {
+        finishPreview();
+        await pendingPreview;
+    });
+    await remount();
+    act(() => controls.onProposal(previousMedia));
+    expect(controls.proposalChoices).toBeUndefined();
+    expect(container.textContent).not.toContain("确认生成本段视频");
+    expect(preflightCalls).toHaveLength(1);
+    expect(executions).toHaveLength(0);
+    delay = undefined;
+    await act(async () => {
+        await controls.requestVideo(episode, segment);
+    });
+    expect(container.textContent).toContain("确认生成本段视频");
+    expect(preflightCalls).toHaveLength(2);
+    await click("确认生成本段视频");
+    expect(executions).toHaveLength(1);
+    expect(executions[0]!.request.targetId).toBe("segment-one");
+});
+
 test("预检和已提交请求在视图切换后正常收尾，不重复执行", async () => {
     let finishPreview!: () => void;
     delay = new Promise<void>((resolve) => {

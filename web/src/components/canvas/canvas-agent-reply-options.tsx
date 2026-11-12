@@ -2,7 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { useRef, useState, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { agentReplyOptionNeedsInput, type AgentReplyOption } from "@/lib/canvas/agent-reply-options";
+import { agentReplyOptionIsInput, type AgentReplyOption } from "@/lib/canvas/agent-reply-options";
 
 export function useAgentReplyOptionDrafts(scopeKey: string) {
     const [state, setState] = useState<{ scopeKey: string; values: Record<string, string> }>({ scopeKey, values: {} });
@@ -82,7 +82,7 @@ export function AgentReplyOptionCards({ options, onSelect, disabled = false, lab
     return (
         <div className="agent-reply-options" role="group" aria-label={label ?? t("canvasA.replyOptions.label")}>
             {options.map((option) =>
-                option.input || [option.title, option.detail, option.text].some((text) => text && agentReplyOptionNeedsInput(text)) ? (
+                agentReplyOptionIsInput(option) ? (
                     <ReplyOptionInput
                         key={`${scopeKey}:${option.marker}:${option.text}`}
                         option={option}

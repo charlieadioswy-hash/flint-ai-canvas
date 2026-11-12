@@ -67,6 +67,10 @@ export function agentReplyOptionNeedsInput(text: string) {
     );
 }
 
+export function agentReplyOptionIsInput(option: AgentReplyOption) {
+    return Boolean(option.input || [option.title, option.detail, option.text].some((text) => text && agentReplyOptionNeedsInput(text)));
+}
+
 function parseListItem(line: string): ParsedItem | null {
     // 缩进行是上一项的续行或子列表，不是选项。
     if (/^(?:\s{4,}|\t)/.test(line)) return null;

@@ -261,11 +261,17 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
         [projectId, updatePreview, current, setDismissed, message],
     );
     const visible = useMemo(() => proposals.filter((proposal) => !dismissed.has(dramaProposalKey(proposal))), [proposals, dismissed]);
+    const continueConversation = useCallback(() => {
+        if (!sessionCurrent()) return;
+        const mediaKeys = visible.filter((proposal) => proposal.kind === "media").map(dramaProposalKey);
+        if (mediaKeys.length) setDismissed((previous) => new Set([...previous, ...mediaKeys]));
+    }, [sessionCurrent, visible, setDismissed]);
     const proposalChoices = useMemo(
         () =>
             visible.length
                 ? {
                       proposals: visible,
+                      onContinueConversation: continueConversation,
                       render: (items: DramaAgentProposal[]) =>
                           items.map((proposal) => {
                               const key = dramaProposalKey(proposal);
@@ -334,7 +340,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                           }),
                   }
                 : undefined,
-        [visible, previews, sendAdjustment, confirm, applyText, loadPreview, requestAction],
+        [visible, previews, sendAdjustment, confirm, applyText, loadPreview, requestAction, continueConversation],
     );
     return { onProposal, proposalChoices, referenceSegment, requestVideo, requestAction, prefillRequest };
 }

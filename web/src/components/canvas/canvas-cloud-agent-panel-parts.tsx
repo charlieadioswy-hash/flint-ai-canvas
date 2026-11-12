@@ -67,7 +67,7 @@ import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentat
 import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-settings";
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
-import { extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
+import { agentReplyOptionIsInput, extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
 import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
 
@@ -656,6 +656,7 @@ function agentReplyOptionsTarget(messages: readonly CloudAgentChatMessage[], dra
         // 短剧推进只能由当前阶段回调提供，不能把恢复的旧引导文案变成普通续聊操作。
         if (drama && hasExplicitDramaStageTransition(message.text)) return null;
         const options = extractAgentReplyOptions(message.text);
+        if (drama && options && !options.options.some(agentReplyOptionIsInput)) options.options.push({ marker: "✎", title: "自定义回复", text: "输入你的要求，回车发送", input: true });
         return options ? { id: message.id, options } : null;
     }
     return null;
@@ -758,7 +759,7 @@ export function AgentConversation({
     const dramaSetupChoices = guideMode ? setupChoices : undefined;
     const dramaProposalChoices = guideMode ? proposalChoices : undefined;
     const dramaStageChoices = guideMode ? stageChoices : undefined;
-    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices && !dramaProposalChoices && !dramaStageChoices;
+    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices && !dramaStageChoices;
     const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages, guideMode) : null), [guideMode, messages, replyOptionsEnabled]);
     const setupPresentation = useMemo(() => {
         const byMessage = new Map<string, ReturnType<typeof prepareDramaSetupMessage>>();
@@ -799,12 +800,16 @@ export function AgentConversation({
             const target = assistantByRun.get(runId);
             if (!target) fallback.push(...proposals);
             else if (!target.streaming) {
-                const prepared = prepareDramaProposalMessage(target.text, proposals);
+                const directions = dramaStudio && proposals.every((proposal) => proposal.kind === "media") ? extractAgentReplyOptions(target.text) : null;
+                // 只有工具明确关联的确认选项才接到预检；普通方向的措辞不承担执行语义。
+                const presented = directions ? proposals.filter((proposal) => proposal.confirmationOption && directions.options.some((option) => !agentReplyOptionIsInput(option) && option.text === proposal.confirmationOption)) : proposals;
+                if (!presented.length) continue;
+                const prepared = prepareDramaProposalMessage(directions?.body ?? target.text, presented);
                 byMessage.set(target.id, prepared);
             }
         }
         return { byMessage, fallback };
-    }, [busy, dramaProposalChoices, segments]);
+    }, [busy, dramaProposalChoices, dramaStudio, segments]);
     const stagePresentation = useMemo(() => {
         if (!dramaStageChoices || dramaStageChoices.pending || busy || approval) return { targetId: null as string | null, fallback: false };
         for (let index = segments.length - 1; index >= 0; index -= 1) {

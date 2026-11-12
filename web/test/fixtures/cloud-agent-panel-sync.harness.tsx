@@ -46,12 +46,16 @@ let loadOverride: ((id: string) => Promise<CloudAgentConversation>) | undefined;
 const conversationLoads: Array<{ id: string; scope: string }> = [];
 const subscriptions: Array<{ id: string; after: number; event: (event: AgentEvent) => void; connection: (status: string) => void; closed: boolean }> = [];
 const sent: string[] = [];
+const interjected: string[] = [];
+const canceled: string[] = [];
 const sendInputs: Array<Record<string, any>> = [];
 const createInputs: Array<Record<string, any>> = [];
 let sendFailure: Error | undefined;
 let capabilitiesOverride: (() => Promise<unknown>) | undefined;
 let sendOverride: (() => Promise<{ run: AgentRun }>) | undefined;
 let createOverride: ((input: any) => Promise<{ run: AgentRun }>) | undefined;
+let interjectionFailure: Error | undefined;
+let interjectionOverride: (() => Promise<{ accepted: boolean; pending: number }>) | undefined;
 const outboxes = new Map<string, AgentOutbox>();
 let outboxLoadOverride: ((id: string) => Promise<AgentOutbox | null>) | undefined;
 let startupSaveOverride: (() => Promise<void>) | undefined;
@@ -106,6 +110,15 @@ mock.module("@/services/api/agent", () => ({
         createInputs.push(input);
         if (createOverride) return createOverride(input);
         throw new Error("不应新建独立轮次");
+    },
+    sendAgentInterjection: async (id: string) => {
+        interjected.push(id);
+        if (interjectionFailure) throw interjectionFailure;
+        return interjectionOverride ? interjectionOverride() : { accepted: true, pending: 1 };
+    },
+    cancelAgentRun: async (id: string) => {
+        canceled.push(id);
+        throw new Error("测试禁止取消已有任务");
     },
     decideAgentApproval: async () => {
         generated++;
@@ -277,11 +290,13 @@ type MountOptions = {
     loadConversation?: (id: string) => Promise<CloudAgentConversation>;
     onConversationBound?: (id: string) => void;
     onProposal?: (proposal: DramaAgentProposal) => void;
+    onContinueConversation?: () => void;
     guideConversationId?: string | null;
     offline?: boolean;
     strictMode?: boolean;
     floatingDrama?: boolean;
     initiallyOpen?: boolean;
+    studioMode?: boolean;
 };
 async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string, options: MountOptions = {}) {
     local = options.localConversations || [initial];
@@ -292,11 +307,15 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     loadOverride = options.loadConversation;
     conversationLoads.length = 0;
     sent.length = 0;
+    interjected.length = 0;
+    canceled.length = 0;
     sendInputs.length = 0;
     createInputs.length = 0;
     sendFailure = undefined;
     capabilitiesOverride = guideProjectId ? async () => ({ permissionModes: ["read_only", "request_approval"], skills: true }) : undefined;
     sendOverride = undefined;
+    interjectionFailure = undefined;
+    interjectionOverride = undefined;
     createOverride =
         options.createRun ||
         (options.startupRequest ? async (input) => ({ run: { ...makeRun(`guide-startup-${generated}`, "running"), canvasId: undefined, dramaProjectId: input.dramaProjectId, permissionMode: "read_only", userPrompt: input.prompt } }) : undefined);
@@ -323,12 +342,14 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
         drama: guideProjectId
             ? {
                   projectId: guideProjectId,
+                  studioMode: options.studioMode,
                   guideConversationId: options.guideConversationId === undefined ? initial.serverConversationId : options.guideConversationId || undefined,
                   host: options.floatingDrama ? undefined : host,
                   startupRequest: options.startupRequest,
                   prefillRequest: options.prefillRequest,
                   onConversationBound: options.onConversationBound,
                   onProposal: options.onProposal,
+                  proposalChoices: options.onContinueConversation ? { proposals: [], render: () => null, onContinueConversation: options.onContinueConversation } : undefined,
               }
             : null,
     });
@@ -633,6 +654,100 @@ function guideChat(id: string, runId: string, projectId = "guide-project"): Clou
     return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
 }
 
+function interjectionHistory(status: "sent" | "delivered" | "undelivered" | "withdrawn") {
+    const source = guideChat("guide-local", `interjection-history-${status}`).run!;
+    source.status = status === "sent" ? "running" : "completed";
+    const events: AgentEvent[] = [];
+    const event = (type: string, payload: Record<string, unknown>) => events.push({ eventId: `history-${events.length + 1}`, runId: source.id, seq: events.length + 1, type, payload, createdAt: source.updatedAt });
+    const proposal = (kind: "media" | "shot", targetId: string) =>
+        event("tool_completed", {
+            toolName: "drama_propose_changes",
+            callId: `call-${targetId}`,
+            result: { kind, targetId, baseRevision: 8, changes: kind === "media" ? { action: "segment_video", episodeId: "episode-one", targetRevision: 2 } : { dialogue: "保留之前的文字建议" } },
+        });
+    proposal("media", "before-interjection");
+    proposal("shot", "old-text-proposal");
+    event("user_interjection", { messageId: "history-interjection", text: "先改一个方向" });
+    if (status !== "sent") event(status === "delivered" ? "user_interjection_delivered" : status === "withdrawn" ? "user_interjection_withdrawn" : "user_interjection_dropped", { messageId: "history-interjection", text: "先改一个方向" });
+    proposal("media", "after-interjection");
+    return awaitImportHistory.projectCloudAgentConversation(source.conversationId!, [{ ...source, events }]);
+}
+
+for (const status of ["sent", "delivered"] as const) {
+    test(`刷新恢复${status}插话历史时，制作台只恢复其后媒体，文字与引导不受影响`, async () => {
+        for (const studioMode of [true, false]) {
+            const existing = interjectionHistory(status);
+            const received: DramaAgentProposal[] = [];
+            const mounted = await mount(existing, [existing], null, "guide-project", { studioMode, onProposal: (proposal) => received.push(proposal) });
+            try {
+                expect(existing.messages.find((message) => message.id === "history-interjection")?.interjection).toBe(status);
+                expect(received.map((proposal) => proposal.targetId)).toEqual(studioMode ? ["old-text-proposal", "after-interjection"] : ["before-interjection", "old-text-proposal", "after-interjection"]);
+                expect(generated).toBe(0);
+                expect(sent).toHaveLength(0);
+                expect(canceled).toHaveLength(0);
+            } finally {
+                await mounted.close();
+            }
+        }
+    });
+}
+
+test("未确认发送、未送达、撤回及转排队的用户消息不误过滤可重试媒体确认", async () => {
+    for (const status of ["sending", "undelivered", "withdrawn", "requeued", "unknown-post"] as const) {
+        const existing = interjectionHistory(status === "withdrawn" ? status : "undelivered");
+        const message = existing.messages.find((entry) => entry.id === "history-interjection")!;
+        if (status === "unknown-post") {
+            message.id = "user-unknown-idempotency-key";
+            delete message.interjection;
+        } else message.interjection = status;
+        const received: DramaAgentProposal[] = [];
+        const mounted = await mount(existing, [existing], null, "guide-project", { studioMode: true, onProposal: (proposal) => received.push(proposal) });
+        try {
+            expect(received.map((proposal) => proposal.targetId)).toEqual(["before-interjection", "old-text-proposal", "after-interjection"]);
+            expect(generated).toBe(0);
+            expect(sent).toHaveLength(0);
+            expect(canceled).toHaveLength(0);
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("制作台恢复仅消费当前轮媒体确认，保留旧轮文字建议且不改变引导恢复", async () => {
+    for (const studioMode of [true, false]) {
+        const existing = guideChat("guide-local", "current-media-run");
+        for (const [kind, runId, targetId] of [
+            ["media", "old-media-run", "old-segment"],
+            ["media", "current-media-run", "current-segment"],
+            ["shot", "old-media-run", "old-shot"],
+        ] as const) {
+            existing.messages.push({
+                id: `tool-${targetId}`,
+                role: "tool",
+                text: "建议完成",
+                runId,
+                detail: {
+                    eventType: "tool_completed",
+                    toolName: "drama_propose_changes",
+                    runId,
+                    callId: `call-${targetId}`,
+                    result: { kind, targetId, baseRevision: 8, changes: kind === "media" ? { action: "segment_video", episodeId: "episode-one", targetRevision: 2 } : { dialogue: "保留旧轮文字修改" } },
+                },
+            });
+        }
+        const received: DramaAgentProposal[] = [];
+        const mounted = await mount(existing, [existing], null, "guide-project", { studioMode, onProposal: (proposal) => received.push(proposal) });
+        try {
+            expect(received.map((proposal) => proposal.targetId)).toEqual(studioMode ? ["current-segment", "old-shot"] : ["old-segment", "current-segment", "old-shot"]);
+            expect(generated).toBe(0);
+            expect(sent).toHaveLength(0);
+            expect(canceled).toHaveLength(0);
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
 test("往返详细台后向新的简易台投递历史及在途完成的建议", async () => {
     const existing = guideChat("guide-local", "studio-proposal-parent");
     existing.messages.push({
@@ -726,7 +841,8 @@ test("运行中排队保存入队时引用，之后切换引用不改写原队�
 
 test("引用消息未发送成功时保留结构化目标，原样重试不丢失或重复绑定", async () => {
     const existing = guideChat("guide-local", "studio-reference-parent");
-    const mounted = await mount(existing, [existing], null, "guide-project");
+    const continued = mock();
+    const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
     try {
         await act(async () => {
             useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-real", segmentIndex: 0, title: "开场", revision: 3 });
@@ -739,6 +855,7 @@ test("引用消息未发送成功时保留结构化目标，原样重试不丢�
         });
         expect(pending?.request?.prompt).toContain('"segmentId":"segment-real"');
         expect(useGlobalAgentStore.getState().dramaReference?.segmentId).toBe("segment-real");
+        expect(continued).not.toHaveBeenCalled();
         sendFailure = undefined;
         sendOverride = async () => ({ run: { ...existing.run!, id: "studio-reference-child", parentId: existing.run!.id } });
         await act(async () => {
@@ -747,8 +864,162 @@ test("引用消息未发送成功时保留结构化目标，原样重试不丢�
         });
         expect(sendInputs[1]?.prompt).toBe(sendInputs[0]?.prompt);
         expect(sendInputs[1]?.prompt.match(/本条消息引用的短剧对象/gu)).toHaveLength(1);
+        expect(continued).toHaveBeenCalledTimes(1);
+        expect(canceled).toHaveLength(0);
     } finally {
         await mounted.close();
+    }
+});
+
+test("新建短剧对话仅在创建请求成功接受后通知旧媒体确认退出，失败可原样重试", async () => {
+    const continued = mock();
+    let fail = true;
+    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
+        onContinueConversation: continued,
+        createRun: async (input) => {
+            if (fail) throw new Error("创建请求网络断开");
+            return { run: { ...makeRun("proposal-create-child"), canvasId: undefined, dramaProjectId: input.dramaProjectId, permissionMode: "read_only", userPrompt: input.prompt } };
+        },
+    });
+    try {
+        await act(async () => composer.onPromptChange("先检查角色，不生成媒体"));
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(createInputs).toHaveLength(1);
+        expect(continued).not.toHaveBeenCalled();
+        expect(pending?.request?.prompt).toBe("先检查角色，不生成媒体");
+        fail = false;
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(createInputs).toHaveLength(2);
+        expect(createInputs[1]).toEqual(createInputs[0]);
+        expect(continued).toHaveBeenCalledTimes(1);
+        expect(sent).toHaveLength(0);
+        expect(canceled).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+for (const operation of ["message", "interjection"] as const) {
+    test(`${operation} 接受回执只清理发送时媒体快照，不触发等待期间的新确认回调`, async () => {
+        const existing = guideChat("guide-local", `proposal-${operation}-parent`);
+        if (operation === "interjection") existing.run!.status = "running";
+        const previous = mock();
+        const replacement = mock();
+        const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: previous });
+        let release!: () => void;
+        try {
+            if (operation === "message")
+                sendOverride = () =>
+                    new Promise((resolve) => {
+                        release = () => resolve({ run: { ...existing.run!, id: "proposal-message-child", parentId: existing.run!.id } });
+                    });
+            else
+                interjectionOverride = () =>
+                    new Promise((resolve) => {
+                        release = () => resolve({ accepted: true, pending: 1 });
+                    });
+            await act(async () => composer.onPromptChange("先换个方向讨论"));
+            await act(async () => {
+                composer.onSubmit({ alternate: operation === "interjection" });
+                await settle();
+            });
+            expect(release).toBeDefined();
+            expect(previous).not.toHaveBeenCalled();
+            await act(async () => {
+                const context = useGlobalAgentStore.getState().drama!;
+                useGlobalAgentStore.setState({ drama: { ...context, proposalChoices: { proposals: [], render: () => null, onContinueConversation: replacement } } });
+                await settle();
+                release();
+                await settle();
+            });
+            expect(previous).toHaveBeenCalledTimes(1);
+            expect(replacement).not.toHaveBeenCalled();
+            expect(operation === "message" ? sent : interjected).toEqual([existing.run!.id]);
+            expect(canceled).toHaveLength(0);
+        } finally {
+            release?.();
+            await mounted.close();
+        }
+    });
+}
+
+test("短剧插话失败保留旧媒体确认与原队列，接受重试后才通知退出", async () => {
+    const existing = guideChat("guide-local", "proposal-interjection-retry");
+    existing.run!.status = "running";
+    const continued = mock();
+    const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
+    try {
+        interjectionFailure = new ApiError("插话请求未被接收", { status: 400 });
+        await act(async () => composer.onPromptChange("我想先调整剧情"));
+        await act(async () => {
+            composer.onSubmit({ alternate: true });
+            await settle();
+        });
+        expect(interjected).toEqual([existing.run!.id]);
+        expect(continued).not.toHaveBeenCalled();
+        expect(outboxUI.outbox.items).toHaveLength(1);
+        expect(outboxUI.outbox.items[0].text).toBe("我想先调整剧情");
+        interjectionFailure = undefined;
+        await act(async () => {
+            const item = outboxUI.outbox.items[0];
+            outboxUI.onPrimary(item, outboxUI.primaryAction(item));
+            await settle();
+        });
+        expect(interjected).toHaveLength(2);
+        expect(continued).toHaveBeenCalledTimes(1);
+        expect(mounted.host.querySelector('[data-testid="outbox"]')).toBeNull();
+        expect(sent).toHaveLength(0);
+        expect(canceled).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("切换账号、会话或作品后的迟到发送回执不通知旧媒体确认退出", async () => {
+    for (const change of ["account", "conversation", "project"] as const) {
+        const existing = guideChat("guide-local", `proposal-late-${change}`);
+        const continued = mock();
+        const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
+        let release!: () => void;
+        try {
+            sendOverride = () =>
+                new Promise((resolve) => {
+                    release = () => resolve({ run: { ...existing.run!, id: "proposal-late-child", parentId: existing.run!.id } });
+                });
+            await act(async () => composer.onPromptChange("尚在发送中的新方向"));
+            await act(async () => {
+                composer.onSubmit();
+                await settle();
+            });
+            expect(release).toBeDefined();
+            await act(async () => {
+                if (change === "account") {
+                    setActiveUserScope("other-user");
+                    useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
+                } else if (change === "conversation") {
+                    const next = guideChat("guide-next", "proposal-next-session");
+                    next.run!.conversationId = "next-guide-session";
+                    next.serverConversationId = "next-guide-session";
+                    loadOverride = async () => next;
+                    const context = useGlobalAgentStore.getState().drama!;
+                    useGlobalAgentStore.setState({ drama: { ...context, guideConversationId: next.serverConversationId } });
+                } else useGlobalAgentStore.setState({ drama: { projectId: "next-project", host: mounted.host } });
+                await settle();
+                release();
+                await settle();
+            });
+            expect(continued).not.toHaveBeenCalled();
+            expect(canceled).toHaveLength(0);
+        } finally {
+            release?.();
+            await mounted.close();
+        }
     }
 });
 

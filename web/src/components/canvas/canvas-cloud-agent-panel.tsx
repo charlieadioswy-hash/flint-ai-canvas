@@ -1382,6 +1382,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         }
         const value = item.text;
         const messageId = agentOutboxMessageId(item.id);
+        const dramaContext = useGlobalAgentStore.getState().drama;
+        const continueDramaConversation = dramaProjectId && dramaContext?.projectId === dramaProjectId ? dramaContext.proposalChoices?.onContinueConversation : undefined;
         // 请求发出即显示气泡；服务端回显后变为「等待送达」，送到模型后变为「已送达」。
         setMessages((current) => appendUniqueMessage(current, { id: messageId, role: "user", text: value, interjection: "sending" }));
         let failure: unknown;
@@ -1401,6 +1403,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         }
         if (!accountIsCurrent() || currentScope.current !== scope) return false;
         if (!failure) {
+            continueDramaConversation?.();
             updateOutbox(scope, (current) => removeAgentOutboxItem(current, item.id));
             setMessages((current) => current.map((entry) => (entry.id === messageId && entry.interjection === "sending" ? { ...entry, interjection: "sent" as const } : entry)));
             return true;
@@ -1684,9 +1687,12 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             bubbleId = userMessage.id;
             setMessages((current) => appendUniqueMessage(current, userMessage));
             requestSent = true;
+            const dramaContext = useGlobalAgentStore.getState().drama;
+            const continueDramaConversation = dramaProjectId && dramaContext?.projectId === dramaProjectId ? dramaContext.proposalChoices?.onContinueConversation : undefined;
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request) : await createAgentRun(request);
             accepted = true;
             if (accountIsCurrent() && currentScope.current === scope) {
+                continueDramaConversation?.();
                 replayCursorRef.current = { runId: result.run.id, seq: 0 };
                 cloudRunTransitionRef.current = result.run.id;
                 setRun(result.run);
@@ -2264,15 +2270,19 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             deliveredProposalsRef.current.clear();
             proposalConsumerRef.current = consumer;
         }
-        for (const message of messages) {
+        const mediaBoundary = messages.findLastIndex((message) => message.role === "user" && (message.interjection === "sent" || message.interjection === "delivered" || (!message.interjection && message.id === `user-${run?.id}`)));
+        for (const [index, message] of messages.entries()) {
             const proposal = dramaProposalFromToolDetail(message.detail);
             if (!proposal) continue;
+            // 插话沿用同一轮次；已接受的新要求之前的媒体确认也不能在刷新后恢复。
+            // 未被接收的乐观气泡与未送达插话不构成边界，文字建议始终可继续审阅。
+            if (dramaStudio && proposal.kind === "media" && (proposal.runId !== run?.id || index < mediaBoundary)) continue;
             const key = `${proposal.runId}:${proposal.toolCallId}`;
             if (deliveredProposalsRef.current.has(key)) continue;
             deliveredProposalsRef.current.add(key);
             consumer(proposal);
         }
-    }, [messages, run?.dramaProjectId, dramaProjectId, guideReadyProject, drama?.onProposal]);
+    }, [messages, run?.id, run?.dramaProjectId, dramaProjectId, dramaStudio, guideReadyProject, drama?.onProposal]);
 
     // ---- 输入区：发送 / 排队 / 插话 / 保存的路由与提示 ----
     const modifierEnter = agentModifierShortcut("Enter");

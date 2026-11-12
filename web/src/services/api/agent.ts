@@ -76,6 +76,8 @@ export type DramaAgentProposal = {
     changes: Record<string, unknown>;
     /** 选项说明，仅用于展示，不参与配置写入。 */
     explanation?: string;
+    /** 媒体确认与回复内选项的明确关联；不构成执行授权。 */
+    confirmationOption?: string;
     runId: string;
     toolCallId: string;
 };
@@ -96,6 +98,7 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
         Array.isArray(result.changes)
     )
         return null;
+    if (result.confirmationOption !== undefined && result.kind !== "media") return null;
     if (result.kind === "cast_delete") {
         const changes = result.changes as Record<string, unknown>;
         if (typeof result.targetId !== "string" || !result.targetId.trim() || typeof changes.reason !== "string" || !changes.reason.trim()) return null;
@@ -105,6 +108,11 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
         if (typeof result.targetId !== "string" || !result.targetId.trim() || !["segment_video", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(changes.action))) return null;
         if (!Number.isSafeInteger(changes.targetRevision) || Number(changes.targetRevision) < 0) return null;
         if (changes.action !== "cast_image" && (typeof changes.episodeId !== "string" || !changes.episodeId.trim())) return null;
+        if (
+            result.confirmationOption !== undefined &&
+            (typeof result.confirmationOption !== "string" || !result.confirmationOption.trim() || [...result.confirmationOption.trim()].length > 90 || /[\r\n\u2028\u2029]/u.test(result.confirmationOption.trim()))
+        )
+            return null;
     }
     return {
         kind: result.kind as DramaAgentProposal["kind"],
@@ -112,6 +120,7 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
         baseRevision: Number(result.baseRevision),
         changes: result.changes as Record<string, unknown>,
         ...(typeof result.explanation === "string" && result.explanation.trim() ? { explanation: [...result.explanation.trim()].slice(0, 1000).join("") } : {}),
+        ...(result.kind === "media" && typeof result.confirmationOption === "string" ? { confirmationOption: result.confirmationOption.trim() } : {}),
         runId: detail.runId,
         toolCallId: detail.callId,
     };

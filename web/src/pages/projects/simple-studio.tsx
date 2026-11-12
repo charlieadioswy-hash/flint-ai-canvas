@@ -194,7 +194,59 @@ export default function SimpleStudioPage() {
     return (
         <WorkspacePage fluid scroll={false}>
             <div className="drama-root drama-simple">
-                <DramaProjectTopbar name={summary.project.name} stage="简易制作台">
+                <DramaProjectTopbar
+                    name={summary.project.name}
+                    stage="简易制作台"
+                    controls={
+                        <>
+                            <h2
+                                title={`${episodes.length} 集 · ${episodes.reduce((sum, episode) => sum + episode.stats.segments, 0)} 段${jobsActive ? ` · ${summary.jobCounts.queued || 0} 排队 / ${summary.jobCounts.running || 0} 进行中` : " · 修改随时保存"}`}
+                            >
+                                分集分镜
+                            </h2>
+                            <div className="drama-simple-filters">
+                                <Select
+                                    className="drama-simple-episode-filter"
+                                    aria-label="选择集数"
+                                    value={all ? "all" : routeEpisodeId}
+                                    options={[{ value: "all", label: "全部集" }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))]}
+                                    onChange={(id) => {
+                                        const next = new URLSearchParams(search);
+                                        next.delete("segment");
+                                        next.delete("shot");
+                                        next.delete("scope");
+                                        navigate(dramaStudioPath(projectId, id === "all" ? undefined : id, next, "simple"));
+                                    }}
+                                />
+                                <Select
+                                    className="drama-simple-status-filter"
+                                    aria-label="筛选段状态"
+                                    value={status}
+                                    options={[
+                                        { value: "all", label: "全部状态" },
+                                        { value: "idle", label: "待生成" },
+                                        { value: "busy", label: "生成中" },
+                                        { value: "ready", label: "已完成" },
+                                        { value: "failed", label: "失败" },
+                                        { value: "blocked", label: "等待条件" },
+                                        { value: "stale", label: "待更新" },
+                                    ]}
+                                    onChange={(value) => setFilter("status", value)}
+                                />
+                                <Button
+                                    type="text"
+                                    icon={<RefreshCw className="size-4" />}
+                                    aria-label="刷新制作进度"
+                                    loading={summaryQuery.isFetching}
+                                    onClick={() => {
+                                        void summaryQuery.refetch();
+                                        void queryClient.invalidateQueries({ queryKey: dramaKeys.episodes(projectId) });
+                                    }}
+                                />
+                            </div>
+                        </>
+                    }
+                >
                     <Button
                         icon={<Settings2 className="size-4" />}
                         onClick={() => {
@@ -220,52 +272,6 @@ export default function SimpleStudioPage() {
                         <div className="drama-guide-agent-host" ref={setHost} />
                     </aside>
                     <section className="drama-simple-results thin-scrollbar" aria-label="分集分镜">
-                        <header className="drama-simple-toolbar">
-                            <div>
-                                <h2>分集分镜</h2>
-                                <p>
-                                    {episodes.length} 集 · {episodes.reduce((sum, episode) => sum + episode.stats.segments, 0)} 段{jobsActive ? ` · ${summary.jobCounts.queued || 0} 排队 / ${summary.jobCounts.running || 0} 进行中` : " · 修改随时保存"}
-                                </p>
-                            </div>
-                            <div className="drama-simple-filters">
-                                <Select
-                                    aria-label="选择集数"
-                                    value={all ? "all" : routeEpisodeId}
-                                    options={[{ value: "all", label: "全部集" }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))]}
-                                    onChange={(id) => {
-                                        const next = new URLSearchParams(search);
-                                        next.delete("segment");
-                                        next.delete("shot");
-                                        next.delete("scope");
-                                        navigate(dramaStudioPath(projectId, id === "all" ? undefined : id, next, "simple"));
-                                    }}
-                                />
-                                <Select
-                                    aria-label="筛选段状态"
-                                    value={status}
-                                    options={[
-                                        { value: "all", label: "全部状态" },
-                                        { value: "idle", label: "待生成" },
-                                        { value: "busy", label: "生成中" },
-                                        { value: "ready", label: "已完成" },
-                                        { value: "failed", label: "失败" },
-                                        { value: "blocked", label: "等待条件" },
-                                        { value: "stale", label: "待更新" },
-                                    ]}
-                                    onChange={(value) => setFilter("status", value)}
-                                />
-                                <Button
-                                    type="text"
-                                    icon={<RefreshCw className="size-4" />}
-                                    aria-label="刷新制作进度"
-                                    loading={summaryQuery.isFetching}
-                                    onClick={() => {
-                                        void summaryQuery.refetch();
-                                        void queryClient.invalidateQueries({ queryKey: dramaKeys.episodes(projectId) });
-                                    }}
-                                />
-                            </div>
-                        </header>
                         {summaryQuery.isError ? (
                             <p className="drama-guide-notice" role="alert">
                                 最新进度读取失败，当前为上次保存的数据。请刷新后操作。

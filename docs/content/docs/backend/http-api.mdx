@@ -31,9 +31,13 @@ description: 信封、错误码与 OpenAPI
 
 用户确认后调用 `POST /api/dramas/:id/actions/execute`，携带同一请求以及必需的 `targetRevision/baseRevision/confirmationToken`。服务端在制作行锁内重读目标、配置、依赖和报价；任一确认输入变化返回冲突，须重新预检。Token 是当前确认快照校验值，不是权限凭证，也不冻结模型路由或余额；执行及实际任务准入继续校验归属、模型、积分、预算和重复提交。仅排指定对象，不放行整集、不自动生成依赖图片、不重试其他失败资产或任务；作品进入精确媒体请求模式，阻止唤醒自动流程时隐式排入无关新任务，保留之前明确放行与排队的授权。尾帧续接重做已有视频会将后续旧视频标记待更新，保留资源且不自动重生成。`segment_reprocess` 仅重放最近一次已有成功任务的结果，不重新调用生成或重复扣费。详细制作台原整集放行接口保留原语义，「全部放行」可恢复原自动媒体模式。
 
-`POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。引导中只开放短剧上下文读取、结构化修改建议及必要提问；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
+`POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。短剧绑定开放上下文读取、结构化建议及必要提问，按当前阶段限制操作；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt/media`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用文字建议后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
 
-建议和可保存的候选在对话内展示，点击直接经上述业务 API 保存；配置建议的调整表单及阶段确认按钮也位于对话内，右侧展示成果。多个备选分别使用现有 `drama_propose_changes`，不新增工具参数、事件或存储协议。`ask_user` 仅澄清意图，选项点击作为用户回复，不从文字推导写入。保存建议与阶段确认是独立操作，选择不自动推进、发起新模型轮次或生成媒体；原 CAS、同轮独立建议接续及删除确认规则保持。
+`media` 仅在 `guideStep` 为 `completed` 或空字符串的制作台可用，必须提供真实 `targetId`；`changes` 仅接受 `action`、`targetRevision` 和段操作必需的 `episodeId`。`action` 沿用上述四种精确操作，`targetRevision` 必填且可为 0。提案只进入真实预检，用户确认范围与费用后才调用 execute，不直接排队或代替用户授权。
+
+媒体提案增加可选顶层 `confirmationOption`，仅 `kind=media` 可传；服务端去掉首尾空白后要求 1–90 字单行文字，非媒体、空值、换行或超长均拒绝。此字段只关联展示：若制作台回复末尾仍有编号媒体确认选项，值须精确等于该选项去掉编号与 Markdown 后的解析文本，且该选项不能是输入项。界面只展示成功关联的媒体提案及其真实预检，并去掉正文重复列表，不依据“确认”“生成”等关键词猜测关联。同轮仅有媒体提案但列表未提供有效关联时，先显示普通方向选择；没有编号列表时仍显示真实预检。此字段不改变目标、版本、预检、报价或用户确认要求。
+
+建议和可保存的候选在对话内展示，点击直接经上述业务 API 保存；配置建议的调整表单及阶段确认按钮也位于对话内，右侧展示成果。多个备选分别使用现有 `drama_propose_changes`，媒体选项的展示关联使用上述可选字段，复用既有事件和建议恢复身份，不新增建议存储。`ask_user` 仅澄清意图，选项点击作为用户回复，不从文字推导写入。保存建议与阶段确认是独立操作，选择不自动推进或生成媒体；原 CAS、同轮独立建议接续及删除确认规则保持。
 
 ## 独立 3D 任务
 

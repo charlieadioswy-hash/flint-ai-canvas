@@ -34,7 +34,12 @@ export type AgentDramaContext = {
     onProposal?: (proposal: DramaAgentProposal) => void;
     onActionsHost?: (host: HTMLDivElement | null) => void;
     setupChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
-    proposalChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
+    proposalChoices?: {
+        proposals: DramaAgentProposal[];
+        render: (proposals: DramaAgentProposal[]) => ReactNode;
+        /** 新对话已被服务端接受后，撤下旧的媒体确认，不取消已提交任务。 */
+        onContinueConversation?: () => void;
+    };
     /** 当前阶段的推进选择，直接显示在 Agent 最新回复中。 */
     stageChoices?: { pending: boolean; render: (labels?: DramaStageChoiceLabels) => ReactNode };
 };

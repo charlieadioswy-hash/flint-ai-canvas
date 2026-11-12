@@ -247,11 +247,12 @@ func cloudAgentDramaVideoModelContext(service *Service, settings DramaSettings) 
 }
 
 type cloudAgentDramaProposal struct {
-	Kind         string         `json:"kind"`
-	TargetID     string         `json:"targetId,omitempty"`
-	BaseRevision int64          `json:"baseRevision"`
-	Changes      map[string]any `json:"changes"`
-	Explanation  string         `json:"explanation,omitempty"`
+	Kind               string         `json:"kind"`
+	TargetID           string         `json:"targetId,omitempty"`
+	BaseRevision       int64          `json:"baseRevision"`
+	Changes            map[string]any `json:"changes"`
+	Explanation        string         `json:"explanation,omitempty"`
+	ConfirmationOption string         `json:"confirmationOption,omitempty"`
 }
 
 // 建议沿用持久工具事件回放；这里只读取并校验，不写短剧，也不提交生成任务。
@@ -266,6 +267,19 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 	args.Explanation = strings.TrimSpace(args.Explanation)
 	if len([]rune(args.Explanation)) > 1000 {
 		return nil, &cloudAgentArgumentError{BadAuthRequest("选项说明不能超过 1000 字")}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &fields); err != nil {
+		return nil, cloudAgentJSONArgumentError(err)
+	}
+	if _, provided := fields["confirmationOption"]; provided {
+		if args.Kind != "media" {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("confirmationOption 仅用于媒体建议的回复选项关联")}
+		}
+		args.ConfirmationOption = strings.TrimSpace(args.ConfirmationOption)
+		if args.ConfirmationOption == "" || len([]rune(args.ConfirmationOption)) > 90 || strings.ContainsAny(args.ConfirmationOption, "\r\n\u2028\u2029") {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("媒体确认选项必须为 1–90 字的单行文字")}
+		}
 	}
 	allowed := map[string][]string{
 		"setup":          {"aspectRatio", "styleName", "stylePrompt", "language", "episodeSeconds", "videoResolution"},

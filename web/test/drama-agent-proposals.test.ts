@@ -68,4 +68,20 @@ describe("短剧 Agent 建议回放", () => {
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 2 } } })?.kind).toBe("media");
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 0 } } })?.changes.targetRevision).toBe(0);
     });
+
+    test("媒体确认选项的明确关联经历史恢复保留，非法关联不进入展示", () => {
+        const at = "2026-11-12T00:00:00Z";
+        const result = { kind: "media", targetId: "segment", baseRevision: 8, changes: { action: "segment_video", episodeId: "episode", targetRevision: 3 }, confirmationOption: "  是，按当前报价生成本段视频  " };
+        const event: AgentEvent = { eventId: "run:1", runId: "run", seq: 1, type: "tool_completed", payload: { toolName: "drama_propose_changes", callId: "video", result }, createdAt: at };
+        const run: AgentRun = { id: "run", conversationId: "conversation", canvasId: "", dramaProjectId: "project", status: "completed", permissionMode: "read_only", createdAt: at, updatedAt: at, events: [event] };
+        const conversation = projectCloudAgentConversation("conversation", [run]);
+        const detail = conversation.messages.find((message) => message.role === "tool")!.detail as Record<string, unknown>;
+        const proposal = dramaProposalFromToolDetail(detail)!;
+        expect(proposal.confirmationOption).toBe("是，按当前报价生成本段视频");
+        expect(proposal.changes).toEqual(result.changes);
+        for (const confirmationOption of [null, 1, "", "  ", "一".repeat(91), "确认生成\n本段视频", "确认生成\u2028本段视频", "确认生成\u2029本段视频"]) {
+            expect(dramaProposalFromToolDetail({ ...detail, result: { ...result, confirmationOption } })).toBeNull();
+        }
+        expect(dramaProposalFromToolDetail({ ...detail, result: { ...result, kind: "shot", changes: { dialogue: "对白" } } })).toBeNull();
+    });
 });
