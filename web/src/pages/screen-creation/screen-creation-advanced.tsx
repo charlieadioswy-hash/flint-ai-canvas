@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { Checkbox } from "@/components/ui/base/checkbox";
 import { ControlNetParameterFields } from "@/components/controlnet-parameter-fields";
-import { LiblibLoraFields } from "@/components/liblib-lora-fields";
 import { screenControlParameters, screenModelDefaults, screenSettingsFromControlSelection } from "@/lib/canvas/irregular-screen-model";
 import type { ScreenAdvancedSettings, ScreenCreationWorkspaceProps } from "./screen-creation-types";
 
@@ -46,7 +45,7 @@ function SettingField({ label, children, hint, help }: { label: string; children
 }
 
 export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config, model, generationMode, inpaint, setInpaint, inpaintUnavailableReason, disabled }: Props) {
-    const { defaults, protocol } = screenModelDefaults(config, model);
+    const { defaults } = screenModelDefaults(config, model);
     const numberField = (key: NumericSetting, label: string, min: number, max?: number, step = 1, hint?: string) => (
         <SettingField label={label} hint={hint} help={settingHelp[key]}>
             <InputNumber
@@ -74,20 +73,36 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config,
                 <ChevronDown className="screen-creation-disclosure size-4" />
             </summary>
             <div className="screen-creation-advanced-body">
-                {generationMode === "img2img" ? <section className="screen-creation-settings-section" aria-label="图生图设置">
-                    <h3>图生图设置</h3>
-                    <Checkbox aria-label="蒙版重绘" checked={inpaint} disabled={disabled || (!inpaint && Boolean(inpaintUnavailableReason))} onChange={(event) => setInpaint(event.target.checked)}>蒙版重绘</Checkbox>
-                    <p className="screen-creation-hint">开启后仅重绘屏幕有效区域内的内容原图，原图尺寸必须与屏幕蒙版完全一致；最终屏外保持黑色。</p>
-                    {inpaintUnavailableReason ? <p className="screen-creation-hint" role="status">{inpaintUnavailableReason}</p> : null}
-                </section> : null}
+                {generationMode === "img2img" ? (
+                    <section className="screen-creation-settings-section" aria-label="图生图设置">
+                        <h3>图生图设置</h3>
+                        <Checkbox aria-label="蒙版重绘" checked={inpaint} disabled={disabled || (!inpaint && Boolean(inpaintUnavailableReason))} onChange={(event) => setInpaint(event.target.checked)}>
+                            蒙版重绘
+                        </Checkbox>
+                        <p className="screen-creation-hint">开启后仅重绘屏幕有效区域内的内容原图，原图尺寸必须与屏幕蒙版完全一致；最终屏外保持黑色。</p>
+                        {inpaintUnavailableReason ? (
+                            <p className="screen-creation-hint" role="status">
+                                {inpaintUnavailableReason}
+                            </p>
+                        ) : null}
+                    </section>
+                ) : null}
                 <section className="screen-creation-settings-section" aria-label="ControlNet 设置">
                     <div>
                         <h3>ControlNet 结构控制</h3>
                         <p className="screen-creation-hint">按控制类型提取轮廓、深度、姿态或其他画面信息。</p>
                     </div>
-                    <ControlNetParameterFields parameters={screenControlParameters(advanced)} profile={profile?.controlNet} defaults={defaults} disabled={disabled} onChange={(parameters) => setAdvanced(screenSettingsFromControlSelection(advanced, parameters))} />
+                    <ControlNetParameterFields
+                        parameters={screenControlParameters(advanced)}
+                        profile={profile?.controlNet}
+                        defaults={defaults}
+                        disabled={disabled}
+                        onChange={(parameters) => setAdvanced(screenSettingsFromControlSelection(advanced, parameters))}
+                    />
                     {advanced.controlType === "inpaint" ? <p className="screen-creation-hint">屏幕有效区域同时作为 ControlNet Inpaint 的控制区域蒙版。</p> : null}
-                    <Checkbox aria-label="完美像素（Pixel Perfect）" checked={advanced.pixelPerfect ?? true} disabled={disabled} onChange={(event) => setAdvanced({ pixelPerfect: event.target.checked })}>完美像素（Pixel Perfect）</Checkbox>
+                    <Checkbox aria-label="完美像素（Pixel Perfect）" checked={advanced.pixelPerfect ?? true} disabled={disabled} onChange={(event) => setAdvanced({ pixelPerfect: event.target.checked })}>
+                        完美像素（Pixel Perfect）
+                    </Checkbox>
                     <div className="screen-creation-settings-grid">
                         {numberField("strength", "控制强度", 0, 2, 0.05)}
                         {numberField("start", "开始控制时点", 0, 1, 0.05)}
@@ -114,7 +129,6 @@ export function ScreenCreationAdvanced({ advanced, setAdvanced, profile, config,
                         />
                     </SettingField>
                 </section>
-                {protocol === "liblib-image" || advanced.additionalNetwork?.length ? <section className="screen-creation-settings-section"><LiblibLoraFields value={advanced.additionalNetwork} profile={profile?.lora} protocol={protocol} disabled={disabled} onChange={(additionalNetwork) => setAdvanced({ additionalNetwork })} /></section> : null}
             </div>
         </details>
     );

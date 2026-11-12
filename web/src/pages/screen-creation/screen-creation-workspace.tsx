@@ -10,6 +10,8 @@ import { ModelPicker } from "@/components/model-picker";
 import { AppDrawer } from "@/components/ui/product/app-drawer";
 import { Callout } from "@/components/ui/product/callout";
 import type { ModelRequirements } from "@/lib/model-selection";
+import { LiblibLoraFields } from "@/components/liblib-lora-fields";
+import { screenModelDefaults } from "@/lib/canvas/irregular-screen-model";
 import { cn } from "@/lib/utils";
 import { ScreenCreationAdvanced } from "./screen-creation-advanced";
 import { ScreenCreationPreviewImage } from "./screen-creation-preview-image";
@@ -113,7 +115,12 @@ function ImageUpload({
     );
 }
 
-export function ScreenCreationGenerationMode({ generationMode, setGenerationMode, imageToImageUnavailableReason, disabled }: Pick<ScreenCreationWorkspaceProps, "generationMode" | "setGenerationMode" | "imageToImageUnavailableReason"> & { disabled: boolean }) {
+export function ScreenCreationGenerationMode({
+    generationMode,
+    setGenerationMode,
+    imageToImageUnavailableReason,
+    disabled,
+}: Pick<ScreenCreationWorkspaceProps, "generationMode" | "setGenerationMode" | "imageToImageUnavailableReason"> & { disabled: boolean }) {
     return (
         <div className="screen-creation-generation-mode">
             <span className="screen-creation-field-label">生成方式</span>
@@ -148,6 +155,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
     const previewWidth = previewTab === "result" ? selectedResult?.width : props.mask?.width;
     const previewHeight = previewTab === "result" ? selectedResult?.height : props.mask?.height;
     const hasModels = props.config.models.length > 0;
+    const { protocol } = screenModelDefaults(props.config, props.model);
 
     useEffect(() => {
         const latestId = props.results[0]?.id;
@@ -201,21 +209,23 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                     <ScreenCreationMaskGuide />
                                 </div>
                                 <ScreenCreationGenerationMode generationMode={props.generationMode} setGenerationMode={props.setGenerationMode} imageToImageUnavailableReason={props.imageToImageUnavailableReason} disabled={disabled} />
-                                {props.generationMode === "img2img" ? <div>
-                                    <ImageUpload
-                                        label="内容原图"
-                                        hint={props.inpaint ? "必填 · 宽、高须与屏幕蒙版完全一致" : "必填 · 在原图基础上调整色彩、风格与内容"}
-                                        value={props.reference}
-                                        disabled={disabled}
-                                        onUpload={props.uploadReference}
-                                        onClear={props.clearReference}
-                                    />
-                                    {props.inpaint ? (
-                                        <p className="screen-creation-hint">
-                                            内容原图必填；{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"} 输出尺寸可按蒙版的相同比例缩放。
-                                        </p>
-                                    ) : null}
-                                </div> : null}
+                                {props.generationMode === "img2img" ? (
+                                    <div>
+                                        <ImageUpload
+                                            label="内容原图"
+                                            hint={props.inpaint ? "必填 · 宽、高须与屏幕蒙版完全一致" : "必填 · 在原图基础上调整色彩、风格与内容"}
+                                            value={props.reference}
+                                            disabled={disabled}
+                                            onUpload={props.uploadReference}
+                                            onClear={props.clearReference}
+                                        />
+                                        {props.inpaint ? (
+                                            <p className="screen-creation-hint">
+                                                内容原图必填；{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"} 输出尺寸可按蒙版的相同比例缩放。
+                                            </p>
+                                        ) : null}
+                                    </div>
+                                ) : null}
                                 <label className="screen-creation-field screen-creation-prompt">
                                     <span>画面描述</span>
                                     <Input.TextArea
@@ -265,13 +275,27 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                         </Popover>
                                     ) : null}
                                 </div>
+                                {protocol === "liblib-image" || props.advanced.additionalNetwork?.length ? (
+                                    <LiblibLoraFields value={props.advanced.additionalNetwork} profile={props.profile?.lora} protocol={protocol} disabled={disabled} onChange={(additionalNetwork) => props.setAdvanced({ additionalNetwork })} />
+                                ) : null}
                                 {!hasModels ? (
                                     <Callout tone="warning" title="暂无可用的异形屏模型">
                                         请联系管理员启用异形屏生图模型，再开始创作。
                                     </Callout>
                                 ) : null}
                             </fieldset>
-                            <ScreenCreationAdvanced advanced={props.advanced} setAdvanced={props.setAdvanced} profile={props.profile} config={props.config} model={props.model} generationMode={props.generationMode} inpaint={props.inpaint} setInpaint={props.setInpaint} inpaintUnavailableReason={props.inpaintUnavailableReason} disabled={disabled} />
+                            <ScreenCreationAdvanced
+                                advanced={props.advanced}
+                                setAdvanced={props.setAdvanced}
+                                profile={props.profile}
+                                config={props.config}
+                                model={props.model}
+                                generationMode={props.generationMode}
+                                inpaint={props.inpaint}
+                                setInpaint={props.setInpaint}
+                                inpaintUnavailableReason={props.inpaintUnavailableReason}
+                                disabled={disabled}
+                            />
                             <div className="screen-creation-submit">
                                 <div className="screen-creation-quote" aria-live="polite">
                                     <span>生成 1 张</span>
