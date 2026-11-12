@@ -69,7 +69,19 @@ describe("Agent submission sync preflight contract", () => {
         expect(source).toContain('composerSubmitMode === "send"\n            ? (otherAgentRunning && !pendingNow?.request)');
         expect(source).toContain("submitDisabled={composerSubmitDisabled}");
         expect(source).toContain("重新读取记录");
-        expect(source).toContain("requestSent = true;\n            const result = submission.parentRunId ? await sendAgentMessage");
+        // 同步、已发送标记与请求保持顺序，允许中间准备其他提交上下文。
+        const submitSync = source.indexOf("await prepareCanvasForCloudAction(canvasId);");
+        const requestSent = source.indexOf("requestSent = true;", submitSync);
+        const messagePost = source.indexOf("await sendAgentMessage(submission.parentRunId, request)", requestSent);
+        const runPost = source.indexOf("await createAgentRun(request)", requestSent);
+        expect(submitSync).toBeGreaterThanOrEqual(0);
+        expect(requestSent).toBeGreaterThan(submitSync);
+        expect(messagePost).toBeGreaterThan(requestSent);
+        expect(runPost).toBeGreaterThan(requestSent);
+        const approvalSync = source.indexOf("await prepareCanvasForCloudAction(run.canvasId);");
+        const approvalPost = source.indexOf("await decideAgentApproval(runId, approvalId, decision", approvalSync);
+        expect(approvalSync).toBeGreaterThanOrEqual(0);
+        expect(approvalPost).toBeGreaterThan(approvalSync);
         expect(source).toContain("agentSubmissionErrorTitle(cause, accepted, requestSent)");
     });
 
