@@ -623,6 +623,148 @@ test.each([
     }
 });
 
+test.each([0, 1, 2, "custom"] as const)("允许阶段确认时仍按模型的三个普通方向与自定义回复交互：%s", async (selection) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const before = "请稍等片刻再让我刷新一次；等角色和场景设定落库后，我会把每个资产的名称和设定摘要列出来，供你逐项确认或调整。";
+    const labels = ["刷新资产提取进度", "先调整第一集正文（说明要改哪一处）", "稍后再说，本次不继续"];
+    const rawText = `${before}\n\n${labels.map((label, index) => `${index + 1}. ${label}`).join("\n")}`;
+    const messages: CloudAgentChatMessage[] = [{ id: "assets-options", runId: "assets-run", role: "assistant", text: rawText }];
+    const selected: string[] = [];
+    const stageSelected: string[] = [];
+    let renderedStage = 0;
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={messages}
+                    onReplyOption={(text) => selected.push(text)}
+                    setupChoices={{ proposals: [], render: () => null }}
+                    proposalChoices={{ proposals: [], render: () => null }}
+                    stageChoices={{
+                        key: "project:assets:7",
+                        pending: false,
+                        render: () => {
+                            renderedStage++;
+                            return (
+                                <GuideStageChoices
+                                    title="下一步：开始改编"
+                                    busy={false}
+                                    choices={[
+                                        { key: "confirm", title: "确认资产，开始改编剧本与分镜", detail: "使用当前资产进入下一阶段。" },
+                                        { key: "adjust", title: "继续调整", detail: "修改当前资产。", input: true },
+                                    ]}
+                                    onChoose={(choice, text) => stageSelected.push(text || choice.key)}
+                                />
+                            );
+                        },
+                    }}
+                />,
+            ),
+        );
+        const group = container.querySelector<HTMLElement>(".agent-reply-options")!;
+        expect(group).toBeTruthy();
+        expect(container.querySelectorAll(".agent-reply-options")).toHaveLength(1);
+        expect(group.querySelectorAll(".agent-reply-option")).toHaveLength(4);
+        const buttons = group.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
+        expect(buttons).toHaveLength(3);
+        expect([...buttons].map((button) => button.querySelector(".agent-reply-option-title")?.textContent)).toEqual(labels);
+        expect(group.querySelectorAll(".agent-reply-option-input")).toHaveLength(1);
+        const bubble = group.closest(".agent-message-body")!;
+        expect(bubble.querySelector("ol")).toBeNull();
+        expect(bubble.textContent).toContain(before);
+        for (const label of labels) expect(bubble.textContent!.split(label)).toHaveLength(2);
+        expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
+        expect(container.textContent).not.toContain("确认资产，开始改编剧本与分镜");
+        expect(renderedStage).toBe(0);
+        const input = group.querySelector<HTMLInputElement>('input[aria-label="自定义回复"]')!;
+        expect(input).toBeTruthy();
+        expect(input.disabled).toBe(false);
+        if (selection === "custom") {
+            await act(async () => {
+                Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "  先核对秦子文的原文角色说明  ");
+                input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+            });
+            await act(async () => input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" })));
+            expect(selected).toEqual(["先核对秦子文的原文角色说明"]);
+        } else {
+            await act(async () => buttons[selection].click());
+            expect(selected).toEqual([labels[selection]]);
+        }
+        expect(stageSelected).toEqual([]);
+        expect(messages[0].text).toBe(rawText);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each([false, true])("历史配置建议与最新回复同轮=%s 时不屏蔽普通方向，旧建议仍不可再次应用", async (sameRun) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const proposal: DramaAgentProposal = { kind: "setup", runId: "old-style-run", toolCallId: "old-style", baseRevision: 3, changes: { styleName: "写实电影", stylePrompt: "真实光影" } };
+    const labels = ["刷新资产提取进度", "先调整第一集正文（说明要改哪一处）", "稍后再说，本次不继续"];
+    const selected: string[] = [];
+    const applied: DramaAgentProposal[] = [];
+    let renderedStage = 0;
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={[
+                        { id: "old-style-reply", runId: "old-style-run", role: "assistant", text: "上一轮推荐的视觉风格。" },
+                        { id: "new-user", role: "user", text: "接下来可以做什么？" },
+                        { id: "new-directions", runId: sameRun ? proposal.runId : "assets-run", role: "assistant", text: `请选择接下来的操作：\n\n${labels.map((label, index) => `${index + 1}. ${label}`).join("\n")}` },
+                    ]}
+                    setupChoices={{
+                        proposals: [proposal],
+                        render: (items) => <GuideSetupChoices proposals={items} busy={false} isValid={() => true} issue={() => ""} onChoose={(item) => applied.push(item)} onCustom={silent} />,
+                    }}
+                    proposalChoices={{ proposals: [], render: () => null }}
+                    stageChoices={{
+                        key: "project:assets:7",
+                        pending: false,
+                        render: () => {
+                            renderedStage++;
+                            return <button data-unused-stage-confirm>确认资产，开始改编剧本与分镜</button>;
+                        },
+                    }}
+                    onReplyOption={(text) => selected.push(text)}
+                />,
+            ),
+        );
+        const old = container.querySelector<HTMLButtonElement>("button.drama-guide-setup-choice");
+        if (sameRun) expect(old).toBeNull();
+        else {
+            expect(old).toBeTruthy();
+            expect(old!.disabled).toBe(true);
+        }
+        const group = container.querySelector<HTMLElement>(".agent-reply-options")!;
+        expect(group).toBeTruthy();
+        expect(group.closest(".agent-message-body")?.querySelector("ol")).toBeNull();
+        const buttons = group.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
+        expect([...buttons].map((button) => button.querySelector(".agent-reply-option-title")?.textContent)).toEqual(labels);
+        expect(group.querySelectorAll(".agent-reply-option")).toHaveLength(4);
+        expect(group.querySelectorAll("input")).toHaveLength(1);
+        expect(buttons[0].disabled).toBe(false);
+        expect(container.querySelector("[data-unused-stage-confirm]")).toBeNull();
+        expect(renderedStage).toBe(0);
+        await act(async () => old?.click());
+        await act(async () => buttons[0].click());
+        expect(applied).toEqual([]);
+        expect(selected).toEqual([labels[0]]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 test("真实对话忙碌时临时卸载阶段输入，恢复后保留父层草稿且作品与阶段隔离", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -750,6 +892,7 @@ test.each(["setup", "proposal"] as const)("有待选的 %s 建议时不叠加阶
             : { kind: "cast", runId: "run", toolCallId: "cast", baseRevision: 7, targetId: "cast-1", changes: { description: "保留原始角色小传" } };
     let renderedStage = 0;
     const selected: DramaAgentProposal[] = [];
+    const genericReplies: string[] = [];
     const candidateChoices = {
         proposals: [proposal],
         render: (proposals: DramaAgentProposal[]) => (
@@ -763,8 +906,9 @@ test.each(["setup", "proposal"] as const)("有待选的 %s 建议时不叠加阶
             root.render(
                 <AgentConversation
                     {...conversationDefaults}
-                    messages={[{ id: "assistant", runId: "run", role: "assistant", text: "请先选择当前建议。" }]}
+                    messages={[{ id: "assistant", runId: "run", role: "assistant", text: "请选择当前建议的处理方式：\n\n1. 保存当前建议\n2. 继续调整" }]}
                     guideMode
+                    onReplyOption={(text) => genericReplies.push(text)}
                     {...(kind === "setup" ? { setupChoices: candidateChoices } : { proposalChoices: candidateChoices })}
                     stageChoices={{
                         pending: true,
@@ -778,10 +922,12 @@ test.each(["setup", "proposal"] as const)("有待选的 %s 建议时不叠加阶
         );
         expect(renderedStage).toBe(0);
         expect(container.textContent).not.toContain("确认资产，开始改编剧本与分镜");
+        expect(container.querySelector(".agent-reply-options")).toBeNull();
         const button = container.querySelector<HTMLButtonElement>("[data-pending-drama-proposal]")!;
         expect(button.closest(".agent-message-body")).toBeTruthy();
         await act(async () => button.click());
         expect(selected).toEqual([proposal]);
+        expect(genericReplies).toEqual([]);
     } finally {
         await act(async () => root.unmount());
         container.remove();

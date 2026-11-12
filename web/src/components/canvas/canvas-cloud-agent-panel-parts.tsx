@@ -68,7 +68,7 @@ import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentReplyOptionIsInput, createAgentChoiceHistory, extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
-import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
+import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage, prepareDramaStageMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
 import { AgentChoiceContext } from "./canvas-agent-reply-options";
 
@@ -648,15 +648,15 @@ function useLinkStableReferences(references: CanvasResourceReference[]) {
  * 只有对话停在 Agent 的最后一条回复上（之后没有用户发言）时，这条回复末尾的编号选项
  * 才变成可点击卡片；更早的回复保持原文，便于回看。
  */
-function agentReplyOptionsTarget(messages: readonly CloudAgentChatMessage[], drama = false): { id: string; options: AgentReplyOptions } | null {
+function agentReplyOptionsTarget(messages: readonly CloudAgentChatMessage[], drama = false, hasStageChoices = false): { id: string; options: AgentReplyOptions } | null {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const message = messages[index];
         if (message.role === "user") return null;
         // 调用方只在本轮已停下（非运行、无审批）时启用，这里的最后一条回复一定是完整的。
         if (message.role !== "assistant" || message.reasoning) continue;
         // 短剧推进只能由当前阶段回调提供，不能把恢复的旧引导文案变成普通续聊操作。
-        if (drama && hasExplicitDramaStageTransition(message.text)) return null;
-        const options = extractAgentReplyOptions(message.text);
+        if (drama && (hasStageChoices ? prepareDramaStageMessage(message.text).labels : hasExplicitDramaStageTransition(message.text))) return null;
+        const options = extractAgentReplyOptions(message.text, { allowImplicitActions: drama });
         if (drama && options && !options.options.some(agentReplyOptionIsInput)) options.options.push({ marker: "✎", title: "自定义回复", text: "输入你的要求，回车发送", input: true });
         return options ? { id: message.id, options } : null;
     }
@@ -823,8 +823,9 @@ export function AgentConversation({
     const dramaSetupChoices = guideMode ? setupChoices : undefined;
     const dramaProposalChoices = guideMode ? proposalChoices : undefined;
     const dramaStageChoices = guideMode ? stageChoices : undefined;
-    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval && !dramaSetupChoices && !dramaStageChoices;
-    const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages, guideMode) : null), [guideMode, messages, replyOptionsEnabled]);
+    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !approval;
+    const hasStageChoices = Boolean(dramaStageChoices);
+    const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages, guideMode, hasStageChoices) : null), [guideMode, hasStageChoices, messages, replyOptionsEnabled]);
     const setupPresentation = useMemo(() => {
         const byMessage = new Map<string, ReturnType<typeof prepareDramaSetupMessage>>();
         const fallback: DramaAgentProposal[] = [];
@@ -864,7 +865,7 @@ export function AgentConversation({
             const target = assistantByRun.get(runId);
             if (!target) fallback.push(...proposals);
             else if (!target.streaming) {
-                const directions = dramaStudio && proposals.every((proposal) => proposal.kind === "media") ? extractAgentReplyOptions(target.text) : null;
+                const directions = dramaStudio && proposals.every((proposal) => proposal.kind === "media") ? extractAgentReplyOptions(target.text, { allowImplicitActions: true }) : null;
                 // 只有工具明确关联的确认选项才接到预检；普通方向的措辞不承担执行语义。
                 const presented = directions ? proposals.filter((proposal) => proposal.confirmationOption && directions.options.some((option) => !agentReplyOptionIsInput(option) && option.text === proposal.confirmationOption)) : proposals;
                 if (!presented.length) continue;
@@ -880,10 +881,12 @@ export function AgentConversation({
             const segment = segments[index];
             if (segment.kind === "message" && segment.item.role === "user") return { targetId: null, fallback: false };
             if (segment.kind !== "message" || segment.item.role !== "assistant" || segment.item.reasoning || segment.item.streaming) continue;
+            // 当前回答已有普通方向选择时，不能再附上另一组固定的阶段确认。
+            if (replyTarget?.id === segment.item.id) return { targetId: null, fallback: false };
             return { targetId: segment.item.id, fallback: false };
         }
         return { targetId: null, fallback: true };
-    }, [approval, busy, dramaStageChoices, segments]);
+    }, [approval, busy, dramaStageChoices, replyTarget, segments]);
     const tail = segments.at(-1);
     const liveActivity = busy && !approval && activity === "running";
     const inlineActivity = liveActivity && (tail?.kind === "operations" || (tail?.kind === "reasoning" && tail.items.some((item) => item.streaming)) || (tail?.kind === "message" && tail.item.role === "assistant" && tail.item.streaming));
@@ -979,6 +982,7 @@ export function AgentConversation({
                         const setupMessage = segment.kind === "message" ? setupPresentation.byMessage.get(segment.item.id) : undefined;
                         const proposalMessage = segment.kind === "message" ? proposalPresentation.byMessage.get(segment.item.id) : undefined;
                         const stageMessage = segment.kind === "message" && stagePresentation.targetId === segment.item.id ? dramaStageChoices : undefined;
+                        const supersededProposals = dramaStageChoices && !dramaStageChoices.pending && segment.kind === "message" && replyTarget?.id === segment.item.id;
                         return segment.kind === "operations" ? (
                             // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
                             <AgentOperationFeed
@@ -1011,12 +1015,14 @@ export function AgentConversation({
                                 replyOptionsDisabled={replyOptionsDisabled}
                                 replyOptionScope={replyTarget?.id === segment.item.id ? (content) => choiceScope([`reply:${segment.item.id}`], segment.item.id === latestAssistantId, content, segment.item.id) : undefined}
                                 setupChoices={
-                                    !stageMessage && setupMessage && dramaSetupChoices
+                                    !stageMessage && !supersededProposals && setupMessage && dramaSetupChoices
                                         ? { body: setupMessage.body, content: choiceScope(setupMessage.proposals.map(proposalChoiceKey), segment.item.id === latestAssistantId, dramaSetupChoices.render(setupMessage.proposals), segment.item.id) }
                                         : undefined
                                 }
                                 proposalChoices={
-                                    !stageMessage && proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: proposalScopes(proposalMessage.proposals, segment.item.id === latestAssistantId, segment.item.id) } : undefined
+                                    !stageMessage && !supersededProposals && proposalMessage && dramaProposalChoices
+                                        ? { body: proposalMessage.body, content: proposalScopes(proposalMessage.proposals, segment.item.id === latestAssistantId, segment.item.id) }
+                                        : undefined
                                 }
                                 stageChoices={stageMessage ? { render: (labels) => choiceScope([`stage:${stageMessage.key || ""}:${segment.item.id}`], segment.item.id === latestAssistantId, stageMessage.render(labels), segment.item.id) } : undefined}
                                 onRetry={onRetryRun && retryableErrorId === segment.item.id ? stableRetry : undefined}

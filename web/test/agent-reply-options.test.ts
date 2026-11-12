@@ -66,6 +66,52 @@ test("同一行的填写选项与普通选择使用同一合同，非选择列�
     expect(extractAgentReplyOptions("已经完成如下工作：\n1. 查看角色\n2. 其他问题（请描述）")).toBeNull();
 });
 
+const productionGuideLead = "请稍等片刻再让我刷新一次；等角色和场景设定落库后，我会把每个资产的名称和设定摘要列出来，供你逐项确认或调整。";
+const productionGuideActions = ["刷新资产提取进度", "先调整第一集正文（说明要改哪一处）", "稍后再说，本次不继续"];
+const productionGuideReply = `${productionGuideLead}\n\n${productionGuideActions.map((text, index) => `${index + 1}. ${text}`).join("\n")}`;
+
+test("短剧原回复省略选择引语时仍提取明确行动，默认画布规则保持严格", () => {
+    expect(extractAgentReplyOptions(productionGuideReply)).toBeNull();
+    expect(extractAgentReplyOptions(productionGuideReply, { allowImplicitActions: false })).toBeNull();
+    const result = extractAgentReplyOptions(productionGuideReply, { allowImplicitActions: true });
+    expect(result?.body).toBe(productionGuideLead);
+    expect(result?.options.map((option) => option.text)).toEqual(productionGuideActions);
+    expect(result?.options.every((option) => !option.input)).toBe(true);
+});
+
+test("省略引语的行动列表须有自填或退让出口，自填身份保持不变", () => {
+    expect(extractAgentReplyOptions("1. 查看角色\n2. 检查场景", { allowImplicitActions: true })).toBeNull();
+    const result = extractAgentReplyOptions("1. 查看角色\n2. 检查场景\n3. 其他要求（请填写）", { allowImplicitActions: true });
+    expect(result?.body).toBe("");
+    expect(result?.options.map((option) => Boolean(option.input))).toEqual([false, false, true]);
+});
+
+test.each([
+    "当前事实：\n1. 角色共有三人\n2. 稍后再说，本次不继续",
+    "当前进度：\n1. 生成角色说明\n2. 暂不生成图片",
+    "任务状态：\n1. 生成角色说明\n2. 暂不生成图片",
+    "执行步骤：\n1. 查看角色\n2. 生成参考图\n3. 暂不生成视频",
+    "制作流程\n1. 提取角色\n2. 生成分镜\n3. 暂不生成视频",
+    "执行计划\n1. 查看角色\n2. 生成参考图\n3. 暂不生成视频",
+    "按顺序执行\n1. 查看角色\n2. 生成参考图\n3. 暂不生成视频",
+    "已经完成如下工作：\n1. 查看角色\n2. 其他问题（请填写）",
+    "本轮操作记录：\n1. 刷新资产提取进度\n2. 暂不生成图片",
+    "1. 刷新资产提取进度已完成\n2. 暂不生成图片",
+    "1. 生成角色参考图失败\n2. 稍后再说",
+    "1. 生成角色参考图失败，请稍后\n2. 暂不生成图片",
+    "1. 生成角色参考图正在排队\n2. 稍后再说",
+    "1. 生成角色参考图 50%\n2. 稍后再说",
+    "```markdown\n1. 查看角色\n2. 稍后再说\n```",
+    "> 1. 查看角色\n> 2. 稍后再说",
+    "    1. 查看角色\n    2. 稍后再说",
+    "1. 查看角色\n   - 核对姓名\n2. 稍后再说",
+    "1. 查看角色\n3. 稍后再说",
+    "1. 查看角色\n2. 稍后再说\n\n这里只是额外说明，并非选择提问。",
+    `1. 查看${"角色".repeat(50)}\n2. 稍后再说`,
+])("短剧隐式行动模式仍保留事实、流程、记录及不符合列表约束的原文：%s", (text) => {
+    expect(extractAgentReplyOptions(text, { allowImplicitActions: true })).toBeNull();
+});
+
 const screenshotActions = ["重写第 2 段提示词，修正首帧空间错误", "重写第 1 段提示词，统一夜戏光照", "为「小区外围围墙边」生成外景概念图", "保持现状，继续分析第 2 集的衔接", "其他要求（请填写）"];
 const actionChoices = (actions = screenshotActions) => `需要我做什么？\n\n${actions.map((action, index) => `${index + 1}. ${action}`).join("\n")}`;
 const screenshotRecommendations = ["### 建议的修正优先级", "", "1. 修正第 2 段首帧的空间错误（客厅 vs 卧室、窗帘误植）", "   ——观感影响最大", "2. 统一第 1 段第 3 镜的夜戏光照（阳光→月光）", "3. 为第 4 段补外景参考图，稳定居民楼+双日远景"].join("\n");
