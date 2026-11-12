@@ -20,7 +20,7 @@ description: 官方合同、真实调用证据、参数修复和两阶段配置�
 | `gemini-3-pro-image` | 十比例；独立 1K/2K/4K | 方图三档实测分别为 1024、2048、4096 像素；未遍历全部比例组合。过滤 `thought:true` 中间图。 |
 | `gemini-nano-banana-2.1` | 1K/2K/4K；十比例加 `1:4/1:8/4:1/8:1`；最多 14 参考图 | 两环境参考图上限与原生比例配置均已迁移；未遍历所有比例与档位组合。 |
 | `qwen-image`、`qwen-image-plus` | 默认 1024×1024 实调均为网关 503 `unknown_service_err` | 保留原配置；503 不能证明尺寸非法、停服或支持更多尺寸，待供应商确认。 |
-| `MiniMax-Hailuo-02` | `512P/768P/1080P`；6/10 秒 | `512P + 10 秒 + 首帧图生` 实测完成，查询报告 `512x512`；不据此开放文生 512P/10 秒。1080P/10 秒仍拒绝。 |
+| `MiniMax-Hailuo-02` | `512P/768P/1080P`；6/10 秒 | `512P + 10 秒 + 首帧图生` 实测完成，查询报告 `512x512`；另以 9:16 首帧请求 512P/6 秒档，实测成片 `512x910`。两者均为图生证据；1080P/10 秒仍拒绝。 |
 | `MiniMax-Hailuo-2.3` | `768P/1080P`；10 秒仅 768P | 生产 480p 误配已修；保留既有停用及价格状态。 |
 | `doubao-seedance-2-0-fast-260128` | `480p/720p`；4–15 秒 | 4K 文生实调明确被拒，两环境移除 4K，协议同步保护。 |
 | `doubao-seedance-2-5-260628` | `480p/720p/1080p`；4–30 秒 | 与型号文档一致，保留；未付费遍历全部组合。 |
@@ -35,6 +35,18 @@ description: 官方合同、真实调用证据、参数修复和两阶段配置�
 - Hailuo 按时长、分辨率、输入模式组合校验；512P/10 秒例外仅限 Hailuo 02 首帧图生。
 
 生成源、manifest、接口文档及插件包同步更新：Wangsu `1.0.1`、Google Gemini Image `2.1.1`。Wangsu 保留现有参数合同，没有额外迁入 typed `imageParameters`；Google Gemini 原有 typed 合同保留。
+
+## Hailuo 画幅与最短时长
+
+网宿 [Hailuo 02 型号接口](https://doc.model-store.ai/cn/docs/api/model?endpointId=48333665-3728-4134-b736-61e6674c2b99&model=MiniMax-Hailuo-02)和 [Hailuo 2.3 型号接口](https://doc.model-store.ai/cn/docs/api/model?endpointId=48333665-3728-4134-b736-61e6674c2b99&model=MiniMax-Hailuo-2.3)均将 `seconds` 声明为 6 或 10，未声明独立的画幅参数。两款均不能用 1 秒作为生成测试时长。型号文档中的 `size` 是清晰度档位，不是横竖屏开关。
+
+[MiniMax 图生接口](https://platform.minimax.cn/docs/api-reference/video-generation-i2v)要求首帧图片短边大于 300 像素，宽高比处于 2:5 至 5:2；[MiniMax 在 Replicate 的 Hailuo 2.3 模型说明](https://replicate.com/minimax/hailuo-2.3/readme)进一步明确图生随源图比例、文生默认 16:9。此范围包含 9:16、16:9、1:1 等常见首帧比例。
+
+通过现有本地网宿渠道凭据直调 Hailuo 02，传入 `576x1024` 首帧、`size:512P`、`seconds:6`，未发送 `eca_aspect_ratio`。网关报告 `512x910`，下载后读取 MP4 视频轨也为 `512x910`，视频轨时长 5.875 秒，证明该图生路径能生成接近 9:16 的竖屏，尺寸存在像素取整。该证据没有覆盖 Hailuo 2.3 的真实生成或其他比例逐项实测。
+
+本轮共提交两次最小生成请求；第一次因测试脚本错误拒绝带点号的任务号而未保留任务号，第二次保留任务号并完成轮询与成片测量。按公开价两次请求合计 1.20 元，未核对供应商最终账单。
+
+短剧当前通过 `VideoCapabilityConfig.Ratios` 判断可用画幅；空列表会被排除。Hailuo 的图生画幅来自首帧，接入时应保证首帧与作品画幅一致，并区分纯文生路径；不能把图生竖屏证据直接当成独立画幅参数已受支持。
 
 ## 两阶段配置
 
