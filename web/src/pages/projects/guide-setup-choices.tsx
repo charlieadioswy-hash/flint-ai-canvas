@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from "react";
 
-import { useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
+import { useAgentChoiceInteraction, useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
 import type { DramaAgentProposal } from "@/services/api/agent";
 
 import "./guide-setup-choices.css";
@@ -73,6 +73,8 @@ function completeConfiguration(proposal: DramaAgentProposal) {
 }
 
 function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onRefresh }: Omit<ChoiceProps, "proposals"> & { group: ChoiceGroup }) {
+    const interaction = useAgentChoiceInteraction();
+    const disabled = busy || interaction.disabled;
     const [custom, setCustom] = useState("");
     const [editing, setEditing] = useState(false);
     const headingId = useId();
@@ -97,7 +99,7 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
                     const problemId = `${headingId}-problem-${index}`;
                     return (
                         <div className="drama-guide-setup-choice-item" key={`${proposal.runId}:${proposal.toolCallId}`}>
-                            <button type="button" className="drama-guide-setup-choice" disabled={busy || !valid || Boolean(problem)} aria-describedby={problem ? problemId : undefined} onClick={() => onChoose(proposal)}>
+                            <button type="button" className="drama-guide-setup-choice" disabled={disabled || !valid || Boolean(problem)} aria-describedby={problem ? problemId : undefined} onClick={() => interaction.choose(() => onChoose(proposal))}>
                                 <span className="drama-guide-setup-choice-number" aria-hidden="true">
                                     {index + 1}.
                                 </span>
@@ -115,7 +117,7 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
                     );
                 })}
                 {group.configuration ? (
-                    <button type="button" className="drama-guide-setup-choice" disabled={busy} aria-expanded={editing} aria-controls={`${headingId}-custom`} onClick={() => setEditing((previous) => !previous)}>
+                    <button type="button" className="drama-guide-setup-choice" disabled={disabled} aria-expanded={editing} aria-controls={`${headingId}-custom`} onClick={() => setEditing((previous) => !previous)}>
                         <span className="drama-guide-setup-choice-number" aria-hidden="true">
                             2.
                         </span>
@@ -131,7 +133,7 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
                     id={`${headingId}-custom`}
                     onSubmit={(event) => {
                         event.preventDefault();
-                        if (!busy && custom.trim()) onCustom(custom.trim(), representative);
+                        if (!disabled && custom.trim()) interaction.choose(() => onCustom(custom.trim(), representative));
                     }}
                 >
                     <label>
@@ -139,19 +141,19 @@ function SetupChoiceGroup({ group, busy, isValid, issue, onChoose, onCustom, onR
                         <input
                             aria-label={`自定义${group.title}`}
                             value={custom}
-                            disabled={busy}
+                            disabled={disabled}
                             maxLength={1600}
                             placeholder={group.configuration ? "例如：改为横屏和 90 秒，其余保持推荐" : `输入你希望的${group.title}`}
                             onChange={(event) => setCustom(event.target.value)}
                         />
                     </label>
-                    <button type="submit" disabled={busy || !custom.trim()}>
+                    <button type="submit" disabled={disabled || !custom.trim()}>
                         发送
                     </button>
                 </form>
             ) : null}
             {blocked && onRefresh ? (
-                <button type="button" className="drama-guide-setup-refresh" disabled={busy} onClick={() => onRefresh(representative)}>
+                <button type="button" className="drama-guide-setup-refresh" disabled={disabled} onClick={() => interaction.choose(() => onRefresh(representative))}>
                     重新推荐{group.title}
                 </button>
             ) : null}
@@ -222,6 +224,8 @@ export function GuideStageChoices({
     drafts?: ReturnType<typeof useAgentReplyOptionDrafts>;
     onChoose: (choice: GuideStageChoice, text?: string) => void;
 }) {
+    const interaction = useAgentChoiceInteraction();
+    const disabled = busy || interaction.disabled;
     const localDrafts = useAgentReplyOptionDrafts(title);
     const inputDrafts = drafts || localDrafts;
     return (
@@ -229,9 +233,17 @@ export function GuideStageChoices({
             <div className="drama-guide-setup-choice-list" role="group" aria-label={title}>
                 {choices.map((choice, index) =>
                     choice.input ? (
-                        <GuideStageChoiceInput key={`${title}:${choice.key}`} choice={choice} index={index} busy={busy} text={inputDrafts.values[choice.key] || ""} onChange={(text) => inputDrafts.onChange(choice.key, text)} onChoose={onChoose} />
+                        <GuideStageChoiceInput
+                            key={`${title}:${choice.key}`}
+                            choice={choice}
+                            index={index}
+                            busy={disabled}
+                            text={inputDrafts.values[choice.key] || ""}
+                            onChange={(text) => inputDrafts.onChange(choice.key, text)}
+                            onChoose={(value, text) => interaction.choose(() => onChoose(value, text))}
+                        />
                     ) : (
-                        <button type="button" className="drama-guide-setup-choice" key={choice.key} disabled={busy} title={choice.detail} onClick={() => onChoose(choice)}>
+                        <button type="button" className="drama-guide-setup-choice" key={choice.key} disabled={disabled} title={choice.detail} onClick={() => interaction.choose(() => onChoose(choice))}>
                             <span className="drama-guide-setup-choice-number" aria-hidden="true">
                                 {index + 1}.
                             </span>

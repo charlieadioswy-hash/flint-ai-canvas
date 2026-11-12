@@ -6,7 +6,7 @@ import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { DramaGuideProposalBatch } from "../guide-state";
 
-export type DramaMediaPreviewState = { request: DramaStudioActionRequest; preview?: DramaStudioActionPreflight; error?: string; loading?: boolean; submitted?: boolean };
+export type DramaMediaPreviewState = { request: DramaStudioActionRequest; preview?: DramaStudioActionPreflight; error?: string; loading?: boolean; submitted?: boolean; choiceRevision?: number; retryRevision?: number };
 type StudioSessionState = {
     proposals: DramaAgentProposal[];
     previews: Record<string, DramaMediaPreviewState>;

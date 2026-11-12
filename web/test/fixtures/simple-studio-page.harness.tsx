@@ -29,6 +29,7 @@ const { useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "type"> & { type?: string; size?: string; icon?: ReactNode; loading?: boolean };
 const successMessages = mock((_message: string) => {});
 const infoMessages = mock((_message: string) => {});
+const downloadResource = mock(async (_resourceId: string, _fileName: string) => {});
 mock.module("antd", () => ({
     App: { useApp: () => ({ message: { success: successMessages, info: infoMessages, error: () => {} } }) },
     Button: ({ type: _type, size: _size, loading, icon, children, ...props }: ButtonProps) => (
@@ -59,11 +60,22 @@ mock.module("@/components/layout/workspace-state", () => ({
     ),
 }));
 mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => <>{children}</> }));
-mock.module("@/components/canvas/canvas-agent-reply-options", () => ({ AgentReplyOptionCards: () => null }));
+mock.module("@/components/ui/product/app-modal", () => ({
+    AppModal: ({ open, children, title, onCancel }: { open: boolean; children: ReactNode; title: string; onCancel: () => void }) =>
+        open ? (
+            <section role="dialog" aria-label={title}>
+                {children}
+                <button onClick={onCancel}>关闭成片播放</button>
+            </section>
+        ) : null,
+}));
+mock.module("@/components/canvas/canvas-agent-reply-options", () => ({ AgentReplyOptionCards: () => null, useAgentChoiceInteraction: () => ({ disabled: false, choose: (action: () => void) => action() }) }));
 mock.module("@/pages/projects/drama-shared", () => ({
     mediaBusy: (status: string) => status === "queued" || status === "running",
     MediaThumb: ({ alt }: { alt: string }) => <span>{alt}</span>,
-    useResourceMediaUrl: () => undefined,
+    useResourceMediaUrl: (resourceId?: string) => (resourceId ? `http://localhost/media/${resourceId}.mp4` : undefined),
+    downloadResource,
+    formatDuration: (durationMs: number) => `${durationMs / 1000} 秒`,
     aspectRatioValue: () => 16 / 9,
     CAST_KIND_LABEL: {},
     formatCredits: (value: number) => String(value / 1_000_000),
@@ -109,6 +121,19 @@ mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
         );
     },
 }));
+type JianyingDialogProps = { open: boolean; projectId: string; episodeId: string; episodeLabel: string; onClose: () => void };
+let jianyingDialog: JianyingDialogProps | undefined;
+mock.module("@/pages/projects/studio/asset-transfer", () => ({
+    JianyingDraftModal: (props: JianyingDialogProps) => {
+        jianyingDialog = props;
+        return props.open ? (
+            <section role="dialog" aria-label="剪映草稿导出" data-episode-id={props.episodeId}>
+                {props.episodeLabel}
+                <button onClick={props.onClose}>关闭草稿导出</button>
+            </section>
+        ) : null;
+    },
+}));
 
 function episode(id: string, number: number, failed = false): DramaEpisodeRow {
     return {
@@ -119,6 +144,7 @@ function episode(id: string, number: number, failed = false): DramaEpisodeRow {
         stage: failed ? "script" : "review",
         stats: { segments: failed ? 0 : 1, promptReady: failed ? 0 : 1, promptSucceeded: failed ? 0 : 1, failed: 0, videoReady: id === "episode-a" ? 1 : 0, videoGenerated: id === "episode-a" ? 1 : 0 },
         shotCount: failed ? 0 : 1,
+        durationMs: failed ? 0 : 5000,
     } as DramaEpisodeRow;
 }
 function segment(episodeId: string): DramaSegment {
@@ -130,6 +156,8 @@ function segment(episodeId: string): DramaSegment {
         durationMs: 5000,
         promptStatus: "ready",
         videoStatus: episodeId === "episode-a" ? "ready" : "",
+        videoResourceId: episodeId === "episode-a" ? `video-${episodeId}` : undefined,
+        videoSeconds: episodeId === "episode-a" ? 5 : 0,
         videoPrompt: "场景内容",
         request: { firstFramePending: false },
     } as DramaSegment;
@@ -146,7 +174,7 @@ const details = new Map(
     episodes.map((row) => [
         row.id,
         {
-            episode: { ...row, projectId: "project" },
+            episode: { ...row, projectId: "project", revision: row.number + 30 },
             segments: row.error ? [] : [segment(row.id)],
             shots: row.error ? [] : [{ id: `shot-${row.id}`, episodeId: row.id, projectId: "project", segmentIndex: 0, speaker: "秦子文", dialogue: `${row.title}台词`, action: "" }],
             jobs: [],
@@ -158,6 +186,7 @@ const getSummary = mock(async (_projectId: string) => structuredClone(summary));
 let queueJobs: DramaJob[] = [];
 const listJobs = mock(async (_projectId: string, _limit: number, _signal?: AbortSignal) => ({ jobs: structuredClone(queueJobs) }));
 const retryEpisode = mock(async (..._args: unknown[]) => ({ jobs: 1 }));
+const renderEpisode = mock(async (_projectId: string, _episodeId: string, _input: { expectedRevision: number }) => ({ jobs: 1 }));
 const preflight = mock(async () => {
     throw new Error("引用不应触发生成预检");
 });
@@ -168,6 +197,7 @@ const castById = new Map<string, DramaCast>();
 mock.module("@/services/api/drama", () => ({
     getDramaEpisode: getEpisode,
     retryFailedDrama: retryEpisode,
+    renderDramaEpisode: renderEpisode,
     getDrama: getSummary,
     listDramaCast: async () => ({ cast: [...castById.values()] }),
     listDramaJobs: listJobs,
@@ -209,6 +239,9 @@ function Location() {
 }
 async function fixture(url = "/projects/project", jobs: DramaJob[] = []) {
     useGlobalAgentStore.getState().reset();
+    renderEpisode.mockClear();
+    downloadResource.mockClear();
+    jianyingDialog = undefined;
     queueJobs = structuredClone(jobs);
     listJobs.mockClear();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -238,6 +271,12 @@ async function fixture(url = "/projects/project", jobs: DramaJob[] = []) {
             queueJobs = structuredClone(jobs);
             await act(async () => {
                 await Promise.all([client.invalidateQueries({ queryKey: dramaKeys.summary("project"), exact: true }), client.invalidateQueries({ queryKey: dramaKeys.jobs("project"), exact: true })]);
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+        },
+        refreshEpisode: async (episodeId: string) => {
+            await act(async () => {
+                await client.invalidateQueries({ queryKey: dramaKeys.episode("project", episodeId), exact: true });
                 await new Promise((resolve) => setTimeout(resolve, 0));
             });
         },
@@ -308,10 +347,207 @@ test("两个集的相同段index编辑带各自真实episodeId，保留全部集
     }
 });
 
+test("每集成片卡位于本集最后一段后，合成只提交所选集的详情版本", async () => {
+    const view = await fixture();
+    try {
+        for (const row of episodes.filter((item) => !item.error)) {
+            const section = view.host.querySelector<HTMLElement>(`.drama-simple-episode[aria-label="第 ${row.number} 集"]`)!;
+            const card = section.querySelector<HTMLElement>(`[data-episode-final-id="${row.id}"]`)!;
+            expect(card).not.toBeNull();
+            expect(card.classList.contains("drama-simple-card")).toBe(true);
+            expect(section.querySelector(".drama-simple-grid")?.lastElementChild).toBe(card);
+            expect(card.previousElementSibling?.getAttribute("data-segment-id")).toBe(`segment-${row.id}`);
+            expect(card.textContent).toContain("1 段");
+            expect(card.textContent).toContain("5 秒");
+            expect(card.textContent).toMatch(/原声|对白与音效/);
+            expect(card.querySelector(`[aria-label="下载第 ${row.number} 集成片"]`)).not.toBeNull();
+            expect(card.querySelector(`[aria-label="导出第 ${row.number} 集剪映草稿"]`)).not.toBeNull();
+        }
+        const first = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-a"]')!;
+        const generate = first.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]')!;
+        expect(generate.disabled).toBe(false);
+        expect(generate.textContent).toContain("合成本集视频");
+        const initialUrl = view.location().href;
+        await act(() => generate.click());
+        await flush();
+        expect(renderEpisode.mock.calls).toEqual([["project", "episode-a", { expectedRevision: 31 }]]);
+        expect(view.location().href).toBe(initialUrl);
+        expect(preflight).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+    } finally {
+        await view.close();
+    }
+});
+
+test("成片卡播放已有视频，下载与剪映草稿保留所属集且不切换制作台", async () => {
+    const previous = details.get("episode-a")!;
+    details.set("episode-a", { ...previous, episode: { ...previous.episode, finalResourceId: "final-episode-a" } });
+    const view = await fixture();
+    try {
+        const initialUrl = view.location().href;
+        const card = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-a"]')!;
+        const cover = card.querySelector<HTMLVideoElement>("video");
+        expect(cover?.src).toBe("http://localhost/media/final-episode-a.mp4#t=0.1");
+        expect(cover?.muted).toBe(true);
+        await act(() => card.querySelector<HTMLButtonElement>('[aria-label="播放第 1 集成片"]')!.click());
+        const video = view.host.querySelector<HTMLVideoElement>('[role="dialog"] video');
+        expect(video?.src).toBe("http://localhost/media/final-episode-a.mp4");
+        expect(video?.controls).toBe(true);
+        await act(() => button(view.host, "关闭成片播放").click());
+        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
+        const download = card.querySelector<HTMLButtonElement>('[aria-label="下载第 1 集成片"]')!;
+        expect(download.disabled).toBe(false);
+        await act(() => download.click());
+        expect(downloadResource.mock.calls).toEqual([["final-episode-a", "我们家小区又穿越了-第1集.mp4"]]);
+        const second = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-b"]')!;
+        expect(second.querySelector<HTMLButtonElement>('[aria-label="下载第 2 集成片"]')?.disabled).toBe(true);
+        await act(() => second.querySelector<HTMLButtonElement>('[aria-label="导出第 2 集剪映草稿"]')!.click());
+        expect(jianyingDialog).toMatchObject({ open: true, projectId: "project", episodeId: "episode-b", episodeLabel: "第 2 集" });
+        expect(view.host.querySelector('[role="dialog"][aria-label="剪映草稿导出"]')?.getAttribute("data-episode-id")).toBe("episode-b");
+        await act(() => button(view.host, "关闭草稿导出").click());
+        expect(view.host.querySelector('[role="dialog"][aria-label="剪映草稿导出"]')).toBeNull();
+        expect(view.location().href).toBe(initialUrl);
+        expect(renderEpisode).not.toHaveBeenCalled();
+        expect(preflight).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+    } finally {
+        await view.close();
+        details.set("episode-a", previous);
+    }
+});
+
+test("缺失或旧版本段视频不能合成本集，详情读取失败也不使用缓存版本提交", async () => {
+    const previous = details.get("episode-a")!;
+    for (const stale of [false, true]) {
+        details.set("episode-a", { ...previous, segments: [{ ...previous.segments[0]!, videoStatus: stale ? "stale" : "ready", videoResourceId: stale ? "old-video" : undefined }] });
+        const view = await fixture("/projects/project/e/episode-a?mode=simple");
+        try {
+            const generate = view.host.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]')!;
+            expect(generate.disabled).toBe(true);
+            await act(() => generate.click());
+            expect(renderEpisode).not.toHaveBeenCalled();
+        } finally {
+            await view.close();
+            details.set("episode-a", previous);
+        }
+    }
+    const view = await fixture("/projects/project/e/episode-a?mode=simple");
+    try {
+        getEpisode.mockImplementationOnce(async () => {
+            throw new Error("测试详情读取失败");
+        });
+        await view.refreshEpisode("episode-a");
+        expect(view.host.textContent).toContain("本集内容读取失败");
+        const generate = view.host.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]');
+        expect(!generate || generate.disabled).toBe(true);
+        if (generate) await act(() => generate.click());
+        expect(renderEpisode).not.toHaveBeenCalled();
+    } finally {
+        await view.close();
+    }
+});
+
+test("成片卡展示本集合成排队与运行状态，不能重复提交且不影响其它集", async () => {
+    const previous = details.get("episode-a")!;
+    for (const status of ["queued", "running"] as const) {
+        details.set("episode-a", { ...previous, jobs: [queueJob({ id: `render-${status}`, kind: "render", episodeId: "episode-a", label: "第 1 集成片", status, taskId: `task-${status}` })] });
+        const view = await fixture();
+        try {
+            const first = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-a"]')!;
+            expect(first.querySelector('[role="status"]')?.textContent).toContain(status === "queued" ? "合成排队中" : "正在合成");
+            const generate = first.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]')!;
+            expect(generate.disabled).toBe(true);
+            await act(() => generate.click());
+            expect(renderEpisode).not.toHaveBeenCalled();
+            const second = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-b"]')!;
+            expect(second.querySelector('[role="status"]')?.textContent).toContain("待合成");
+            expect(second.textContent).not.toMatch(/合成排队中|正在合成/);
+        } finally {
+            await view.close();
+            details.set("episode-a", previous);
+        }
+    }
+});
+
+test("未绑定任务的排队合成可按本集版本继续提交，段未就绪仍禁止操作", async () => {
+    const previous = details.get("episode-a")!;
+    const row = episodes[0]!;
+    const previousRow = { ...row };
+    for (const ready of [true, false]) {
+        row.stage = "render";
+        details.set("episode-a", {
+            ...previous,
+            episode: { ...previous.episode, stage: "render" },
+            segments: [{ ...previous.segments[0]!, videoStatus: ready ? "ready" : "stale" }],
+            jobs: [queueJob({ id: "unbound-render", kind: "render", episodeId: "episode-a", label: "第 1 集成片", status: "queued" })],
+        });
+        const view = await fixture();
+        try {
+            const first = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-a"]')!;
+            expect(first.querySelector('[role="status"]')?.textContent).toContain("等待提交合成");
+            const generate = first.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]')!;
+            expect(generate.textContent).toContain("继续合成本集");
+            expect(generate.disabled).toBe(!ready);
+            await act(() => {
+                generate.click();
+                generate.click();
+            });
+            await flush();
+            expect(renderEpisode.mock.calls).toEqual(ready ? [["project", "episode-a", { expectedRevision: 31 }]] : []);
+            expect(view.host.querySelector('[data-episode-final-id="episode-b"] [role="status"]')?.textContent).toContain("待合成");
+            expect(preflight).not.toHaveBeenCalled();
+            expect(execute).not.toHaveBeenCalled();
+        } finally {
+            await view.close();
+            details.set("episode-a", previous);
+            Object.assign(row, previousRow);
+        }
+    }
+});
+
+test("只有过期标记而没有成片资源时仍显示待合成", async () => {
+    const previous = details.get("episode-a")!;
+    details.set("episode-a", { ...previous, episode: { ...previous.episode, finalStale: true, finalResourceId: undefined } });
+    const view = await fixture("/projects/project/e/episode-a?mode=simple");
+    try {
+        const card = view.host.querySelector<HTMLElement>('[data-episode-final-id="episode-a"]')!;
+        expect(card.querySelector('[role="status"]')?.textContent).toContain("待合成");
+        expect(card.textContent).not.toMatch(/成片待更新|当前为旧版成片/);
+        expect(card.querySelector<HTMLButtonElement>('[aria-label="合成第 1 集视频"]')?.disabled).toBe(false);
+        expect(card.querySelector<HTMLButtonElement>('[aria-label="下载第 1 集成片"]')?.disabled).toBe(true);
+        expect(renderEpisode).not.toHaveBeenCalled();
+    } finally {
+        await view.close();
+        details.set("episode-a", previous);
+    }
+});
+
+test("折叠与展开多段分镜时，成片卡始终位于本集可见段末尾", async () => {
+    const restore = withEightSegments();
+    const view = await fixture("/projects/project/e/episode-b?mode=simple");
+    try {
+        const section = view.host.querySelector<HTMLElement>('.drama-simple-episode[aria-label="第 2 集"]')!;
+        const grid = section.querySelector(".drama-simple-grid")!;
+        const card = section.querySelector('[data-episode-final-id="episode-b"]')!;
+        expect(grid.lastElementChild).toBe(card);
+        expect(card.previousElementSibling?.getAttribute("data-segment-id")).toBe("segment-episode-b-5");
+        await act(() => button(section, "展开其余 2 段").click());
+        expect(grid.lastElementChild).toBe(card);
+        expect(card.previousElementSibling?.getAttribute("data-segment-id")).toBe("segment-episode-b-7");
+        expect(section.querySelectorAll('[data-episode-final-id="episode-b"]')).toHaveLength(1);
+        await act(() => button(section, "收起本集").click());
+        expect(grid.lastElementChild).toBe(card);
+        expect(card.previousElementSibling?.getAttribute("data-segment-id")).toBe("segment-episode-b-5");
+    } finally {
+        await view.close();
+        restore();
+    }
+});
+
 test("失败集没有任何段也能按真实集重试剧本", async () => {
     const view = await fixture("/projects/project/e/episode-failed?mode=simple");
     try {
-        expect(view.host.querySelectorAll(".drama-simple-card").length).toBe(0);
+        expect(view.host.querySelectorAll(".drama-simple-card[data-segment-id]").length).toBe(0);
         expect(view.host.textContent).toContain("模型没有返回可解析的 JSON");
         await act(() => button(view.host, "重试本集剧本").click());
         await flush();
@@ -349,7 +585,7 @@ test("成片失败保留成功分镜，只重试本集成片且识别零任务�
     try {
         expect(view.host.textContent).toContain("第 1 集成片合成失败");
         expect(view.host.textContent).not.toContain("剧本与分镜未就绪");
-        expect(view.host.querySelectorAll(".drama-simple-card")).toHaveLength(1);
+        expect(view.host.querySelectorAll(".drama-simple-card[data-segment-id]")).toHaveLength(1);
         await act(() => button(view.host, "重试本集成片").click());
         await flush();
         expect(retryEpisode.mock.calls.at(-1)).toEqual(["project", "episode-a", "render"]);
@@ -379,9 +615,9 @@ test("全部与单集切换清除旧弹窗定位，状态筛选使用真实视�
         await view.select("选择集数", "all");
         expect(view.host.querySelectorAll(".drama-simple-episode").length).toBe(3);
         await view.select("筛选段状态", "ready");
-        expect([...view.host.querySelectorAll(".drama-simple-card")].map((item) => item.getAttribute("data-segment-id"))).toEqual(["segment-episode-a"]);
+        expect([...view.host.querySelectorAll(".drama-simple-card[data-segment-id]")].map((item) => item.getAttribute("data-segment-id"))).toEqual(["segment-episode-a"]);
         await view.select("筛选段状态", "idle");
-        expect([...view.host.querySelectorAll(".drama-simple-card")].map((item) => item.getAttribute("data-segment-id"))).toEqual(["segment-episode-b"]);
+        expect([...view.host.querySelectorAll(".drama-simple-card[data-segment-id]")].map((item) => item.getAttribute("data-segment-id"))).toEqual(["segment-episode-b"]);
     } finally {
         await view.close();
     }
@@ -594,7 +830,7 @@ for (const [kind, index] of [
         const job = queueJob({ id: `${kind}-job`, kind, status: "running", label: `第 2 集第 ${index + 1} 段`, episodeId: "episode-b", shotId: target.id });
         const view = await fixture("/projects/project/e/episode-a?mode=simple&scope=all&segment=0&shot=old-shot&status=idle", [job]);
         try {
-            expect(view.host.querySelector('[aria-label="第 2 集"]')?.querySelectorAll(".drama-simple-card")).toHaveLength(6);
+            expect(view.host.querySelector('[aria-label="第 2 集"]')?.querySelectorAll(".drama-simple-card[data-segment-id]")).toHaveLength(6);
             expect(view.host.querySelector(`[data-segment-id="${target.id}"]`)).toBeNull();
             await act(() => button(view.host, "与 Agent 讨论").click());
             await act(() => button(view.host, "展开队列").click());
@@ -607,7 +843,7 @@ for (const [kind, index] of [
             expect(view.location().searchParams.get("segment")).toBe(String(target.index));
             for (const key of ["scope", "shot", "status"]) expect(view.location().searchParams.has(key)).toBe(false);
             expect(view.host.querySelectorAll(".drama-simple-episode")).toHaveLength(1);
-            expect(view.host.querySelectorAll(".drama-simple-card")).toHaveLength(8);
+            expect(view.host.querySelectorAll(".drama-simple-card[data-segment-id]")).toHaveLength(8);
             expect(view.host.querySelector(`[data-segment-id="${target.id}"]`)).not.toBeNull();
             expect(editor.episodeId).toBe("episode-b");
             expect(editor.segmentIndex).toBe(target.index);
@@ -638,7 +874,7 @@ test("队列段目标已删除时回退到目标单集并展开，不误开旧�
         for (const key of ["scope", "segment", "shot", "status"]) expect(view.location().searchParams.has(key)).toBe(false);
         expect(view.host.querySelectorAll(".drama-simple-episode")).toHaveLength(1);
         expect(view.host.querySelector(".drama-simple-episode")?.getAttribute("aria-label")).toBe("第 2 集");
-        expect(view.host.querySelectorAll(".drama-simple-card")).toHaveLength(8);
+        expect(view.host.querySelectorAll(".drama-simple-card[data-segment-id]")).toHaveLength(8);
         expect(editor.episodeId).toBe("episode-b");
         expect(editor.segmentIndex).toBeUndefined();
         expect(editor.shotId).toBeUndefined();

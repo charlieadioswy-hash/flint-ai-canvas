@@ -7,7 +7,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import type { AgentDramaContext } from "@/stores/use-global-agent-store";
 import { agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, DEFAULT_CANVAS_APPEARANCE, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
-import { type CSSProperties, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePopoverAnchorAlign } from "@/hooks/use-popover-anchor-align";
 import { useAgentLauncherPosition } from "./use-agent-launcher-position";
 import { resolveAgentLauncherAvatarHeight } from "@/lib/canvas/agent-launcher-position";
@@ -67,9 +67,10 @@ import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentat
 import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-settings";
 import { CanvasAgentVideoApprovalSettings } from "./canvas-agent-video-approval-settings";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
-import { agentReplyOptionIsInput, extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
+import { agentReplyOptionIsInput, createAgentChoiceHistory, extractAgentReplyOptions, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
 import { hasExplicitDramaStageTransition, prepareDramaProposalMessage, prepareDramaSetupMessage } from "@/lib/canvas/drama-setup-presentation";
 import type { ApprovalState } from "./canvas-cloud-agent-events";
+import { AgentChoiceContext } from "./canvas-agent-reply-options";
 
 // hidden 为 true 时入口保持挂载但不显示：Live2D 模型加载开销大，面板开合不能卸载它，
 // 否则每次重新挂载都要重新下载模型并重建渲染上下文。隐藏期间形象动画暂停。
@@ -698,6 +699,7 @@ export function AgentConversation({
     proposalChoices,
     stageChoices,
     focusLatestRequest,
+    choiceHistoryState,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -740,6 +742,7 @@ export function AgentConversation({
     stageChoices?: AgentDramaContext["stageChoices"];
     /** 用户在作品侧明确点选对象或操作时，将相应的对话确认带入视野。 */
     focusLatestRequest?: number;
+    choiceHistoryState?: ReturnType<typeof createAgentChoiceHistory>;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const reducedMotion = useReducedMotion();
@@ -750,6 +753,67 @@ export function AgentConversation({
     const [awayFromBottom, setAwayFromBottom] = useState(false);
     const [unseenCount, setUnseenCount] = useState(0);
     const lastUserId = messages.findLast((item) => item.role === "user")?.id;
+    const lastUserIndex = messages.findLastIndex((item) => item.role === "user");
+    const currentTurn = messages.slice(lastUserIndex + 1);
+    const latestAssistantId = currentTurn.findLast((item) => item.role === "assistant" && !item.reasoning)?.id;
+    const currentRunIds = new Set(currentTurn.map((item) => item.runId).filter(Boolean));
+    const localChoiceHistory = useRef(createAgentChoiceHistory());
+    const choiceHistory = { current: choiceHistoryState || localChoiceHistory.current };
+    const [, refreshChoices] = useState(0);
+    // 发送失败移除临时气泡、忙碌期间卸载卡片，都不能重新激活已经越过的选择。
+    if (choiceHistory.current.userId !== lastUserId) {
+        for (const key of choiceHistory.current.seen) choiceHistory.current.expired.add(key);
+        for (const owner of choiceHistory.current.proposalOwners.values()) choiceHistory.current.obsoleteProposals.add(owner);
+        for (const owner of choiceHistory.current.messageOwners.values()) choiceHistory.current.obsoleteMessages.add(owner);
+        choiceHistory.current.userId = lastUserId;
+    }
+    const activeChoiceKeys = useRef(new Set<string>());
+    activeChoiceKeys.current = new Set();
+    const proposalChoiceKey = (proposal: DramaAgentProposal) => {
+        const owner = `${proposal.runId}:${proposal.toolCallId}`;
+        const key = `proposal:${proposalChoices?.interactionKey?.(proposal) || owner}`;
+        choiceHistory.current.proposalOwners.set(key, owner);
+        if (choiceHistory.current.obsoleteProposals.has(owner)) choiceHistory.current.expired.add(key);
+        return key;
+    };
+    // 未展示的候选也属于本轮，切换制作视图或迟到的预检不能把它们重新开放。
+    for (const proposal of [...(setupChoices?.proposals || []), ...(proposalChoices?.proposals || [])]) proposalChoiceKey(proposal);
+    const choiceScope = (keys: string[], eligible: boolean, content: ReactNode, messageId?: string, renewsMedia = false) => {
+        const history = choiceHistory.current;
+        for (const key of keys) {
+            history.seen.add(key);
+            if (messageId) history.messageOwners.set(key, messageId);
+            if (!eligible) history.expired.add(key);
+        }
+        const disabled = busy || replyOptionsDisabled || Boolean(approval) || !eligible || Boolean(messageId && !renewsMedia && history.obsoleteMessages.has(messageId)) || keys.some((key) => history.expired.has(key));
+        if (!disabled) for (const key of keys) activeChoiceKeys.current.add(key);
+        return (
+            <AgentChoiceContext.Provider
+                value={{
+                    disabled,
+                    choose: (action) => {
+                        if (disabled || keys.some((key) => !activeChoiceKeys.current.has(key) || choiceHistory.current.expired.has(key))) return;
+                        // 同步关闭当前所有选择，回调触发异步保存前就挡住双击与回车重复提交。
+                        for (const key of choiceHistory.current.seen) choiceHistory.current.expired.add(key);
+                        const selectedOwners = new Set(keys.map((key) => choiceHistory.current.proposalOwners.get(key)));
+                        for (const owner of choiceHistory.current.proposalOwners.values()) {
+                            if (!selectedOwners.has(owner)) choiceHistory.current.obsoleteProposals.add(owner);
+                        }
+                        for (const owner of choiceHistory.current.messageOwners.values()) choiceHistory.current.obsoleteMessages.add(owner);
+                        activeChoiceKeys.current.clear();
+                        refreshChoices((value) => value + 1);
+                        action();
+                    },
+                }}
+            >
+                <fieldset disabled={disabled} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+                    {content}
+                </fieldset>
+            </AgentChoiceContext.Provider>
+        );
+    };
+    const proposalScopes = (proposals: DramaAgentProposal[], eligible: boolean, messageId: string) =>
+        proposals.map((proposal) => <div key={`${proposal.runId}:${proposal.toolCallId}`}>{choiceScope([proposalChoiceKey(proposal)], eligible, proposalChoices?.render([proposal]), messageId, proposal.kind === "media")}</div>);
     // 连续的工具记录折成一行（只报最新一步），计划/提问载体由输入区上方的固定条渲染。
     const segments = useMemo(() => buildAgentFeedSegments(messages), [messages]);
     // 只渲染最近的一小段历史：几千条消息全部挂到 DOM 会让画布拖动明显掉帧。
@@ -814,6 +878,7 @@ export function AgentConversation({
         if (!dramaStageChoices || dramaStageChoices.pending || busy || approval) return { targetId: null as string | null, fallback: false };
         for (let index = segments.length - 1; index >= 0; index -= 1) {
             const segment = segments[index];
+            if (segment.kind === "message" && segment.item.role === "user") return { targetId: null, fallback: false };
             if (segment.kind !== "message" || segment.item.role !== "assistant" || segment.item.reasoning || segment.item.streaming) continue;
             return { targetId: segment.item.id, fallback: false };
         }
@@ -944,20 +1009,55 @@ export function AgentConversation({
                                 replyOptions={replyTarget?.id === segment.item.id ? replyTarget.options : null}
                                 onReplyOption={replyTarget?.id === segment.item.id && onReplyOption ? stableReply : undefined}
                                 replyOptionsDisabled={replyOptionsDisabled}
-                                setupChoices={!stageMessage && setupMessage && dramaSetupChoices ? { body: setupMessage.body, content: dramaSetupChoices.render(setupMessage.proposals) } : undefined}
-                                proposalChoices={!stageMessage && proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: dramaProposalChoices.render(proposalMessage.proposals) } : undefined}
-                                stageChoices={stageMessage}
+                                replyOptionScope={replyTarget?.id === segment.item.id ? (content) => choiceScope([`reply:${segment.item.id}`], segment.item.id === latestAssistantId, content, segment.item.id) : undefined}
+                                setupChoices={
+                                    !stageMessage && setupMessage && dramaSetupChoices
+                                        ? { body: setupMessage.body, content: choiceScope(setupMessage.proposals.map(proposalChoiceKey), segment.item.id === latestAssistantId, dramaSetupChoices.render(setupMessage.proposals), segment.item.id) }
+                                        : undefined
+                                }
+                                proposalChoices={
+                                    !stageMessage && proposalMessage && dramaProposalChoices ? { body: proposalMessage.body, content: proposalScopes(proposalMessage.proposals, segment.item.id === latestAssistantId, segment.item.id) } : undefined
+                                }
+                                stageChoices={stageMessage ? { render: (labels) => choiceScope([`stage:${stageMessage.key || ""}:${segment.item.id}`], segment.item.id === latestAssistantId, stageMessage.render(labels), segment.item.id) } : undefined}
                                 onRetry={onRetryRun && retryableErrorId === segment.item.id ? stableRetry : undefined}
                                 retrying={retryingRun && retryableErrorId === segment.item.id}
                             />
                         );
                     })}
                     {setupPresentation.fallback.length && dramaSetupChoices ? (
-                        <AgentChatMessage item={{ id: "drama-setup-choices-fallback", role: "assistant", text: "" }} theme={theme} setupChoices={{ body: "", content: dramaSetupChoices.render(setupPresentation.fallback) }} />
+                        <AgentChatMessage
+                            item={{ id: "drama-setup-choices-fallback", role: "assistant", text: "" }}
+                            theme={theme}
+                            setupChoices={{
+                                body: "",
+                                content: choiceScope(
+                                    setupPresentation.fallback.map(proposalChoiceKey),
+                                    !messages.length || setupPresentation.fallback.every((proposal) => currentRunIds.has(proposal.runId)),
+                                    dramaSetupChoices.render(setupPresentation.fallback),
+                                ),
+                            }}
+                        />
                     ) : null}
-                    {stagePresentation.fallback && dramaStageChoices ? <AgentChatMessage item={{ id: "drama-stage-choices-fallback", role: "assistant", text: "" }} theme={theme} stageChoices={dramaStageChoices} /> : null}
+                    {stagePresentation.fallback && dramaStageChoices ? (
+                        <AgentChatMessage
+                            item={{ id: "drama-stage-choices-fallback", role: "assistant", text: "" }}
+                            theme={theme}
+                            stageChoices={{ render: (labels) => choiceScope([`stage:${dramaStageChoices.key || ""}:fallback`], !messages.length, dramaStageChoices.render(labels)) }}
+                        />
+                    ) : null}
                     {proposalPresentation.fallback.length && dramaProposalChoices ? (
-                        <AgentChatMessage item={{ id: "drama-proposal-choices-fallback", role: "assistant", text: "" }} theme={theme} proposalChoices={{ body: "", content: dramaProposalChoices.render(proposalPresentation.fallback) }} />
+                        <AgentChatMessage
+                            item={{ id: "drama-proposal-choices-fallback", role: "assistant", text: "" }}
+                            theme={theme}
+                            proposalChoices={{
+                                body: "",
+                                content: proposalPresentation.fallback.map((proposal) => (
+                                    <div key={`${proposal.runId}:${proposal.toolCallId}`}>
+                                        {choiceScope([proposalChoiceKey(proposal)], proposal.runId.startsWith("studio-") || !messages.length || currentRunIds.has(proposal.runId), dramaProposalChoices.render([proposal]))}
+                                    </div>
+                                )),
+                            }}
+                        />
                     ) : null}
                     {approval ? (
                         <ApprovalCard

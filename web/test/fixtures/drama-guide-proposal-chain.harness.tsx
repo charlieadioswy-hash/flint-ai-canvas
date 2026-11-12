@@ -637,6 +637,7 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         expect(dramaContext?.prefillRequest?.autoSubmit).toBe(true);
         expect(dramaContext?.prefillRequest?.requireIdle).toBe(true);
         expect(dramaContext?.prefillRequest?.text).toContain("当前制作版本：8");
+        const savedConfigurationRequestId = dramaContext?.prefillRequest?.id;
         expect(summary.production.settings.language).toBe("粤语");
         expect(guideConfirms).toEqual([]);
         expect(summary.production.guideStep).toBe("configuring");
@@ -651,26 +652,70 @@ test("聊天内单击保存建议，再明确确认才推进原阶段；失败�
         await click("确认配置，开始提取资产");
         expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "configuring", expectedRevision: 8, settings: { ...originalSettings, language: "粤语", mediaMode: "manual" } } }]);
         expect(summary.production.guideStep).toBe("assets");
-        expect(dramaContext?.prefillRequest).toBeNull();
+        const followup = structuredClone(dramaContext?.prefillRequest);
+        expect(followup?.id).not.toBe(savedConfigurationRequestId);
+        expect(followup?.autoSubmit).toBe(true);
+        expect(followup?.requireIdle).toBe(true);
+        expect(followup?.displayText).toBe("已确认创作配置，开始提取资产");
+        expect(followup?.text).toContain("当前已进入角色与场景阶段");
+        expect(followup?.text).toContain("drama_get_context");
+        expect(followup?.text).toContain("文字任务仍在进行时说明等待原因");
+        expect(followup?.text).toContain("不要重复上一阶段的确认，不自动确认下一阶段或生成图片、视频");
+        await refresh();
+        await refresh();
+        expect(dramaContext?.prefillRequest).toEqual(followup);
+        expect(guideConfirms).toHaveLength(1);
+        expect(findButton(chatHost, "确认配置，开始提取资产")).toBeUndefined();
         expect(findButton(chatHost, "确认资产，开始改编剧本与分镜")).toBeUndefined();
         expect(chatHost.querySelector(".drama-guide-footer")).toBeNull();
         expect(unexpectedWrites).toBe(0);
         expect(errors).toEqual([]);
     });
-    await withGuide("configuring", async ({ refresh, click, chatHost }) => {
+    await withGuide("assets", async ({ refresh, click, chatHost }) => {
         allowGuideConfirm = true;
         summary.guide!.canConfirm = true;
         await refresh();
-        failWrite = true;
-        await click("确认配置，开始提取资产");
+        await click("确认资产，开始改编剧本与分镜");
+        expect(guideConfirms).toEqual([{ projectId: "project", input: { expectedStep: "assets", expectedRevision: 7 } }]);
+        expect(summary.production.guideStep).toBe("story");
+        const followup = structuredClone(dramaContext?.prefillRequest);
+        expect(followup?.autoSubmit).toBe(true);
+        expect(followup?.requireIdle).toBe(true);
+        expect(followup?.displayText).toBe("已确认资产，开始改编剧本与分镜");
+        expect(followup?.text).toContain("我已确认角色与场景，当前已进入剧本与分镜阶段");
+        expect(followup?.text).toContain("drama_get_context");
+        expect(followup?.text).toContain("就绪后提供本阶段的下一步选项和自定义调整输入");
+        expect(followup?.text).toContain("不要重复上一阶段的确认，不自动确认下一阶段或生成图片、视频");
+        await refresh();
+        await refresh();
+        expect(dramaContext?.prefillRequest).toEqual(followup);
         expect(guideConfirms).toHaveLength(1);
-        expect(summary.production.guideStep).toBe("configuring");
-        expect(summary.production.revision).toBe(7);
-        expect(chatHost.textContent).toContain("确认配置，开始提取资产");
-        expect(errors).toContain("模拟阶段确认失败");
+        expect(findButton(chatHost, "确认资产，开始改编剧本与分镜")).toBeUndefined();
+        expect(findButton(chatHost, "确认剧本与分镜，进入制作台")).toBeUndefined();
         expect(writes).toEqual([]);
         expect(unexpectedWrites).toBe(0);
+        expect(errors).toEqual([]);
     });
+    for (const step of ["configuring", "assets"] as const)
+        await withGuide(step, async ({ refresh, click, chatHost }) => {
+            const confirmLabel = step === "configuring" ? "确认配置，开始提取资产" : "确认资产，开始改编剧本与分镜";
+            allowGuideConfirm = true;
+            summary.guide!.canConfirm = true;
+            await refresh();
+            const previousRequest = structuredClone(dramaContext?.prefillRequest);
+            failWrite = true;
+            await click(confirmLabel);
+            expect(guideConfirms).toHaveLength(1);
+            expect(summary.production.guideStep).toBe(step);
+            expect(summary.production.revision).toBe(7);
+            expect(chatHost.textContent).toContain(confirmLabel);
+            expect(errors).toContain("模拟阶段确认失败");
+            await refresh();
+            expect(dramaContext?.prefillRequest).toEqual(previousRequest);
+            expect(dramaContext?.prefillRequest).toBeNull();
+            expect(writes).toEqual([]);
+            expect(unexpectedWrites).toBe(0);
+        });
 });
 
 test("剧本与分镜阶段在对话内提供确认选项，确认后进入制作台", async () => {

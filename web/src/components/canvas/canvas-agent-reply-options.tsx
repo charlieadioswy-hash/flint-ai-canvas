@@ -1,8 +1,14 @@
 import { ArrowRight } from "lucide-react";
-import { useRef, useState, type SyntheticEvent } from "react";
+import { createContext, useContext, useRef, useState, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { agentReplyOptionIsInput, type AgentReplyOption } from "@/lib/canvas/agent-reply-options";
+
+export const AgentChoiceContext = createContext<{ disabled: boolean; choose: (action: () => void) => void }>({ disabled: false, choose: (action) => action() });
+
+export function useAgentChoiceInteraction() {
+    return useContext(AgentChoiceContext);
+}
 
 export function useAgentReplyOptionDrafts(scopeKey: string) {
     const [state, setState] = useState<{ scopeKey: string; values: Record<string, string> }>({ scopeKey, values: {} });
@@ -77,6 +83,8 @@ function ReplyOptionInput({ option, value, disabled, onChange, onSelect }: { opt
 /** 编号回复和 ask_user 共用：普通选项点击回复，输入型选项提交填写内容。 */
 export function AgentReplyOptionCards({ options, onSelect, disabled = false, label, scopeKey = "", drafts }: AgentReplyOptionCardsProps) {
     const { t } = useTranslation();
+    const interaction = useAgentChoiceInteraction();
+    const blocked = disabled || interaction.disabled;
     const localDrafts = useAgentReplyOptionDrafts(scopeKey);
     const currentDrafts = drafts || localDrafts;
     return (
@@ -87,22 +95,22 @@ export function AgentReplyOptionCards({ options, onSelect, disabled = false, lab
                         key={`${scopeKey}:${option.marker}:${option.text}`}
                         option={option}
                         value={currentDrafts.values[`${option.marker}:${option.text}`] || ""}
-                        disabled={disabled}
+                        disabled={blocked}
                         onChange={(value) => currentDrafts.onChange(`${option.marker}:${option.text}`, value)}
-                        onSelect={onSelect}
+                        onSelect={(value) => interaction.choose(() => onSelect(value))}
                     />
                 ) : (
                     <button
                         key={`${scopeKey}:${option.marker}:${option.text}`}
                         type="button"
                         className="agent-reply-option"
-                        disabled={disabled}
+                        disabled={blocked}
                         title={option.text}
                         onMouseDown={stop}
                         onPointerDown={stop}
                         onClick={(event) => {
                             stop(event);
-                            onSelect(option);
+                            if (!blocked) interaction.choose(() => onSelect(option));
                         }}
                     >
                         <span className="agent-reply-option-marker" aria-hidden="true">

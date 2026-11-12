@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { App, Button } from "antd";
-import { AgentReplyOptionCards } from "@/components/canvas/canvas-agent-reply-options";
+import { AgentReplyOptionCards, useAgentChoiceInteraction } from "@/components/canvas/canvas-agent-reply-options";
 import { createClientUUID } from "@/lib/client-id";
 import { appendDramaAgentReference } from "@/lib/canvas/drama-agent-reference";
 import type { DramaAgentProposal } from "@/services/api/agent";
@@ -42,6 +42,15 @@ const TEXT_FIELD_LABEL: Record<string, string> = {
     durationSeconds: "时长",
     videoPromptOverride: "段视频提示词",
 };
+
+function DismissMediaProposal({ disabled, submitted, onDismiss }: { disabled?: boolean; submitted?: boolean; onDismiss: () => void }) {
+    const interaction = useAgentChoiceInteraction();
+    return (
+        <Button type="text" size="small" disabled={disabled || interaction.disabled} onClick={() => interaction.choose(onDismiss)}>
+            {submitted ? "收起" : "暂不操作"}
+        </Button>
+    );
+}
 
 export function dramaMediaProposalRequest(proposal: DramaAgentProposal): DramaStudioActionRequest | null {
     if (proposal.kind !== "media" || !proposal.targetId) return null;
@@ -96,8 +105,22 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
         [session, sessionCurrent],
     );
     const updatePreview = useCallback(
-        (key: string, value: PreviewState) => {
-            if (sessionCurrent()) session.setState((state) => ({ previews: { ...state.previews, [key]: value } }));
+        (key: string, value: PreviewState, newChoice?: "preview" | "retry") => {
+            if (sessionCurrent())
+                session.setState((state) =>
+                    state.dismissed.has(key)
+                        ? state
+                        : {
+                              previews: {
+                                  ...state.previews,
+                                  [key]: {
+                                      ...value,
+                                      choiceRevision: (state.previews[key]?.choiceRevision || 0) + (newChoice === "preview" ? 1 : 0),
+                                      retryRevision: (state.previews[key]?.retryRevision || 0) + (newChoice === "retry" ? 1 : 0),
+                                  },
+                              },
+                          },
+                );
         },
         [session, sessionCurrent],
     );
@@ -108,7 +131,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
             updatePreview(key, { request, loading: true });
             try {
                 const preview = await preflightDramaStudioAction(projectId, request);
-                updatePreview(key, { request, preview });
+                updatePreview(key, { request, preview }, "preview");
                 if (sessionCurrent())
                     setProposals((previous) =>
                         previous.map((item) =>
@@ -118,7 +141,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                         ),
                     );
             } catch (cause) {
-                updatePreview(key, { request, error: cause instanceof Error ? cause.message : "暂时无法检查生成条件，请重试" });
+                updatePreview(key, { request, error: cause instanceof Error ? cause.message : "暂时无法检查生成条件，请重试" }, "retry");
             } finally {
                 busy.current.delete(key);
             }
@@ -244,7 +267,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
             updatePreview(key, { ...state, loading: true, error: undefined });
             try {
                 const result = await confirmDramaMediaAction(projectId, state.request, state.preview, current);
-                updatePreview(key, { request: state.request, preview: result.preview, submitted: result.submitted, ...(!result.submitted ? { error: "条件或费用已变化，请查看最新结果后重新确认" } : {}) });
+                updatePreview(key, { request: state.request, preview: result.preview, submitted: result.submitted, ...(!result.submitted ? { error: "条件或费用已变化，请查看最新结果后重新确认" } : {}) }, result.submitted ? undefined : "preview");
                 if (result.submitted) {
                     setDismissed((previous) => new Set(previous).add(key));
                     if (current()) {
@@ -253,7 +276,8 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                     }
                 }
             } catch (cause) {
-                updatePreview(key, { ...state, error: cause instanceof Error ? cause.message : "提交失败，请重新检查后重试", loading: false });
+                // 失败只产生新的重试入口；旧报价及其执行确认一起失效。
+                updatePreview(key, { request: state.request, error: cause instanceof Error ? cause.message : "提交失败，请重新检查后重试" }, "retry");
             } finally {
                 busy.current.delete(key);
             }
@@ -263,14 +287,19 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
     const visible = useMemo(() => proposals.filter((proposal) => !dismissed.has(dramaProposalKey(proposal))), [proposals, dismissed]);
     const continueConversation = useCallback(() => {
         if (!sessionCurrent()) return;
-        const mediaKeys = visible.filter((proposal) => proposal.kind === "media").map(dramaProposalKey);
-        if (mediaKeys.length) setDismissed((previous) => new Set([...previous, ...mediaKeys]));
+        const keys = visible.map(dramaProposalKey);
+        if (keys.length) setDismissed((previous) => new Set([...previous, ...keys]));
     }, [sessionCurrent, visible, setDismissed]);
     const proposalChoices = useMemo(
         () =>
             visible.length
                 ? {
                       proposals: visible,
+                      interactionKey: (proposal: DramaAgentProposal) => {
+                          const key = dramaProposalKey(proposal);
+                          const state = previews[key];
+                          return `${key}:${state?.choiceRevision || 0}${state?.retryRevision && !state.preview ? `:retry:${state.retryRevision}` : ""}`;
+                      },
                       onContinueConversation: continueConversation,
                       render: (items: DramaAgentProposal[]) =>
                           items.map((proposal) => {
@@ -332,9 +361,7 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                                               )}
                                           </>
                                       )}
-                                      <Button type="text" size="small" disabled={state?.loading} onClick={() => setDismissed((previous) => new Set(previous).add(key))}>
-                                          {state?.submitted ? "收起" : "暂不操作"}
-                                      </Button>
+                                      <DismissMediaProposal disabled={state?.loading} submitted={state?.submitted} onDismiss={() => setDismissed((previous) => new Set(previous).add(key))} />
                                   </div>
                               );
                           }),

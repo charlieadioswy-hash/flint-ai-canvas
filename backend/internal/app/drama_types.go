@@ -362,6 +362,10 @@ type UpdateDramaEpisodeRequest struct {
 	SourceFormat     *string `json:"sourceFormat"`
 }
 
+type RenderDramaEpisodeRequest struct {
+	ExpectedRevision *int64 `json:"expectedRevision"`
+}
+
 // InsertDramaShotRequest 在指定镜头前或后插入一个空镜头，归入同一剧情段。
 type InsertDramaShotRequest struct {
 	Position string `json:"position"`

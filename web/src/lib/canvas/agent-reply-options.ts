@@ -274,3 +274,15 @@ export function extractAgentReplyOptions(markdown: string): AgentReplyOptions | 
     const last = lines.length - 1;
     return extractBlockOptions(lines, last) || extractInlineOptions(lines, last);
 }
+/** 仅在当前登录会话内保存选择水位，跨制作视图返回时不重新开放历史操作。 */
+export function createAgentChoiceHistory() {
+    return {
+        userId: undefined as string | undefined,
+        seen: new Set<string>(),
+        expired: new Set<string>(),
+        proposalOwners: new Map<string, string>(),
+        obsoleteProposals: new Set<string>(),
+        messageOwners: new Map<string, string>(),
+        obsoleteMessages: new Set<string>(),
+    };
+}

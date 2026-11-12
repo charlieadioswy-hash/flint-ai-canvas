@@ -23,7 +23,8 @@ const { createPortal } = await import("react-dom");
 const { createRoot } = await import("react-dom/client");
 const { AgentConversation } = await import("@/components/canvas/canvas-cloud-agent-panel-parts");
 const { GuideSetupChoices, GuideStageChoices } = await import("@/pages/projects/guide-setup-choices");
-const { useAgentReplyOptionDrafts } = await import("@/components/canvas/canvas-agent-reply-options");
+const { AgentReplyOptionCards, useAgentReplyOptionDrafts } = await import("@/components/canvas/canvas-agent-reply-options");
+const { createAgentChoiceHistory } = await import("@/lib/canvas/agent-reply-options");
 const { canvasThemes } = await import("@/lib/canvas-theme");
 const { applyAgentEvent } = await import("@/lib/canvas/cloud-agent-events");
 const { dramaProposalFromToolDetail } = await import("@/services/api/agent");
@@ -167,7 +168,7 @@ test("操作位于消息滚动区，稳定重渲染不反复设置 host，切换
     }
 });
 
-test("真实聊天把同轮风格候选和说明合为一组消息内选项，直接选择及自定义保留原建议身份", async () => {
+test("真实聊天合并同轮风格候选，选择后整组及自定义输入不再提交", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -221,14 +222,13 @@ test("真实聊天把同轮风格候选和说明合为一组消息内选项，�
 
         const input = group.querySelector<HTMLInputElement>('input[aria-label="自定义视觉风格"]')!;
         expect(input.value).toBe("");
+        expect(input.disabled).toBe(true);
         await act(async () => {
             Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "  低饱和水彩  ");
             input.dispatchEvent(new browser.Event("input", { bubbles: true }));
         });
         await act(async () => input.closest("form")!.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })));
-        expect(custom).toHaveLength(1);
-        expect(custom[0].text).toBe("低饱和水彩");
-        expect(custom[0].proposal).toBe(proposals[0]);
+        expect(custom).toHaveLength(0);
         expect(chosen).toHaveLength(1);
     } finally {
         await act(async () => root.unmount());
@@ -329,12 +329,16 @@ test("整组推荐配置的模型正文仅保留一组采用与修改操作", as
         expect(bubble.textContent).toContain("风格已保存");
         expect(bubble.textContent).toContain("保存配置后再确认是否提取资产");
         for (const value of ["9:16", "720p", "中文普通话", "60 秒"]) expect(bubble.textContent).toContain(value);
+        expect(group.querySelector("input")).toBeNull();
+        await act(async () => buttons[1].click());
+        const input = group.querySelector<HTMLInputElement>('input[aria-label="自定义创作配置"]')!;
+        expect(input).toBeTruthy();
+        expect(input.disabled).toBe(false);
         await act(async () => buttons[0].click());
         expect(chosen).toEqual([proposal]);
         expect(genericReplies).toEqual([]);
-        expect(group.querySelector("input")).toBeNull();
         await act(async () => buttons[1].click());
-        expect(group.querySelector('input[aria-label="自定义创作配置"]')).toBeTruthy();
+        expect(input.disabled).toBe(true);
         expect(chosen).toHaveLength(1);
     } finally {
         await act(async () => root.unmount());
@@ -406,14 +410,14 @@ test("制作台的确认对白与修改镜头是普通选择，仍能直接点�
         expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
         await act(async () => buttons[0].click());
         await act(async () => buttons[1].click());
-        expect(selected).toEqual(labels);
+        expect(selected).toEqual([labels[0]]);
     } finally {
         await act(async () => root.unmount());
         container.remove();
     }
 });
 
-test("旧轮媒体提案按原身份保留，最新四条创作选项和唯一自定义输入仍可直接回复", async () => {
+test("新轮对话禁用旧媒体提案，最新创作选项选定后自定义输入也不可再次提交", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -435,21 +439,24 @@ test("旧轮媒体提案按原身份保留，最新四条创作选项和唯一�
                     proposalChoices={{
                         proposals: [media],
                         render: (proposals) => (
-                            <button type="button" data-old-media-confirm onClick={() => saved.push(proposals[0])}>
-                                确认生成本段视频
-                            </button>
+                            <div data-old-media-confirm>
+                                <AgentReplyOptionCards options={[{ marker: "1", title: "确认生成本段视频", text: "confirm" }]} onSelect={() => saved.push(proposals[0])} />
+                            </div>
                         ),
                     }}
                     onReplyOption={(text) => selected.push(text)}
                 />,
             ),
         );
-        const old = container.querySelector<HTMLButtonElement>("[data-old-media-confirm]")!;
-        expect(old.closest(".agent-message-body")?.textContent).toContain("已检查第 1 段");
-        const replies = container.querySelector<HTMLElement>(".agent-reply-options")!;
+        const old = container.querySelector<HTMLButtonElement>("[data-old-media-confirm] button");
+        if (old) {
+            expect(old.disabled).toBe(true);
+            expect(old.closest(".agent-message-body")?.textContent).toContain("已检查第 1 段");
+        }
+        const replies = [...container.querySelectorAll<HTMLElement>(".agent-reply-options")].find((group) => group.textContent?.includes(labels[0]))!;
         expect(replies).toBeTruthy();
         expect(replies.closest(".agent-message-body")?.querySelector("ol")).toBeNull();
-        expect(replies.contains(old)).toBe(false);
+        if (old) expect(replies.contains(old)).toBe(false);
         const options = replies.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
         expect(options).toHaveLength(4);
         expect([...options].map((option) => option.querySelector(".agent-reply-option-title")?.textContent)).toEqual(labels);
@@ -464,11 +471,11 @@ test("旧轮媒体提案按原身份保留，最新四条创作选项和唯一�
             input.dispatchEvent(new browser.Event("input", { bubbles: true }));
         });
         await act(async () => input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" })));
-        expect(selected).toEqual([labels[2], "先核对角色原文说明"]);
-        await act(async () => old.click());
-        expect(saved).toHaveLength(1);
-        expect(saved[0]).toBe(media);
-        expect(selected).toHaveLength(2);
+        expect(input.disabled).toBe(true);
+        expect(selected).toEqual([labels[2]]);
+        await act(async () => old?.click());
+        expect(saved).toHaveLength(0);
+        expect(selected).toHaveLength(1);
     } finally {
         await act(async () => root.unmount());
         container.remove();
@@ -497,9 +504,9 @@ test.each([
                 render: (proposals) => {
                     renderedMedia++;
                     return (
-                        <button type="button" data-same-run-media-confirm onClick={() => saved.push(proposals[0])}>
-                            确认生成本段视频
-                        </button>
+                        <div data-same-run-media-confirm>
+                            <AgentReplyOptionCards options={[{ marker: "1", title: "确认生成本段视频", text: "confirm" }]} onSelect={() => saved.push(proposals[0])} />
+                        </div>
                     );
                 },
             }}
@@ -520,12 +527,10 @@ test.each([
         expect(selected).toEqual([labels[0]]);
         expect(saved).toEqual([]);
         await act(async () => root.render(render(false)));
-        const confirmation = container.querySelector<HTMLButtonElement>("[data-same-run-media-confirm]")!;
-        expect(confirmation).toBeTruthy();
-        expect(container.querySelector(".agent-reply-options")).toBeNull();
-        await act(async () => confirmation.click());
-        expect(saved).toHaveLength(1);
-        expect(saved[0]).toBe(media);
+        const confirmation = container.querySelector<HTMLButtonElement>("[data-same-run-media-confirm] button");
+        if (confirmation) expect(confirmation.disabled).toBe(true);
+        await act(async () => confirmation?.click());
+        expect(saved).toHaveLength(0);
         expect(selected).toHaveLength(1);
     } finally {
         await act(async () => root.unmount());
@@ -632,6 +637,7 @@ test("真实对话忙碌时临时卸载阶段输入，恢复后保留父层草�
                 guideMode
                 messages={[{ id: "current-stage", role: "assistant", text: "请选择下一步：\n\n1. 确认资产，开始改编剧本与分镜\n2. 继续调整" }]}
                 stageChoices={{
+                    key: scope,
                     pending: false,
                     render: () => <GuideStageChoices title="下一步：开始改编" drafts={drafts} choices={[{ key: "adjust", title: "继续调整", detail: "", input: true }]} busy={false} onChoose={(_choice, text) => text && chosen.push(text)} />,
                 }}
@@ -655,7 +661,11 @@ test("真实对话忙碌时临时卸载阶段输入，恢复后保留父层草�
         expect(chosen).toEqual(["保留秦子文原文定义"]);
         await render(true);
         await render(false);
-        expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("保留秦子文原文定义");
+        const consumed = container.querySelector<HTMLInputElement>("input");
+        if (consumed) {
+            expect(consumed.value).toBe("保留秦子文原文定义");
+            expect(consumed.disabled).toBe(true);
+        }
         await render(false, "project:story");
         expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("");
         await render(false, "other-project:assets");
@@ -721,7 +731,7 @@ test.each(["确认，进入下一阶段", "确认", "确认资产"])("真实阶�
         expect(bubble.textContent).not.toContain("选择后继续当前创作流程");
         await act(async () => buttons[0].click());
         await act(async () => buttons[1].click());
-        expect(selected).toEqual(["confirm", "adjust"]);
+        expect(selected).toEqual(["confirm"]);
         expect(genericReplies).toEqual([]);
         expect(messages[0].text).toContain(`1. ${confirm}`);
     } finally {
@@ -865,6 +875,357 @@ test("普通画布仍保留模型原文列表和错误，不消费短剧配置�
         expect(container.textContent).toContain("原始失败信息需要保留");
         expect(container.textContent).not.toContain("不应出现的短剧选项");
         expect(container.querySelector(".drama-guide-setup-choices")).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each(["reply", "setup", "proposal", "stage"] as const)("新的用户输入使历史 %s 选项失效，回放旧消息也不能重新操作", async (kind) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const proposal: DramaAgentProposal = {
+        kind: kind === "setup" ? "setup" : "cast",
+        runId: "previous-run",
+        toolCallId: "previous-choice",
+        baseRevision: 1,
+        targetId: "cast-one",
+        changes: kind === "setup" ? { styleName: "写实电影", stylePrompt: "真实光影" } : { appearance: "保持原文设定" },
+    };
+    const previous: CloudAgentChatMessage = {
+        id: "previous-choice-message",
+        runId: "previous-run",
+        role: "assistant",
+        text: kind === "stage" ? "请选择下一步：\n\n1. 确认资产，开始改编剧本与分镜\n2. 继续调整" : "请选择接下来的操作：\n\n1. 检查角色\n2. 补充场景\n3. 其他问题（请直接描述）",
+    };
+    const newUser: CloudAgentChatMessage = { id: "new-input", role: "user", text: "先保留当前设定，我想讨论别的内容。" };
+    const render = (messages: CloudAgentChatMessage[]) =>
+        act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={messages}
+                    onReplyOption={(text) => selected.push(text)}
+                    {...(kind === "setup"
+                        ? {
+                              setupChoices: {
+                                  proposals: [proposal],
+                                  render: (items: DramaAgentProposal[]) => <GuideSetupChoices proposals={items} busy={false} isValid={() => true} issue={() => ""} onChoose={() => selected.push("setup")} onCustom={(text) => selected.push(text)} />,
+                              },
+                          }
+                        : {})}
+                    {...(kind === "proposal"
+                        ? {
+                              proposalChoices: {
+                                  proposals: [proposal],
+                                  render: () => (
+                                      <AgentReplyOptionCards
+                                          options={[
+                                              { marker: "1", title: "保存当前建议", text: "save" },
+                                              { marker: "✎", title: "调整要求", text: "输入调整要求", input: true },
+                                          ]}
+                                          onSelect={(option) => selected.push(option.text)}
+                                      />
+                                  ),
+                              },
+                          }
+                        : {})}
+                    {...(kind === "stage"
+                        ? {
+                              stageChoices: {
+                                  key: "assets:1",
+                                  pending: false,
+                                  render: () => (
+                                      <GuideStageChoices
+                                          title="确认当前阶段"
+                                          busy={false}
+                                          choices={[
+                                              { key: "confirm", title: "确认资产，开始改编剧本与分镜", detail: "" },
+                                              { key: "adjust", title: "继续调整", detail: "", input: true },
+                                          ]}
+                                          onChoose={(choice, text) => selected.push(text || choice.key)}
+                                      />
+                                  ),
+                              },
+                          }
+                        : {})}
+                />,
+            ),
+        );
+    try {
+        await render([previous]);
+        const original = container.querySelector<HTMLButtonElement>(".agent-reply-option, .drama-guide-setup-choice")!;
+        expect(original).toBeTruthy();
+        expect(original.disabled).toBe(false);
+        await render([previous, newUser]);
+        for (const element of container.querySelectorAll<HTMLButtonElement | HTMLInputElement>(".agent-reply-options button, .agent-reply-options input, .drama-guide-setup-choices button, .drama-guide-setup-choices input"))
+            expect(element.disabled).toBe(true);
+        await act(async () => original.click());
+        expect(selected).toEqual([]);
+        // 历史同步回退或失败请求撤掉气泡，不能把已经失效的旧选项再启用。
+        await render([previous]);
+        for (const element of container.querySelectorAll<HTMLButtonElement | HTMLInputElement>(".agent-reply-options button, .agent-reply-options input, .drama-guide-setup-choices button, .drama-guide-setup-choices input"))
+            expect(element.disabled).toBe(true);
+        await act(async () => original.click());
+        expect(selected).toEqual([]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("同一轮选项的连续点击同步拦截，真正的新回复仍可选择", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const first: CloudAgentChatMessage = { id: "first-options", runId: "first-run", role: "assistant", text: "请选择：\n\n1. 检查角色\n2. 检查场景" };
+    const render = (messages: CloudAgentChatMessage[], busy = false) => act(async () => root.render(<AgentConversation {...conversationDefaults} guideMode messages={messages} busy={busy} onReplyOption={(text) => selected.push(text)} />));
+    try {
+        await render([first]);
+        const buttons = container.querySelectorAll<HTMLButtonElement>("button.agent-reply-option");
+        await act(async () => {
+            buttons[0].click();
+            buttons[1].click();
+            buttons[0].click();
+        });
+        expect(selected).toEqual(["检查角色"]);
+        await render([first], true);
+        await render([first]);
+        await act(async () => container.querySelector<HTMLButtonElement>("button.agent-reply-option")?.click());
+        expect(selected).toEqual(["检查角色"]);
+        await render([first, { id: "user-choice", role: "user", text: "检查角色" }, { id: "new-options", runId: "new-run", role: "assistant", text: "角色已检查，请选择：\n\n1. 保留角色\n2. 修改角色" }]);
+        const current = container.querySelector<HTMLButtonElement>("button.agent-reply-option")!;
+        expect(current.disabled).toBe(false);
+        await act(async () => current.click());
+        expect(selected).toEqual(["检查角色", "保留角色"]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test.each(["reply", "setup", "stage"] as const)("%s 自定义输入回车后，同轮再次回车、提交和其他按钮不能重复操作", async (kind) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const proposal: DramaAgentProposal = { kind: "setup", runId: "custom-run", toolCallId: "custom-style", baseRevision: 1, changes: { styleName: "写实电影", stylePrompt: "真实光影" } };
+    try {
+        await act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={[{ id: "custom-options", runId: "custom-run", role: "assistant", text: "请选择下一步：\n\n1. 保留当前方案\n2. 其他问题（请直接描述）" }]}
+                    onReplyOption={(text) => selected.push(text)}
+                    {...(kind === "setup"
+                        ? {
+                              setupChoices: {
+                                  proposals: [proposal],
+                                  render: (items: DramaAgentProposal[]) => (
+                                      <GuideSetupChoices
+                                          proposals={items}
+                                          busy={false}
+                                          isValid={() => true}
+                                          issue={() => ""}
+                                          onChoose={() => selected.push("chosen-style")}
+                                          onCustom={(text, item) => {
+                                              expect(item).toBe(proposal);
+                                              selected.push(text);
+                                          }}
+                                      />
+                                  ),
+                              },
+                          }
+                        : {})}
+                    {...(kind === "stage"
+                        ? {
+                              stageChoices: {
+                                  key: "assets:custom",
+                                  pending: false,
+                                  render: () => (
+                                      <GuideStageChoices
+                                          title="继续当前阶段"
+                                          busy={false}
+                                          choices={[
+                                              { key: "confirm", title: "确认资产", detail: "" },
+                                              { key: "adjust", title: "继续调整", detail: "", input: true },
+                                          ]}
+                                          onChoose={(choice, text) => selected.push(text || choice.key)}
+                                      />
+                                  ),
+                              },
+                          }
+                        : {})}
+                />,
+            ),
+        );
+        const input = container.querySelector<HTMLInputElement>("input")!;
+        expect(input).toBeTruthy();
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, "  保留角色原文说明  ");
+            input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+        });
+        const form = input.closest("form")!;
+        const other = container.querySelector<HTMLButtonElement>("button.agent-reply-option, button.drama-guide-setup-choice")!;
+        await act(async () => {
+            input.dispatchEvent(new browser.CompositionEvent("compositionstart", { bubbles: true }));
+            input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter", isComposing: true }));
+        });
+        expect(selected).toEqual([]);
+        await act(async () => input.dispatchEvent(new browser.CompositionEvent("compositionend", { bubbles: true })));
+        await act(async () => {
+            input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+            input.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+            form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+            other.click();
+        });
+        expect(selected).toEqual(["保留角色原文说明"]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("本地制作请求消费后不复活，新卡片请求和明确刷新后的预检可重新确认", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const old: DramaAgentProposal = { kind: "media", runId: "studio-old-request", toolCallId: "old-call", baseRevision: 1, targetId: "old-segment", changes: { action: "segment_video", episodeId: "episode", targetRevision: 1 } };
+    const fresh: DramaAgentProposal = { ...old, runId: "studio-new-request", toolCallId: "new-call", targetId: "fresh-segment" };
+    let messages: CloudAgentChatMessage[] = [{ id: "conversation", runId: "agent-run", role: "assistant", text: "可以继续制作当前作品。" }];
+    const render = (proposals: DramaAgentProposal[], revision = 1) =>
+        act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    dramaStudio
+                    messages={messages}
+                    proposalChoices={{
+                        proposals,
+                        interactionKey: (proposal) => `${proposal.runId}:${proposal.toolCallId}:${revision}`,
+                        render: (items) =>
+                            items.map((proposal) => (
+                                <div key={proposal.toolCallId} data-local-request={proposal.toolCallId}>
+                                    <AgentReplyOptionCards options={[{ marker: "1", title: `生成${proposal.targetId}`, text: proposal.targetId! }]} onSelect={(option) => selected.push(option.text)} />
+                                </div>
+                            )),
+                    }}
+                />,
+            ),
+        );
+    try {
+        await render([old]);
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-local-request="old-call"] button')!.click());
+        expect(selected).toEqual(["old-segment"]);
+        await render([old]);
+        const prior = container.querySelector<HTMLButtonElement>('[data-local-request="old-call"] button');
+        if (prior) expect(prior.disabled).toBe(true);
+        await render([old, fresh]);
+        const current = container.querySelector<HTMLButtonElement>('[data-local-request="new-call"] button')!;
+        expect(current.disabled).toBe(false);
+        await act(async () => current.click());
+        expect(selected).toEqual(["old-segment", "fresh-segment"]);
+        await render([fresh], 2);
+        const updated = container.querySelector<HTMLButtonElement>('[data-local-request="new-call"] button')!;
+        expect(updated.disabled).toBe(false);
+        await act(async () => updated.click());
+        expect(selected).toEqual(["old-segment", "fresh-segment", "fresh-segment"]);
+        messages = [...messages, { id: "new-conversation-input", role: "user", text: "先不要生成，讨论一下角色设定。" }];
+        // 原预检的迟到响应即使带新报价版本，也不能跨用户轮次恢复执行权限。
+        await render([fresh], 3);
+        const late = container.querySelector<HTMLButtonElement>('[data-local-request="new-call"] button');
+        if (late) {
+            expect(late.disabled).toBe(true);
+            await act(async () => late.click());
+        }
+        expect(selected).toEqual(["old-segment", "fresh-segment", "fresh-segment"]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("已消费的阶段回复不因阶段版本刷新重新启用，新助手回复仍可继续确认", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const selected: string[] = [];
+    const previous: CloudAgentChatMessage = { id: "consumed-stage-reply", runId: "assets-run", role: "assistant", text: "角色与场景已经就绪，请确认后继续。" };
+    const next: CloudAgentChatMessage = { id: "new-stage-reply", runId: "story-run", role: "assistant", text: "新的剧本与分镜已经就绪，请确认后继续。" };
+    const render = (messages: CloudAgentChatMessage[], stageKey: string) =>
+        act(async () =>
+            root.render(
+                <AgentConversation
+                    {...conversationDefaults}
+                    guideMode
+                    messages={messages}
+                    stageChoices={{
+                        key: stageKey,
+                        pending: false,
+                        render: () => <GuideStageChoices title="确认当前阶段" busy={false} choices={[{ key: "confirm", title: "确认当前阶段", detail: "" }]} onChoose={() => selected.push(stageKey)} />,
+                    }}
+                />,
+            ),
+        );
+    try {
+        await render([previous], "assets:1");
+        const original = container.querySelector<HTMLButtonElement>("button.drama-guide-setup-choice")!;
+        expect(original.disabled).toBe(false);
+        await act(async () => original.click());
+        expect(selected).toEqual(["assets:1"]);
+        await render([previous], "story:2");
+        const refreshed = container.querySelector<HTMLButtonElement>("button.drama-guide-setup-choice");
+        if (refreshed) {
+            expect(refreshed.disabled).toBe(true);
+            await act(async () => refreshed.click());
+        }
+        expect(selected).toEqual(["assets:1"]);
+        await render([previous, next], "story:2");
+        const current = container.querySelector<HTMLButtonElement>("button.drama-guide-setup-choice")!;
+        expect(current.disabled).toBe(false);
+        expect(current.closest(".agent-message-body")?.textContent).toContain("新的剧本与分镜已经就绪");
+        await act(async () => current.click());
+        expect(selected).toEqual(["assets:1", "story:2"]);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
+test("复用会话历史时卸载重挂不恢复已选选项，独立会话历史不串状态", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let root = createRoot(container);
+    const history = createAgentChoiceHistory();
+    const selected: string[] = [];
+    const messages: CloudAgentChatMessage[] = [{ id: "same-options", runId: "same-run", role: "assistant", text: "请选择下一步：\n\n1. 检查角色\n2. 检查场景\n3. 其他问题（请直接描述）" }];
+    const render = (choiceHistoryState = history) => act(async () => root.render(<AgentConversation {...conversationDefaults} guideMode messages={messages} choiceHistoryState={choiceHistoryState} onReplyOption={(text) => selected.push(text)} />));
+    try {
+        await render();
+        await act(async () => container.querySelector<HTMLButtonElement>("button.agent-reply-option")!.click());
+        expect(selected).toEqual(["检查角色"]);
+        // 两种制作视图共用同一份历史，即使消息组件重新挂载也保留消费状态。
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render();
+        for (const element of container.querySelectorAll<HTMLButtonElement | HTMLInputElement>(".agent-reply-options button, .agent-reply-options input")) expect(element.disabled).toBe(true);
+        await act(async () => container.querySelector<HTMLButtonElement>("button.agent-reply-option")?.click());
+        expect(selected).toEqual(["检查角色"]);
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render(createAgentChoiceHistory());
+        const independent = container.querySelector<HTMLButtonElement>("button.agent-reply-option")!;
+        expect(independent.disabled).toBe(false);
+        expect(container.querySelector<HTMLInputElement>(".agent-reply-options input")!.disabled).toBe(false);
+        await act(async () => independent.click());
+        expect(selected).toEqual(["检查角色", "检查角色"]);
     } finally {
         await act(async () => root.unmount());
         container.remove();

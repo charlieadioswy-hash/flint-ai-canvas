@@ -3,9 +3,22 @@ import { Window } from "happy-dom";
 import type { DramaAgentProposal } from "@/services/api/agent";
 import type { DramaCast, DramaSummary } from "@/services/api/drama";
 import type { AgentDramaContext } from "@/stores/use-global-agent-store";
+import type { CloudAgentChatMessage } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 
 const browser = new Window({ url: "http://localhost/projects/project/guide" });
-for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, IS_REACT_ACT_ENVIRONMENT: true })) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+for (const [key, value] of Object.entries({
+    window: browser,
+    document: browser.document,
+    navigator: browser.navigator,
+    HTMLElement: browser.HTMLElement,
+    Element: browser.Element,
+    Node: browser.Node,
+    SVGElement: browser.SVGElement,
+    ResizeObserver: browser.ResizeObserver,
+    getComputedStyle: browser.getComputedStyle.bind(browser),
+    IS_REACT_ACT_ENVIRONMENT: true,
+}))
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 
 const React = await import("react");
 const { act } = React;
@@ -13,6 +26,7 @@ const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { environmentManager } = await import("@tanstack/query-core");
 environmentManager.setIsServer(() => false);
+const antd = { ...(await import("antd")) };
 
 let summary: DramaSummary;
 let cast: DramaCast[];
@@ -38,6 +52,7 @@ const agentStore = {
 };
 mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: { getState: () => agentStore } }));
 mock.module("antd", () => ({
+    ...antd,
     App: {
         useApp: () => ({
             message: { info: silent, warning: silent, success: silent, error: (value: string) => errors.push(value) },
@@ -55,11 +70,12 @@ mock.module("antd", () => ({
 mock.module("react-router", () => ({
     useParams: () => ({ projectId: "project" }),
     useNavigate: () => silent,
+    useMatch: () => null,
     Link: ({ children }: any) => children,
     Navigate: () => null,
 }));
 mock.module("@/components/layout/workspace-page", () => ({ WorkspacePage: ({ children }: any) => <div>{children}</div> }));
-mock.module("@/components/layout/workspace-state", () => ({ WorkspaceErrorState: () => <div>读取失败</div>, WorkspaceLoadingState: () => <div>读取中</div> }));
+mock.module("@/components/layout/workspace-state", () => ({ WorkspaceErrorState: () => <div>读取失败</div>, WorkspaceLoadingState: () => <div>读取中</div>, WorkspaceState: () => null }));
 mock.module("@/components/ui/product/app-modal", () => ({ AppModal: () => null }));
 mock.module("@/services/drama-canvas", () => ({ encodeDramaCanvasFocus: () => "", openDramaCanvasPath: async () => "" }));
 mock.module("@/pages/projects/drama-shared", () => ({ CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" }, SourceFormatPicker: () => null }));
@@ -100,6 +116,8 @@ mock.module("@/services/api/drama", () => ({
 
 const { dramaKeys } = await import("@/pages/projects/studio/use-studio");
 const { default: DramaGuidePage } = await import("@/pages/projects/guide");
+const { AgentConversation } = await import("@/components/canvas/canvas-cloud-agent-panel-parts");
+const { canvasThemes } = await import("@/lib/canvas-theme");
 const settle = async () => {
     for (let i = 0; i < 6; i++) await Bun.sleep(10);
 };
@@ -117,7 +135,16 @@ function proposal(kind: "cast_create" | "cast_delete", overrides: Partial<DramaA
     };
 }
 
-async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDivElement; client: InstanceType<typeof QueryClient>; receive: (value: DramaAgentProposal) => Promise<void>; click: (label: string) => Promise<void> }) => Promise<void>) {
+async function withGuide(
+    check: (ui: {
+        container: HTMLElement;
+        chatHost: HTMLDivElement;
+        client: InstanceType<typeof QueryClient>;
+        receive: (value: DramaAgentProposal) => Promise<void>;
+        click: (label: string) => Promise<void>;
+        sendMessage: (text: string) => Promise<void>;
+    }) => Promise<void>,
+) {
     summary = {
         project: { id: "project", name: "资产建议测试" },
         production: { guideStep: "assets", revision: 7, status: "draft", stage: "bible", settings: {}, chapterCount: 1 },
@@ -165,9 +192,24 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
         chatHost.append(choicesHost, actionsHost);
         container.querySelector(".drama-guide-agent-host")!.append(chatHost);
         choicesRoot = createRoot(choicesHost);
+        let messages: CloudAgentChatMessage[] = [{ id: "proposal-reply", runId: "run", role: "assistant", text: "请审阅以下资产建议。" }];
         renderChoices = () => {
             const choices = dramaContext?.proposalChoices;
-            choicesRoot?.render(choices ? choices.render(choices.proposals) : null);
+            choicesRoot?.render(
+                <AgentConversation
+                    guideMode
+                    theme={canvasThemes.light}
+                    messages={messages}
+                    references={[]}
+                    busy={false}
+                    approval={null}
+                    approvalSubmitting={false}
+                    onApprovalReasonChange={silent}
+                    onApprove={silent}
+                    onReject={silent}
+                    proposalChoices={choices}
+                />,
+            );
         };
         await act(async () => {
             dramaContext!.onActionsHost!(actionsHost);
@@ -190,6 +232,13 @@ async function withGuide(check: (ui: { container: HTMLElement; chatHost: HTMLDiv
                 expect(button, `未找到按钮：${label}`).toBeDefined();
                 await act(async () => {
                     button!.click();
+                    await settle();
+                });
+            },
+            sendMessage: async (text) => {
+                await act(async () => {
+                    messages = [...messages, { id: `user-${messages.length}`, role: "user", text }];
+                    renderChoices?.();
                     await settle();
                 });
             },
@@ -225,6 +274,7 @@ test("聊天内新增资产建议点击后携带 CAS 版本创建并刷新真实
 test("删除建议必须二次确认，取消不写入，确认后才删除并刷新资产", async () => {
     await withGuide(async ({ container, receive, click }) => {
         await receive(proposal("cast_delete"));
+        await receive(proposal("cast_create"));
         expect(deletes).toEqual([]);
         await click("删除此资产");
         expect(confirmations).toHaveLength(1);
@@ -235,6 +285,7 @@ test("删除建议必须二次确认，取消不写入，确认后才删除并�
         });
         expect(deletes).toEqual([]);
         expect(container.querySelector("output")?.textContent).toContain("多余的怀表");
+        expect([...container.querySelectorAll<HTMLButtonElement>(".drama-guide-proposal-choose")].every((button) => !button.disabled)).toBe(true);
         await click("删除此资产");
         expect(confirmations).toHaveLength(2);
         expect(deletes).toEqual([]);
@@ -247,6 +298,41 @@ test("删除建议必须二次确认，取消不写入，确认后才删除并�
         expect(invalidations).toContainEqual(dramaKeys.summary("project"));
         expect(invalidations).toContainEqual(dramaKeys.cast("project"));
         expect(errors).toEqual([]);
+    });
+});
+
+test("删除弹窗打开后收到新消息，旧确认不能删除资产", async () => {
+    await withGuide(async ({ container, receive, click, sendMessage }) => {
+        await receive(proposal("cast_delete"));
+        await click("删除此资产");
+        expect(confirmations).toHaveLength(1);
+        await sendMessage("先保留这个道具，我想讨论其他内容。");
+        expect(container.querySelector<HTMLButtonElement>(".drama-guide-proposal-choose")?.disabled).toBe(true);
+        await act(async () => {
+            await confirmations[0].onOk();
+            await settle();
+        });
+        expect(deletes).toEqual([]);
+        expect(container.querySelector("output")?.textContent).toContain("多余的怀表");
+    });
+});
+
+test("删除弹窗打开后选择忽略建议，旧确认不能删除资产", async () => {
+    await withGuide(async ({ container, chatHost, receive, click }) => {
+        await receive(proposal("cast_delete"));
+        await click("删除此资产");
+        expect(confirmations).toHaveLength(1);
+        const dismiss = chatHost.querySelector<HTMLButtonElement>('[aria-label="忽略删除资产"]')!;
+        await act(async () => {
+            dismiss.click();
+            await settle();
+        });
+        await act(async () => {
+            await confirmations[0].onOk();
+            await settle();
+        });
+        expect(deletes).toEqual([]);
+        expect(container.querySelector("output")?.textContent).toContain("多余的怀表");
     });
 });
 

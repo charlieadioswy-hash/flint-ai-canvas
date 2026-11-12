@@ -4459,6 +4459,42 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "416": { description: Range 不满足原始媒体长度 }
+  /dramas/{id}/episodes/{episodeId}/render:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: episodeId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 将本集已采用的段视频合成为成片
+      description: 只合成全部就绪且未过期的当前段视频，不生成新图片或段视频，不放行其他媒体，不恢复暂停的作品。合成不要求模型、生成积分或剩余预算，仍校验任务数和存储配额。同版本已有排队或运行的合成返回 jobs=0。成功后可再次合成，已有成片保留到替代版本完成。版本冲突或本集仍有其他内容任务返回 409。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, format: int64, minimum: 0, description: 当前集的 revision }
+      responses:
+        "200":
+          description: 本次新增的合成作业数量
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [jobs]
+                        properties:
+                          jobs: { type: integer, enum: [0, 1] }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/episodes/{episodeId}/jianying-draft/preview:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }

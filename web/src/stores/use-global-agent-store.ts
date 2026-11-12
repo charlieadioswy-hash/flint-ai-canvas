@@ -37,11 +37,13 @@ export type AgentDramaContext = {
     proposalChoices?: {
         proposals: DramaAgentProposal[];
         render: (proposals: DramaAgentProposal[]) => ReactNode;
-        /** 新对话已被服务端接受后，撤下旧的媒体确认，不取消已提交任务。 */
+        /** 新预检数据或独立重试入口使用新标识，加载不恢复旧确认。 */
+        interactionKey?: (proposal: DramaAgentProposal) => string;
+        /** 新对话已被服务端接受后，撤下本次发送前的旧建议，不取消已提交任务。 */
         onContinueConversation?: () => void;
     };
     /** 当前阶段的推进选择，直接显示在 Agent 最新回复中。 */
-    stageChoices?: { pending: boolean; render: (labels?: DramaStageChoiceLabels) => ReactNode };
+    stageChoices?: { key?: string; pending: boolean; render: (labels?: DramaStageChoiceLabels) => ReactNode };
 };
 
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };

@@ -28,6 +28,7 @@ type (
 	UpdateDramaChapterRequest     = app.UpdateDramaChapterRequest
 	ProduceDramaChaptersRequest   = app.ProduceDramaChaptersRequest
 	UpdateDramaEpisodeRequest     = app.UpdateDramaEpisodeRequest
+	RenderDramaEpisodeRequest     = app.RenderDramaEpisodeRequest
 	InsertDramaShotRequest        = app.InsertDramaShotRequest
 	SetDramaCastImageRequest      = app.SetDramaCastImageRequest
 	AdoptDramaSegmentVideoRequest = app.AdoptDramaSegmentVideoRequest

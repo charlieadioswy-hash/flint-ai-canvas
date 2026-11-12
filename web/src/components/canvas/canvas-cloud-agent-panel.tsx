@@ -123,6 +123,7 @@ import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/sk
 import { AGENT_SCENE_DEFS, AgentChatComposer, parseCloudAgentFormAnswer, AgentPlanBar, AgentQuestionBar, AgentSceneCapsules, type AgentSceneBucket, type CloudAgentChatMessage } from "./canvas-cloud-agent-chat-ui";
 import { AgentContextChip } from "./canvas-cloud-agent-composer";
 import { useAgentReplyOptionDrafts } from "./canvas-agent-reply-options";
+import { createAgentChoiceHistory } from "@/lib/canvas/agent-reply-options";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
 import { useSkillCuration, curationQuery } from "@/components/skills/skill-curation-browser";
 import { CanvasCloudAgentSettings, agentPermissionLabel, type AgentContextKey } from "./canvas-cloud-agent-settings";
@@ -201,6 +202,15 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const dock = useAgentPanelDock();
     const userId = useUserStore((state) => state.user?.id);
     const accountScope = getActiveUserScope();
+    const choiceHistories = useMemo(() => new Map<string, ReturnType<typeof createAgentChoiceHistory>>(), [accountScope, userId]);
+    const historyForChoices = (key: string) => {
+        let history = choiceHistories.get(key);
+        if (!history) {
+            history = createAgentChoiceHistory();
+            choiceHistories.set(key, history);
+        }
+        return history;
+    };
     const accountIsCurrent = () => getActiveUserScope() === accountScope && useUserStore.getState().user?.id === userId;
     const theme = canvasThemes[useActiveTheme()];
     const config = useEffectiveConfig();
@@ -2938,6 +2948,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                         focusLatestRequest={dramaProjectId ? dramaReferenceFocus : undefined}
                                         theme={theme}
                                         messages={messages}
+                                        choiceHistoryState={historyForChoices(JSON.stringify([dramaProjectId || canvasId, activeConversationId]))}
                                         nodeCount={canvasId ? nodeCount : null}
                                         installedSkillCount={drama ? null : skillCatalogReady ? installedSkills.length : null}
                                         onOpenSkillRecommendations={drama ? undefined : () => setSkillRecommendationsOpen(true)}
@@ -3009,7 +3020,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                             replyOptionDrafts={questionReplyDrafts}
                                             theme={theme}
                                             inlineFreeform={Boolean(dramaProjectId)}
-                                            disabled={otherAgentRunning || approvalSubmitting || connectionStatus !== "connected"}
+                                            disabled={busy || otherAgentRunning || approvalSubmitting || connectionStatus !== "connected"}
                                             onAnswer={(label) => void submit(label)}
                                             onRecordDecision={insertAgentMarkdown ? (record) => insertAgentMarkdown(record.markdown, record.title) : undefined}
                                         />

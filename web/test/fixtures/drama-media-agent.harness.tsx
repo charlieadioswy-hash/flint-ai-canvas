@@ -16,6 +16,7 @@ let productionRevision = 8;
 let delay: Promise<void> | undefined;
 let writeDelay: Promise<void> | undefined;
 let executeDelay: Promise<void> | undefined;
+let preflightFailure: Error | undefined;
 let externalWriteAfterSave = false;
 mock.module("antd", () => ({ App: { useApp: () => ({ message: { success() {} } }) }, Button: ({ children, ...props }: Record<string, unknown>) => createElement("button", { ...props, type: "button" }, children as never) }));
 mock.module("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -23,6 +24,7 @@ mock.module("@/services/api/drama", () => ({
     preflightDramaStudioAction: async (projectId: string, request: DramaStudioActionRequest): Promise<DramaStudioActionPreflight> => {
         preflightCalls.push({ projectId, request });
         await delay;
+        if (preflightFailure) throw preflightFailure;
         return {
             action: request.action,
             targetId: request.targetId,
@@ -66,6 +68,8 @@ const { useDramaMediaAgent, confirmDramaMediaAction } = await import("@/pages/pr
 const { appendDramaAgentReference } = await import("@/lib/canvas/drama-agent-reference");
 const { useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 const { useUserStore } = await import("@/stores/use-user-store");
+const { dramaMediaAccountKey, dramaMediaSession } = await import("@/pages/projects/studio/drama-media-agent-session");
+const { dramaProposalKey } = await import("@/pages/projects/guide-state");
 let controls: ReturnType<typeof useDramaMediaAgent>;
 function Harness({ projectId = "project" }: { projectId?: string }) {
     controls = useDramaMediaAgent({ projectId, onChanged: () => {} });
@@ -103,6 +107,7 @@ beforeEach(async () => {
     delay = undefined;
     writeDelay = undefined;
     executeDelay = undefined;
+    preflightFailure = undefined;
     externalWriteAfterSave = false;
     useGlobalAgentStore.getState().reset();
     await act(async () => root.render(<Harness />));
@@ -136,10 +141,13 @@ test("卡片仅预检，报价变化后要再次确认且只执行原指定对�
         await controls.requestVideo(episode, segment, { logicalModelId: "chosen" });
     });
     expect(executions).toHaveLength(0);
+    const proposal = controls.proposalChoices!.proposals[0]!;
+    const originalChoice = controls.proposalChoices!.interactionKey(proposal);
     token = "token-2";
     await click("确认生成本段视频");
     expect(executions).toHaveLength(0);
     expect(container.textContent).toContain("条件或费用已变化");
+    expect(controls.proposalChoices!.interactionKey(proposal)).not.toBe(originalChoice);
     await click("确认生成本段视频");
     expect(executions).toHaveLength(1);
     expect(controls.proposalChoices).toBeUndefined();
@@ -147,6 +155,47 @@ test("卡片仅预检，报价变化后要再次确认且只执行原指定对�
         projectId: "project",
         request: { action: "segment_video", targetId: "segment-one", episodeId: "episode-one", targetRevision: 3, baseRevision: 8, confirmationToken: "token-2", videoModel: { logicalModelId: "chosen" } },
     });
+});
+
+test("新预检才恢复确认，失败提供独立重试且不保留旧报价", async () => {
+    let finish!: () => void;
+    delay = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    let pending!: Promise<void>;
+    act(() => {
+        pending = controls.requestVideo(episode, segment);
+    });
+    const proposal = controls.proposalChoices!.proposals[0]!;
+    const loadingChoice = controls.proposalChoices!.interactionKey(proposal);
+    expect(loadingChoice).toEndWith(":0");
+    await act(async () => {
+        finish();
+        await pending;
+    });
+    const originalChoice = controls.proposalChoices!.interactionKey(proposal);
+    expect(originalChoice).toEndWith(":1");
+    expect(originalChoice).not.toBe(loadingChoice);
+
+    delay = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    await click("重新检查当前条件");
+    expect(container.textContent).toContain("正在检查当前对象");
+    expect(controls.proposalChoices!.interactionKey(proposal)).toBe(originalChoice);
+    preflightFailure = new Error("临时预检失败");
+    await act(async () => finish());
+    await settle();
+    expect(container.textContent).toContain("临时预检失败");
+    expect(controls.proposalChoices!.interactionKey(proposal)).toBe(`${originalChoice}:retry:1`);
+    expect(container.textContent).not.toContain("确认生成本段视频");
+
+    delay = undefined;
+    preflightFailure = undefined;
+    await click("重新检查当前条件");
+    expect(controls.proposalChoices!.interactionKey(proposal)).toEndWith(":2");
+    expect(controls.proposalChoices!.interactionKey(proposal)).not.toBe(originalChoice);
+    expect(executions).toHaveLength(0);
 });
 
 test("缺图不自动创建图片，点击缺图选项仍需确认具体资产", async () => {
@@ -293,8 +342,9 @@ test("往返视图恢复待确认操作，已应用或忽略的建议不再出�
     expect(executions).toHaveLength(0);
 });
 
-test("继续对话只清理发送前的媒体快照，文字建议与随后新增媒体保留", async () => {
-    act(() => controls.onProposal(shotProposal("shot-one")));
+test("继续对话清理发送前全部建议，随后新增媒体保留且旧建议重放不恢复", async () => {
+    const previousShot = shotProposal("shot-one");
+    act(() => controls.onProposal(previousShot));
     await act(async () => {
         await controls.requestVideo(episode, segment);
     });
@@ -307,21 +357,20 @@ test("继续对话只清理发送前的媒体快照，文字建议与随后新�
     });
     await act(async () => continueConversation!());
     const remaining = controls.proposalChoices!.proposals;
-    expect(remaining.map((proposal) => [proposal.kind, proposal.targetId])).toEqual([
-        ["shot", "shot-one"],
-        ["media", "segment-two"],
-    ]);
+    expect(remaining.map((proposal) => [proposal.kind, proposal.targetId])).toEqual([["media", "segment-two"]]);
     expect(executions).toHaveLength(0);
     await remount();
-    act(() => controls.onProposal(previousMedia));
-    expect(controls.proposalChoices!.proposals.map((proposal) => proposal.targetId)).toEqual(["shot-one", "segment-two"]);
+    act(() => {
+        controls.onProposal(previousMedia);
+        controls.onProposal(previousShot);
+    });
+    expect(controls.proposalChoices!.proposals.map((proposal) => proposal.targetId)).toEqual(["segment-two"]);
     expect(preflightCalls).toHaveLength(2);
-    expect(container.textContent).toContain("确认保存分镜修改");
+    expect(container.textContent).not.toContain("确认保存分镜修改");
     await click("确认生成本段视频");
     expect(executions).toHaveLength(1);
     expect(executions[0]!.request).toMatchObject({ targetId: "segment-two", episodeId: "episode-one", targetRevision: 4 });
-    await click("确认保存分镜修改");
-    expect(writes).toEqual([["project", "shot-one", { dialogue: "别怕", expectedRevision: 8 }]]);
+    expect(writes).toEqual([]);
     expect(controls.proposalChoices).toBeUndefined();
     await remount();
     expect(controls.proposalChoices).toBeUndefined();
@@ -337,6 +386,9 @@ test("继续对话后迟到的旧媒体预检与会话重放不恢复确认，�
         pendingPreview = controls.requestVideo(episode, segment);
     });
     const previousMedia = controls.proposalChoices!.proposals[0]!;
+    const session = dramaMediaSession(dramaMediaAccountKey(), "project");
+    const previousKey = dramaProposalKey(previousMedia);
+    expect(session.getState().previews[previousKey]?.choiceRevision).toBe(0);
     const continueConversation = controls.proposalChoices!.onContinueConversation;
     expect(typeof continueConversation).toBe("function");
     expect(container.textContent).toContain("正在检查当前对象");
@@ -348,6 +400,8 @@ test("继续对话后迟到的旧媒体预检与会话重放不恢复确认，�
         finishPreview();
         await pendingPreview;
     });
+    expect(session.getState().previews[previousKey]?.choiceRevision).toBe(0);
+    expect(session.getState().previews[previousKey]?.preview).toBeUndefined();
     await remount();
     act(() => controls.onProposal(previousMedia));
     expect(controls.proposalChoices).toBeUndefined();

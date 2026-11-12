@@ -15,6 +15,7 @@ import { DramaProjectTopbar } from "./studio/project-topbar";
 import { QueueBar } from "./studio/queue-bar";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { SimpleStudioSegmentEditor } from "./simple-studio-segment-editor";
+import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
 import { dramaStudioPath } from "./studio/studio-route";
 import { useDramaMediaAgent } from "./studio/use-drama-media-agent";
 import "./drama.css";
@@ -350,6 +351,15 @@ export default function SimpleStudioPage() {
                                                 onGenerate={() => requestVideo(episode, segment)}
                                             />
                                         ))}
+                                        <SimpleEpisodeFinalCard
+                                            key={`final:${episode.id}`}
+                                            projectId={projectId}
+                                            title={summary.project.name}
+                                            episode={episode}
+                                            detail={detail}
+                                            unavailable={summaryQuery.isError || Boolean(query?.isError)}
+                                            onChanged={() => invalidate(episode.id)}
+                                        />
                                     </div>
                                     {segments.length > 6 ? (
                                         <Button

@@ -253,6 +253,39 @@
     padding-inline: var(--space-1);
     font-size: var(--fs-tiny);
 }
+.drama-simple-final-compose strong {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+.drama-simple-final-compose:disabled {
+    cursor: default;
+}
+.drama-simple-final-compose:disabled strong {
+    color: var(--drama-muted);
+}
+.drama-simple-final .drama-simple-card-state > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.drama-simple-final footer {
+    flex-wrap: nowrap;
+}
+.drama-simple-final footer .ant-btn {
+    min-width: 0;
+    font-size: var(--fs-micro);
+}
+.drama-simple-final footer .ant-btn > span:not(.ant-btn-icon) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.drama-simple-final-player {
+    display: block;
+    width: 100%;
+    max-height: 75vh;
+    background: var(--drama-sunken);
+}
 .drama-simple-expand {
     margin-top: var(--space-2);
 }

@@ -687,6 +687,13 @@ func (r *Repository) CancelQueuedDramaJobs(projectID string, filter func(*gorm.D
 	return query.Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error
 }
 
+func (r *Repository) CancelUnboundDramaRenderJob(projectID, jobID string) (bool, error) {
+	result := r.db.Model(&model.DramaJob{}).
+		Where("id = ? AND project_id = ? AND kind = ? AND status = ? AND COALESCE(task_id, '') = ''", jobID, projectID, model.DramaJobRender, model.DramaJobQueued).
+		Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()})
+	return result.RowsAffected == 1, result.Error
+}
+
 func (r *Repository) DeleteDramaProductionData(projectID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		for _, entity := range []any{&model.DramaJob{}, &model.DramaTake{}, &model.DramaSegment{}, &model.DramaShot{}, &model.DramaEpisode{}, &model.DramaCast{}, &model.DramaProduction{}} {

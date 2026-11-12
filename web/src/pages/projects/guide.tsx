@@ -8,7 +8,7 @@ import { Navigate, useNavigate, useParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
+import { useAgentChoiceInteraction, useAgentReplyOptionDrafts } from "@/components/canvas/canvas-agent-reply-options";
 import { analyzeNovel, EPISODE_SOURCE_CHARS, sourceChars } from "@/lib/drama/novel-parse";
 import { dramaChoiceKey, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import type { DramaAgentProposal } from "@/services/api/agent";
@@ -58,6 +58,7 @@ type Operation = { work: () => Promise<unknown>; after?: (summary: DramaSummary 
 type SettingsDraft = { value: DramaSettings; baseline: DramaSettings; revision: number };
 type CastDraft = { cast: DramaCast; patch: DramaCastPatch; revision: number };
 type ProposalApplication = { proposal: DramaAgentProposal; change: DramaGuideChange; revision: number; step: DramaGuideStep };
+type ChooseAgentAction = ReturnType<typeof useAgentChoiceInteraction>["choose"];
 
 export default function DramaGuidePage() {
     const { projectId = "" } = useParams();
@@ -89,13 +90,13 @@ export default function DramaGuidePage() {
     proposalBatchesRef.current = proposalBatches;
     const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
     const [pendingConversationId, setPendingConversationId] = useState<string | null>(null);
-    const [prefillRequest, setPrefillRequest] = useState<{ projectId: string; request: AgentPrefillRequest } | null>(null);
+    const [prefillRequest, setPrefillRequest] = useState<{ projectId: string; step?: DramaGuideStep; request: AgentPrefillRequest } | null>(null);
     const confirmStageRef = useRef<() => void>(() => undefined);
     const prefillSequence = useRef(1);
-    const sendGuideMessage = (text: string, displayText: string, requireIdle = false) => {
+    const sendGuideMessage = (text: string, displayText: string, requireIdle = false, targetStep = summaryRef.current?.production.guideStep || undefined) => {
         if (summaryRef.current?.project.id !== projectId) return;
         prefillSequence.current = Math.max(Date.now(), prefillSequence.current + 1);
-        setPrefillRequest({ projectId, request: { id: prefillSequence.current, text, displayText, autoSubmit: true, ...(requireIdle ? { requireIdle: true } : {}) } });
+        setPrefillRequest({ projectId, step: targetStep, request: { id: prefillSequence.current, text, displayText, autoSubmit: true, ...(requireIdle ? { requireIdle: true } : {}) } });
         setMobilePane("chat");
     };
     const creativeBrief = summary?.production.creativeBrief || "";
@@ -180,7 +181,7 @@ export default function DramaGuidePage() {
         setAppliedNotice("");
         setProposals([]);
         setDismissed(new Set());
-        setPrefillRequest((previous) => (previous?.request.requireIdle ? null : previous));
+        setPrefillRequest((previous) => (previous?.request.requireIdle && previous.step !== step ? null : previous));
     }, [step, projectId]);
     useEffect(() => {
         if (proposalBatchesRef.current.some((batch) => batch.currentRevision !== null && (batch.step !== step || batch.currentRevision !== revision))) {
@@ -318,9 +319,9 @@ export default function DramaGuidePage() {
             true,
         );
     };
-    const applyProposal = (proposal: DramaAgentProposal) => {
+    const applyProposal = (proposal: DramaAgentProposal, choose: ChooseAgentAction = (action) => action()) => {
         if (proposal.kind !== "cast_delete") {
-            saveProposal(proposal);
+            choose(() => saveProposal(proposal));
             return;
         }
         const target = castQuery.cast.find((item) => item.id === proposal.targetId);
@@ -334,7 +335,8 @@ export default function DramaGuidePage() {
             okText: "确认删除",
             cancelText: "取消",
             okButtonProps: { danger: true },
-            onOk: () => saveProposal(proposal),
+            // 弹窗取消不消费选择；确认时仍由原会话水位拒绝已经失效的操作。
+            onOk: () => choose(() => saveProposal(proposal)),
         });
     };
 
@@ -395,7 +397,7 @@ export default function DramaGuidePage() {
                         target={castQuery.cast.find((item) => item.id === proposal.targetId)}
                         valid={!summaryQuery.isError && Boolean(dramaGuideProposal(proposal, step, revision, proposalBatches, castQuery.cast)) && (proposal.kind !== "cast_delete" || castQuery.cast.some((item) => item.id === proposal.targetId))}
                         busy={busy}
-                        onApply={() => applyProposal(proposal)}
+                        onApply={(choose) => applyProposal(proposal, choose)}
                         onDismiss={() => setDismissed((previous) => new Set(previous).add(dramaProposalKey(proposal)))}
                     />
                 )),
@@ -421,6 +423,7 @@ export default function DramaGuidePage() {
                     ];
         const title = step === "configuring" ? "下一步：提取资产" : step === "assets" ? "下一步：开始改编" : "下一步：剧本与分镜";
         return {
+            key: `${projectId}:${step}:${revision}`,
             pending: visibleProposals.some(validProposal),
             render: (labels?: { confirm: string; adjust: string }) => (
                 <GuideStageChoices
@@ -451,7 +454,7 @@ export default function DramaGuidePage() {
                 />
             ),
         };
-    }, [busy, projectId, stale, step, summary?.guide?.canConfirm, summaryQuery.isError, visibleProposals, validProposal, stageChoiceDrafts.values]);
+    }, [busy, projectId, revision, stale, step, summary?.guide?.canConfirm, summaryQuery.isError, visibleProposals, validProposal, stageChoiceDrafts.values]);
     useEffect(() => {
         if (!host || summary?.project.id !== projectId || !summary.production.guideStep) {
             if (useGlobalAgentStore.getState().drama?.projectId === projectId) useGlobalAgentStore.getState().setDrama(null);
@@ -468,7 +471,7 @@ export default function DramaGuidePage() {
             proposalChoices,
             stageChoices,
             startupRequest,
-            prefillRequest: prefillRequest?.projectId === projectId ? prefillRequest.request : null,
+            prefillRequest: prefillRequest?.projectId === projectId && prefillRequest.step === step ? prefillRequest.request : null,
         });
     }, [host, projectId, summary?.production.guideStep, summary?.production.guideConversationId, boundConversation, receiveProposal, startupRequest, prefillRequest, setupChoices, proposalChoices, stageChoices]);
     useEffect(
@@ -508,9 +511,17 @@ export default function DramaGuidePage() {
                 if (summaryRef.current?.production.guideStep !== step) throw new Error("引导步骤已经更新，请查看当前内容后再确认");
                 return confirmDramaGuide(projectId, { expectedStep: step, expectedRevision: settingsDraft?.revision ?? revision, ...(step === "configuring" ? { settings: { ...settings, mediaMode: "manual" } } : {}) });
             },
-            () => {
+            (latest) => {
                 setSettingsDraft(null);
                 if (step === "story") navigate(`/projects/${projectId}`, { replace: true });
+                else if (latest?.project.id === projectId && latest.production.guideStep && latest.production.guideStep !== step) {
+                    sendGuideMessage(
+                        `我已确认${step === "configuring" ? "创作配置" : "角色与场景"}，当前已进入${latest.production.guideStep === "assets" ? "角色与场景" : "剧本与分镜"}阶段。请用 drama_get_context 读取最新状态，说明当前进度和需要我确认的内容；文字任务仍在进行时说明等待原因，就绪后提供本阶段的下一步选项和自定义调整输入。不要重复上一阶段的确认，不自动确认下一阶段或生成图片、视频。`,
+                        `已确认${step === "configuring" ? "创作配置，开始提取资产" : "资产，开始改编剧本与分镜"}`,
+                        true,
+                        latest.production.guideStep,
+                    );
+                }
             },
         );
     };
@@ -847,7 +858,9 @@ function setupChoiceDescription(proposal: DramaAgentProposal) {
             .join(" · ") || "创作配置"
     );
 }
-function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: { proposal: DramaAgentProposal; target?: DramaCast; valid: boolean; busy: boolean; onApply: () => void; onDismiss: () => void }) {
+function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: { proposal: DramaAgentProposal; target?: DramaCast; valid: boolean; busy: boolean; onApply: (choose: ChooseAgentAction) => void; onDismiss: () => void }) {
+    const interaction = useAgentChoiceInteraction();
+    const disabled = busy || interaction.disabled;
     const title = { setup: "创作配置建议", source: "故事正文草稿", cast: "资产设定调整", cast_create: "新增资产", cast_delete: "删除资产", shot: "镜头文字调整", segment_prompt: "段提示词调整", media: "媒体操作确认" }[proposal.kind];
     const deleting = proposal.kind === "cast_delete";
     const chooseLabel = deleting ? "删除此资产" : proposal.kind === "cast_create" ? "新增此资产" : proposal.kind === "source" ? "采用这份正文" : proposal.kind === "cast" ? "保存资产设定" : proposal.kind === "shot" ? "保存分镜修改" : "保存段提示词";
@@ -855,7 +868,7 @@ function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: {
         <article className="drama-guide-card drama-guide-proposal">
             <div className="drama-guide-section-head">
                 <h3>{title}</h3>
-                <Button type="text" size="small" aria-label={`忽略${title}`} icon={<X className="size-3.5" />} onClick={onDismiss} />
+                <Button type="text" size="small" aria-label={`忽略${title}`} icon={<X className="size-3.5" />} disabled={disabled} onClick={() => interaction.choose(onDismiss)} />
             </div>
             {target && (proposal.kind === "cast" || deleting) ? <p>{`${CAST_KIND_LABEL[target.kind]} · ${target.name}`}</p> : null}
             {proposal.kind === "source" && Array.isArray(proposal.changes.chapters) ? (
@@ -885,7 +898,7 @@ function ProposalReview({ proposal, target, valid, busy, onApply, onDismiss }: {
                 <span className="drama-guide-note">
                     {!valid ? "此建议已过期或目标已不存在，请根据最新内容重新建议" : deleting ? "确认后删除；已有引用或正在生成时无法删除" : proposal.kind === "cast_create" ? "仅保存文字设定，参考图可稍后手动生成" : "选择后直接保存到作品"}
                 </span>
-                <Button className="drama-guide-proposal-choose" danger={deleting} disabled={!valid || busy} onClick={onApply}>
+                <Button className="drama-guide-proposal-choose" danger={deleting} disabled={!valid || disabled} onClick={() => onApply(interaction.choose)}>
                     {chooseLabel}
                 </Button>
             </div>

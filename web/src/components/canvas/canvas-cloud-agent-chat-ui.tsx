@@ -429,6 +429,7 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     replyOptions,
     onReplyOption,
     replyOptionsDisabled = false,
+    replyOptionScope,
     setupChoices,
     proposalChoices,
     stageChoices,
@@ -452,6 +453,7 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     replyOptions?: AgentReplyOptions | null;
     onReplyOption?: (text: string) => void;
     replyOptionsDisabled?: boolean;
+    replyOptionScope?: (content: ReactNode) => ReactNode;
     setupChoices?: { body: string; content: ReactNode };
     proposalChoices?: { body: string; content: ReactNode };
     stageChoices?: { render: (labels?: DramaStageChoiceLabels) => ReactNode };
@@ -629,7 +631,13 @@ export const AgentChatMessage = memo(function AgentChatMessage({
                                 </AIMessageMarkdown>
                             ) : null}
                             {showReplyOptions && replyOptions && onReplyOption ? (
-                                <AgentReplyOptionCards scopeKey={`${item.runId || ""}:${item.id}`} drafts={replyDrafts} options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} />
+                                replyOptionScope ? (
+                                    replyOptionScope(
+                                        <AgentReplyOptionCards scopeKey={`${item.runId || ""}:${item.id}`} drafts={replyDrafts} options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} />,
+                                    )
+                                ) : (
+                                    <AgentReplyOptionCards scopeKey={`${item.runId || ""}:${item.id}`} drafts={replyDrafts} options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} />
+                                )
                             ) : null}
                         </>
                     ) : isUser && canvasReference ? (

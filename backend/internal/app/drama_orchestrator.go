@@ -1961,7 +1961,7 @@ func dramaRenderSize(aspect string) (int, int) {
 	return 1080, 1920
 }
 
-// buildDramaTimeline 把一集镜头装配为时间线：视频轨静音，配音轨按镜头起点对齐，字幕单独输出。
+// buildDramaTimeline 按段序装配一集视频并保留各段原声；当前不追加独立配音、字幕或转场。
 func buildDramaTimeline(segments []model.DramaSegment, aspect string) (renderProject, error) {
 	width, height := dramaRenderSize(aspect)
 	visible := true
@@ -1990,6 +1990,12 @@ func (r *dramaRun) submitRender(job *model.DramaJob) (*model.Task, bool, error) 
 	episode, err := r.s.repo.DramaEpisode(r.project.ID, job.EpisodeID)
 	if err != nil || (episode.Stage != model.DramaEpisodeRender) {
 		return nil, true, nil
+	}
+	if job.PayloadJSON != "" {
+		var expected dramaRevisionPayload
+		if json.Unmarshal([]byte(job.PayloadJSON), &expected) != nil || expected.Revision != episode.Revision {
+			return nil, true, nil
+		}
 	}
 	// 先记下版本：时间线装配失败时 failJob 要按这个版本把原因写到本集上，否则本集没有错误、每轮重新排队合成。
 	job.PayloadJSON = encodeDramaRevision(episode.Revision)

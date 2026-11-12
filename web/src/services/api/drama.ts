@@ -631,6 +631,10 @@ export function pauseDrama(projectId: string) {
     return http.post<DramaSummary>(`${base(projectId)}/pause`);
 }
 
+export function renderDramaEpisode(projectId: string, episodeId: string, input: { expectedRevision: number }) {
+    return http.post<{ jobs: number }>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/render`, input);
+}
+
 export function retryFailedDrama(projectId: string, episodeId?: undefined): Promise<{ segments: number; casts: number }>;
 export function retryFailedDrama(projectId: string, episodeId: string, target?: "text" | "render"): Promise<{ jobs: number }>;
 export function retryFailedDrama(projectId: string, episodeId?: string, target?: "text" | "render") {
