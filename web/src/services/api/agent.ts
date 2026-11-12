@@ -105,7 +105,7 @@ export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal 
     }
     if (result.kind === "media") {
         const changes = result.changes as Record<string, unknown>;
-        if (typeof result.targetId !== "string" || !result.targetId.trim() || !["segment_video", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(changes.action))) return null;
+        if (typeof result.targetId !== "string" || !result.targetId.trim() || !["segment_video", "segment_assets", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(changes.action))) return null;
         if (!Number.isSafeInteger(changes.targetRevision) || Number(changes.targetRevision) < 0) return null;
         if (changes.action !== "cast_image" && (typeof changes.episodeId !== "string" || !changes.episodeId.trim())) return null;
         if (

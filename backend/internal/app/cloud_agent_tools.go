@@ -366,7 +366,7 @@ func cloudAgentAllToolSchemas() []map[string]any {
 		"kind":               map[string]any{"type": "string", "enum": []string{"setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt", "media"}},
 		"targetId":           str("cast/cast_delete/shot/segment_prompt/media 必填真实对象 ID；setup/source/cast_create 省略。media 使用资产或剧情段 ID"),
 		"baseRevision":       map[string]any{"type": "integer", "minimum": 1, "description": "本次读取到的制作版本 guide.baseRevision"},
-		"changes":            map[string]any{"type": "object", "minProperties": 1, "description": "仅填本建议类型允许的字段。media 仅在引导完成后可用，必填 action(segment_video指定段生视频/cast_image指定资产生图/segment_prompt指定段提示词重写/segment_reprocess重处理已有结果)、targetRevision当前目标版本；段动作另必填真实episodeId。仅提出待确认动作，不生成，界面预检并由用户在回复内确认后精确执行。不得以一个动作放行整集或生成范围外的资产。"},
+		"changes":            map[string]any{"type": "object", "minProperties": 1, "description": "仅填本建议类型允许的字段。media 仅在引导完成后可用，必填 action(segment_video指定段生视频/segment_assets批量生成指定段缺失的资产参考图/cast_image指定资产生图/segment_prompt指定段提示词重写/segment_reprocess重处理已有结果)、targetRevision当前目标版本；段动作另必填真实episodeId。视频缺少多张参考图时使用一个segment_assets补图选项，不逐个建议cast_image。仅提出待确认动作，不生成，界面预检并由用户在回复内确认后精确执行。不得以一个动作放行整集或生成范围外的资产。"},
 		"explanation":        map[string]any{"type": "string", "maxLength": 1000, "description": "可选：此选项的推荐理由或适用情境，最多1000字；仅展示，不写入配置或资产"},
 		"confirmationOption": map[string]any{"type": "string", "minLength": 1, "maxLength": 90, "description": "可选，仅 media：优先由结构化建议展示媒体确认，不重复编号选项；若回复末尾仍列媒体执行确认选项，必填其去掉编号与 Markdown 后的精确单行文字，须为1–90字非空文字，界面按文本精确关联本建议。其他类型省略，普通下一步方向不能关联媒体。仅用于展示，不代表用户已确认，不执行或绕过预检、费用展示及用户确认。"},
 	}, "kind", "baseRevision", "changes")

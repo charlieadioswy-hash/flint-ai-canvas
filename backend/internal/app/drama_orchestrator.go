@@ -599,7 +599,14 @@ func (r *dramaRun) plan() error {
 		r.enqueue(model.DramaJobSegmentPrompt, segment.EpisodeID, segment.ID, "", segmentPriority(dramaRankPrompt, number, segment.SegmentIndex), fmt.Sprintf("第 %d 集第 %d 段 视频提示词", number, segment.SegmentIndex+1), nil)
 		allDone = false
 	}
-	if allDone {
+	// 造型可能还在等待本体，尚未创建作业；已请求的资产与活跃作业都收尾后才能结束调度。
+	for _, cast := range r.casts {
+		if !cast.Locked && mediaBusyStatus(cast.ImageStatus) {
+			allDone = false
+			break
+		}
+	}
+	if allDone && len(r.active) == 0 {
 		p.Status, p.Stage = model.DramaStatusCompleted, model.DramaStageDone
 	}
 	return nil

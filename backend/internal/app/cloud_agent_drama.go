@@ -379,7 +379,7 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 			if _, specified := args.Changes["episodeId"]; specified {
 				return nil, &cloudAgentArgumentError{BadAuthRequest("资产生图建议不需要 episodeId")}
 			}
-		case "segment_video", "segment_prompt", "segment_reprocess":
+		case "segment_video", "segment_assets", "segment_prompt", "segment_reprocess":
 			var segment *model.DramaSegment
 			segment, lookupErr = repo.DramaSegment(production.ProjectID, args.TargetID)
 			if segment != nil {
@@ -389,7 +389,7 @@ func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID str
 				}
 			}
 		default:
-			return nil, &cloudAgentArgumentError{BadAuthRequest("不支持此媒体动作，仅可建议指定资产生图、指定段生视频、提示词重写或结果重处理")}
+			return nil, &cloudAgentArgumentError{BadAuthRequest("不支持此媒体动作，仅可建议指定资产生图、指定段补齐资产参考图或生视频、提示词重写或结果重处理")}
 		}
 		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
 			return nil, &cloudAgentArgumentError{BadAuthRequest("建议目标不属于当前短剧，请重新读取上下文")}

@@ -2,7 +2,7 @@ import { compactApiParams, http } from "@/services/api/request";
 import type { Project } from "@/services/api/projects";
 import type { ThinkingRequest } from "@/lib/text-thinking";
 
-export type DramaStudioAction = "segment_video" | "cast_image" | "segment_prompt" | "segment_reprocess";
+export type DramaStudioAction = "segment_video" | "segment_assets" | "cast_image" | "segment_prompt" | "segment_reprocess";
 
 export type DramaStudioActionRequest = {
     action: DramaStudioAction;

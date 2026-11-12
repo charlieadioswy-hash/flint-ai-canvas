@@ -24,7 +24,7 @@ import { activeDramaGuide, dramaGuideProposal, dramaProposalKey, type DramaGuide
 import { dramaMediaAccountKey, dramaMediaSession, dramaMediaSessionIsCurrent, type DramaMediaPreviewState as PreviewState } from "./drama-media-agent-session";
 
 type EpisodeReference = { id: string; number: number };
-const ACTION_LABEL = { segment_video: "生成本段视频", cast_image: "生成这张参考图", segment_prompt: "重新撰写本段提示词", segment_reprocess: "重新处理已有视频" };
+const ACTION_LABEL = { segment_video: "生成本段视频", segment_assets: "生成缺失的资产", cast_image: "生成这张参考图", segment_prompt: "重新撰写本段提示词", segment_reprocess: "重新处理已有视频" };
 const TEXT_FIELD_LABEL: Record<string, string> = {
     name: "名称",
     aliases: "别名",
@@ -55,7 +55,7 @@ function DismissMediaProposal({ disabled, submitted, onDismiss }: { disabled?: b
 export function dramaMediaProposalRequest(proposal: DramaAgentProposal): DramaStudioActionRequest | null {
     if (proposal.kind !== "media" || !proposal.targetId) return null;
     const { action, episodeId, targetRevision } = proposal.changes;
-    if (!["segment_video", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(action)) || !Number.isSafeInteger(targetRevision) || Number(targetRevision) < 0) return null;
+    if (!["segment_video", "segment_assets", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(action)) || !Number.isSafeInteger(targetRevision) || Number(targetRevision) < 0) return null;
     if (action !== "cast_image" && (typeof episodeId !== "string" || !episodeId)) return null;
     return { action: action as DramaStudioActionRequest["action"], targetId: proposal.targetId, ...(typeof episodeId === "string" ? { episodeId } : {}), targetRevision: Number(targetRevision), baseRevision: proposal.baseRevision };
 }
@@ -343,7 +343,8 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                                                       scopeKey={key}
                                                       options={[
                                                           ...(!media || preview?.ready ? [{ marker: "1", title: `确认${label}`, text: "confirm" }] : []),
-                                                          ...(preview?.missingCasts || []).map((cast, index) => ({ marker: String(index + 2), title: `生成「${cast.name}」参考图`, text: `cast:${cast.id}` })),
+                                                          ...(preview?.action === "segment_video" && preview.missingCasts.length ? [{ marker: preview.ready ? "2" : "1", title: "生成缺失的资产", text: "missing-assets" }] : []),
+                                                          ...(preview?.action === "cast_image" ? preview.missingCasts.map((cast, index) => ({ marker: String(index + 1), title: `生成「${cast.name}」参考图`, text: `cast:${cast.id}` })) : []),
                                                           ...(media ? [{ marker: "↻", title: "重新检查当前条件", text: "refresh" }] : []),
                                                           { marker: "✎", title: "调整要求", text: "填写想调整的内容，回车发送", input: true },
                                                       ]}
@@ -355,6 +356,8 @@ export function useDramaMediaAgent({ projectId, onChanged }: { projectId: string
                                                           } else if (option.text === "refresh" && state) {
                                                               const { baseRevision: _base, targetRevision: _target, ...request } = state.request;
                                                               void loadPreview(key, request);
+                                                          } else if (option.text === "missing-assets" && preview?.action === "segment_video") {
+                                                              void requestAction({ action: "segment_assets", targetId: preview.targetId, episodeId: preview.episodeId, targetRevision: preview.targetRevision });
                                                           } else if (option.text.startsWith("cast:")) void requestAction({ action: "cast_image", targetId: option.text.slice(5) });
                                                       }}
                                                   />

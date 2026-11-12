@@ -55,6 +55,7 @@ type dramaStudioActionPlan struct {
 	production      *model.DramaProduction
 	segment         *model.DramaSegment
 	cast            *model.DramaCast
+	casts           []model.DramaCast
 	jobID           string
 	videoModelJSON  *string
 	invalidateLater bool
@@ -95,6 +96,9 @@ func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, 
 	}
 	if dramaGuideActive(p) && req.Action != "segment_prompt" {
 		blocked("请先完成文字创作引导")
+	}
+	if req.Action == "segment_assets" {
+		return s.prepareDramaStudioSegmentAssets(repo, userID, req, plan, settings, snapshot)
 	}
 	if req.Action == "cast_image" {
 		cast, err := repo.DramaCast(projectID, req.TargetID)
@@ -408,6 +412,17 @@ func (s *Service) ExecuteDramaStudioAction(userID, projectID string, req DramaSt
 				return dramaGuideConflict("资产状态已改变，请重新确认")
 			}
 			return nil
+		case "segment_assets":
+			for _, cast := range plan.casts {
+				changed, err := tx.UpdateDramaCastImageRevision(cast.ID, cast.Revision, []string{cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
+				if err != nil {
+					return err
+				}
+				if !changed {
+					return dramaGuideConflict("资产状态已改变，请重新确认")
+				}
+			}
+			return nil
 		case "segment_video":
 			return tx.RequestDramaSegmentVideoExact(projectID, plan.segment.ID, plan.segment.Revision, plan.videoModelJSON, plan.invalidateLater)
 		case "segment_prompt":
@@ -427,5 +442,9 @@ func (s *Service) ExecuteDramaStudioAction(userID, projectID string, req DramaSt
 	if err != nil {
 		return nil, dramaGuideError(err)
 	}
-	return map[string]any{"queued": 1, "action": req.Action, "targetId": req.TargetID}, s.requestDramaWork(plan.production)
+	queued := 1
+	if req.Action == "segment_assets" {
+		queued = len(plan.casts)
+	}
+	return map[string]any{"queued": queued, "action": req.Action, "targetId": req.TargetID}, s.requestDramaWork(plan.production)
 }

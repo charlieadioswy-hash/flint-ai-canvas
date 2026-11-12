@@ -59,12 +59,14 @@ describe("短剧 Agent 建议回放", () => {
         for (const changes of [
             { action: "release_all", targetRevision: 3 },
             { action: "segment_video", targetRevision: 3 },
+            { action: "segment_assets", targetRevision: 3 },
             { action: "segment_video", episodeId: "episode", targetRevision: -1 },
             { action: "segment_video", episodeId: "episode", targetRevision: 1.5 },
         ]) {
             expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, changes } })).toBeNull();
         }
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: " " } })).toBeNull();
+        expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, changes: { action: "segment_assets", episodeId: "episode", targetRevision: 3 } } })?.changes.action).toBe("segment_assets");
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 2 } } })?.kind).toBe("media");
         expect(dramaProposalFromToolDetail({ ...detail, result: { ...detail.result, targetId: "cast", changes: { action: "cast_image", targetRevision: 0 } } })?.changes.targetRevision).toBe(0);
     });

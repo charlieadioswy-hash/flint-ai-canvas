@@ -12,6 +12,7 @@ const executions: Array<{ projectId: string; request: DramaStudioActionRequest }
 const writes: unknown[] = [];
 let token = "token-1";
 let ready = true;
+let missingCasts: DramaStudioActionPreflight["missingCasts"] = [];
 let productionRevision = 8;
 let delay: Promise<void> | undefined;
 let writeDelay: Promise<void> | undefined;
@@ -25,6 +26,8 @@ mock.module("@/services/api/drama", () => ({
         preflightCalls.push({ projectId, request });
         await delay;
         if (preflightFailure) throw preflightFailure;
+        const assetBatch = request.action === "segment_assets";
+        const missingBase = request.action === "cast_image" && request.targetId === "look-one";
         return {
             action: request.action,
             targetId: request.targetId,
@@ -32,15 +35,15 @@ mock.module("@/services/api/drama", () => ({
             segmentIndex: 1,
             targetRevision: request.targetRevision || 3,
             baseRevision: productionRevision,
-            ready: request.action === "cast_image" || ready,
-            message: ready ? "仅生成指定段" : "缺少必需参考图：主角",
+            ready: assetBatch ? missingCasts.length > 0 : request.action === "cast_image" ? !missingBase : ready,
+            message: assetBatch ? `仅生成本段缺失的 ${missingCasts.length} 个资产参考图，不生成视频` : missingBase ? "请先生成角色本体参考图" : ready ? "仅生成指定段" : "缺少必需参考图：主角",
             confirmationToken: token,
-            missingCasts: ready ? [] : [{ id: "cast-one", name: "主角" }],
+            missingCasts: request.action === "cast_image" ? (missingBase ? [{ id: "cast-one", name: "主角" }] : []) : missingCasts,
             warnings: [],
-            canUseText: false,
+            canUseText: request.action === "segment_video" && ready && missingCasts.length > 0,
             reprocessable: false,
             priced: true,
-            amountMicrocredits: 500000,
+            amountMicrocredits: assetBatch ? missingCasts.length * 500000 : 500000,
         };
     },
     executeDramaStudioAction: async (projectId: string, request: DramaStudioActionRequest) => {
@@ -64,7 +67,7 @@ mock.module("@/services/api/drama", () => ({
         productionRevision += 1;
     },
 }));
-const { useDramaMediaAgent, confirmDramaMediaAction } = await import("@/pages/projects/studio/use-drama-media-agent");
+const { useDramaMediaAgent, confirmDramaMediaAction, dramaMediaProposalRequest } = await import("@/pages/projects/studio/use-drama-media-agent");
 const { appendDramaAgentReference } = await import("@/lib/canvas/drama-agent-reference");
 const { useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 const { useUserStore } = await import("@/stores/use-user-store");
@@ -103,6 +106,7 @@ beforeEach(async () => {
     writes.length = 0;
     token = "token-1";
     ready = true;
+    missingCasts = [];
     productionRevision = 8;
     delay = undefined;
     writeDelay = undefined;
@@ -198,19 +202,100 @@ test("新预检才恢复确认，失败提供独立重试且不保留旧报价",
     expect(executions).toHaveLength(0);
 });
 
-test("缺图不自动创建图片，点击缺图选项仍需确认具体资产", async () => {
+test("多个缺图合并为一个选项，确认后只执行原段的资产批量生成", async () => {
     ready = false;
+    missingCasts = [
+        { id: "cast-one", name: "主角" },
+        { id: "cast-two", name: "房间" },
+        { id: "cast-three", name: "钥匙" },
+    ];
     await act(async () => {
         await controls.requestVideo(episode, segment);
     });
     expect(container.textContent).toContain("缺少必需参考图");
     expect(container.textContent).not.toContain("确认生成本段视频");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("生成缺失的资产"))).toHaveLength(1);
+    for (const cast of missingCasts) expect(container.textContent).not.toContain(`生成「${cast.name}」参考图`);
+    expect(executions).toHaveLength(0);
+
+    await click("生成缺失的资产");
+    expect(preflightCalls.at(-1)).toEqual({ projectId: "project", request: { action: "segment_assets", targetId: "segment-one", episodeId: "episode-one", targetRevision: 3 } });
+    expect(container.textContent).toContain("3 个资产参考图");
+    expect(container.textContent).toContain("预计 1.5 积分");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("确认生成缺失的资产"))).toHaveLength(1);
+    expect(executions).toHaveLength(0);
+
+    await click("确认生成缺失的资产");
+    expect(executions).toEqual([{ projectId: "project", request: { action: "segment_assets", targetId: "segment-one", episodeId: "episode-one", targetRevision: 3, baseRevision: 8, confirmationToken: "token-1" } }]);
+    expect(writes).toEqual([]);
+});
+
+test("允许按文字生成视频时仍提供唯一缺失资产选项，不自动生成图片或视频", async () => {
+    missingCasts = [
+        { id: "cast-one", name: "主角" },
+        { id: "cast-two", name: "房间" },
+    ];
+    await act(async () => {
+        await controls.requestVideo(episode, segment);
+    });
+    expect(container.textContent).toContain("确认生成本段视频");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("生成缺失的资产"))).toHaveLength(1);
+    expect(container.textContent).not.toContain("生成「主角」参考图");
+    expect(container.textContent).not.toContain("生成「房间」参考图");
+    expect(executions).toHaveLength(0);
+    await click("生成缺失的资产");
+    expect(preflightCalls.at(-1)?.request.action).toBe("segment_assets");
+    expect(container.textContent).toContain("确认生成缺失的资产");
+    expect(executions).toHaveLength(0);
+});
+
+test("缺失资产的统一报价变化后再次确认，仅提交当前段的最新报价", async () => {
+    ready = false;
+    missingCasts = [
+        { id: "cast-one", name: "主角" },
+        { id: "cast-two", name: "房间" },
+    ];
+    await act(async () => {
+        await controls.requestVideo(episode, segment);
+    });
+    await click("生成缺失的资产");
+    token = "assets-token-2";
+    await click("确认生成缺失的资产");
+    expect(executions).toHaveLength(0);
+    expect(container.textContent).toContain("条件或费用已变化");
+    await click("确认生成缺失的资产");
+    expect(executions).toEqual([{ projectId: "project", request: { action: "segment_assets", targetId: "segment-one", episodeId: "episode-one", targetRevision: 3, baseRevision: 8, confirmationToken: "assets-token-2" } }]);
+});
+
+test("造型参考图缺本体时保留单个本体生成入口，仍须明确确认", async () => {
+    await act(async () => {
+        await controls.requestAction({ action: "cast_image", targetId: "look-one", targetRevision: 2 });
+    });
+    expect(container.textContent).toContain("请先生成角色本体参考图");
+    expect(container.textContent).toContain("生成「主角」参考图");
+    expect(container.textContent).not.toContain("生成缺失的资产");
+    expect(container.textContent).not.toContain("确认生成这张参考图");
     await click("生成「主角」参考图");
+    expect(preflightCalls.at(-1)).toEqual({ projectId: "project", request: { action: "cast_image", targetId: "cast-one" } });
     expect(executions).toHaveLength(0);
     await click("确认生成这张参考图");
-    expect(executions).toHaveLength(1);
-    expect(executions[0]?.request.targetId).toBe("cast-one");
-    expect(executions[0]?.request.action).toBe("cast_image");
+    expect(executions).toEqual([{ projectId: "project", request: { action: "cast_image", targetId: "cast-one", targetRevision: 3, baseRevision: 8, confirmationToken: "token-1" } }]);
+});
+
+test("Agent的缺失资产建议通过相同预检入口，不接受缺少剧集的批量建议", async () => {
+    missingCasts = [
+        { id: "cast-one", name: "主角" },
+        { id: "cast-two", name: "房间" },
+    ];
+    const proposal = { kind: "media" as const, targetId: "segment-one", baseRevision: 8, runId: "agent-run", toolCallId: "assets-call", changes: { action: "segment_assets", episodeId: "episode-one", targetRevision: 3 } };
+    const request = { action: "segment_assets", targetId: "segment-one", episodeId: "episode-one", targetRevision: 3, baseRevision: 8 };
+    expect(dramaMediaProposalRequest(proposal)).toEqual(request);
+    expect(dramaMediaProposalRequest({ ...proposal, changes: { action: "segment_assets", targetRevision: 3 } })).toBeNull();
+    act(() => controls.onProposal(proposal));
+    await settle();
+    expect(preflightCalls).toEqual([{ projectId: "project", request }]);
+    expect(container.textContent).toContain("确认生成缺失的资产");
+    expect(executions).toHaveLength(0);
 });
 
 test("制作阶段文字建议仍可保存并拒绝过期版本", async () => {

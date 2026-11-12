@@ -242,7 +242,7 @@ func TestCloudAgentDramaMediaProposalTargetsCurrentObjectWithoutEnqueue(t *testi
 		_, err = cloudAgentHandleDramaProposeChanges(svc.repo, userID, state, call, svc)
 		return err
 	}
-	for _, action := range []string{"segment_video", "segment_prompt", "segment_reprocess"} {
+	for _, action := range []string{"segment_video", "segment_assets", "segment_prompt", "segment_reprocess"} {
 		if err := propose("usr-drama", "segment-current", draft.Production.Revision, map[string]any{"action": action, "episodeId": "episode-current", "targetRevision": 4}); err != nil {
 			t.Fatalf("%s: %v", action, err)
 		}
