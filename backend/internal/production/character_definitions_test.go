@@ -48,6 +48,117 @@ func TestRestoreCharacterDefinitionsKeepsOriginalAndRejectsInferredFields(t *tes
 	}
 }
 
+func TestRestoreCharacterDefinitionsKeepsBodyExtractionForLabels(t *testing.T) {
+	for _, source := range []string{
+		"（人物字幕：陆承明　小说黄毛）",
+		"（人物字幕：陆承明\n小说黄毛）",
+		"(人物字幕: 陆承明\r\n小说黄毛)",
+		" ( 人物字幕 : 陆承明 小说黄毛 ) ",
+		"【人物字幕】陆承明 小说黄毛",
+		"[角色字幕: 陆承明 小说黄毛]",
+		"字幕：陆承明 小说黄毛",
+		"陆承明",
+		"### 陆承明",
+		"陆承明：",
+		"（姓名：陆承明）",
+		"【角色名】陆承明",
+		"黄毛",
+	} {
+		t.Run(source, func(t *testing.T) {
+			character := BibleCharacter{
+				Name: "陆承明", Aliases: []string{"黄毛", "小陆"}, Role: "穿越者", Gender: "男",
+				Description: "穿越成小说中的炮灰", Appearance: "头发染得金黄，穿着一身廉价运动外套",
+				Voice: "语气义正辞严", SourceDefinition: source, SourceChapterIndex: 1,
+				Looks: BibleLooks{{Name: "西装", Appearance: "换上黑色西装", FromChapter: 2}},
+			}
+			chapter := Chapter{Index: 1, Text: "年轻男人头发染得金黄，穿着一身廉价运动外套。\n" + source + "\n陆承明语气义正辞严。小陆换上黑色西装。"}
+			got, err := RestoreCharacterDefinitions([]BibleCharacter{character}, []Chapter{chapter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := character
+			want.SourceDefinition, want.SourceChapterIndex = "", 0
+			if !reflect.DeepEqual(got, []BibleCharacter{want}) {
+				t.Fatalf("labels must not erase body extraction: got %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestRestoreCharacterDefinitionsKeepsRealDefinitionsContainingLabels(t *testing.T) {
+	for _, source := range []string{
+		"陆承明：黄毛，穿廉价运动外套。",
+		"人物小传：陆承明是穿越者，头发染得金黄。",
+		"姓名：陆承明\n性格：冷静\n外观：金黄头发，廉价运动外套。",
+		"（人物字幕：陆承明　小说黄毛）\n人物说明：冷静谨慎，穿廉价运动外套。",
+		"（人物字幕：陆承明 小说黄毛）人物说明：陆承明26岁，性格冷静。",
+		"【人物字幕】陆承明 小说黄毛；人物说明：陆承明26岁，性格冷静。",
+		"（人物字幕：陆承明\n人物说明：26岁，性格冷静。）",
+		"陆承明：他的出场会配人物字幕，性格冷静。",
+	} {
+		t.Run(source, func(t *testing.T) {
+			got, err := RestoreCharacterDefinitions([]BibleCharacter{{
+				Name: "陆承明", SourceDefinition: source, SourceChapterIndex: 1,
+				Description: "模型改写", Appearance: "银色长发", Voice: "浑厚男声",
+			}}, []Chapter{{Index: 1, Text: source}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got[0].SourceDefinition != source || got[0].Description != source || got[0].Appearance != "" || got[0].Voice != "" {
+				t.Fatalf("real definitions must still be preserved without invented fields: %#v", got[0])
+			}
+		})
+	}
+}
+
+func TestRestoreCharacterDefinitionsVerifiesLabelsBeforeKeepingExtraction(t *testing.T) {
+	source := "（人物字幕：陆承明　小说黄毛）"
+	for name, character := range map[string]BibleCharacter{
+		"rewritten quote": {Name: "陆承明", SourceDefinition: "（人物字幕：陆承明　小说男主）", SourceChapterIndex: 1},
+		"wrong chapter":   {Name: "陆承明", SourceDefinition: source, SourceChapterIndex: 2},
+		"other character": {Name: "秦子文", SourceDefinition: source, SourceChapterIndex: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := RestoreCharacterDefinitions([]BibleCharacter{character}, []Chapter{{Index: 1, Text: source}})
+			if err == nil || got != nil {
+				t.Fatalf("invalid label quote must still be rejected: %#v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestParseBibleDoesNotPrioritizeCaptionOverCharacterDefinition(t *testing.T) {
+	caption := "（人物字幕：陆承明　小说黄毛）"
+	source := "陆承明：26岁，性格冷静。"
+	labelled := BibleCharacter{Name: "陆承明", SourceDefinition: caption, SourceChapterIndex: 1, Appearance: "金黄头发，廉价运动外套"}
+	defined := BibleCharacter{Name: "陆承明", SourceDefinition: source, SourceChapterIndex: 1}
+	extracted := BibleCharacter{Name: "陆承明", Description: "穿越者", Appearance: "金黄头发，廉价运动外套"}
+	for name, characters := range map[string][]BibleCharacter{
+		"caption first":       {labelled, defined},
+		"definition first":    {defined, labelled},
+		"body before caption": {extracted, labelled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := json.Marshal(Bible{Characters: characters})
+			if err != nil {
+				t.Fatal(err)
+			}
+			bible, err := ParseBible(string(body), Chapter{Index: 1, Text: caption + "\n" + source})
+			if err != nil || len(bible.Characters) != 1 {
+				t.Fatalf("expected one character: %#v, %v", bible, err)
+			}
+			character := bible.Characters[0]
+			if name == "body before caption" {
+				if character.Description != extracted.Description || character.Appearance != extracted.Appearance || character.SourceDefinition != "" {
+					t.Fatalf("caption must not take priority over ordinary extraction: %#v", character)
+				}
+			} else if character.Description != source || character.Appearance != "" || character.SourceDefinition != source {
+				t.Fatalf("verified full definition must take priority over caption extraction: %#v", character)
+			}
+		})
+	}
+}
+
 func TestRestoreCharacterDefinitionsSupportsArbitrarySourceFormats(t *testing.T) {
 	sources := []string{
 		"## 秦子文\n\n**年龄**：26岁\n- 性格：冷静\n- 外貌：黑发\n- 声音：低沉\n",

@@ -44,6 +44,22 @@ func TestBiblePromptWithoutDefinitionStillExtractsFromSource(t *testing.T) {
 	}
 }
 
+func TestBiblePromptDistinguishesCharacterCaptionFromDefinition(t *testing.T) {
+	text := "年轻男人头发染得金黄，穿着一身廉价运动外套。\n（人物字幕：陆承明　小说黄毛）"
+	prompt := BiblePrompt("穿越小说", Settings{}, []Chapter{{Index: 1, Title: "第一集", Text: text}}, 40000, nil)
+	for _, want := range []string{
+		text,
+		"人物字幕、出场姓名标签、只写姓名的标题和对白说话人标记不属于完整角色说明",
+		"先检查是否另有明确人物说明",
+		"继续从正文中抽取该角色有明确依据的身份、性格、外观、声音及换装",
+		"不得只保留字幕、清空外观",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("caption extraction guidance missing %q", want)
+		}
+	}
+}
+
 func TestBiblePromptDoesNotRequireFixedDefinitionFormat(t *testing.T) {
 	for name, text := range map[string]string{
 		"numbered":  definedCharacterExample,
