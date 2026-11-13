@@ -1,9 +1,8 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { AgentEvent, AgentRun, DramaAgentProposal } from "@/services/api/agent";
+import type { AgentEvent, AgentRun } from "@/services/api/agent";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 import type { AgentOutbox } from "@/lib/canvas/agent-outbox";
-import type { AgentPrefillRequest } from "@/stores/use-global-agent-store";
 
 const dom = new Window({ url: "http://localhost/" });
 for (const [key, value] of Object.entries({
@@ -58,7 +57,6 @@ let interjectionFailure: Error | undefined;
 let interjectionOverride: (() => Promise<{ accepted: boolean; pending: number }>) | undefined;
 const outboxes = new Map<string, AgentOutbox>();
 let outboxLoadOverride: ((id: string) => Promise<AgentOutbox | null>) | undefined;
-let startupSaveOverride: (() => Promise<void>) | undefined;
 const refreshRequests: Array<{ observedConversationIds?: string[]; canvasId?: string }> = [];
 let generated = 0;
 let composer: Record<string, any>;
@@ -130,7 +128,6 @@ mock.module("@/services/cloud-agent-conversations", () => ({
     loadCloudAgentConversations: async (scope: string) => (scope === "sync-user" ? { version: 1, activeId, conversations: local } : { version: 1, activeId: null, conversations: [] }),
     saveCloudAgentConversations: async (id: string, conversations: CloudAgentConversation[], scope: string) => {
         if (scope !== "sync-user") return;
-        if (startupSaveOverride && conversations.some((item) => item.localDramaStartupRequested)) await startupSaveOverride();
         activeId = id;
         local = conversations;
     },
@@ -280,26 +277,17 @@ const persist = async () => {
     });
 };
 type MountOptions = {
-    startupRequest?: AgentPrefillRequest;
-    prefillRequest?: AgentPrefillRequest;
     localConversations?: CloudAgentConversation[];
     initialOutbox?: AgentOutbox;
     outboxLoad?: (id: string) => Promise<AgentOutbox | null>;
-    startupSave?: () => Promise<void>;
     createRun?: (input: any) => Promise<{ run: AgentRun }>;
     loadConversation?: (id: string) => Promise<CloudAgentConversation>;
-    onConversationBound?: (id: string) => void;
-    onProposal?: (proposal: DramaAgentProposal) => void;
-    onContinueConversation?: () => void;
-    guideConversationId?: string | null;
     offline?: boolean;
     strictMode?: boolean;
-    floatingDrama?: boolean;
     initiallyOpen?: boolean;
-    studioMode?: boolean;
     hidden?: boolean;
 };
-async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string, options: MountOptions = {}) {
+async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, options: MountOptions = {}) {
     local = options.localConversations || [initial];
     activeId = initial.id;
     remote = cloud;
@@ -313,17 +301,14 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     sendInputs.length = 0;
     createInputs.length = 0;
     sendFailure = undefined;
-    capabilitiesOverride = guideProjectId ? async () => ({ permissionModes: ["read_only", "request_approval"], skills: true }) : undefined;
+    capabilitiesOverride = undefined;
     sendOverride = undefined;
     interjectionFailure = undefined;
     interjectionOverride = undefined;
-    createOverride =
-        options.createRun ||
-        (options.startupRequest ? async (input) => ({ run: { ...makeRun(`guide-startup-${generated}`, "running"), canvasId: undefined, dramaProjectId: input.dramaProjectId, permissionMode: "read_only", userPrompt: input.prompt } }) : undefined);
+    createOverride = options.createRun;
     outboxes.clear();
     if (options.initialOutbox) outboxes.set(initial.id, options.initialOutbox);
     outboxLoadOverride = options.outboxLoad;
-    startupSaveOverride = options.startupSave;
     outboxUI = undefined!;
     questionUI = undefined;
     Object.defineProperty(navigator, "onLine", { configurable: true, value: !options.offline });
@@ -336,23 +321,8 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     const host = document.createElement("div");
     document.body.append(host);
     useGlobalAgentStore.setState({
-        dramaReference: null,
-        dramaReferenceFocus: 0,
         open: options.initiallyOpen ?? true,
-        canvas: guideProjectId ? null : { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
-        drama: guideProjectId
-            ? {
-                  projectId: guideProjectId,
-                  studioMode: options.studioMode,
-                  guideConversationId: options.guideConversationId === undefined ? initial.serverConversationId : options.guideConversationId || undefined,
-                  host: options.floatingDrama ? undefined : host,
-                  startupRequest: options.startupRequest,
-                  prefillRequest: options.prefillRequest,
-                  onConversationBound: options.onConversationBound,
-                  onProposal: options.onProposal,
-                  proposalChoices: options.onContinueConversation ? { proposals: [], render: () => null, onContinueConversation: options.onContinueConversation } : undefined,
-              }
-            : null,
+        canvas: { canvasId: "shared-canvas", nodeCount: 2, selectedNodeIds: [], references: [] },
     });
     const root = createRoot(host);
     const renderPanel = (hidden = options.hidden ?? false) =>
@@ -384,6 +354,53 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
 }
 afterAll(() => dom.happyDOM.abort());
 
+test("本机上次停在旧短剧会话时恢复画布会话，历史列表和续发均不带短剧绑定", async () => {
+    const retired = chat("retired-drama", { ...makeRun("retired-run", "running"), conversationId: "retired-session", canvasId: undefined, dramaProjectId: "old-project" });
+    const canvas = chat("canvas-local", makeRun("canvas-parent"));
+    const mounted = await mount(retired, [canvas], null, { localConversations: [retired, canvas] });
+    try {
+        expect(conversationUI.messages.some((message: any) => message.text === "结果-canvas-parent")).toBe(true);
+        expect(subscriptions.every((entry) => entry.id !== "retired-run")).toBe(true);
+        await act(async () => {
+            header.onHistory();
+            await settle();
+        });
+        expect(historyUI.conversations.map((entry: CloudAgentConversation) => entry.id)).toEqual([canvas.id]);
+        await act(async () => {
+            historyUI.onBack();
+            await settle();
+        });
+        await act(async () => composer.onPromptChange("继续调整这个画布"));
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(sent).toEqual(["canvas-parent"]);
+        expect(sendInputs[0]).toMatchObject({ canvasId: "shared-canvas", prompt: "继续调整这个画布", contextScope: ["canvas"] });
+        expect(sendInputs[0]).not.toHaveProperty("dramaProjectId");
+        await persist();
+        expect(local.some((entry) => entry.id === retired.id)).toBe(true);
+        expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("仅有旧短剧草稿时新建空画布对话，保留旧记录且不自动提交", async () => {
+    const retired = { ...chat("retired-draft", null), localNewCanvasId: "drama:old-project", draft: "旧引导草稿" };
+    const mounted = await mount(retired, []);
+    try {
+        expect(activeId).not.toBe(retired.id);
+        expect(composer.prompt).toBe("");
+        expect(conversationUI.messages).toHaveLength(0);
+        expect(local.find((entry) => entry.id === retired.id)?.draft).toBe("旧引导草稿");
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
 test("短剧页隐藏通用画布 Agent 时仍接收 SSE，回到画布恢复原会话和打开状态", async () => {
     const active = chat("canvas-background", makeRun("canvas-running", "running"));
     const mounted = await mount(active, [active]);
@@ -411,7 +428,7 @@ test("短剧页隐藏通用画布 Agent 时仍接收 SSE，回到画布恢复原
 });
 
 test("隐藏期间不消费新的画布预填、不响应快捷键，返回后只填入一次", async () => {
-    const mounted = await mount(chat("hidden-canvas", null), [], null, undefined, { hidden: true, initiallyOpen: false, strictMode: true });
+    const mounted = await mount(chat("hidden-canvas", null), [], null, { hidden: true, initiallyOpen: false, strictMode: true });
     try {
         await act(async () => {
             const canvas = useGlobalAgentStore.getState().canvas!;
@@ -438,23 +455,6 @@ test("隐藏期间不消费新的画布预填、不响应快捷键，返回后�
     }
 });
 
-test("隐藏的遗留短剧上下文不会启动引导或自动提交预填", async () => {
-    const initial = chat("hidden-old-guide", null);
-    const mounted = await mount(initial, [], null, "old-project", {
-        hidden: true,
-        strictMode: true,
-        startupRequest: { id: 1, text: "旧引导自动开始", autoSubmit: true, requireIdle: true },
-        prefillRequest: { id: 2, text: "旧短剧预填", autoSubmit: true },
-    });
-    try {
-        expect(mounted.host.textContent).toBe("");
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-        expect(local.every((item) => !item.localDramaStartupRequested)).toBe(true);
-    } finally {
-        await mounted.close();
-    }
-});
 function configureModels(ambiguous: boolean) {
     const entry = (id: string, model: string, price: number) =>
         createModelChannel({ id, scope: "system", models: [model], modelCosts: [{ model, channelModelId: `${id}-${model}`, capability: "text", billingMode: "fixed_request", unitPriceMicrocredits: price }] });
@@ -729,1005 +729,11 @@ test("另一端已推进parent的明确拒绝只同步上下文，保留草稿�
     }
 });
 
-function guideChat(id: string, runId: string, projectId = "guide-project"): CloudAgentConversation {
-    return { ...chat(id, { ...makeRun(runId), canvasId: undefined, dramaProjectId: projectId, permissionMode: "read_only" }), permissionMode: "read_only" };
-}
-
-function interjectionHistory(status: "sent" | "delivered" | "undelivered" | "withdrawn") {
-    const source = guideChat("guide-local", `interjection-history-${status}`).run!;
-    source.status = status === "sent" ? "running" : "completed";
-    const events: AgentEvent[] = [];
-    const event = (type: string, payload: Record<string, unknown>) => events.push({ eventId: `history-${events.length + 1}`, runId: source.id, seq: events.length + 1, type, payload, createdAt: source.updatedAt });
-    const proposal = (kind: "media" | "shot", targetId: string) =>
-        event("tool_completed", {
-            toolName: "drama_propose_changes",
-            callId: `call-${targetId}`,
-            result: { kind, targetId, baseRevision: 8, changes: kind === "media" ? { action: "segment_video", episodeId: "episode-one", targetRevision: 2 } : { dialogue: "保留之前的文字建议" } },
-        });
-    proposal("media", "before-interjection");
-    proposal("shot", "old-text-proposal");
-    event("user_interjection", { messageId: "history-interjection", text: "先改一个方向" });
-    if (status !== "sent") event(status === "delivered" ? "user_interjection_delivered" : status === "withdrawn" ? "user_interjection_withdrawn" : "user_interjection_dropped", { messageId: "history-interjection", text: "先改一个方向" });
-    proposal("media", "after-interjection");
-    return awaitImportHistory.projectCloudAgentConversation(source.conversationId!, [{ ...source, events }]);
-}
-
-for (const status of ["sent", "delivered"] as const) {
-    test(`刷新恢复${status}插话历史时，制作台只恢复其后媒体，文字与引导不受影响`, async () => {
-        for (const studioMode of [true, false]) {
-            const existing = interjectionHistory(status);
-            const received: DramaAgentProposal[] = [];
-            const mounted = await mount(existing, [existing], null, "guide-project", { studioMode, onProposal: (proposal) => received.push(proposal) });
-            try {
-                expect(existing.messages.find((message) => message.id === "history-interjection")?.interjection).toBe(status);
-                expect(received.map((proposal) => proposal.targetId)).toEqual(studioMode ? ["old-text-proposal", "after-interjection"] : ["before-interjection", "old-text-proposal", "after-interjection"]);
-                expect(generated).toBe(0);
-                expect(sent).toHaveLength(0);
-                expect(canceled).toHaveLength(0);
-            } finally {
-                await mounted.close();
-            }
-        }
-    });
-}
-
-test("未确认发送、未送达、撤回及转排队的用户消息不误过滤可重试媒体确认", async () => {
-    for (const status of ["sending", "undelivered", "withdrawn", "requeued", "unknown-post"] as const) {
-        const existing = interjectionHistory(status === "withdrawn" ? status : "undelivered");
-        const message = existing.messages.find((entry) => entry.id === "history-interjection")!;
-        if (status === "unknown-post") {
-            message.id = "user-unknown-idempotency-key";
-            delete message.interjection;
-        } else message.interjection = status;
-        const received: DramaAgentProposal[] = [];
-        const mounted = await mount(existing, [existing], null, "guide-project", { studioMode: true, onProposal: (proposal) => received.push(proposal) });
-        try {
-            expect(received.map((proposal) => proposal.targetId)).toEqual(["before-interjection", "old-text-proposal", "after-interjection"]);
-            expect(generated).toBe(0);
-            expect(sent).toHaveLength(0);
-            expect(canceled).toHaveLength(0);
-        } finally {
-            await mounted.close();
-        }
-    }
-});
-
-test("制作台恢复仅消费当前轮媒体确认，保留旧轮文字建议且不改变引导恢复", async () => {
-    for (const studioMode of [true, false]) {
-        const existing = guideChat("guide-local", "current-media-run");
-        for (const [kind, runId, targetId] of [
-            ["media", "old-media-run", "old-segment"],
-            ["media", "current-media-run", "current-segment"],
-            ["shot", "old-media-run", "old-shot"],
-        ] as const) {
-            existing.messages.push({
-                id: `tool-${targetId}`,
-                role: "tool",
-                text: "建议完成",
-                runId,
-                detail: {
-                    eventType: "tool_completed",
-                    toolName: "drama_propose_changes",
-                    runId,
-                    callId: `call-${targetId}`,
-                    result: { kind, targetId, baseRevision: 8, changes: kind === "media" ? { action: "segment_video", episodeId: "episode-one", targetRevision: 2 } : { dialogue: "保留旧轮文字修改" } },
-                },
-            });
-        }
-        const received: DramaAgentProposal[] = [];
-        const mounted = await mount(existing, [existing], null, "guide-project", { studioMode, onProposal: (proposal) => received.push(proposal) });
-        try {
-            expect(received.map((proposal) => proposal.targetId)).toEqual(studioMode ? ["current-segment", "old-shot"] : ["old-segment", "current-segment", "old-shot"]);
-            expect(generated).toBe(0);
-            expect(sent).toHaveLength(0);
-            expect(canceled).toHaveLength(0);
-        } finally {
-            await mounted.close();
-        }
-    }
-});
-
-test("往返详细台后向新的简易台投递历史及在途完成的建议", async () => {
-    const existing = guideChat("guide-local", "studio-proposal-parent");
-    existing.messages.push({
-        id: "tool-studio-proposal",
-        role: "tool",
-        text: "建议完成",
-        runId: existing.run!.id,
-        detail: { eventType: "tool_completed", toolName: "drama_propose_changes", runId: existing.run!.id, callId: "studio-call", result: { kind: "shot", targetId: "shot-one", baseRevision: 8, changes: { dialogue: "别怕" } } },
-    });
-    const first: DramaAgentProposal[] = [];
-    const afterSwitch: DramaAgentProposal[] = [];
-    const mounted = await mount(existing, [existing], null, "guide-project", { onProposal: (proposal) => first.push(proposal) });
-    try {
-        expect(first).toHaveLength(1);
-        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, onOpenStudio: () => {} }));
-        await act(async () =>
-            subscriptions.at(-1)!.event({
-                eventId: "studio-proposal-while-away",
-                runId: existing.run!.id,
-                seq: 5,
-                type: "tool_completed",
-                payload: { toolName: "drama_propose_changes", callId: "studio-away-call", result: { kind: "shot", targetId: "shot-two", baseRevision: 8, changes: { dialogue: "往前走" } } },
-                createdAt: existing.updatedAt,
-            }),
-        );
-        const consumer = (proposal: DramaAgentProposal) => afterSwitch.push(proposal);
-        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host, onProposal: consumer }));
-        expect(conversationUI.messages.some((item: any) => item.id === "tool-studio-proposal")).toBe(true);
-        expect(conversationLoads).toHaveLength(1);
-        expect(afterSwitch.map((proposal) => proposal.targetId)).toEqual(["shot-one", "shot-two"]);
-        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host, onProposal: consumer }));
-        expect(afterSwitch).toHaveLength(2);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("简易和详细台切换只更换host，保持同一会话、草稿与剧情段引用", async () => {
-    const existing = guideChat("guide-local", "studio-switch-parent");
-    const mounted = await mount(existing, [existing], null, "guide-project");
-    try {
-        await act(async () => composer.onPromptChange("还没发送的分镜调整"));
-        const reference = { projectId: "guide-project", episodeId: "episode-real", episodeNumber: 9, segmentId: "segment-real", segmentIndex: 2, title: "森林", revision: 4 };
-        await act(async () => useGlobalAgentStore.getState().setDramaReference(reference));
-        expect(sent).toHaveLength(0);
-        expect(composer.focusRequest).toBeGreaterThan(0);
-        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, onOpenStudio: () => {} }));
-        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
-        expect(composer.prompt).toBe("还没发送的分镜调整");
-        await act(async () => useGlobalAgentStore.getState().setDrama({ projectId: "guide-project", guideConversationId: existing.serverConversationId, host: mounted.host }));
-        expect(composer.prompt).toBe("还没发送的分镜调整");
-        expect(useGlobalAgentStore.getState().dramaReference).toEqual(reference);
-        expect(conversationLoads).toHaveLength(1);
-        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-switch-child", parentId: existing.run!.id } });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sendInputs[0]?.prompt).toContain('"segmentId":"segment-real"');
-        expect(sendInputs[0]?.prompt).toContain('"revision":4');
-        expect(useGlobalAgentStore.getState().dramaReference).toBeNull();
-        expect(conversationUI.messages.findLast((item: any) => item.role === "user")?.text).toBe("第 9 集 · 第 3 段 · 森林\n还没发送的分镜调整");
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("运行中排队保存入队时引用，之后切换引用不改写原队列消息", async () => {
-    const existing = guideChat("guide-local", "studio-running");
-    existing.run!.status = "running";
-    const mounted = await mount(existing, [existing], null, "guide-project");
-    try {
-        await act(async () => {
-            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-first", segmentIndex: 0, title: "开场", revision: 3 });
-            composer.onPromptChange("修改这段节奏");
-        });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sent).toHaveLength(0);
-        expect(outboxUI.outbox.items).toHaveLength(1);
-        expect(outboxUI.outbox.items[0]?.text).toContain('"segmentId":"segment-first"');
-        expect(useGlobalAgentStore.getState().dramaReference).toBeNull();
-        await act(async () => useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-second", segmentIndex: 1, title: "后续", revision: 2 }));
-        expect(outboxUI.outbox.items[0]?.text).not.toContain("segment-second");
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("引用消息未发送成功时保留结构化目标，原样重试不丢失或重复绑定", async () => {
-    const existing = guideChat("guide-local", "studio-reference-parent");
-    const continued = mock();
-    const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
-    try {
-        await act(async () => {
-            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-real", segmentIndex: 0, title: "开场", revision: 3 });
-            composer.onPromptChange("改一下对白");
-        });
-        sendFailure = new Error("网络断开");
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(pending?.request?.prompt).toContain('"segmentId":"segment-real"');
-        expect(useGlobalAgentStore.getState().dramaReference?.segmentId).toBe("segment-real");
-        expect(continued).not.toHaveBeenCalled();
-        sendFailure = undefined;
-        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-reference-child", parentId: existing.run!.id } });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sendInputs[1]?.prompt).toBe(sendInputs[0]?.prompt);
-        expect(sendInputs[1]?.prompt.match(/本条消息引用的短剧对象/gu)).toHaveLength(1);
-        expect(continued).toHaveBeenCalledTimes(1);
-        expect(canceled).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("新建短剧对话仅在创建请求成功接受后通知旧媒体确认退出，失败可原样重试", async () => {
-    const continued = mock();
-    let fail = true;
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
-        onContinueConversation: continued,
-        createRun: async (input) => {
-            if (fail) throw new Error("创建请求网络断开");
-            return { run: { ...makeRun("proposal-create-child"), canvasId: undefined, dramaProjectId: input.dramaProjectId, permissionMode: "read_only", userPrompt: input.prompt } };
-        },
-    });
-    try {
-        await act(async () => composer.onPromptChange("先检查角色，不生成媒体"));
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(createInputs).toHaveLength(1);
-        expect(continued).not.toHaveBeenCalled();
-        expect(pending?.request?.prompt).toBe("先检查角色，不生成媒体");
-        fail = false;
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(createInputs).toHaveLength(2);
-        expect(createInputs[1]).toEqual(createInputs[0]);
-        expect(continued).toHaveBeenCalledTimes(1);
-        expect(sent).toHaveLength(0);
-        expect(canceled).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-for (const operation of ["message", "interjection"] as const) {
-    test(`${operation} 接受回执只清理发送时媒体快照，不触发等待期间的新确认回调`, async () => {
-        const existing = guideChat("guide-local", `proposal-${operation}-parent`);
-        if (operation === "interjection") existing.run!.status = "running";
-        const previous = mock();
-        const replacement = mock();
-        const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: previous });
-        let release!: () => void;
-        try {
-            if (operation === "message")
-                sendOverride = () =>
-                    new Promise((resolve) => {
-                        release = () => resolve({ run: { ...existing.run!, id: "proposal-message-child", parentId: existing.run!.id } });
-                    });
-            else
-                interjectionOverride = () =>
-                    new Promise((resolve) => {
-                        release = () => resolve({ accepted: true, pending: 1 });
-                    });
-            await act(async () => composer.onPromptChange("先换个方向讨论"));
-            await act(async () => {
-                composer.onSubmit({ alternate: operation === "interjection" });
-                await settle();
-            });
-            expect(release).toBeDefined();
-            expect(previous).not.toHaveBeenCalled();
-            await act(async () => {
-                const context = useGlobalAgentStore.getState().drama!;
-                useGlobalAgentStore.setState({ drama: { ...context, proposalChoices: { proposals: [], render: () => null, onContinueConversation: replacement } } });
-                await settle();
-                release();
-                await settle();
-            });
-            expect(previous).toHaveBeenCalledTimes(1);
-            expect(replacement).not.toHaveBeenCalled();
-            expect(operation === "message" ? sent : interjected).toEqual([existing.run!.id]);
-            expect(canceled).toHaveLength(0);
-        } finally {
-            release?.();
-            await mounted.close();
-        }
-    });
-}
-
-test("短剧插话失败保留旧媒体确认与原队列，接受重试后才通知退出", async () => {
-    const existing = guideChat("guide-local", "proposal-interjection-retry");
-    existing.run!.status = "running";
-    const continued = mock();
-    const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
-    try {
-        interjectionFailure = new ApiError("插话请求未被接收", { status: 400 });
-        await act(async () => composer.onPromptChange("我想先调整剧情"));
-        await act(async () => {
-            composer.onSubmit({ alternate: true });
-            await settle();
-        });
-        expect(interjected).toEqual([existing.run!.id]);
-        expect(continued).not.toHaveBeenCalled();
-        expect(outboxUI.outbox.items).toHaveLength(1);
-        expect(outboxUI.outbox.items[0].text).toBe("我想先调整剧情");
-        interjectionFailure = undefined;
-        await act(async () => {
-            const item = outboxUI.outbox.items[0];
-            outboxUI.onPrimary(item, outboxUI.primaryAction(item));
-            await settle();
-        });
-        expect(interjected).toHaveLength(2);
-        expect(continued).toHaveBeenCalledTimes(1);
-        expect(mounted.host.querySelector('[data-testid="outbox"]')).toBeNull();
-        expect(sent).toHaveLength(0);
-        expect(canceled).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("切换账号、会话或作品后的迟到发送回执不通知旧媒体确认退出", async () => {
-    for (const change of ["account", "conversation", "project"] as const) {
-        const existing = guideChat("guide-local", `proposal-late-${change}`);
-        const continued = mock();
-        const mounted = await mount(existing, [existing], null, "guide-project", { onContinueConversation: continued });
-        let release!: () => void;
-        try {
-            sendOverride = () =>
-                new Promise((resolve) => {
-                    release = () => resolve({ run: { ...existing.run!, id: "proposal-late-child", parentId: existing.run!.id } });
-                });
-            await act(async () => composer.onPromptChange("尚在发送中的新方向"));
-            await act(async () => {
-                composer.onSubmit();
-                await settle();
-            });
-            expect(release).toBeDefined();
-            await act(async () => {
-                if (change === "account") {
-                    setActiveUserScope("other-user");
-                    useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
-                } else if (change === "conversation") {
-                    const next = guideChat("guide-next", "proposal-next-session");
-                    next.run!.conversationId = "next-guide-session";
-                    next.serverConversationId = "next-guide-session";
-                    loadOverride = async () => next;
-                    const context = useGlobalAgentStore.getState().drama!;
-                    useGlobalAgentStore.setState({ drama: { ...context, guideConversationId: next.serverConversationId } });
-                } else useGlobalAgentStore.setState({ drama: { projectId: "next-project", host: mounted.host } });
-                await settle();
-                release();
-                await settle();
-            });
-            expect(continued).not.toHaveBeenCalled();
-            expect(canceled).toHaveLength(0);
-        } finally {
-            release?.();
-            await mounted.close();
-        }
-    }
-});
-
-test("发送检查期间选择新的剧情段，旧消息发送后保留新引用", async () => {
-    const existing = guideChat("guide-local", "studio-reference-race");
-    const mounted = await mount(existing, [existing], null, "guide-project");
-    try {
-        let release!: (value: unknown) => void;
-        capabilitiesOverride = () =>
-            new Promise((resolve) => {
-                release = resolve;
-            });
-        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-reference-next", parentId: existing.run!.id } });
-        await act(async () => {
-            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-first", segmentIndex: 0, title: "开场", revision: 3 });
-            composer.onPromptChange("修改第一段");
-        });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        await act(async () => {
-            useGlobalAgentStore.getState().setDramaReference({ projectId: "guide-project", episodeId: "episode-real", episodeNumber: 1, segmentId: "segment-next", segmentIndex: 1, title: "后续", revision: 2 });
-            release({ permissionModes: ["read_only"], skills: true });
-            await settle();
-        });
-        expect(sendInputs[0]?.prompt).toContain('"segmentId":"segment-first"');
-        expect(useGlobalAgentStore.getState().dramaReference?.segmentId).toBe("segment-next");
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("制作台悬浮入口接续短剧原会话，可收起重开且保持只读文字边界", async () => {
-    const existing = guideChat("guide-local", "studio-parent");
-    const mounted = await mount(existing, [existing], null, "guide-project", { floatingDrama: true, initiallyOpen: false });
-    try {
-        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
-        expect(createInputs).toHaveLength(0);
-        const launcher = mounted.host.querySelector<HTMLButtonElement>('[aria-label="打开 Agent"]')!;
-        expect(launcher).toBeTruthy();
-        await act(async () => {
-            launcher.click();
-            await settle();
-        });
-        expect(mounted.host.querySelector(".canvas-agent-panel")?.className).toContain("fixed");
-        expect(mounted.host.textContent).toContain("短剧创作助手");
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-studio-parent")).toBe(true);
-        expect(controls.guideMode).toBe(true);
-        expect(controls.showReadOnlyPermission).toBe(true);
-        expect(controls.onModelChange).toBeFunction();
-        expect(controls.onReasoningModeChange).toBeFunction();
-        await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="收起短剧 Agent"]')!.click());
-        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
-        await act(async () => {
-            mounted.host.querySelector<HTMLButtonElement>('[aria-label="打开 Agent"]')!.click();
-            await settle();
-        });
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-studio-parent")).toBe(true);
-        sendOverride = async () => ({ run: { ...existing.run!, id: "studio-child", parentId: existing.run!.id } });
-        await act(async () => composer.onPromptChange("接着核对第九集的人物与分镜"));
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sent).toEqual(["studio-parent"]);
-        expect(sendInputs[0]).toMatchObject({ prompt: "接着核对第九集的人物与分镜", dramaProjectId: "guide-project", permissionMode: "read_only", budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 } });
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-const guideStartup: AgentPrefillRequest = { id: 1, text: "请读取当前短剧，按预设流程起草正文并推荐配置，等待我确认后再提取资产。", displayText: "请根据创作想法开始引导", autoSubmit: true };
-function emptyGuide(projectId = "guide-project"): CloudAgentConversation {
-    return { ...chat(`drama-guide-${projectId}`, null), localNewCanvasId: `drama:${projectId}`, permissionMode: "read_only", model: "local-test::local-agent-test" };
-}
-function queuedGuideMessage(): AgentOutbox {
-    return {
-        version: 1,
-        items: [
-            {
-                id: "queued-guide-request",
-                text: "之前排队的正文",
-                canvasId: "",
-                focusNodeIds: [],
-                focusNodeOmittedCount: 0,
-                status: "queued",
-                createdAt: "2026-10-23T01:00:00Z",
-                settings: { model: "local-test::local-agent-test", permissionMode: "read_only", reasoningMode: "off", skillIds: [], contextScope: ["drama"], maxCredits: "200", maxGenerationTasks: "0", maxVideoSeconds: "0" },
-            },
-        ],
-    };
-}
-
-test("空白短剧首次进入无需手点推荐，StrictMode及上下文重注册不重复启动", async () => {
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, strictMode: true });
-    try {
-        expect(createInputs).toHaveLength(1);
-        expect(createInputs[0]).toMatchObject({
-            prompt: guideStartup.text,
-            dramaProjectId: "guide-project",
-            permissionMode: "read_only",
-            contextScope: ["drama"],
-            model: "local-agent-test",
-            channelId: "local-test",
-            budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 },
-        });
-        expect(conversationUI.messages.some((item: any) => item.role === "user" && item.text === guideStartup.displayText)).toBe(true);
-        await persist();
-        expect(local.find((item) => item.id === activeId)?.localDramaStartupRequested).toBe(true);
-        await act(async () => {
-            const context = useGlobalAgentStore.getState().drama!;
-            useGlobalAgentStore.setState({ drama: { ...context, startupRequest: { ...guideStartup } } });
-            await settle();
-        });
-        await focus();
-        expect(createInputs).toHaveLength(1);
-        expect(sent).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("已有完成或运行中的引导只恢复对话，不自动发起新轮", async () => {
-    for (const status of ["completed", "running"] as const) {
-        const existing = guideChat("guide-local", `existing-${status}`);
-        existing.run!.status = status;
-        const mounted = await mount(existing, [existing], null, "guide-project", { startupRequest: guideStartup });
-        try {
-            expect(conversationUI.messages.some((item: any) => item.text === `结果-existing-${status}`)).toBe(true);
-            expect(createInputs).toHaveLength(0);
-            expect(sent).toHaveLength(0);
-        } finally {
-            await mounted.close();
-        }
-    }
-});
-
-test("首次准备时尊重已保存草稿和结果未知的原请求，不追加自动消息", async () => {
-    const original: CloudAgentPendingSubmission = {
-        key: "startup-pending-original",
-        fingerprint: "startup-frozen",
-        messageId: "user-startup-pending-original",
-        request: { prompt: "结果未知的首次请求", canvasId: "", dramaProjectId: "guide-project", permissionMode: "read_only", idempotencyKey: "startup-pending-original" },
-    };
-    for (const [initial, waiting] of [
-        [{ ...emptyGuide(), draft: "保留用户正在写的内容" }, null],
-        [emptyGuide(), original],
-    ] as const) {
-        const mounted = await mount(initial, [], waiting, "guide-project", { startupRequest: guideStartup });
-        try {
-            expect(composer.prompt).toBe(waiting ? original.request!.prompt : initial.draft);
-            expect(createInputs).toHaveLength(0);
-            expect(sent).toHaveLength(0);
-            expect(pending).toBe(waiting);
-            if (!waiting) {
-                await act(async () => {
-                    composer.onPromptChange("");
-                    await settle();
-                });
-                expect(createInputs).toHaveLength(0);
-            }
-        } finally {
-            await mounted.close();
-        }
-    }
-});
-
-test("等队列恢复完成再判定首次启动，已有排队消息不被自动推荐挤入", async () => {
-    let resolveOutbox!: (value: AgentOutbox | null) => void;
-    const restored = new Promise<AgentOutbox | null>((resolve) => (resolveOutbox = resolve));
-    const initial = emptyGuide();
-    const mounted = await mount(initial, [], null, "guide-project", { startupRequest: guideStartup, outboxLoad: (id) => (id === initial.id ? restored : Promise.resolve(null)) });
-    try {
-        expect(createInputs).toHaveLength(0);
-        await act(async () => {
-            resolveOutbox(queuedGuideMessage());
-            await settle();
-        });
-        expect(outboxUI.outbox.items.map((item: any) => item.text)).toEqual(["之前排队的正文"]);
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-        await act(async () => {
-            outboxUI.onRemove(outboxUI.outbox.items[0]);
-            await settle();
-        });
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("恢复队列失败时不能把未知内容当作空白并自动发起推荐", async () => {
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
-        startupRequest: guideStartup,
-        outboxLoad: async () => {
-            throw new Error("本机队列读取失败");
-        },
-    });
-    try {
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("首次启动标记写入期间离开配置阶段，迟到完成不能再启动旧流程", async () => {
-    let finishSave!: () => void;
-    const saving = new Promise<void>((resolve) => (finishSave = resolve));
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, startupSave: () => saving });
-    try {
-        expect(createInputs).toHaveLength(0);
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, startupRequest: null } });
-            finishSave();
-            await settle();
-        });
-        expect(createInputs).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-    } finally {
-        finishSave();
-        await mounted.close();
-    }
-});
-
-test("首次自动消息被移除后，阶段变化及重挂载仍不重新自动开始", async () => {
-    let saved!: CloudAgentConversation;
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, offline: true });
-    try {
-        expect(outboxUI.outbox.items).toHaveLength(1);
-        expect(outboxUI.outbox.items[0].text).toBe(guideStartup.text);
-        await act(async () => {
-            outboxUI.onRemove(outboxUI.outbox.items[0]);
-            await settle();
-        });
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, startupRequest: { ...guideStartup, text: "请检查下一阶段的角色与场景" } } });
-            await settle();
-        });
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        await persist();
-        saved = structuredClone(local.find((item) => item.id === activeId)!);
-        expect(saved.localDramaStartupRequested).toBe(true);
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-    const reloaded = await mount(saved, [], null, "guide-project", { startupRequest: guideStartup });
-    try {
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-    } finally {
-        await reloaded.close();
-    }
-});
-
-test("取消首次自动消息后新建全局对话，空引导记录在刷新后仍保留启动标记", async () => {
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", { startupRequest: guideStartup, offline: true });
-    let saved!: CloudAgentConversation[];
-    let savedActive!: CloudAgentConversation;
-    try {
-        expect(outboxUI.outbox.items).toHaveLength(1);
-        await act(async () => {
-            outboxUI.onRemove(outboxUI.outbox.items[0]);
-            await settle();
-            useGlobalAgentStore.setState({ drama: null });
-            await settle();
-        });
-        await act(async () => {
-            header.onNew();
-            await settle();
-        });
-        await persist();
-        saved = structuredClone(local);
-        savedActive = saved.find((item) => item.id === activeId)!;
-        expect(saved.find((item) => item.id === emptyGuide().id)).toMatchObject({ localDramaStartupRequested: true, messages: [], run: null });
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-    const reloaded = await mount(savedActive, [], null, "guide-project", { startupRequest: guideStartup, localConversations: saved });
-    try {
-        await focus();
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-    } finally {
-        await reloaded.close();
-    }
-});
-
-function startupConflict(projectId = "guide-project") {
-    return new ApiError("幂等键已用于不同请求", {
-        status: 409,
-        reason: "agent_idempotency_conflict",
-        details: { runId: "other-device-startup", conversationId: "shared-session", dramaProjectId: projectId, canvasId: "" },
-    });
-}
-
-test("不同模型争用首次启动身份时恢复已存在的会话，不重排首轮且允许用户继续", async () => {
-    const existing = guideChat("other-device", "other-device-startup");
-    const bound: string[] = [];
-    let resolveLoad!: (value: CloudAgentConversation) => void;
-    const mounted = await mount(emptyGuide(), [existing], null, "guide-project", {
-        startupRequest: guideStartup,
-        createRun: async () => {
-            throw startupConflict();
-        },
-        loadConversation: () => new Promise((resolve) => (resolveLoad = resolve)),
-        onConversationBound: (id) => bound.push(id),
-    });
-    try {
-        expect(createInputs).toHaveLength(1);
-        expect(createInputs[0].idempotencyKey).toBe("drama-start-guide-project");
-        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
-        expect(pending).toBeNull();
-        await act(async () => {
-            composer.onPromptChange("加载期间继续写的新草稿");
-            resolveLoad(existing);
-            await settle();
-        });
-        expect(composer.prompt).toBe("加载期间继续写的新草稿");
-        expect(bound).toContain("shared-session");
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
-        expect(conversationUI.messages.some((item: any) => item.role === "user" && item.text === guideStartup.displayText)).toBe(false);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        await focus();
-        expect(createInputs).toHaveLength(1);
-        await act(async () => composer.onPromptChange("把视频语言改为中文"));
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sent).toEqual(["other-device-startup"]);
-        expect(sendInputs[0]).toMatchObject({ prompt: "把视频语言改为中文", dramaProjectId: "guide-project", permissionMode: "read_only" });
-        expect(createInputs).toHaveLength(1);
-    } finally {
-        resolveLoad?.(existing);
-        await mounted.close();
-    }
-});
-
-test("首轮冲突后的会话读取失败可重新同步，刷新仍恢复原会话且不重建任务", async () => {
-    const existing = guideChat("other-device", "other-device-startup");
-    let saved!: CloudAgentConversation;
-    const mounted = await mount(emptyGuide(), [existing], null, "guide-project", {
-        startupRequest: guideStartup,
-        createRun: async () => {
-            throw startupConflict();
-        },
-        loadConversation: async () => {
-            throw new Error("暂时不能读取已有对话");
-        },
-    });
-    try {
-        expect(createInputs).toHaveLength(1);
-        expect(conversationLoads).toHaveLength(1);
-        expect(pending).toBeNull();
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        await persist();
-        saved = structuredClone(local.find((item) => item.id === activeId)!);
-        expect(saved).toMatchObject({ serverConversationId: "shared-session", localDramaStartupRequested: true });
-        const retry = Array.from(mounted.host.querySelectorAll("button")).find((button) => button.textContent?.includes("重新同步"));
-        expect(retry).toBeDefined();
-        loadOverride = async () => existing;
-        await act(async () => {
-            retry!.click();
-            await settle();
-        });
-        expect(conversationLoads).toHaveLength(2);
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
-        expect(createInputs).toHaveLength(1);
-    } finally {
-        await mounted.close();
-    }
-    const reloaded = await mount(saved, [existing], null, "guide-project", { startupRequest: guideStartup, guideConversationId: null });
-    try {
-        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
-        expect(createInputs).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-        expect(pending).toBeNull();
-    } finally {
-        await reloaded.close();
-    }
-});
-
-test("首轮冲突恢复期间切换项目或账号，迟到的原会话不会覆盖新上下文", async () => {
-    for (const switchTarget of ["project", "account"] as const) {
-        const existing = guideChat("other-device", "other-device-startup");
-        const next = guideChat("next-guide", "next-guide-run", "next-project");
-        next.serverConversationId = "next-session";
-        next.run!.conversationId = "next-session";
-        let resolveLoad!: (value: CloudAgentConversation) => void;
-        const bound: string[] = [];
-        const mounted = await mount(emptyGuide(), [existing, next], null, "guide-project", {
-            startupRequest: guideStartup,
-            createRun: async () => {
-                throw startupConflict();
-            },
-            loadConversation: (id) => (id === "next-session" ? Promise.resolve(next) : new Promise((resolve) => (resolveLoad = resolve))),
-            onConversationBound: (id) => bound.push(id),
-        });
-        try {
-            expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
-            expect(pending).toBeNull();
-            await act(async () => {
-                if (switchTarget === "project") {
-                    useGlobalAgentStore.setState({ drama: { projectId: "next-project", guideConversationId: "next-session", host: mounted.host } });
-                } else {
-                    setActiveUserScope("other-user");
-                    useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
-                }
-                await settle();
-            });
-            await act(async () => {
-                composer.onPromptChange("新上下文中的草稿");
-                resolveLoad(existing);
-                await settle();
-            });
-            expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(false);
-            if (switchTarget === "project") expect(conversationUI.messages.some((item: any) => item.text === "结果-next-guide-run")).toBe(true);
-            expect(composer.prompt).toBe("新上下文中的草稿");
-            expect(bound).not.toContain("shared-session");
-            expect(createInputs).toHaveLength(1);
-            expect(sent).toHaveLength(0);
-        } finally {
-            resolveLoad?.(existing);
-            await mounted.close();
-        }
-    }
-});
-
-test("首轮冲突返回不匹配的恢复信息或会话时拒绝绑定，不重新发起任务", async () => {
-    for (const mismatch of ["details-project", "loaded-project", "loaded-empty"] as const) {
-        const existing = mismatch === "loaded-empty" ? { ...emptyGuide(), serverConversationId: "shared-session" } : guideChat("wrong-project", "other-device-startup", "different-project");
-        const bound: string[] = [];
-        const mounted = await mount(emptyGuide(), [], null, "guide-project", {
-            startupRequest: guideStartup,
-            createRun: async () => {
-                throw startupConflict(mismatch === "details-project" ? "different-project" : "guide-project");
-            },
-            loadConversation: async () => existing,
-            onConversationBound: (id) => bound.push(id),
-        });
-        try {
-            expect(createInputs).toHaveLength(1);
-            expect(conversationLoads).toHaveLength(mismatch === "details-project" ? 0 : 1);
-            expect(bound).toHaveLength(0);
-            expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(false);
-            expect(sent).toHaveLength(0);
-            if (mismatch !== "details-project") expect(pending).toBeNull();
-            await focus();
-            expect(createInputs).toHaveLength(1);
-        } finally {
-            await mounted.close();
-        }
-    }
-});
-
-test("缺少明确原因的首次409保留未知请求，重试仍使用原请求与幂等键", async () => {
-    const mounted = await mount(emptyGuide(), [], null, "guide-project", {
-        startupRequest: guideStartup,
-        createRun: async () => {
-            throw new ApiError("提交结果暂时不能确认", { status: 409 });
-        },
-    });
-    try {
-        expect(createInputs).toHaveLength(1);
-        expect(pending?.key).toBe("drama-start-guide-project");
-        const original = structuredClone(pending!);
-        await focus();
-        expect(createInputs).toHaveLength(1);
-        expect(conversationLoads).toHaveLength(0);
-        await act(async () => composer.onPromptChange(original.displayText || original.request!.prompt));
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(createInputs).toHaveLength(2);
-        expect(createInputs[1]).toEqual(original.request);
-        expect(pending?.key).toBe(original.key);
-        expect(sent).toHaveLength(0);
-        expect(conversationLoads).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("刷新后的未知首轮原样重试被明确拒绝时，也能解除待确认并恢复已有会话", async () => {
-    const existing = guideChat("other-device", "other-device-startup");
-    const original: CloudAgentPendingSubmission = {
-        key: "drama-start-guide-project",
-        fingerprint: "startup-frozen",
-        messageId: "user-drama-start-guide-project",
-        displayText: guideStartup.displayText,
-        request: { prompt: guideStartup.text, idempotencyKey: "drama-start-guide-project", dramaProjectId: "guide-project", permissionMode: "read_only" },
-    };
-    const mounted = await mount({ ...emptyGuide(), localDramaStartupRequested: true }, [existing], original, "guide-project", {
-        startupRequest: guideStartup,
-        createRun: async () => {
-            throw startupConflict();
-        },
-    });
-    try {
-        expect(createInputs).toHaveLength(0);
-        expect(pending?.key).toBe(original.key);
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(createInputs).toHaveLength(1);
-        expect(createInputs[0]).toEqual(original.request);
-        expect(pending).toBeNull();
-        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-other-device-startup")).toBe(true);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        expect(sent).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("新作品可首次自动开始，返回旧作品不再自动推荐", async () => {
-    const mounted = await mount(emptyGuide("first-guide"), [], null, "first-guide", { startupRequest: guideStartup });
-    try {
-        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide"]);
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { projectId: "second-guide", host: mounted.host, startupRequest: { ...guideStartup } } });
-            await settle();
-        });
-        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide", "second-guide"]);
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { projectId: "first-guide", host: mounted.host, startupRequest: { ...guideStartup } } });
-            await settle();
-        });
-        expect(createInputs.map((input) => input.dramaProjectId)).toEqual(["first-guide", "second-guide"]);
-        expect(sent).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("已启动引导仍可显式请求再次推荐，自动启动标记不吞掉手动预填", async () => {
-    const existing = guideChat("guide-local", "manual-parent");
-    const mounted = await mount(existing, [existing], null, "guide-project", { startupRequest: guideStartup });
-    try {
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, prefillRequest: { id: 2, text: "请根据新要求重新推荐方案", autoSubmit: true } } });
-            await settle();
-        });
-        expect(sent).toEqual(["manual-parent"]);
-        expect(sendInputs[0]).toMatchObject({ prompt: "请根据新要求重新推荐方案", dramaProjectId: "guide-project", permissionMode: "read_only" });
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-const savedGuideFeedback: AgentPrefillRequest = { id: 20, text: "配置已保存，请检查剩余事项并继续引导。", displayText: "配置已保存，继续引导", autoSubmit: true, requireIdle: true };
-
-test("保存反馈在空闲时自动续接一次，StrictMode和上下文重注册不重复", async () => {
-    const existing = guideChat("guide-local", "feedback-parent");
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback, strictMode: true });
-    try {
-        expect(sent).toEqual(["feedback-parent"]);
-        expect(sendInputs[0]).toMatchObject({ prompt: savedGuideFeedback.text, dramaProjectId: "guide-project", permissionMode: "read_only" });
-        expect(composer.prompt).toBe("");
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { ...useGlobalAgentStore.getState().drama!, prefillRequest: { ...savedGuideFeedback } } });
-            await settle();
-        });
-        await focus();
-        expect(sent).toHaveLength(1);
-        expect(createInputs).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("保存反馈保留未发送草稿，清空草稿后再自动续接", async () => {
-    const existing = { ...guideChat("guide-local", "draft-feedback-parent"), draft: "我正在补充的要求" };
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
-    try {
-        expect(sent).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        expect(composer.prompt).toBe(existing.draft);
-        await act(async () => {
-            composer.onPromptChange("");
-            await settle();
-        });
-        expect(sent).toEqual(["draft-feedback-parent"]);
-        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("保存反馈不能回答已有问题，用户明确回答后才继续", async () => {
-    const existing = guideChat("guide-local", "question-feedback-parent");
-    existing.messages.push({ id: "pending-question", role: "assistant", text: "", question: { questionId: "direction", question: "选择创作方向", options: [{ label: "悬疑" }, { label: "喜剧" }] } });
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
-    try {
-        expect(sent).toHaveLength(0);
-        expect(composer.prompt).toBe("");
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        expect(questionUI?.inlineFreeform).toBe(true);
-        sendOverride = async () => ({ run: { ...makeRun("submitted-child"), canvasId: undefined, dramaProjectId: "guide-project", permissionMode: "read_only" } });
-        await act(async () => {
-            questionUI!.onAnswer("悬疑");
-            await settle();
-        });
-        expect(sendInputs.map((input) => input.prompt)).toEqual(["悬疑", savedGuideFeedback.text]);
-        expect(sent).toEqual(["question-feedback-parent", "submitted-child"]);
-        expect(composer.prompt).toBe("");
-    } finally {
-        await mounted.close();
-    }
-});
-
 test.each([400, 422])("ask_user输入回答被HTTP%s明确拒绝后，问题重挂仍保留同一草稿", async (status) => {
-    const existing = guideChat("guide-local", `question-rejected-${status}`);
+    const existing = chat("canvas-local", makeRun(`question-rejected-${status}`));
     const question = { questionId: "custom-direction", question: "选择创作方向", options: [{ label: "悬疑" }, { label: "其他（请直接描述）" }] };
     existing.messages.push({ id: "pending-question", role: "assistant", text: "", question });
-    const mounted = await mount(existing, [existing], null, "guide-project");
+    const mounted = await mount(existing, [existing]);
     let rejectSend: ((reason: Error) => void) | undefined;
     try {
         const draftKey = `2:${question.options[1].label}`;
@@ -1755,201 +761,6 @@ test.each([400, 422])("ask_user输入回答被HTTP%s明确拒绝后，问题重�
         expect(createInputs).toHaveLength(0);
     } finally {
         rejectSend?.(new ApiError("测试清理", { status }));
-        await mounted.close();
-    }
-});
-
-test("保存反馈等待现有轮次结束，不提前进入发送队列", async () => {
-    const existing = guideChat("guide-local", "running-feedback-parent");
-    existing.run!.status = "running";
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
-    try {
-        expect(sent).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        await act(async () => {
-            subscriptions.at(-1)!.event({ eventId: "feedback-completed", runId: existing.run!.id, seq: 5, type: "run_status", payload: { status: "completed", revision: 2 }, createdAt: existing.updatedAt });
-            await settle();
-        });
-        expect(sent).toEqual(["running-feedback-parent"]);
-        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("保存反馈不能越过结果未知请求，即使手动清空输入框也不发送", async () => {
-    const existing = guideChat("guide-local", "pending-feedback-parent");
-    const original: CloudAgentPendingSubmission = { key: "feedback-original", fingerprint: "frozen", parentRunId: existing.run!.id, request: { prompt: "原结果未知请求", dramaProjectId: "guide-project", idempotencyKey: "feedback-original" } };
-    const mounted = await mount(existing, [existing], original, "guide-project", { prefillRequest: savedGuideFeedback });
-    try {
-        await act(async () => {
-            composer.onPromptChange("");
-            await settle();
-        });
-        expect(pending).toBe(original);
-        expect(sent).toHaveLength(0);
-        expect(outboxes.get(activeId)?.items || []).toHaveLength(0);
-        expect(composer.prompt).toBe("");
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("保存反馈等待队列恢复，已有满队列时不回填输入框，移空后才发送", async () => {
-    const existing = guideChat("guide-local", "outbox-feedback-parent");
-    let resolveOutbox!: (value: AgentOutbox | null) => void;
-    const restored = new Promise<AgentOutbox | null>((resolve) => (resolveOutbox = resolve));
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback, outboxLoad: (id) => (id === existing.id ? restored : Promise.resolve(null)) });
-    try {
-        expect(sent).toHaveLength(0);
-        const item = queuedGuideMessage().items[0];
-        await act(async () => {
-            resolveOutbox({ version: 1, items: Array.from({ length: 5 }, (_, index) => ({ ...item, id: `existing-${index}` })) });
-            await settle();
-        });
-        expect(sent).toHaveLength(0);
-        expect(outboxUI.outbox.items).toHaveLength(5);
-        expect(composer.prompt).toBe("");
-        await act(async () => {
-            for (const entry of outboxUI.outbox.items) outboxUI.onRemove(entry);
-            await settle();
-        });
-        expect(sent).toEqual(["outbox-feedback-parent"]);
-        expect(sendInputs[0].prompt).toBe(savedGuideFeedback.text);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("等待中的保存反馈不泄漏到新项目或新账号", async () => {
-    const existing = { ...guideChat("guide-local", "old-feedback-parent"), draft: "旧项目草稿" };
-    const mounted = await mount(existing, [existing], null, "guide-project", { prefillRequest: savedGuideFeedback });
-    try {
-        const next = emptyGuide("next-project");
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { projectId: "next-project", host: mounted.host } });
-            await settle();
-        });
-        expect(sent).toHaveLength(0);
-        expect(createInputs).toHaveLength(0);
-        expect(composer.prompt).not.toContain(savedGuideFeedback.text);
-        await act(async () => {
-            setActiveUserScope("other-user");
-            useUserStore.setState({ user: { id: "other-user", username: "other", displayName: "other", role: "user", status: "active" } });
-            await settle();
-        });
-        expect(sent).toHaveLength(0);
-        expect(createInputs).toHaveLength(0);
-        expect(outboxes.get(next.id)?.items || []).toHaveLength(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("引导会话冲突重新加载最新轮次，保留本机身份与加载期间的新草稿，明确发送才续接", async () => {
-    const first = guideChat("guide-local", "guide-first");
-    const mounted = await mount(first, [first], null, "guide-project");
-    try {
-        expect(conversationLoads).toEqual([{ id: "shared-session", scope: "sync-user" }]);
-        await act(async () => composer.onPromptChange("保留这条引导草稿"));
-        const latest = guideChat("guide-server", "guide-other-device-child");
-        latest.run!.parentId = "guide-first";
-        let resolveLoad!: (conversation: CloudAgentConversation) => void;
-        loadOverride = () => new Promise((resolve) => (resolveLoad = resolve));
-        sendFailure = new ApiError("会话已在另一端推进", { status: 409, reason: "agent_conversation_stale_parent" });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sent).toEqual(["guide-first"]);
-        expect(conversationLoads).toHaveLength(2);
-        expect(pending).toBeNull();
-        expect(composer.prompt).toBe("保留这条引导草稿");
-        await act(async () => {
-            composer.onPromptChange("加载期间继续编辑的草稿");
-            resolveLoad(latest);
-            await settle();
-        });
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-guide-other-device-child")).toBe(true);
-        expect(composer.prompt).toBe("加载期间继续编辑的草稿");
-        expect(sent).toHaveLength(1);
-        await persist();
-        expect(activeId).toBe("guide-local");
-        sendFailure = undefined;
-        sendOverride = async () => ({ run: { ...latest.run!, id: "guide-next", parentId: latest.run!.id } });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sent).toEqual(["guide-first", "guide-other-device-child"]);
-        expect(sendInputs[1]).toMatchObject({ prompt: "加载期间继续编辑的草稿", dramaProjectId: "guide-project", permissionMode: "read_only", budget: { maxGenerationTasks: 0, maxVideoSeconds: 0 } });
-        expect(sendInputs[1].idempotencyKey).not.toBe(sendInputs[0].idempotencyKey);
-        expect(generated).toBe(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("引导未知提交原样重试后收到明确冲突，释放原身份并同步，保留正文等待确认", async () => {
-    const first = guideChat("guide-local", "guide-pending-parent");
-    const original: CloudAgentPendingSubmission = {
-        key: "guide-original-key",
-        fingerprint: "frozen",
-        parentRunId: first.run!.id,
-        messageId: "user-guide-original-key",
-        request: { prompt: "引导待确认请求", idempotencyKey: "guide-original-key", dramaProjectId: "guide-project", permissionMode: "read_only" },
-    };
-    const mounted = await mount(first, [first], original, "guide-project");
-    try {
-        expect(composer.prompt).toBe(original.request!.prompt);
-        expect(pending?.key).toBe(original.key);
-        remote = [guideChat("guide-server", "guide-pending-new-parent")];
-        sendFailure = new ApiError("原请求未受理，会话已经更新", { status: 409, reason: "agent_conversation_stale_parent" });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(sendInputs).toHaveLength(1);
-        expect(sendInputs[0]).toEqual(original.request);
-        expect(pending).toBeNull();
-        expect(composer.prompt).toBe(original.request!.prompt);
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-guide-pending-new-parent")).toBe(true);
-        expect(generated).toBe(0);
-    } finally {
-        await mounted.close();
-    }
-});
-
-test("引导冲突恢复时切换项目，迟到的旧会话不能写入新项目", async () => {
-    const first = guideChat("guide-local", "guide-first");
-    const mounted = await mount(first, [first], null, "guide-project");
-    try {
-        let resolveLoad!: (conversation: CloudAgentConversation) => void;
-        const next = guideChat("next-guide", "next-guide-run", "next-project");
-        next.serverConversationId = "next-session";
-        next.run!.conversationId = "next-session";
-        loadOverride = (id) => (id === "next-session" ? Promise.resolve(next) : new Promise((resolve) => (resolveLoad = resolve)));
-        await act(async () => composer.onPromptChange("旧项目的草稿"));
-        sendFailure = new ApiError("会话已经更新", { status: 409, reason: "agent_conversation_stale_parent" });
-        await act(async () => {
-            composer.onSubmit();
-            await settle();
-        });
-        expect(conversationLoads).toHaveLength(2);
-        await act(async () => {
-            useGlobalAgentStore.setState({ drama: { projectId: "next-project", guideConversationId: "next-session", host: mounted.host } });
-            await settle();
-        });
-        await act(async () => {
-            composer.onPromptChange("新项目草稿");
-            resolveLoad(guideChat("old-cloud", "late-old-guide"));
-            await settle();
-        });
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-next-guide-run")).toBe(true);
-        expect(conversationUI.messages.some((item: any) => item.text === "结果-late-old-guide")).toBe(false);
-        expect(composer.prompt).toBe("新项目草稿");
-        expect(sent).toEqual(["guide-first"]);
-    } finally {
         await mounted.close();
     }
 });

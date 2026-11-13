@@ -304,47 +304,29 @@ func TestDramaGuideSingleImageIsOptionalAndDoesNotBlockConfirmation(t *testing.T
 	confirmGuide(t, svc, story)
 }
 
-func TestDramaGuideConversationBindingIsProjectAndUserScoped(t *testing.T) {
+func TestDramaGuideConversationBindingIsRetiredWithoutChangingWorkflow(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc)
-	for _, row := range []model.CloudAgentExecution{
-		{ID: "valid-run", ConversationID: "valid-conv", UserID: "usr-drama", StateJSON: `{"request":{"dramaProjectId":"` + draft.Project.ID + `"}}`},
-		{ID: "other-project", ConversationID: "other-project", UserID: "usr-drama", StateJSON: `{"request":{"dramaProjectId":"another"}}`},
-		{ID: "other-user", ConversationID: "other-user", UserID: "another-user", StateJSON: `{"request":{"dramaProjectId":"` + draft.Project.ID + `"}}`},
-		{ID: "other-conv", ConversationID: "other-conv", UserID: "usr-drama", StateJSON: `{"request":{"dramaProjectId":"` + draft.Project.ID + `"}}`},
-	} {
-		if err := fake.db.Create(&row).Error; err != nil {
-			t.Fatal(err)
-		}
+	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", draft.Project.ID).Update("guide_conversation_id", "historical-conversation").Error; err != nil {
+		t.Fatal(err)
 	}
-	for _, invalid := range []string{"other-project", "other-user", "missing"} {
-		if _, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{GuideConversationID: &invalid}); err == nil {
-			t.Fatalf("must reject conversation %q", invalid)
-		}
-	}
-	valid := "valid-conv"
-	bound, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{GuideConversationID: &valid})
-	if err != nil || bound.Production.GuideConversationID != valid {
-		t.Fatalf("bind scoped conversation: %+v %v", bound.Production, err)
-	}
-	if bound.Production.Revision != draft.Production.Revision {
-		t.Fatal("conversation binding must not invalidate a proposal from the first run")
-	}
-	if _, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{GuideConversationID: &valid, ExpectedRevision: &draft.Production.Revision}); err != nil {
-		t.Fatalf("rebinding the same conversation must be idempotent: %v", err)
-	}
-	stale := draft.Production.Revision - 1
-	_, err = svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{GuideConversationID: &valid, ExpectedRevision: &stale})
-	requireGuideConflict(t, err)
 	settings := draft.Production.Settings
 	settings.Language = "English"
-	changed, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{Settings: &settings, ExpectedRevision: &draft.Production.Revision})
-	if err != nil || changed.Production.Revision != draft.Production.Revision+1 || changed.Production.GuideConversationID != valid {
-		t.Fatalf("the first run's content revision must remain usable, and content saves must advance it: %+v %v", changed.Production, err)
+	budget := int64(100)
+	for _, id := range []string{"new-conversation", "historical-conversation", ""} {
+		_, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{
+			GuideConversationID: &id, Settings: &settings, BudgetMicrocredits: &budget, ExpectedRevision: &draft.Production.Revision,
+		})
+		requireDramaAgentRetired(t, err)
 	}
-	other := "other-conv"
-	_, err = svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{GuideConversationID: &other})
-	requireGuideConflict(t, err)
+	current, err := svc.DramaSummary("usr-drama", draft.Project.ID)
+	if err != nil || current.Production.GuideConversationID != "historical-conversation" || current.Production.Revision != draft.Production.Revision || current.Production.Settings.Language != draft.Production.Settings.Language || current.Production.BudgetMicrocredits != draft.Production.BudgetMicrocredits {
+		t.Fatalf("retired binding changed the workflow: %+v %v", current.Production, err)
+	}
+	updated, err := svc.UpdateDramaSettings("usr-drama", draft.Project.ID, UpdateDramaSettingsRequest{Settings: &settings, ExpectedRevision: &draft.Production.Revision})
+	if err != nil || updated.Production.Settings.Language != "English" || updated.Production.Revision != draft.Production.Revision+1 || updated.Production.GuideConversationID != "historical-conversation" {
+		t.Fatalf("normal workflow settings must remain writable: %+v %v", updated.Production, err)
+	}
 }
 
 func TestDramaGuideOldImageResultOnlyEntersTakeHistory(t *testing.T) {

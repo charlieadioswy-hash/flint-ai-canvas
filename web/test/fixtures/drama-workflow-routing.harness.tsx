@@ -41,18 +41,10 @@ let navigate: ReturnType<typeof useNavigate>;
 const userStore = create(() => ({ user: { id: "routing-user" } }));
 const agentStore = create<{
     open: boolean;
-    drama: { projectId: string } | null;
-    dramaReference: unknown;
     closeAgent: () => void;
-    setDrama: (drama: { projectId: string } | null) => void;
-    setDramaReference: (value: unknown) => void;
 }>((set) => ({
     open: true,
-    drama: null,
-    dramaReference: null,
     closeAgent: () => set({ open: false }),
-    setDrama: (drama) => set({ drama }),
-    setDramaReference: (dramaReference) => set({ dramaReference }),
 }));
 
 function Box({ children, className }: { children?: ReactNode; className?: string }) {
@@ -280,8 +272,8 @@ test("从画布导入分镜时保留原始正文、格式和 canvasId", async ()
     }
 });
 
-test("进入短剧页只隐藏画布 Agent 并清除旧短剧上下文，返回后恢复同一实例", async () => {
-    agentStore.setState({ open: true, drama: { projectId: "old-drama" }, dramaReference: { id: "old" } });
+test("进入短剧页只隐藏画布 Agent，返回后恢复同一实例及打开状态", async () => {
+    agentStore.setState({ open: true });
     panelMounts = 0;
     panelUnmounts = 0;
     const mounted = await mount(
@@ -295,7 +287,7 @@ test("进入短剧页只隐藏画布 Agent 并清除旧短剧上下文，返回�
         expect(panelMounts).toBe(1);
         await mounted.go("/projects/project-a/guide");
         expect(mounted.host.querySelector('[aria-label="通用画布 Agent"]')).toBeNull();
-        expect(agentStore.getState()).toMatchObject({ open: true, drama: null, dramaReference: null });
+        expect(agentStore.getState().open).toBe(true);
         expect(panelUnmounts).toBe(0);
         await mounted.go("/canvas/canvas-a");
         expect(mounted.host.textContent).toContain("保留的画布会话");

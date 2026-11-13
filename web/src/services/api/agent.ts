@@ -69,63 +69,6 @@ export type AgentApproval = {
     reason?: string;
 };
 
-export type DramaAgentProposal = {
-    kind: "setup" | "source" | "cast" | "cast_create" | "cast_delete" | "shot" | "segment_prompt" | "media";
-    targetId?: string;
-    baseRevision: number;
-    changes: Record<string, unknown>;
-    /** 选项说明，仅用于展示，不参与配置写入。 */
-    explanation?: string;
-    /** 媒体确认与回复内选项的明确关联；不构成执行授权。 */
-    confirmationOption?: string;
-    runId: string;
-    toolCallId: string;
-};
-
-/** 实时事件和持久消息共用此解析；读取建议不会执行业务写入。 */
-export function dramaProposalFromToolDetail(value: unknown): DramaAgentProposal | null {
-    if (!value || typeof value !== "object") return null;
-    const detail = value as Record<string, unknown>;
-    if (detail.eventType !== "tool_completed" || detail.toolName !== "drama_propose_changes" || typeof detail.runId !== "string" || typeof detail.callId !== "string") return null;
-    const result = detail.result as Record<string, unknown> | null;
-    if (
-        !result ||
-        !["setup", "source", "cast", "cast_create", "cast_delete", "shot", "segment_prompt", "media"].includes(String(result.kind)) ||
-        !Number.isSafeInteger(result.baseRevision) ||
-        Number(result.baseRevision) <= 0 ||
-        !result.changes ||
-        typeof result.changes !== "object" ||
-        Array.isArray(result.changes)
-    )
-        return null;
-    if (result.confirmationOption !== undefined && result.kind !== "media") return null;
-    if (result.kind === "cast_delete") {
-        const changes = result.changes as Record<string, unknown>;
-        if (typeof result.targetId !== "string" || !result.targetId.trim() || typeof changes.reason !== "string" || !changes.reason.trim()) return null;
-    }
-    if (result.kind === "media") {
-        const changes = result.changes as Record<string, unknown>;
-        if (typeof result.targetId !== "string" || !result.targetId.trim() || !["segment_video", "segment_assets", "cast_image", "segment_prompt", "segment_reprocess"].includes(String(changes.action))) return null;
-        if (!Number.isSafeInteger(changes.targetRevision) || Number(changes.targetRevision) < 0) return null;
-        if (changes.action !== "cast_image" && (typeof changes.episodeId !== "string" || !changes.episodeId.trim())) return null;
-        if (
-            result.confirmationOption !== undefined &&
-            (typeof result.confirmationOption !== "string" || !result.confirmationOption.trim() || [...result.confirmationOption.trim()].length > 90 || /[\r\n\u2028\u2029]/u.test(result.confirmationOption.trim()))
-        )
-            return null;
-    }
-    return {
-        kind: result.kind as DramaAgentProposal["kind"],
-        targetId: typeof result.targetId === "string" ? result.targetId : undefined,
-        baseRevision: Number(result.baseRevision),
-        changes: result.changes as Record<string, unknown>,
-        ...(typeof result.explanation === "string" && result.explanation.trim() ? { explanation: [...result.explanation.trim()].slice(0, 1000).join("") } : {}),
-        ...(result.kind === "media" && typeof result.confirmationOption === "string" ? { confirmationOption: result.confirmationOption.trim() } : {}),
-        runId: detail.runId,
-        toolCallId: detail.callId,
-    };
-}
-
 export type AgentRun = {
     id: string;
     conversationId?: string;
@@ -192,7 +135,6 @@ export type CreateAgentRunInput = {
     profileRevision?: string;
     /** 空字符串 = 平台级对话（未进入画布），后端不开放画布工具。 */
     canvasId: string;
-    dramaProjectId?: string;
     prompt: string;
     model?: string;
     logicalModelId?: string;

@@ -10,7 +10,7 @@ import (
 var (
 	legacyWrite      = []string{"canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "image_layer_split", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "previs_scene_create", "previs_apply_patch", "drama_adopt_canvas_media", "generate_media_batch", "canvas_build_board"}
 	legacyCacheable  = []string{"agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "skill_read_file", "model_list"}
-	legacyReadOnly   = []string{"agent_profile_read", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "skill_market_search", "model_list", "task_get", "drama_get_context", "drama_propose_changes", "canvas_preflight"}
+	legacyReadOnly   = []string{"agent_profile_read", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "skill_market_search", "model_list", "task_get", "drama_get_context", "canvas_preflight"}
 	legacyCanvasRev  = []string{"canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "previs_scene_read"}
 	legacyOffsetNorm = []string{"skill_read_file", "canvas_get_state", "canvas_read_text", "canvas_read_storyboard", "canvas_read_batch_table"}
 	legacyMedia      = []string{"generate_media", "image_layer_split", "generate_media_batch"}
@@ -61,15 +61,24 @@ func TestCacheableToolsAreReadOnly(t *testing.T) {
 	}
 }
 
-func TestDramaGuideRejectsUnrelatedToolsAtExecutionGate(t *testing.T) {
-	scope := Scope{Canvas: true, Skills: true, Vision: true, Drama: true, DramaGuide: true, Memory: true, IncludeProfile: true}
-	want := map[string]bool{DramaGetContext: true, DramaProposeChanges: true, AskUser: true, PlanUpdate: true}
-	for _, name := range Names() {
-		if got := Of(name).Allowed(scope); got != want[name] {
-			t.Errorf("guide tool %s allowed=%v want %v", name, got, want[name])
+func TestDramaToolsRequireActualCanvasAndDedicatedProposalIsRetired(t *testing.T) {
+	if _, ok := Get("drama_propose_changes"); ok {
+		t.Fatal("dedicated short-drama proposal tool must not be registered")
+	}
+	for _, name := range []string{DramaGetContext, DramaAdoptCanvasMedia} {
+		for _, scope := range []Scope{{}, {Canvas: true}, {Drama: true}} {
+			if Of(name).Allowed(scope) {
+				t.Fatalf("%s exposed without a linked canvas: %+v", name, scope)
+			}
+		}
+		if !Of(name).Allowed(Scope{Canvas: true, Drama: true}) {
+			t.Fatalf("%s missing from linked canvas", name)
 		}
 	}
-	if Of(DramaProposeChanges).Allowed(Scope{Drama: true, Canvas: true}) {
-		t.Fatal("canvas conversation must not expose guide proposals")
+	if !Of(DramaGetContext).Allowed(Scope{Canvas: true, Drama: true, ReadOnly: true}) || Of(DramaAdoptCanvasMedia).Allowed(Scope{Canvas: true, Drama: true, ReadOnly: true}) {
+		t.Fatal("read-only canvas must read context without adopting media")
+	}
+	if !Of(DramaAdoptCanvasMedia).ApprovalRequired("auto") {
+		t.Fatal("canvas media adoption must retain explicit approval")
 	}
 }

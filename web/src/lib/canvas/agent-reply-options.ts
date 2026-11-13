@@ -183,20 +183,6 @@ function signalsChoice(leadIn: string | undefined, tail: string | undefined) {
     return tailSignalsChoice(tail) && !STATEMENT.test(plainLeadIn(leadIn));
 }
 
-/** 短剧有时省略选择引语；只接收带退让或自填出口的明确行动列表。 */
-function implicitActionsSignalChoice(leadIn: string | undefined, options: readonly AgentReplyOption[]) {
-    const lead = plainLeadIn(leadIn);
-    if (/^\s*>/u.test(leadIn || "") || /(?:我已|已经|已完成|完成了|如下|以下(?:是|为)|步骤|流程|清单|计划|顺序|事实|记录|原因|区别|进度[：:]?$|状态[：:]?$)/u.test(lead)) return false;
-    const deferred = (text: string) => /^(?:稍后再(?:说|处理|继续|决定|确认)|暂不|暂时不|先不|本次不|不继续|取消本次|保持现状|维持现状|跳过这一步)/u.test(text);
-    const texts = options.map((option) => stripInlineMarkdown(option.text).normalize("NFKC"));
-    if (!options.some((option, index) => agentReplyOptionIsInput(option) || deferred(texts[index]))) return false;
-    return options.every((option, index) => {
-        const text = texts[index];
-        if (/(?:已(?:经)?(?:完成|提交|保存|取消|启动|更新)|正在|进行中|排队中|等待中|\d+(?:\.\d+)?%|(?:成功|失败|完成)(?:了)?(?:$|[，,。；;：:！!]))/u.test(text)) return false;
-        return agentReplyOptionIsInput(option) || deferred(text) || /^(?:(?:先|再|继续|重新|立即|现在|请|帮我|为我)\s*)*(?:刷新|查看|检查|核对|调整|修改|重写|改写|编辑|补充|新增|添加|删除|生成|提取|分析|导出|下载|返回|重试)\S/u.test(text);
-    });
-}
-
 /** “回复数字即可”这类说明在卡片出现后就多余了。 */
 function isReplyInstruction(line: string) {
     const text = stripInlineMarkdown(line);
@@ -220,7 +206,7 @@ function joinBody(lines: readonly string[], tail: string | undefined) {
     return parts.filter(Boolean).join("\n\n");
 }
 
-function extractBlockOptions(lines: readonly string[], last: number, allowImplicitActions = false): AgentReplyOptions | null {
+function extractBlockOptions(lines: readonly string[], last: number): AgentReplyOptions | null {
     let cursor = last;
     let tail: string | undefined;
     if (!parseListItem(lines[cursor])) {
@@ -249,7 +235,7 @@ function extractBlockOptions(lines: readonly string[], last: number, allowImplic
     if (!options) return null;
     const leadIn = cursor >= 0 ? lines[cursor] : undefined;
     const before = lines.slice(0, cursor + 1);
-    if (insideCodeFence(before) || (!signalsChoice(leadIn, tail) && !(allowImplicitActions && implicitActionsSignalChoice(leadIn, options)))) return null;
+    if (insideCodeFence(before) || !signalsChoice(leadIn, tail)) return null;
     if (leadIn !== undefined) before[before.length - 1] = cleanLeadIn(leadIn);
     return { body: joinBody(before, tail), options };
 }
@@ -440,22 +426,20 @@ function withoutRepeatedActionLists(body: string, originalOptions: AgentReplyOpt
     return { body: remaining.join("\n"), options };
 }
 
-export function extractAgentReplyOptions(markdown: string, { allowImplicitActions = false }: { allowImplicitActions?: boolean } = {}): AgentReplyOptions | null {
+export function extractAgentReplyOptions(markdown: string): AgentReplyOptions | null {
     const source = markdown.replace(/\r\n?/g, "\n").trimEnd();
     if (!source || source.length > MAX_SOURCE_CHARS) return null;
     const lines = source.split("\n");
     const last = lines.length - 1;
-    const result = extractBlockOptions(lines, last, allowImplicitActions) || extractInlineOptions(lines, last);
+    const result = extractBlockOptions(lines, last) || extractInlineOptions(lines, last);
     return result ? withoutRepeatedActionLists(result.body, result.options) : null;
 }
-/** 仅在当前登录会话内保存选择水位，跨制作视图返回时不重新开放历史操作。 */
+/** 仅在当前登录会话内保存选择水位，返回历史会话时不重新开放旧操作。 */
 export function createAgentChoiceHistory() {
     return {
         userId: undefined as string | undefined,
         seen: new Set<string>(),
         expired: new Set<string>(),
-        proposalOwners: new Map<string, string>(),
-        obsoleteProposals: new Set<string>(),
         messageOwners: new Map<string, string>(),
         obsoleteMessages: new Set<string>(),
     };

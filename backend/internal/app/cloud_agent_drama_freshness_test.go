@@ -25,7 +25,7 @@ func TestCloudAgentDramaReadsReportSourceAndFreshness(t *testing.T) {
 	if err := fake.db.Create(&model.CanvasProject{ID: "canvas-drama", UserID: "usr-drama", ProjectID: project, Title: "精修", PayloadJSON: string(raw), Revision: 7}).Error; err != nil {
 		t.Fatal(err)
 	}
-	state := &cloudAgentRuntime{Request: CloudAgentRequest{CanvasID: "canvas-drama"}}
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{CanvasID: "canvas-drama", DramaProjectID: "forged-project"}}
 	call := cloudAgentCall{ID: "drama-read"}
 	call.Function.Name = "drama_get_context"
 	call.Function.Arguments = `{"episodeNumber":1}`
@@ -35,6 +35,14 @@ func TestCloudAgentDramaReadsReportSourceAndFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := value.(map[string]any)
+	if result["drama"].(map[string]any)["id"] != project {
+		t.Fatal("drama context must derive its project from the owned canvas")
+	}
+	for _, retiredField := range []string{"guide", "chapters", "chapter"} {
+		if _, exists := result[retiredField]; exists {
+			t.Fatalf("dedicated guide context %s survived retirement", retiredField)
+		}
+	}
 	readAt, err := time.Parse(time.RFC3339, stringValue(result["readAt"]))
 	if err != nil || readAt.Before(before) || result["source"] != "drama_db" || result["note"] != cloudAgentDramaContextNote {
 		t.Fatalf("drama context freshness = readAt %v source %v note %v (%v)", result["readAt"], result["source"], result["note"], err)

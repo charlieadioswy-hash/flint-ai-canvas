@@ -15,7 +15,6 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 采用复用 `drama_takes.kind=shot_image` 与 `drama_shot_media`，Take 的 `owner_id` 为真实镜头，`task_id` 为 Board 原图的真实任务；专用采用接口校验裁片来源与尺寸，并对 Board 和镜头媒体执行双版本校验。配置参考图、原图和所有裁片均参加资源引用和孤儿清理二次检查；只随整个作品删除清除故事板记录。
 
-
 ## 上游任务编号（Schema 109）
 
 版本 109 `provider_request_id_text` 将 PostgreSQL 的 `tasks`、`api_call_logs`、`billing_orders` 和 `route_attempts` 中的 `provider_request_id` 从 `varchar(160)` 扩展为 `text`，保留原值、记录与索引。网宿等网关可能在编号中编码多层路由，返回超过 160 字符的任务 ID；该值必须完整保存，不能截断或以摘要代替，否则无法查询原任务或恢复结果。
@@ -193,14 +192,14 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 调用日志把各协议 usage 归一为同一口径：`input_tokens` 含缓存命中和缓存写入。Anthropic 原生 usage 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写日志时补齐为总输入；百炼与 OpenRouter 的缓存写入分别读 `prompt_tokens_details.cache_creation_input_tokens` 和 `cache_write_tokens`。Token 预授权按输入价与缓存写入价中较高者估算全部输入 Token。
 
 
-## 短剧 Agent 引导创建（Schema 87）
+## 短剧分步创建（Schema 87）
 
 版本 87 `drama_guided_creation` 为 `drama_productions` 增加三列，不创建第二套任务、资产或会话表：
 
 | 列 | 用途与边界 |
 | --- | --- |
 | `guide_step` | 空串沿用传统流程；`configuring/assets/story/completed` 表示引导阶段；仅前三个阶段启用文字确认关口，与 `mediaMode=manual` 独立 |
-| `guide_conversation_id` | 关联已有 CloudAgent 会话，首次绑定校验当前用户与同一短剧项目，并按空值 CAS；不是数据授权凭证 |
+| `guide_conversation_id` | 专用短剧 Agent 停用后仅保留历史关联，不再提供绑定或更新；新分步流程不依赖会话，未做删列迁移 |
 | `creative_brief` | 可选的原始创作简述；正式正文仍存既有章节，引导确认方案前必须补齐正文 |
 
 引导中的文字修改复用 `drama_productions.revision` 做页面级并发校验，并保留设定、单集和剧情段原有 revision 的异步结果保护。配置期替换正文在同一事务同步尚未启动的分集、章节引用和规划游标。图片状态不递增文字总版本；过期图片不能以旧结果覆盖新设定。引导完成只记录文字审阅通过并保留手动媒体生成，不把作品状态改成成片完成。
@@ -881,7 +880,6 @@ Schema 45 增加五张配置与任务提交表，执行队列复用 `tasks` 的 
 ### 短剧场景分镜修订
 
 迁移 115 新增 `drama_scene_revisions`，仅记录用户审阅后实际采用的一次场景范围替换，包含真实 Task/Take 来源、替换前镜头、原剧情段、镜头媒体槽位与历史 Take 快照，以及采用后镜头 ID。重拆任务仍使用现有 `tasks` 和 `drama_takes(kind=scene_split)`，不另建任务队列。组外镜头的相对顺序和引用保留，数量变化只调整其顺序编号；剧情段 ID、索引和手工参考选择保持。原有媒体槽位与 Take 不删除，范围内媒体标过期，迟到结果不能自动采用。
-
 
 ### 参考素材发送策略
 

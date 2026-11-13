@@ -280,7 +280,7 @@ func (s *Service) runCloudAgentPiSession(ctx context.Context, userID, runID stri
 		return fmt.Errorf("load task: %w", err)
 	}
 
-	runtimeState, err := cloudAgentDecode(run)
+	runtimeState, err := cloudAgentDecodeForExecution(run)
 	if err != nil {
 		return fmt.Errorf("decode state: %w", err)
 	}

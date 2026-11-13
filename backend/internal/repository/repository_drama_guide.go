@@ -12,7 +12,7 @@ import (
 
 var ErrDramaGuideChanged = errors.New("短剧引导已更新，请刷新后重试")
 
-// Text results also invalidate proposals made against the previous guide snapshot.
+// Text results advance the shared workflow snapshot used by concurrent edits.
 func (r *Repository) AdvanceDramaGuideRevision(projectID string) error {
 	return r.db.Model(&model.DramaProduction{}).
 		Where("project_id = ? AND guide_step IN ?", projectID, []string{model.DramaGuideConfiguring, model.DramaGuideAssets, model.DramaGuideStory}).
@@ -30,21 +30,6 @@ func (r *Repository) DramaProductionForUpdate(projectID string) (*model.DramaPro
 	}
 	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "project_id = ?", projectID).Error
 	return &row, err
-}
-
-// Conversation binding is metadata and must not invalidate proposals made by the first run.
-func (r *Repository) BindDramaGuideConversation(projectID string, revision int64, conversationID string) error {
-	result := r.db.Model(&model.DramaProduction{}).
-		Where("project_id = ? AND revision = ?", projectID, revision).
-		Where("guide_conversation_id IS NULL OR guide_conversation_id = '' OR guide_conversation_id = ?", conversationID).
-		Updates(map[string]any{"guide_conversation_id": conversationID, "updated_at": time.Now()})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrDramaGuideChanged
-	}
-	return nil
 }
 
 func (r *Repository) UpdateDramaGuideIf(projectID string, revision int64, step string, fields map[string]any) error {

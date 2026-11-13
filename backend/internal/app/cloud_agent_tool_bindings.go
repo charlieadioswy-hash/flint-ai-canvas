@@ -42,7 +42,6 @@ func cloudAgentToolHandlers() map[string]cloudAgentToolHandler {
 		agenttool.CanvasBuildBoard:       {Write: applyCloudAgentBuildBoard, Preview: cloudAgentPreviewBuildBoard},
 		agenttool.CanvasPreflight:        {Read: cloudAgentHandleCanvasPreflight},
 		agenttool.DramaGetContext:        {Read: cloudAgentHandleDramaGetContext},
-		agenttool.DramaProposeChanges:    {Read: cloudAgentHandleDramaProposeChanges},
 		agenttool.DramaAdoptCanvasMedia:  {Write: applyCloudAgentDramaAdopt, Preview: cloudAgentPreviewDramaAdopt},
 	}
 }

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -426,24 +425,4 @@ func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInp
 	}
 	episodes, err := groupDramaChapterEpisodes(projectID, 1, produced, settings.ChaptersPerEpisode, format, now)
 	return chapters, episodes, len(produced), true, err
-}
-
-func (s *Service) validateDramaGuideConversation(userID, projectID, conversationID string) error {
-	row, err := s.repo.CloudAgentConversationLatest(userID, conversationID)
-	if err != nil {
-		return BadAuthRequest("Agent 会话不存在或不属于当前用户")
-	}
-	full, err := s.repo.CloudAgent(userID, row.ID)
-	if err != nil {
-		return err
-	}
-	var state struct {
-		Request struct {
-			DramaProjectID string `json:"dramaProjectId"`
-		} `json:"request"`
-	}
-	if json.Unmarshal([]byte(full.StateJSON), &state) != nil || state.Request.DramaProjectID != projectID {
-		return BadAuthRequest("Agent 会话未绑定此短剧项目")
-	}
-	return nil
 }

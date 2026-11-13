@@ -426,7 +426,8 @@ type DramaDialogueCheck struct {
 }
 
 type UpdateDramaSettingsRequest struct {
-	ExpectedRevision    *int64         `json:"expectedRevision,omitempty"`
+	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
+	// Retained only to reject writes from retired short-drama Agent clients.
 	GuideConversationID *string        `json:"guideConversationId,omitempty"`
 	Settings            *DramaSettings `json:"settings"`
 	BudgetMicrocredits  *int64         `json:"budgetMicrocredits"`

@@ -20,6 +20,9 @@ import (
 // 调度循环的结果写入带状态条件，因此两边并发时以用户最新意图为准。
 
 func (s *Service) UpdateDramaSettings(userID string, projectID string, req UpdateDramaSettingsRequest) (DramaSummary, error) {
+	if req.GuideConversationID != nil {
+		return DramaSummary{}, dramaAgentRetired()
+	}
 	_, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return DramaSummary{}, err
@@ -94,16 +97,6 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			}
 		}
 	}
-	if req.GuideConversationID != nil {
-		id := strings.TrimSpace(*req.GuideConversationID)
-		if productionRow.GuideStep == "" || id == "" {
-			return DramaSummary{}, BadAuthRequest("请选择有效的短剧引导会话")
-		}
-		if err := s.validateDramaGuideConversation(userID, projectID, id); err != nil {
-			return DramaSummary{}, err
-		}
-		fields["guide_conversation_id"] = id
-	}
 	if len(fields) > 0 {
 		err := s.repo.Transaction(func(tx *repository.Repository) error {
 			current, err := tx.DramaProductionForUpdate(projectID)
@@ -112,15 +105,6 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			}
 			if req.Settings != nil && req.ExpectedRevision != nil && current.GuideStep != "" && current.GuideStep != model.DramaGuideConfiguring {
 				return repository.ErrDramaGuideChanged
-			}
-			if req.GuideConversationID != nil && current.GuideConversationID != "" && current.GuideConversationID != fields["guide_conversation_id"] {
-				return dramaGuideConflict("此项目已关联另一段引导会话")
-			}
-			if req.GuideConversationID != nil && req.Settings == nil && req.BudgetMicrocredits == nil {
-				if req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision {
-					return repository.ErrDramaGuideChanged
-				}
-				return tx.BindDramaGuideConversation(projectID, current.Revision, fields["guide_conversation_id"].(string))
 			}
 			if dramaGuideActive(current) {
 				if req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision || req.Settings != nil && req.ExpectedRevision == nil {

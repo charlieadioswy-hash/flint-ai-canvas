@@ -12,7 +12,6 @@ import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { AgentMemoryUpdateCard, AgentSkillSuggestionCard } from "./canvas-cloud-agent-memory-cards";
 import { AgentReplyOptionCards, useAgentReplyOptionDrafts } from "./canvas-agent-reply-options";
 import { agentReplyOptionNeedsInput, type AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
-import { prepareDramaStageMessage, type DramaStageChoiceLabels } from "@/lib/canvas/drama-setup-presentation";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Components } from "streamdown";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, isAgentCanvasReadTool, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
@@ -430,9 +429,6 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     onReplyOption,
     replyOptionsDisabled = false,
     replyOptionScope,
-    setupChoices,
-    proposalChoices,
-    stageChoices,
 }: {
     item: CloudAgentChatMessage;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
@@ -454,9 +450,6 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     onReplyOption?: (text: string) => void;
     replyOptionsDisabled?: boolean;
     replyOptionScope?: (content: ReactNode) => ReactNode;
-    setupChoices?: { body: string; content: ReactNode };
-    proposalChoices?: { body: string; content: ReactNode };
-    stageChoices?: { render: (labels?: DramaStageChoiceLabels) => ReactNode };
 }) {
     const isUser = item.role === "user";
     const reducedMotion = useReducedMotion();
@@ -465,15 +458,8 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     const displayedText = useTypewriterText(item.text, item.role === "assistant" && isStreaming);
     const formAnswer = item.formAnswer ?? (isUser ? parseCloudAgentFormAnswer(item.text) : undefined);
     const markdownComponents = useMemo(() => createAgentMessageMarkdownComponents(references, onFocusNode), [onFocusNode, references]);
-    const showSetupChoices = Boolean(setupChoices && item.role === "assistant" && !isStreaming && !item.streaming);
-    const showProposalChoices = Boolean(proposalChoices && item.role === "assistant" && !isStreaming && !item.streaming && !showSetupChoices);
-    const showStageChoices = Boolean(stageChoices && item.role === "assistant" && !isStreaming && !item.streaming && !showSetupChoices && !showProposalChoices);
-    const showReplyOptions = Boolean(replyOptions && onReplyOption && item.role === "assistant" && !isStreaming && !showSetupChoices && !showProposalChoices && !showStageChoices);
-    const stageMessage = showStageChoices ? prepareDramaStageMessage(displayedText) : null;
-    const agentMarkdownText = rewriteAgentNodeLinks(
-        showSetupChoices && setupChoices ? setupChoices.body : showProposalChoices && proposalChoices ? proposalChoices.body : stageMessage ? stageMessage.body : showReplyOptions && replyOptions ? replyOptions.body : displayedText,
-        references,
-    );
+    const showReplyOptions = Boolean(replyOptions && onReplyOption && item.role === "assistant" && !isStreaming);
+    const agentMarkdownText = rewriteAgentNodeLinks(showReplyOptions && replyOptions ? replyOptions.body : displayedText, references);
     const canvasReference = item.canvasReferenceNodeId ? references.find((reference) => reference.nodeId === item.canvasReferenceNodeId) : undefined;
     const userCanvasMarkdown = canvasReference ? item.text.replace("此图", createAgentNodeLink(canvasReference.nodeId, canvasReference)) : item.text;
     const errorTone = item.errorSeverity === "warning" ? "warning" : "error";
@@ -620,14 +606,6 @@ export const AgentChatMessage = memo(function AgentChatMessage({
                             {agentMarkdownText ? (
                                 <AIMessageMarkdown className="text-left" isStreaming={isStreaming} streamingAnimation="none" components={markdownComponents}>
                                     {agentMarkdownText}
-                                </AIMessageMarkdown>
-                            ) : null}
-                            {showSetupChoices && setupChoices ? setupChoices.content : null}
-                            {showProposalChoices && proposalChoices ? proposalChoices.content : null}
-                            {showStageChoices && stageChoices ? stageChoices.render(stageMessage?.labels) : null}
-                            {stageMessage?.after ? (
-                                <AIMessageMarkdown className="text-left" components={markdownComponents}>
-                                    {rewriteAgentNodeLinks(stageMessage.after, references)}
                                 </AIMessageMarkdown>
                             ) : null}
                             {showReplyOptions && replyOptions && onReplyOption ? (

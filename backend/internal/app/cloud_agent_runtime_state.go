@@ -106,10 +106,17 @@ func cloudAgentDecodeForExecution(run *model.CloudAgentExecution) (cloudAgentRun
 	if err != nil {
 		return state, WrapAppError(409, "Agent 运行记录无法安全恢复；请新建一轮消息", err)
 	}
-	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
-		return state, WrapAppError(409, "Agent 运行使用旧版执行合同，无法继续原运行；请新建一轮消息", err)
+	return state, validateCloudAgentExecutionContract(state)
+}
+
+func validateCloudAgentExecutionContract(state cloudAgentRuntime) error {
+	if state.Request.DramaProjectID != "" {
+		return dramaAgentRetired()
 	}
-	return state, nil
+	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
+		return WrapAppError(409, "Agent 运行使用旧版执行合同，无法继续原运行；请新建一轮消息", err)
+	}
+	return nil
 }
 
 func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
@@ -125,7 +132,19 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.Request.Prompt == "" || state.Request.PermissionMode == "" {
 		return errors.New("Agent runtime request is incomplete")
 	}
-	if err := validateCloudAgentRequest(&state.Request); err != nil {
+	request := state.Request
+	if request.DramaProjectID != "" {
+		// Retired short-drama records remain readable and cancellable. Execution
+		// and continuations reject this binding before starting a model turn.
+		if err := validateCloudAgentID(request.DramaProjectID, "短剧项目 ID", 80); err != nil {
+			return err
+		}
+		if request.CanvasID != "" || len(request.ContextScope) != 1 || request.ContextScope[0] != "drama" || len(request.FocusNodeIDs) != 0 || request.FocusNodeOmittedCount != 0 || request.PermissionMode != "read_only" || len(request.PinnedSkillIDs) != 0 {
+			return errors.New("invalid retired short-drama Agent binding")
+		}
+		request.DramaProjectID, request.ContextScope = "", nil
+	}
+	if err := validateCloudAgentRequest(&request); err != nil {
 		return fmt.Errorf("invalid Agent runtime request: %w", err)
 	}
 	if err := validateCloudAgentPolicySnapshotStructure(state.Policy); err != nil {

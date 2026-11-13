@@ -1,51 +1,9 @@
 import { create } from "zustand";
-import type { ReactNode } from "react";
 import { AGENT_PANEL_DOCK_KEY, restoreAgentPanelDock, type AgentPanelDockPreference } from "@/lib/canvas/agent-panel-dock";
 import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CloudAgentMessagePresentation } from "@/services/cloud-agent-conversations";
 import type { CanvasNodeData } from "@/types/canvas";
-import type { DramaAgentProposal } from "@/services/api/agent";
-import type { DramaStageChoiceLabels } from "@/lib/canvas/drama-setup-presentation";
-
-export type AgentDramaReference = {
-    projectId: string;
-    episodeId: string;
-    episodeNumber: number;
-    segmentId: string;
-    segmentIndex: number;
-    title: string;
-    revision: number;
-    shotId?: string;
-};
-
-export type AgentDramaContext = {
-    projectId: string;
-    guideConversationId?: string;
-    /** 引导与简易制作台的嵌入容器。 */
-    host?: HTMLElement;
-    /** 简易制作台显示制作阶段的对话说明。 */
-    studioMode?: boolean;
-    prefillRequest?: AgentPrefillRequest | null;
-    startupRequest?: AgentPrefillRequest | null;
-    /** 详细制作台入口切回简易制作台，继续同一份会话与草稿。 */
-    onOpenStudio?: () => void;
-    onConversationBound?: (id: string) => void;
-    onProposal?: (proposal: DramaAgentProposal) => void;
-    onActionsHost?: (host: HTMLDivElement | null) => void;
-    setupChoices?: { proposals: DramaAgentProposal[]; render: (proposals: DramaAgentProposal[]) => ReactNode };
-    proposalChoices?: {
-        proposals: DramaAgentProposal[];
-        render: (proposals: DramaAgentProposal[]) => ReactNode;
-        /** 新预检数据或独立重试入口使用新标识，加载不恢复旧确认。 */
-        interactionKey?: (proposal: DramaAgentProposal) => string;
-        /** 新对话已被服务端接受后，撤下本次发送前的旧建议，不取消已提交任务。 */
-        onContinueConversation?: () => void;
-    };
-    /** 当前阶段的推进选择，直接显示在 Agent 最新回复中。 */
-    stageChoices?: { key?: string; pending: boolean; render: (labels?: DramaStageChoiceLabels) => ReactNode };
-};
-
 export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };
 /** 画布为 Agent 输入框新建的节点，输入框据此显示附件卡片。 */
 export type AgentInsertedNode = { nodeId: string; title: string; kind: "image" | "text" | "video" | "audio"; previewUrl?: string };
@@ -87,11 +45,6 @@ type GlobalAgentStore = {
     /** 平台唯一 Agent 面板的开合状态，跨路由保持。 */
     open: boolean;
     canvas: AgentCanvasContext | null;
-    drama: AgentDramaContext | null;
-    dramaReference: AgentDramaReference | null;
-    dramaReferenceFocus: number;
-    setDramaReference: (reference: AgentDramaReference | null) => void;
-    setDrama: (drama: AgentDramaContext | null) => void;
     /** 本机 UI 偏好：在画布里是否停靠到右侧，以及停靠宽度。账号切换不影响。 */
     dock: AgentPanelDockPreference;
     openAgent: () => void;
@@ -164,17 +117,8 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     resetEpoch: 0,
     open: false,
     canvas: null,
-    drama: null,
-    dramaReference: null,
-    dramaReferenceFocus: 0,
-    setDramaReference: (dramaReference) => set((state) => ({ dramaReference, dramaReferenceFocus: state.dramaReferenceFocus + 1 })),
-    setDrama: (drama) => set({ drama }),
     dock: readDockPreference(),
-    openAgent: () => {
-        const onOpenStudio = get().drama?.onOpenStudio;
-        if (onOpenStudio) onOpenStudio();
-        else set({ open: true });
-    },
+    openAgent: () => set({ open: true }),
     closeAgent: () => set({ open: false }),
     setCanvas: (canvas) =>
         set((state) => {
@@ -193,5 +137,5 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
         set({ dock });
         persistDockPreference(dock);
     },
-    reset: () => set((state) => ({ open: false, canvas: null, drama: null, dramaReference: null, dramaReferenceFocus: 0, resetEpoch: state.resetEpoch + 1 })),
+    reset: () => set((state) => ({ open: false, canvas: null, resetEpoch: state.resetEpoch + 1 })),
 }));

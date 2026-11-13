@@ -64,16 +64,16 @@ func (s *Service) validateCloudAgentPiModelRequest(userID, runID string, request
 	if purpose == "compaction" && len(request.Tools) > 0 {
 		return false, errors.New("压缩模型请求不得携带 Agent 工具")
 	}
-	if strings.TrimSpace(request.ModelID) == "" {
-		return compactionSummary, nil
-	}
 	run, err := s.repo.CloudAgent(userID, runID)
 	if err != nil {
 		return false, err
 	}
-	state, err := cloudAgentDecode(run)
+	state, err := cloudAgentDecodeForExecution(run)
 	if err != nil {
 		return false, err
+	}
+	if strings.TrimSpace(request.ModelID) == "" {
+		return compactionSummary, nil
 	}
 	expected := strings.TrimSpace(firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model))
 	if expected != "" && request.ModelID != expected {
@@ -201,7 +201,7 @@ func (s *Service) runCloudAgentModelStep(ctx context.Context, userID, runID stri
 		if err != nil {
 			return nil, false, err
 		}
-		state, err = cloudAgentDecode(run)
+		state, err = cloudAgentDecodeForExecution(run)
 		if err != nil {
 			return nil, false, err
 		}
@@ -280,9 +280,6 @@ func (s *Service) runCloudAgentModelStep(ctx context.Context, userID, runID stri
 		}
 		if !compactionSummary {
 			cloudAgentAttachRunContext(&canonical, &state)
-			if err := s.attachCloudAgentDramaLiveContext(userID, &state, &canonical); err != nil {
-				return nil, false, err
-			}
 			budget := s.cloudAgentContextBudgetForRequest(state.Request)
 			if err := fitCloudAgentModelContext(&canonical, budget.InputBudgetTokens); err != nil {
 				return nil, false, err

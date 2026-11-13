@@ -1,10 +1,8 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -27,7 +25,6 @@ const (
 type cloudAgentDramaContextArgs struct {
 	EpisodeID     string `json:"episodeId"`
 	EpisodeNumber int    `json:"episodeNumber"`
-	ChapterID     string `json:"chapterId"`
 }
 
 type cloudAgentDramaRef struct {
@@ -93,15 +90,11 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 	}
 	// readAt 取在读库之前：返回的状态不早于这个时间。
 	readAt := time.Now()
-	projectID := state.Request.DramaProjectID
-	nodes := map[string]map[string]any{}
-	if projectID == "" {
-		canvas, canvasNodes, err := cloudAgentDramaCanvas(repo, userID, state.Request.CanvasID)
-		if err != nil {
-			return nil, err
-		}
-		projectID, nodes = canvas.ProjectID, canvasNodes
+	canvas, nodes, err := cloudAgentDramaCanvas(repo, userID, state.Request.CanvasID)
+	if err != nil {
+		return nil, err
 	}
+	projectID := canvas.ProjectID
 	summary, err := service.DramaSummary(userID, projectID)
 	if err != nil {
 		return nil, err
@@ -120,27 +113,6 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 			"heldCredits": float64(production.HeldMicrocredits) / 1e6,
 			"revision":    production.Revision, "settings": production.Settings,
 		},
-	}
-	if state.Request.DramaProjectID != "" {
-		result["guide"] = map[string]any{
-			"step": production.GuideStep, "creativeBrief": production.CreativeBrief, "baseRevision": production.Revision,
-			"videoModel": cloudAgentDramaVideoModelContext(service, production.Settings),
-		}
-		chapters, err := service.DramaChapterOutline(userID, projectID)
-		if err != nil {
-			return nil, err
-		}
-		if len(chapters) > cloudAgentDramaListLimit {
-			chapters = chapters[:cloudAgentDramaListLimit]
-		}
-		result["chapters"] = chapters
-		if args.ChapterID != "" {
-			chapter, err := service.DramaChapter(userID, projectID, args.ChapterID)
-			if err != nil {
-				return nil, err
-			}
-			result["chapter"] = map[string]any{"id": chapter.ID, "title": chapter.Title, "text": truncateRunes(chapter.SourceText, 16000), "truncated": len([]rune(chapter.SourceText)) > 16000}
-		}
 	}
 	episodes := make([]map[string]any, 0, min(len(summary.Episodes), cloudAgentDramaListLimit))
 	for _, episode := range summary.Episodes {
@@ -217,267 +189,6 @@ func cloudAgentHandleDramaGetContext(repo *repository.Repository, userID string,
 		result["shots"] = detail.Shots
 	}
 	return result, nil
-}
-
-type cloudAgentDramaVideoModel struct {
-	Choice                 DramaModelChoice `json:"choice"`
-	VideoRatios            []string         `json:"videoRatios"`
-	VideoResolutions       []string         `json:"videoResolutions"`
-	DefaultVideoResolution string           `json:"defaultVideoResolution"`
-	Issue                  string           `json:"issue,omitempty"`
-}
-
-func cloudAgentDramaVideoModelContext(service *Service, settings DramaSettings) cloudAgentDramaVideoModel {
-	result := cloudAgentDramaVideoModel{Choice: settings.Models.Video, VideoRatios: []string{}, VideoResolutions: []string{}}
-	if result.Choice.Empty() {
-		result.Issue = "尚未选择视频模型，请先在制作方案中选择"
-		return result
-	}
-	profile, err := service.dramaVideoProfile(result.Choice)
-	if err != nil {
-		result.Issue = "所选视频模型暂不可用：" + err.Error()
-		return result
-	}
-	result.VideoRatios = profile.ratios()
-	result.VideoResolutions, result.DefaultVideoResolution = dramaVideoResolutionsFor(profile.video)
-	if len(result.VideoRatios) == 0 {
-		result.Issue = "所选视频模型没有可用于短剧的画幅，请先调整视频模型"
-	}
-	return result
-}
-
-type cloudAgentDramaProposal struct {
-	Kind               string         `json:"kind"`
-	TargetID           string         `json:"targetId,omitempty"`
-	BaseRevision       int64          `json:"baseRevision"`
-	Changes            map[string]any `json:"changes"`
-	Explanation        string         `json:"explanation,omitempty"`
-	ConfirmationOption string         `json:"confirmationOption,omitempty"`
-}
-
-// 建议沿用持久工具事件回放；这里只读取并校验，不写短剧，也不提交生成任务。
-func cloudAgentHandleDramaProposeChanges(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
-	if len(services) == 0 || services[0] == nil || state.Request.DramaProjectID == "" {
-		return nil, BadAuthRequest("建议工具仅用于已绑定项目的短剧引导")
-	}
-	var args cloudAgentDramaProposal
-	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, cloudAgentJSONArgumentError(err)
-	}
-	args.Explanation = strings.TrimSpace(args.Explanation)
-	if len([]rune(args.Explanation)) > 1000 {
-		return nil, &cloudAgentArgumentError{BadAuthRequest("选项说明不能超过 1000 字")}
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(call.Function.Arguments), &fields); err != nil {
-		return nil, cloudAgentJSONArgumentError(err)
-	}
-	if _, provided := fields["confirmationOption"]; provided {
-		if args.Kind != "media" {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("confirmationOption 仅用于媒体建议的回复选项关联")}
-		}
-		args.ConfirmationOption = strings.TrimSpace(args.ConfirmationOption)
-		if args.ConfirmationOption == "" || len([]rune(args.ConfirmationOption)) > 90 || strings.ContainsAny(args.ConfirmationOption, "\r\n\u2028\u2029") {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("媒体确认选项必须为 1–90 字的单行文字")}
-		}
-	}
-	allowed := map[string][]string{
-		"setup":          {"aspectRatio", "styleName", "stylePrompt", "language", "episodeSeconds", "videoResolution"},
-		"source":         {"chapters", "sourceFormat"},
-		"cast":           {"name", "aliases", "appearance", "description", "voiceInstructions"},
-		"cast_create":    {"kind", "name", "aliases", "appearance", "description", "voiceInstructions"},
-		"cast_delete":    {"reason"},
-		"shot":           {"speaker", "dialogue", "action", "shotSize", "camera", "imagePrompt", "videoPrompt", "transition", "durationSeconds"},
-		"segment_prompt": {"videoPromptOverride"},
-		"media":          {"action", "episodeId", "targetRevision"},
-	}
-	keys, ok := allowed[args.Kind]
-	if !ok || len(args.Changes) == 0 || args.BaseRevision <= 0 {
-		return nil, &cloudAgentArgumentError{BadAuthRequest("需要有效建议类型、修改内容和当前制作版本")}
-	}
-	for key, value := range args.Changes {
-		found := false
-		for _, allowedKey := range keys {
-			found = found || key == allowedKey
-		}
-		if !found || value == nil {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("建议包含不允许修改的字段：" + key)}
-		}
-		if args.Kind == "media" && key == "targetRevision" {
-			if number, ok := value.(float64); !ok || number < 0 || math.Trunc(number) != number || number > 9007199254740991 {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("媒体建议需要当前对象的有效版本")}
-			}
-		} else if key == "episodeSeconds" || key == "durationSeconds" {
-			if number, ok := value.(float64); !ok || number <= 0 || number > 3600 {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("建议时长无效")}
-			} else if key == "episodeSeconds" && math.Trunc(number) != number {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("每集时长 episodeSeconds 需要整数秒")}
-			}
-		} else if key == "aliases" {
-			values, ok := value.([]any)
-			if !ok || len(values) > 20 {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("建议别名无效")}
-			}
-			for _, alias := range values {
-				if text, ok := alias.(string); !ok || len([]rune(text)) > 120 {
-					return nil, &cloudAgentArgumentError{BadAuthRequest("建议别名无效")}
-				}
-			}
-		} else if key != "chapters" {
-			if text, ok := value.(string); !ok || len([]rune(text)) > 16000 {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("建议文字无效")}
-			}
-		}
-	}
-	if args.Kind == "source" {
-		encoded, _ := json.Marshal(args.Changes)
-		var source struct {
-			Chapters []struct {
-				Title string `json:"title"`
-				Text  string `json:"text"`
-			} `json:"chapters"`
-			SourceFormat string `json:"sourceFormat"`
-		}
-		if err := decodeCloudAgentJSONObject(string(encoded), &source); err != nil || len(source.Chapters) == 0 || len(source.Chapters) > 20 || len(encoded) > 64000 {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("正文建议需要 1–20 个章节，合计不超过 64KB")}
-		}
-		for _, chapter := range source.Chapters {
-			if strings.TrimSpace(chapter.Title) == "" || strings.TrimSpace(chapter.Text) == "" {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("章节标题与正文不能为空")}
-			}
-		}
-	}
-	service := services[0]
-	_, production, err := service.dramaForUser(userID, state.Request.DramaProjectID)
-	if err != nil {
-		return nil, err
-	}
-	if production.Revision != args.BaseRevision {
-		return nil, &cloudAgentArgumentError{creationConflict("短剧内容已变化，请重新读取上下文后提出建议")}
-	}
-	if args.Kind == "media" {
-		if production.GuideStep != "" && production.GuideStep != model.DramaGuideCompleted {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("请先完成短剧文字引导，再确认媒体生成")}
-		}
-		if err := validateCloudAgentID(args.TargetID, "建议目标 ID", 80); err != nil {
-			return nil, &cloudAgentArgumentError{err}
-		}
-		action, _ := args.Changes["action"].(string)
-		targetRevision, hasTargetRevision := args.Changes["targetRevision"].(float64)
-		if !hasTargetRevision || targetRevision < 0 {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("请读取当前目标对象版本 targetRevision")}
-		}
-		var revision int64
-		var lookupErr error
-		switch action {
-		case "cast_image":
-			var cast *model.DramaCast
-			cast, lookupErr = repo.DramaCast(production.ProjectID, args.TargetID)
-			if cast != nil {
-				revision = cast.Revision
-			}
-			if _, specified := args.Changes["episodeId"]; specified {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("资产生图建议不需要 episodeId")}
-			}
-		case "segment_video", "segment_assets", "segment_prompt", "segment_reprocess":
-			var segment *model.DramaSegment
-			segment, lookupErr = repo.DramaSegment(production.ProjectID, args.TargetID)
-			if segment != nil {
-				revision = segment.Revision
-				if episodeID, _ := args.Changes["episodeId"].(string); episodeID != segment.EpisodeID {
-					return nil, &cloudAgentArgumentError{BadAuthRequest("建议中的集与剧情段不一致，请重新读取上下文")}
-				}
-			}
-		default:
-			return nil, &cloudAgentArgumentError{BadAuthRequest("不支持此媒体动作，仅可建议指定资产生图、指定段补齐资产参考图或生视频、提示词重写或结果重处理")}
-		}
-		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("建议目标不属于当前短剧，请重新读取上下文")}
-		}
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-		if int64(targetRevision) != revision {
-			return nil, &cloudAgentArgumentError{creationConflict("目标内容已变化，请重新读取上下文后提出媒体建议")}
-		}
-		return args, nil
-	}
-	if args.Kind == "setup" {
-		if production.GuideStep != model.DramaGuideConfiguring {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议仅限配置确认前，请重新读取短剧上下文")}
-		}
-		settings := parseDramaSettings(production.SettingsJSON)
-		encoded, err := json.Marshal(args.Changes)
-		if err != nil {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议格式无效")}
-		}
-		if err := json.Unmarshal(encoded, &settings); err != nil {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("制作方案建议格式无效")}
-		}
-		normalized, err := service.validateDramaGuideSettings(userID, settings)
-		// 换模型时可沿用默认分辨率；新推荐的明确档位必须确实受当前模型支持。
-		if _, specified := args.Changes["videoResolution"]; err == nil && specified && normalized.VideoResolution != "" {
-			var profile dramaVideoProfile
-			profile, err = service.dramaVideoProfile(normalized.Models.Video)
-			if err == nil {
-				if issue := profile.screen(normalized.AspectRatio, normalized.VideoResolution).Issue; issue != "" {
-					err = BadAuthRequest(issue)
-				}
-			}
-		}
-		if err != nil {
-			video := cloudAgentDramaVideoModelContext(service, settings)
-			return nil, &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("%s。请重新读取 drama_get_context，videoResolution 必须取 guide.videoModel.videoResolutions 中的真实值（当前可选：%s），或传空字符串使用模型默认；画幅单独填写 aspectRatio。不要自行使用宽×高像素值，除非模型可选值明确包含它", err.Error(), strings.Join(video.VideoResolutions, "、")))}
-		}
-		values := map[string]any{
-			"aspectRatio": normalized.AspectRatio, "styleName": normalized.StyleName, "stylePrompt": normalized.StylePrompt,
-			"language": normalized.Language, "episodeSeconds": float64(normalized.EpisodeSeconds), "videoResolution": normalized.VideoResolution,
-		}
-		for key := range args.Changes {
-			args.Changes[key] = values[key]
-		}
-	}
-	if args.Kind == "cast_create" || args.Kind == "cast_delete" {
-		if production.GuideStep != model.DramaGuideAssets && production.GuideStep != model.DramaGuideStory {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("请在角色与场景或剧本与分镜阶段调整资产")}
-		}
-		if args.Kind == "cast_create" {
-			kind, _ := args.Changes["kind"].(string)
-			name, _ := args.Changes["name"].(string)
-			name = strings.TrimSpace(name)
-			if (kind != "character" && kind != "scene" && kind != "prop") || name == "" || len([]rune(name)) > 60 {
-				return nil, &cloudAgentArgumentError{BadAuthRequest("新增资产需要有效类型 character/scene/prop 和 1–60 字名称")}
-			}
-			args.Changes["name"] = name
-		} else if reason, _ := args.Changes["reason"].(string); strings.TrimSpace(reason) == "" || len([]rune(reason)) > 1000 {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("删除资产需要 1–1000 字的删除原因，供用户确认")}
-		}
-	}
-	if args.Kind == "setup" || args.Kind == "source" || args.Kind == "cast_create" {
-		if args.TargetID != "" {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("配置、正文与新增资产建议不需要 targetId")}
-		}
-	} else {
-		if err := validateCloudAgentID(args.TargetID, "建议目标 ID", 80); err != nil {
-			return nil, &cloudAgentArgumentError{err}
-		}
-		var lookupErr error
-		switch args.Kind {
-		case "cast", "cast_delete":
-			_, lookupErr = repo.DramaCast(production.ProjectID, args.TargetID)
-		case "shot":
-			_, lookupErr = repo.DramaShot(production.ProjectID, args.TargetID)
-		case "segment_prompt":
-			_, lookupErr = repo.DramaSegment(production.ProjectID, args.TargetID)
-		}
-		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("建议目标不属于当前短剧，请重新读取上下文")}
-		}
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-	}
-	return args, nil
 }
 
 type cloudAgentDramaAdoptArgs struct {

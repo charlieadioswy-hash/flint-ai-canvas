@@ -70,20 +70,10 @@ const productionGuideLead = "请稍等片刻再让我刷新一次；等角色和
 const productionGuideActions = ["刷新资产提取进度", "先调整第一集正文（说明要改哪一处）", "稍后再说，本次不继续"];
 const productionGuideReply = `${productionGuideLead}\n\n${productionGuideActions.map((text, index) => `${index + 1}. ${text}`).join("\n")}`;
 
-test("短剧原回复省略选择引语时仍提取明确行动，默认画布规则保持严格", () => {
+test("没有明确选择提问的行动列表保留原文", () => {
     expect(extractAgentReplyOptions(productionGuideReply)).toBeNull();
-    expect(extractAgentReplyOptions(productionGuideReply, { allowImplicitActions: false })).toBeNull();
-    const result = extractAgentReplyOptions(productionGuideReply, { allowImplicitActions: true });
-    expect(result?.body).toBe(productionGuideLead);
-    expect(result?.options.map((option) => option.text)).toEqual(productionGuideActions);
-    expect(result?.options.every((option) => !option.input)).toBe(true);
-});
-
-test("省略引语的行动列表须有自填或退让出口，自填身份保持不变", () => {
-    expect(extractAgentReplyOptions("1. 查看角色\n2. 检查场景", { allowImplicitActions: true })).toBeNull();
-    const result = extractAgentReplyOptions("1. 查看角色\n2. 检查场景\n3. 其他要求（请填写）", { allowImplicitActions: true });
-    expect(result?.body).toBe("");
-    expect(result?.options.map((option) => Boolean(option.input))).toEqual([false, false, true]);
+    expect(extractAgentReplyOptions("1. 查看角色\n2. 检查场景")).toBeNull();
+    expect(extractAgentReplyOptions("1. 查看角色\n2. 检查场景\n3. 其他要求（请填写）")).toBeNull();
 });
 
 test.each([
@@ -108,8 +98,8 @@ test.each([
     "1. 查看角色\n3. 稍后再说",
     "1. 查看角色\n2. 稍后再说\n\n这里只是额外说明，并非选择提问。",
     `1. 查看${"角色".repeat(50)}\n2. 稍后再说`,
-])("短剧隐式行动模式仍保留事实、流程、记录及不符合列表约束的原文：%s", (text) => {
-    expect(extractAgentReplyOptions(text, { allowImplicitActions: true })).toBeNull();
+])("没有选择提问时保留事实、流程、记录及原文：%s", (text) => {
+    expect(extractAgentReplyOptions(text)).toBeNull();
 });
 
 const screenshotActions = ["重写第 2 段提示词，修正首帧空间错误", "重写第 1 段提示词，统一夜戏光照", "为「小区外围围墙边」生成外景概念图", "保持现状，继续分析第 2 集的衔接", "其他要求（请填写）"];

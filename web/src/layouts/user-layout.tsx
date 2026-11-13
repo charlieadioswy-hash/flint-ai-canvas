@@ -29,12 +29,6 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const agentDocked = Boolean(userId) && canvasEditor && agentDock.active;
     const creationWorkspace = pathname === "/" || pathname === "/create";
     const wasCanvasEditorRef = useRef(canvasEditor);
-    useLayoutEffect(() => {
-        if (!dramaWorkspace) return;
-        const agent = useGlobalAgentStore.getState();
-        agent.setDrama(null);
-        agent.setDramaReference(null);
-    }, [dramaWorkspace]);
     // 从画布编辑器回到创作首页时收起 Agent：画布里停靠在右侧的面板到首页会变成浮窗，挡住首页。
     // 只收起面板，对话和运行照常继续；在绘制前收起，首页不会先闪出浮窗。
     useLayoutEffect(() => {

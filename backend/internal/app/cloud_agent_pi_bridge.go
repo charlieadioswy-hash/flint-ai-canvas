@@ -402,6 +402,9 @@ func (s *Service) executeCloudAgentRuntimeTool(ctx context.Context, userID, runI
 		if content, ok := cloudAgentToolMessage(&state, call.ID); ok {
 			return cloudAgentPiToolResult(call, content), nil
 		}
+		if err := validateCloudAgentExecutionContract(state); err != nil {
+			return nil, err
+		}
 		if cloudAgentRunTerminal(run.Status) {
 			return nil, fmt.Errorf("run already terminated")
 		}
