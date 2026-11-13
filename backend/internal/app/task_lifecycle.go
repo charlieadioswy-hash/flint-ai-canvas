@@ -57,6 +57,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if taskHasDramaStoryboardOrigin(task.InputJSON) {
 		return nil, BadAuthRequest("故事板重做需要新的报价确认，请创建新的宫格故事板并预检")
 	}
+	if taskHasDramaSceneSplitOrigin(task.InputJSON) {
+		return nil, BadAuthRequest("场景重拆需要新的报价确认，请在场景分镜中重新预检并生成")
+	}
 	if taskHasDramaCastViewOrigin(task.InputJSON) {
 		return nil, BadAuthRequest("资产视图重做需要新的报价确认，请在资产视图中重新预检并生成")
 	}

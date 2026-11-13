@@ -40,6 +40,7 @@ let readinessOverride: (() => Promise<DramaWorkflowReadiness>) | undefined;
 const userStore = create(() => ({ user: { id: "user" } }));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
+mock.module("@/pages/projects/workflow-scene-splits", () => ({ WorkflowSceneSplits: () => null }));
 
 beforeEach(() => {
     calls.retried = [];

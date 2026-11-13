@@ -1299,6 +1299,9 @@ func (r *dramaRun) applyDirectStoryboard(e *model.DramaEpisode) (bool, error) {
 // hints 是剧本给出的新设定外观，用于即时建档；info 补齐逐集追加时缺少的梗概。
 // imported 表示镜头来自用户分镜：写明的时长照写执行，只有模型写的剧本才按镜头节奏夹紧。
 func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []production.ScriptShot, hints []production.ScriptCast, info production.ScriptEpisode, imported bool) error {
+	if target := r.settings.Storyboard.TargetShotCount; !imported && target > 0 && len(scripted) != target {
+		return fmt.Errorf("模型返回 %d 镜，未满足指定的 %d 镜；请调整镜头数或重试", len(scripted), target)
+	}
 	shotMs := r.settings.Storyboard.ShotMs
 	if imported {
 		shotMs = r.settings.Storyboard.ImportedShotMs

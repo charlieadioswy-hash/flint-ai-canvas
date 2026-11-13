@@ -6521,6 +6521,14 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 环境阻塞：文档站 `bun run types:check` 在 MDX 扫描前失败，当前忽略的 `docs/node_modules/fdir/dist/index.mjs` 调用了 `Dirent.isPrevisy()`（Node Dirent 无此方法）；为避免改依赖，本轮未继续修补 node_modules。
 - [ ] 真实模型/收费生成与多次运行pass^k、provider缓存命中率、PostgreSQL 58迁移、浏览器记忆提案与历史撤销尚未人工验收。
 
+## 简易流程 · 场景分镜与导演规则
+
+- [x] 复用 StoryboardSettings、ScriptSkill、Task、DramaTake：提供智能导演/详细故事板模板、自定义目标镜头数和14种运镜预设，约束进入实际分镜/视频请求。
+- [x] 按连续场景组预检、报价确认生成文字方案，用户审阅后明确采用；保留原剧情段和组外镜头，范围内媒体标过期，旧分镜/媒体快照与 Take 可回看。
+- [x] 定向后端与真实组件 DOM 测试覆盖来源绑定、幂等、在途阻塞、陈旧原稿拒绝、镜数/台词/资产/段时长校验、范围外保持与账号/scope迟到隔离；未调用真实付费生成。
+- [ ] 真实浏览器核对明暗主题、五列场景镜头卡、窄屏滚动、长方案及历史视频/音频播放；在实际已配置文字模型上验证模板表达与镜数约束的模型遵循情况。
+
+
 ## FBX 与 Alembic 模型导出
 
 - 已实现：原文件、GLB／GLTF／OBJ／STL 下载继续使用既有路径；新增后端按需 Blender 异步 FBX／ABC 导出，保留源模型，不请求 Tripo 转换或新增供应商扣费。原生 FBX 同格式下载不启动 Blender。素材卡片、素材档案及画布 3D 节点共用格式弹窗，画布默认原文件；独立 3D 页保留格式菜单。FBX／ABC 选项仍显示，下载时检查后端可用性。

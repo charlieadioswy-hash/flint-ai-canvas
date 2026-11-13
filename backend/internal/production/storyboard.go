@@ -80,7 +80,9 @@ type StoryboardSettings struct {
 	// Performance 是表演强度 1–10（1 内敛、5 自然、10 夸张外放）。
 	Performance int `json:"performance"`
 	// CameraMotion 是运镜动感 1–10（1 静态、5 有动机的运镜、10 强烈冲击）。
-	CameraMotion int `json:"cameraMotion"`
+	CameraMotion     int    `json:"cameraMotion"`
+	DirectorTemplate string `json:"directorTemplate,omitempty"`
+	TargetShotCount  int    `json:"targetShotCount,omitempty"`
 }
 
 // SegmentLimits 是切分一集剧情段时实际执行的约束（毫秒），已按视频模型单次可生成的时长范围收紧。
@@ -277,6 +279,9 @@ func (s StoryboardSettings) DialoguePauseMs() int64 { return s.dialogue().pauseM
 
 // ShotTarget 按单集时长与平均镜头长度估算镜头数，供剧本提示词与预估使用。
 func (s StoryboardSettings) ShotTarget(episodeSeconds int) int {
+	if s.TargetShotCount > 0 && s.TargetShotCount <= MaxScriptShots {
+		return s.TargetShotCount
+	}
 	return clampInt(int(math.Round(float64(episodeSeconds)/s.AverageShotSeconds())), 4, MaxScriptShots)
 }
 

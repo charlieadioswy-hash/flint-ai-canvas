@@ -249,6 +249,9 @@ func ScriptPrompt(ctx ScriptContext) string {
 	fmt.Fprintf(&b, "作品：%s\n第 %d 集《%s》\n画幅：%s · 单集约 %d 秒 · 对白语言：%s\n视觉风格：%s\n画面规则：%s\n\n", ctx.Title, ctx.EpisodeNumber, ctx.EpisodeTitle, settings.AspectRatio, settings.EpisodeSeconds, settings.Language, firstNonEmpty(settings.StylePrompt, "写实电影感"), firstNonEmpty(ctx.VisualRules, "保持全剧统一"))
 	fmt.Fprintf(&b, "本集大纲：%s\n开场钩子：%s\n结尾悬念：%s\n\n", firstNonEmpty(ctx.Synopsis, "以原文为准"), firstNonEmpty(ctx.Hook, "以原文为准"), firstNonEmpty(ctx.Cliffhanger, "以原文为准"))
 	b.WriteString(structuredSkillBlock("拆分镜头", ctx.Skill))
+	if rule := DirectorTemplateRule(settings.Storyboard.DirectorTemplate); rule != "" {
+		b.WriteString("【分镜模板】\n" + rule + "\n")
+	}
 	b.WriteString(sourceFormatRules(format))
 	b.WriteString("【角色表】（name 必须从这里选；新出现的人物用其原文称呼）\n" + firstNonEmpty(ctx.CastSummary, "无") + "\n")
 	b.WriteString("角色规则：已确认的角色说明直接沿用，不重新改写年龄、性格、背景、身份、外貌或声线。文档已有明确角色说明时，不为缺失字段补设定；只有没有明确角色说明的新角色才从正文抽取，原文未明确的信息留空，不按身份合理补全。该规则优先于写作技能和造型建议。\n")
@@ -261,6 +264,9 @@ func ScriptPrompt(ctx ScriptContext) string {
 		fmt.Fprintf(&b, "镜头数以完整容纳剧本全部台词为准（参考约 %d 个），输出：\n", shotTarget)
 	default:
 		fmt.Fprintf(&b, "输出约 %d 个镜头：\n", shotTarget)
+	}
+	if settings.Storyboard.TargetShotCount > 0 && format != SourceStoryboard {
+		fmt.Fprintf(&b, "用户指定镜头总数：必须恰好输出 %d 镜，在此数量内完整保留情节与台词，不能省略内容凑数。\n", settings.Storyboard.TargetShotCount)
 	}
 	b.WriteString("以下是唯一的输出结构，所有镜头写入同一个 shots 数组，cast 与需要的 episode 是同一根对象内的字段。按本集原文填写完整最终稿，不复述示例，不先给部分镜头后再补一份，不在根对象闭合后追加其他 JSON 对象。\n")
 	b.WriteString(`{`)

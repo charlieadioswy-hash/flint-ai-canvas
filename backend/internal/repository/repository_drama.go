@@ -250,7 +250,7 @@ func (r *Repository) DeleteDramaEpisode(projectID, episodeID string, releaseChap
 		if err := tx.Where("project_id = ? AND episode_id = ?", projectID, episode.ID).Delete(&model.DramaJob{}).Error; err != nil {
 			return err
 		}
-		for _, entity := range []any{&model.DramaSegment{}, &model.DramaShot{}} {
+		for _, entity := range []any{&model.DramaSegment{}, &model.DramaShot{}, &model.DramaSceneRevision{}} {
 			if err := tx.Where("project_id = ? AND episode_id = ?", projectID, episode.ID).Delete(entity).Error; err != nil {
 				return err
 			}
@@ -706,7 +706,7 @@ func (r *Repository) DeleteDramaProductionData(projectID string) error {
 		if err := New(tx).DeleteDramaCastViews(projectID); err != nil {
 			return err
 		}
-		for _, entity := range []any{&model.DramaJob{}, &model.DramaTake{}, &model.DramaSegment{}, &model.DramaShot{}, &model.DramaEpisode{}, &model.DramaCast{}, &model.DramaProduction{}} {
+		for _, entity := range []any{&model.DramaJob{}, &model.DramaTake{}, &model.DramaSegment{}, &model.DramaShot{}, &model.DramaSceneRevision{}, &model.DramaEpisode{}, &model.DramaCast{}, &model.DramaProduction{}} {
 			if err := tx.Where("project_id = ?", projectID).Delete(entity).Error; err != nil {
 				return err
 			}

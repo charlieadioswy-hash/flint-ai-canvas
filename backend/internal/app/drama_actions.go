@@ -26,6 +26,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 	}
 	fields := map[string]any{}
 	if req.Settings != nil {
+		if err := req.Settings.Storyboard.ValidateDirector(); err != nil {
+			return DramaSummary{}, BadAuthRequest(err.Error())
+		}
 		if dramaGuideActive(productionRow) && productionRow.GuideStep != model.DramaGuideConfiguring {
 			return DramaSummary{}, BadAuthRequest("请在开始改编前确认制作方案；当前引导只允许调整文字成果")
 		}

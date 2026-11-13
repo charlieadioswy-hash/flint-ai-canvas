@@ -14,6 +14,7 @@ import (
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/production"
 	"yingce/backend/internal/protocol"
 	"yingce/backend/internal/repository"
 )
@@ -91,9 +92,10 @@ func validDramaShotMediaKind(kind string) bool {
 }
 
 func dramaShotScriptHash(shot model.DramaShot) string {
-	// UpdatedAt is persistence metadata; all script and dependency fields remain
-	// in the fingerprint, including scene/cast/look/prop references.
+	// Ordering and timestamps are persistence metadata. Reindexing an unrelated
+	// scene must not invalidate saved media; script and dependency fields remain.
 	shot.CreatedAt, shot.UpdatedAt = time.Time{}, time.Time{}
+	shot.Position = 0
 	return dramaShotMediaDigest(shot)
 }
 
@@ -382,7 +384,7 @@ func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, pro
 	// The digest never contains credentials or signed URLs. Resource identities
 	// and normalized parameters are immutable inputs; the real request is private.
 	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{projectID, shot, row, config, p.Revision, p.GuideStep, quote, intent})
-	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_" + kind, Operation: config.Operation, Prompt: config.Prompt, LogicalModelID: config.Model.LogicalModelID, Model: config.Model.ModelKey, Input: requestInput}
+	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_" + kind, Operation: config.Operation, Prompt: stringValue(requestInput["prompt"]), LogicalModelID: config.Model.LogicalModelID, Model: config.Model.ModelKey, Input: requestInput}
 	return plan, nil
 }
 
@@ -426,7 +428,13 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 			metadata[frame.key] = frame.id
 		}
 	}
-	return map[string]any{"mode": kind, "prompt": config.Prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}, nil
+	prompt := config.Prompt
+	if kind == "video" {
+		if rule := production.CameraPresetRule(shot.Camera); rule != "" {
+			prompt += "\n运镜要求：" + rule
+		}
+	}
+	return map[string]any{"mode": kind, "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}, nil
 }
 
 // BuildCreate is a local protocol translation, not an upstream request. This

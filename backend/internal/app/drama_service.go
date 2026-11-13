@@ -67,6 +67,9 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	if format != production.SourceNovel {
 		req.Settings.EpisodeMode, req.Settings.ChaptersPerEpisode = DramaEpisodeModeChapter, 1
 	}
+	if err := req.Settings.Storyboard.ValidateDirector(); err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
 	settings := req.Settings.normalized()
 	if err := settings.TextThinking.validate(); err != nil {
 		return nil, err

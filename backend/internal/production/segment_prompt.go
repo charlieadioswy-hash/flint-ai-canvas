@@ -117,6 +117,11 @@ var cameraMoves = [3]map[string]string{
 }
 
 func cameraMoveText(level int, camera string) string {
+	if strings.HasSuffix(camera, "镜头") || camera == "无运镜" {
+		if rule := CameraPresetRule(camera); rule != "" {
+			return rule
+		}
+	}
 	switch level = normalizedDirectionLevel(level, DefaultCameraLevel); {
 	case level <= 3:
 		return cameraMoves[0][camera]

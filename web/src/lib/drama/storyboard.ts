@@ -85,6 +85,8 @@ export function normalizeStoryboard(input?: Partial<DramaStoryboardSettings>): D
         transitionMs: clamp(Math.round(value.transitionMs || MIN_TRANSITION_MS), MIN_TRANSITION_MS, 1500),
         performance: directionLevel(value.performance, DEFAULT_STORYBOARD.performance),
         cameraMotion: directionLevel(value.cameraMotion, DEFAULT_STORYBOARD.cameraMotion),
+        directorTemplate: value.directorTemplate === "smart_drama" || value.directorTemplate === "storyboard_detail" ? value.directorTemplate : "",
+        targetShotCount: clamp(Math.round(value.targetShotCount || 0), 0, 240),
     };
 }
 
@@ -129,6 +131,7 @@ export function segmentTargetSeconds(limits: SegmentLimits) {
 }
 
 export function shotTarget(settings: DramaStoryboardSettings, episodeSeconds: number) {
+    if (settings.targetShotCount && settings.targetShotCount > 0) return clamp(Math.round(settings.targetShotCount), 1, 240);
     return clamp(Math.round(episodeSeconds / averageShotSeconds(settings)), 4, 240);
 }
 

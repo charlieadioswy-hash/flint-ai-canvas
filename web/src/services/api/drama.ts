@@ -212,6 +212,8 @@ export type DramaStoryboardSettings = {
     performance: number;
     /** 运镜动感 1–10（1 静态、5 有动机的运镜、10 强烈冲击）。 */
     cameraMotion: number;
+    directorTemplate?: "" | "smart_drama" | "storyboard_detail";
+    targetShotCount?: number;
 };
 
 export type DramaPacing = "rapid" | "fast" | "standard" | "relaxed" | "slow";

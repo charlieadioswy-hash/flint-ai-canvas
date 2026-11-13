@@ -1,0 +1,151 @@
+.drama-scene-splits {
+    display: flex;
+    flex-direction: column;
+    max-height: 85dvh;
+    color: var(--text-primary);
+}
+.drama-scene-splits > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    border-bottom: 1px solid var(--border);
+}
+.drama-scene-splits h2,
+.drama-scene-splits h3,
+.drama-scene-splits p {
+    margin: 0;
+}
+.drama-scene-splits p,
+.drama-scene-splits small {
+    color: var(--text-secondary);
+}
+.drama-scene-splits-body {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+}
+.drama-scene-splits nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    overflow: auto;
+    padding: var(--space-4);
+    border-right: 1px solid var(--border);
+}
+.drama-scene-splits nav button,
+.drama-scene-splits-grid > button {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    text-align: left;
+}
+.drama-scene-splits-grid > button > img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: var(--radius-md);
+}
+.drama-scene-preview-shot {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+.drama-scene-splits-media {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+.drama-scene-splits-media figure {
+    width: min(240px, 100%);
+    margin: 0;
+}
+.drama-scene-splits-media img,
+.drama-scene-splits-media video,
+.drama-scene-splits-media audio {
+    width: 100%;
+    max-height: 200px;
+    object-fit: contain;
+}
+.drama-scene-splits nav button[aria-pressed="true"] {
+    border-color: var(--primary);
+    background: var(--bg-tertiary);
+}
+.drama-scene-splits main {
+    min-width: 0;
+    padding: var(--space-5);
+    overflow: auto;
+}
+.drama-scene-splits section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-5);
+}
+.drama-scene-splits-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+}
+.drama-scene-splits-grid > button {
+    min-width: 0;
+    min-height: 140px;
+    font-size: 12px;
+}
+.drama-scene-splits-grid span,
+.drama-scene-splits-grid small {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+.drama-scene-splits-config {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+}
+.drama-scene-splits-config label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+.drama-scene-splits-config .ant-select {
+    min-width: 220px;
+}
+.drama-scene-split-result {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+.drama-scene-split-result details {
+    width: 100%;
+}
+.drama-scene-split-result pre {
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+@media (max-width: 780px) {
+    .drama-scene-splits-body {
+        grid-template-columns: 130px minmax(0, 1fr);
+    }
+    .drama-scene-splits-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

@@ -21,6 +21,7 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowSegmentCard } from "./workflow-segment-card";
 import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowImpact } from "./workflow-impact";
+import { WorkflowSceneSplits } from "./workflow-scene-splits";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
@@ -429,6 +430,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                           {blocker ? <p role="status">{blocker}</p> : guideStep === "story" ? <p role="status">本集文字已就绪，可独立生成视频；其他集可继续处理。</p> : null}
                                       </div>
                                       <div className="drama-workflow-production-actions">
+                                          {detail?.shots.length ? <WorkflowSceneSplits summary={summary} detail={detail} onChanged={() => void refresh(episode.id)} onOpenSegment={(index) => openSegment(episode.id, index)} /> : null}
                                           {segments.length ? (
                                               <label className="drama-workflow-batch-episode">
                                                   <input

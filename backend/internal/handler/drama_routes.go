@@ -56,6 +56,7 @@ func bindDramaJSON(c *gin.Context, target any) error {
 }
 
 func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
+	registerDramaSceneSplitRoutes(r, svc)
 	registerDramaCastViewRoutes(r, svc)
 	registerDramaCastAssistanceRoutes(r, svc)
 	registerDramaCharacterLibraryRoutes(r, svc)

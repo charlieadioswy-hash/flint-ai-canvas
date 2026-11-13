@@ -1327,6 +1327,16 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 - 资源保护：短剧表直接持有的资源（设定参考图、剧情段视频与尾帧、成片以及全部版本记录）在资源引用快照里记为 `短剧` 引用，素材“彻底删除”与 24 小时孤儿资源清理都会保留它们。
 - 段视图新增 `revision`（采用时的乐观并发校验）与 `videoSeconds`（当前视频进入成片的秒数，与成片时间线一致）。
 
+### 场景范围重拆
+
+- `GET /dramas/:id/episodes/:episodeId/scene-splits`：读取真实文字任务及其进度、来源是否过期、采用前分镜与媒体历史。
+- `POST /dramas/:id/episodes/:episodeId/scene-splits/preflight`：提交作品/集版本、完整连续场景 `shotIds`、目标镜数、模板与要求，检查权限、在途任务、模型能力和报价，不生成任务。
+- `POST /dramas/:id/episodes/:episodeId/scene-splits/execute`：携带预检令牌和 `clientOperationId` 创建现有文字 Task 与场景所属 Take，同一提交标识幂等，结果不自动改写镜头。
+- `POST /dramas/:id/episodes/:episodeId/scene-splits/adopt`：携带当前作品/集版本与真实 `takeId`；校验原稿指纹、完整场景范围、结果镜数、原台词/说话人、已有资产引用和段时长后，事务内替换本场景，原段边界与组外内容保留。场景跨多段时每段至少一镜。不会回退引导阶段或自动生成图片/视频。
+
+作品 `settings.storyboard` 新增 `directorTemplate`（空、`smart_drama`、`storyboard_detail`）与 `targetShotCount`（0智能、1至240自定义）。模板与已选 ScriptSkill 一起进入实际分镜提示词，导入用户已有分镜仍保持原镜数。离散运镜保存在现有 `DramaShot.camera`，转为实际视频提示词要求；模型不保证物理精确的运镜轨迹。
+
+
 ### 系统渠道参考素材发送方式
 
 管理端创建/更新渠道的现有 JSON 请求及渠道响应支持可选 `mediaTransport`，包括独立的 `image`、`audio`、`video` 字段。渠道未提交此对象时保留原设置，提交空对象恢复协议默认。模型的同名配置位于 `capabilityConfig.mediaTransport`，支持 `inherit`（跟随渠道）、`protocol`（使用协议默认并取消渠道强制值）、`url`、`base64`。后端执行任务时重新读取管理员配置，不接受客户端任务覆盖系统渠道策略。此字段只影响参考素材输入，不改变结果 `response_format`。

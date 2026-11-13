@@ -6,6 +6,7 @@ import { AlertTriangle, Brush, Check, ChevronLeft, ChevronRight, Copy, Info, Loa
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { TRANSITION_LABEL } from "@/lib/drama/storyboard";
+import { CAMERA_PRESETS } from "@/lib/drama/director";
 import type { DramaCast, DramaEpisodeDetail, DramaModelChoice, DramaSegment, DramaSegmentReferencePatch, DramaShot, DramaShotPatch, DramaTransition } from "@/services/api/drama";
 import { ReferenceBoard } from "./segment-references";
 import { dramaChoiceKey, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
@@ -25,7 +26,7 @@ import { WorkflowShotMediaDialog } from "../workflow-shot-media-dialog";
 import { WorkflowStoryboardDialog } from "../workflow-storyboard-dialog";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
-const CAMERAS = ["固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
+const CAMERAS = [...CAMERA_PRESETS, "固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
 
 const PROMPT_NOTICE: Record<DramaSegment["promptStatus"], string> = {
     none: "还没有撰写本段视频提示词",

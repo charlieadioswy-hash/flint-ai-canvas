@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Dropdown, Input, InputNumber, Slider } from "antd";
+import { Dropdown, Input, InputNumber, Select, Slider } from "antd";
+import { DIRECTOR_TEMPLATES } from "@/lib/drama/director";
 import { ChevronDown, Film, TriangleAlert } from "lucide-react";
 
 import {
@@ -293,6 +294,45 @@ export function StoryboardRules({
     );
     return (
         <div className={`drama-sbrules ${bare ? "is-bare" : ""}`}>
+            <div className="drama-sbrules-row">
+                <span className="drama-sbrules-label">分镜模板</span>
+                <div className="drama-sbrules-segment">
+                    <Select<NonNullable<DramaStoryboardSettings["directorTemplate"]>>
+                        aria-label="分镜模板"
+                        value={rules.directorTemplate || ""}
+                        options={DIRECTOR_TEMPLATES.map(({ value, label }) => ({ value, label }))}
+                        onChange={(directorTemplate) => set({ directorTemplate })}
+                    />
+                    <span className="drama-sbrules-hint">{DIRECTOR_TEMPLATES.find((item) => item.value === rules.directorTemplate)?.detail}</span>
+                </div>
+            </div>
+            <div className="drama-sbrules-row">
+                <span className="drama-sbrules-label">镜头数量</span>
+                <div className="drama-sbrules-segment">
+                    <Segmented
+                        label="镜头数量"
+                        value={rules.targetShotCount ? "custom" : "auto"}
+                        options={[
+                            { value: "auto", label: "智能" },
+                            { value: "custom", label: "自定义" },
+                        ]}
+                        onChange={(value) => set({ targetShotCount: value === "auto" ? 0 : shotTarget(rules, episodeSeconds) })}
+                    />
+                    {rules.targetShotCount ? (
+                        <InputNumber
+                            aria-label="目标镜头数"
+                            min={1}
+                            max={240}
+                            precision={0}
+                            value={rules.targetShotCount}
+                            onChange={(value) => {
+                                if (typeof value === "number") set({ targetShotCount: value });
+                            }}
+                        />
+                    ) : null}
+                    <span className="drama-sbrules-hint">自定义约束新生成的镜头数量；导入已有分镜保留原镜数，已有成果不自动重写。</span>
+                </div>
+            </div>
             {onEpisodeSecondsChange ? (
                 <div className="drama-sbrules-row">
                     <span className="drama-sbrules-label">单集时长</span>
