@@ -29,13 +29,7 @@ mock.module("antd", () => ({
 mock.module("@/components/layout/workspace-page", () => ({ WorkspacePage: ({ children }: { children: ReactNode }) => children }));
 mock.module("@/components/layout/workspace-state", () => ({ WorkspaceLoadingState: () => null, WorkspaceErrorState: () => null }));
 mock.module("@/components/ui/base/segmented-control", () => ({ SegmentedControl: () => null }));
-mock.module("@/pages/projects/simple-studio", () => ({ default: () => <div data-simple-studio /> }));
-let openSimpleStudio: (() => void) | undefined;
-mock.module("@/pages/projects/studio/use-studio-agent", () => ({
-    useStudioAgent(_project: string, _summary: unknown, _unavailable: boolean, onOpen: () => void) {
-        openSimpleStudio = onOpen;
-    },
-}));
+mock.module("@/pages/projects/workflow", () => ({ default: () => <div data-simple-studio /> }));
 mock.module("@/pages/projects/drama-shared", () => ({
     formatCount: (value: number) => String(value),
     formatDuration: (value: number) => String(value),
@@ -224,7 +218,7 @@ for (const operation of ["insert", "delete"] as const) {
                 if (operation === "insert") dialog.onInsertShot(shot, "after");
                 else dialog.onDeleteShot(shot);
             });
-            await act(() => openSimpleStudio!());
+            await act(() => clickLabel(view.host, "简易制作台"));
             expect(view.host.querySelector("[data-simple-studio]")).not.toBeNull();
             await act(async () => {
                 finish();
