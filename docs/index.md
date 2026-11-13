@@ -12,6 +12,8 @@
 
 ## 设计沉淀
 
+- [短剧简易流程重构实施计划](design/short-drama-workflow-rebuild.md)：当前开发计划；以六步页面替换短剧 Agent，保留详细制作台，分批补齐多视图、镜头媒体和故事板能力，每批 review、验证与提交。
+
 - [短剧简易制作台](design/short-drama-simple-studio.md)：引导与制作共用左侧 Agent、右侧分集分镜界面，复用原编辑弹窗与任务能力，支持详细设置往返、对象引用及按确认范围生成（提案，未实施）。
 
 - [个人风格管理与资产封面](design/personal-style-management.md)：账户设置复用画布风格管理，支持资产库选封面与 AI 填写配置；封面资产绑定、按风格生图与短剧联动保留为后续方案。
