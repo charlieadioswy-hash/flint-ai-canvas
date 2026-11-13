@@ -101,6 +101,17 @@ func TestDramaCastCreateRejectsInvalidOrUnavailableEdits(t *testing.T) {
 	}
 }
 
+func TestDramaGuidedNameOnlyCastRemainsInactiveDraft(t *testing.T) {
+	svc, _, projectID, revision := newDramaCastGuide(t)
+	cast, err := svc.CreateDramaCast("usr-drama", projectID, CreateDramaCastRequest{ExpectedRevision: &revision, Kind: "character", Name: "仅名称"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cast.ImageStatus != model.DramaMediaDraft || cast.Appearance != "" || cast.Description != "" || cast.ImagePrompt != "" {
+		t.Fatalf("guided name-only asset could implicitly generate: %+v", cast)
+	}
+}
+
 func TestDramaCastDeleteRetainsGeneratedMediaAndHistory(t *testing.T) {
 	for _, hasTake := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy-image", true: "existing-take"}[hasTake], func(t *testing.T) {

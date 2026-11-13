@@ -62,11 +62,11 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 		VoiceInstructions: truncateRunes(strings.TrimSpace(req.VoiceInstructions), 500),
 		ImageStatus:       model.DramaMediaDraft, Revision: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	if dramaGuideActive(p) {
-		cast.ImageStatus = ""
-	}
 	if _, err := applyDramaCastImageFields(&cast, &req.ImagePrompt, &req.ImageStyleID, &req.ImageStyleName, &req.ImageStylePrompt); err != nil {
 		return model.DramaCast{}, err
+	}
+	if dramaGuideActive(p) && dramaCastHasImageDefinition(cast) {
+		cast.ImageStatus = ""
 	}
 	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
 		current, err := tx.DramaProduction(project.ID)
