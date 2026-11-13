@@ -819,21 +819,11 @@ func (s *Service) RegenerateDramaCasts(userID string, projectID string, req Rege
 }
 
 // DramaCastImpact 预览修改某个设定会影响多少集和镜头。
-func (s *Service) DramaCastImpact(userID string, projectID string, castID string) (map[string]any, error) {
-	project, _, err := s.dramaForUser(userID, projectID)
-	if err != nil {
-		return nil, err
+func (s *Service) DramaCastImpact(userID string, projectID string, castID string) (DramaWorkflowImpact, error) {
+	if strings.TrimSpace(castID) == "" {
+		return DramaWorkflowImpact{}, BadAuthRequest("请选择要查看影响范围的资产")
 	}
-	shots, err := s.repo.DramaShotsReferencingCast(project.ID, castID)
-	if err != nil {
-		return nil, err
-	}
-	episodes, segments := map[string]bool{}, map[string]bool{}
-	for _, shot := range shots {
-		episodes[shot.EpisodeID] = true
-		segments[shot.EpisodeID+"|"+itoa(shot.SegmentIndex)] = true
-	}
-	return map[string]any{"segments": len(segments), "episodes": len(episodes)}, nil
+	return s.dramaWorkflowImpact(userID, projectID, castID)
 }
 
 // RetryFailedDramaEpisode 仅恢复指定集当前失败的文字作业，不删除已保存镜头或重试媒体。

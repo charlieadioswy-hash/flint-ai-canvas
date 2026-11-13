@@ -114,7 +114,7 @@ func TestRenderDramaEpisodeRejectsIncompleteStaleAndForeignVideos(t *testing.T) 
 				old := episode.Revision - 1
 				req.ExpectedRevision = &old
 			case "guide":
-				if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"guide_step": model.DramaGuideStory}); err != nil {
+				if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"guide_step": model.DramaGuideAssets}); err != nil {
 					t.Fatal(err)
 				}
 			case "foreign-user":

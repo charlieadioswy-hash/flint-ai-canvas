@@ -56,6 +56,19 @@ func bindDramaJSON(c *gin.Context, target any) error {
 }
 
 func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/dramas/:id/workflow/readiness", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.DramaWorkflowReadiness(userID, c.Param("id"))
+	}))
+	r.PATCH("/dramas/:id/workflow/style", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.UpdateDramaWorkflowStyleRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.UpdateDramaWorkflowStyle(userID, c.Param("id"), req)
+	}))
+	r.GET("/dramas/:id/settings/impact", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.DramaSettingsImpact(userID, c.Param("id"))
+	}))
 	r.POST("/dramas/:id/actions/batch/preflight", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.DramaStudioBatchRequest
 		if err := bindDramaJSON(c, &req); err != nil {

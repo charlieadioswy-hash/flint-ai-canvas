@@ -105,7 +105,8 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 			v.Reason = reason
 		}
 	}
-	if dramaGuideActive(p) && req.Action != "segment_prompt" && !(req.Action == "cast_image" && (p.GuideStep == model.DramaGuideAssets || p.GuideStep == model.DramaGuideStory)) {
+	storyMedia := p.GuideStep == model.DramaGuideStory && (req.Action == "segment_video" || req.Action == "segment_assets" || req.Action == "segment_reprocess")
+	if dramaGuideActive(p) && req.Action != "segment_prompt" && !storyMedia && !(req.Action == "cast_image" && (p.GuideStep == model.DramaGuideAssets || p.GuideStep == model.DramaGuideStory)) {
 		blocked("请先确认剧本与分镜文字")
 	}
 	if req.Action == "segment_assets" {
@@ -191,6 +192,16 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 			return plan, err
 		}
 		plan.segment, v.EpisodeID, v.TargetRevision = segment, segment.EpisodeID, segment.Revision
+		if storyMedia {
+			readiness, err := dramaWorkflowEpisodeReadiness(repo, p, episode)
+			if err != nil {
+				return plan, err
+			}
+			snapshot = append(snapshot, readiness)
+			if !readiness.TextReady {
+				blocked(readiness.BlockingReason)
+			}
+		}
 		plan.invalidateLater = !settings.parallelVideo() && segment.VideoResourceID != "" && req.Action != "segment_reprocess"
 		if plan.invalidateLater {
 			v.Warnings = append(v.Warnings, "本段采用尾帧续接；后续段的旧视频将标记待更新，保留原视频，不自动重新生成")

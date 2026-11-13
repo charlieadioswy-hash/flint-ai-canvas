@@ -475,13 +475,14 @@ func dramaAttemptRecorded(job *model.DramaJob, taskID string) bool {
 	return false
 }
 
-func (r *dramaRun) enqueue(kind, episodeID, shotID, castID string, priority int, label string, payload any) bool {
-	if !dramaGuideAllowsJob(r.production, kind) {
-		return false
+func (r *dramaRun) enqueue(kind, episodeID, shotID, castID string, priority int, label string, payload any) (bool, error) {
+	allowed, err := dramaGuideAllowsScopedJob(r.s.repo, r.production, model.DramaJob{Kind: kind, EpisodeID: episodeID, ShotID: shotID})
+	if err != nil || !allowed {
+		return false, err
 	}
 	key := dramaJobKey(kind, episodeID, shotID, castID)
 	if r.active[key] {
-		return false
+		return false, nil
 	}
 	r.active[key] = true
 	now := time.Now()
@@ -491,7 +492,7 @@ func (r *dramaRun) enqueue(kind, episodeID, shotID, castID string, priority int,
 		job.PayloadJSON = string(encoded)
 	}
 	r.newJobs = append(r.newJobs, job)
-	return true
+	return true, nil
 }
 
 type dramaPlanPayload struct {
@@ -506,8 +507,8 @@ func (r *dramaRun) plan() error {
 		return nil
 	}
 	if p.Stage == model.DramaStageBible {
-		r.enqueue(model.DramaJobBible, "", "", "", dramaPriorityBible, "建立作品圣经：角色、场景与风格", nil)
-		return nil
+		_, err := r.enqueue(model.DramaJobBible, "", "", "", dramaPriorityBible, "建立作品圣经：角色、场景与风格", nil)
+		return err
 	}
 	for i := range r.casts {
 		cast := &r.casts[i]
@@ -536,7 +537,9 @@ func (r *dramaRun) plan() error {
 				continue
 			}
 		}
-		r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil)
+		if _, err := r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil); err != nil {
+			return err
+		}
 	}
 	if p.GuideStep == model.DramaGuideAssets {
 		return nil
@@ -559,7 +562,9 @@ func (r *dramaRun) plan() error {
 				runes += chapters[end].WordCount
 				end++
 			}
-			r.enqueue(model.DramaJobPlan, "", "", "", dramaPriorityPlan, fmt.Sprintf("分集规划：第 %d-%d 章", p.PlanCursor+1, end), dramaPlanPayload{Start: p.PlanCursor, End: end})
+			if _, err := r.enqueue(model.DramaJobPlan, "", "", "", dramaPriorityPlan, fmt.Sprintf("分集规划：第 %d-%d 章", p.PlanCursor+1, end), dramaPlanPayload{Start: p.PlanCursor, End: end}); err != nil {
+				return err
+			}
 		}
 	}
 	episodes, err := r.s.repo.DramaEpisodes(r.project.ID)
@@ -607,7 +612,9 @@ func (r *dramaRun) plan() error {
 	}
 	for _, segment := range segments {
 		number := numberByEpisode[segment.EpisodeID]
-		r.enqueue(model.DramaJobSegmentPrompt, segment.EpisodeID, segment.ID, "", segmentPriority(dramaRankPrompt, number, segment.SegmentIndex), fmt.Sprintf("第 %d 集第 %d 段 视频提示词", number, segment.SegmentIndex+1), nil)
+		if _, err := r.enqueue(model.DramaJobSegmentPrompt, segment.EpisodeID, segment.ID, "", segmentPriority(dramaRankPrompt, number, segment.SegmentIndex), fmt.Sprintf("第 %d 集第 %d 段 视频提示词", number, segment.SegmentIndex+1), nil); err != nil {
+			return err
+		}
 		allDone = false
 	}
 	// 造型可能还在等待本体，尚未创建作业；已请求的资产与活跃作业都收尾后才能结束调度。
@@ -705,7 +712,9 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 			// 分镜已直接写入（阶段与版本由 ApplyDramaScript 更新）或已记录错误，本轮不再回写阶段。
 			return nil
 		}
-		r.enqueue(model.DramaJobScript, e.ID, "", "", episodePriority(dramaRankScript, e.Number), label+" 剧本与分镜", nil)
+		if _, err := r.enqueue(model.DramaJobScript, e.ID, "", "", episodePriority(dramaRankScript, e.Number), label+" 剧本与分镜", nil); err != nil {
+			return err
+		}
 	case model.DramaEpisodePrompts:
 		ready := len(segments) > 0
 		for _, seg := range segments {
@@ -735,7 +744,9 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 		}
 	case model.DramaEpisodeRender:
 		if e.Error == "" {
-			r.enqueue(model.DramaJobRender, e.ID, "", "", episodePriority(dramaRankRender, e.Number), label+" 合成成片", nil)
+			if _, err := r.enqueue(model.DramaJobRender, e.ID, "", "", episodePriority(dramaRankRender, e.Number), label+" 合成成片", nil); err != nil {
+				return err
+			}
 		}
 	case model.DramaEpisodeDone:
 		if e.FinalStale {
@@ -779,7 +790,9 @@ func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.
 			shots = loaded
 		}
 		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
-			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
+			if _, err := r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil); err != nil {
+				return false, err
+			}
 		}
 		return false, nil
 	}
@@ -808,7 +821,9 @@ func (r *dramaRun) enqueueParallelSegmentVideos(e *model.DramaEpisode, segments 
 			shots = loaded
 		}
 		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
-			r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil)
+			if _, err := r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil); err != nil {
+				return false, err
+			}
 		}
 	}
 	return ready, nil
@@ -837,7 +852,11 @@ func (r *dramaRun) queuedJobsForGuide() ([]model.DramaJob, error) {
 		}
 		var blocked []string
 		for _, job := range queued {
-			if dramaGuideAllowsJob(current, job.Kind) {
+			allowedJob, err := dramaGuideAllowsScopedJob(tx, current, job)
+			if err != nil {
+				return err
+			}
+			if allowedJob {
 				allowed = append(allowed, job)
 			} else {
 				blocked = append(blocked, job.ID)
@@ -2164,7 +2183,11 @@ func (s *Service) persistDramaTask(job *model.DramaJob, task *model.Task, order 
 		if err != nil {
 			return err
 		}
-		if !dramaGuideAllowsJob(current, job.Kind) {
+		allowed, err := dramaGuideAllowsScopedJob(repo, current, *job)
+		if err != nil {
+			return err
+		}
+		if !allowed {
 			return repository.ErrDramaJobChanged
 		}
 		if err := createTaskWithStorageQuotaRepository(repo, task, order, policy); err != nil {

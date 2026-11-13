@@ -45,7 +45,12 @@ func dramaSegmentVideoDone(segment model.DramaSegment) bool {
 // dramaVideoWaitReason 说明第 index 段视频为何还不能提交；空串表示调度会提交它。调度与详情页共用。
 func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *model.DramaEpisode, segments []model.DramaSegment, index int, shots []model.DramaShot, lookup func(string) (model.DramaCast, bool)) string {
 	if dramaGuideActive(p) {
-		return "请先完成文字创作引导"
+		if p.GuideStep != model.DramaGuideStory || !p.MediaRequestsOnly || !e.VideoRequestsOnly || !mediaBusyStatus(segments[index].VideoStatus) {
+			return "请先完成文字创作引导或确认本段生成"
+		}
+		if reason := dramaWorkflowTextReason(p, e, segments, shots); reason != "" {
+			return reason
+		}
 	}
 	if wait := dramaProductionWait(p); wait != "" {
 		return wait

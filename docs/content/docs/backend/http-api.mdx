@@ -36,6 +36,16 @@ description: 信封、错误码与 OpenAPI
 
 确认后调用 `POST /api/dramas/:id/actions/batch/execute`，原请求加必需的 `baseRevision/confirmationToken`。全部目标在同一作品锁内完成重检，统一限制隐式媒体，再原子入队所有 `ready` 目标；任何内容、依赖或报价变化使整批不写，HTTP 409 的 `details.batch` 给出逐项冲突。数据库写失败整批回滚，已排队、已有成功结果与阻塞项继续逐项跳过。成功返回相同结构，入队项为 `queued`；重复确认范围内全部目标均已排队或成功时返回跳过，不重新生成或收费；仍有阻塞或无效目标且确认快照变化时要求重新预检，不能把新阻塞误报成无变化。单项与批量均在持久入队后返回真实结果：恢复制作失败时仍报告已入队，附 `dispatchPending=true` 与 `warnings`，用户可继续制作，无需重新提交生成。该批次确认不创建计费订单，实际任务派发仍按原准入与冻结规则处理。
 
+### 简易流程逐集推进与影响提示
+
+`GET /api/dramas/:id/workflow/readiness` 返回 `{revision,guideStep,episodes}`。每集包含 `episodeId/number/title/revision/textReady/canGenerateVideo/canRender/blockingReason?/segmentCount/readyVideos`；按真实镜头、段提示词、集版本及相关活跃文字作业判断就绪。另一集的剧本或提示词失败、生成中，不阻塞已就绪集；作品级资产文字提取或分集规划仍受保护。只浏览页面、查询就绪或预检不改变阶段和媒体授权。
+
+`story` 阶段允许已就绪集通过既有单段、批量视频预检与确认继续制作，也可按需补引用资产；缺图补齐不接续视频。视频只放行已确认的段，入队、排队清理与最终任务绑定统一重检本集文字及显式授权；`configuring/assets` 阶段仍禁止视频与合成。现有 `POST /api/dramas/:id/episodes/:episodeId/render` 在本集文字和全部段视频就绪后可显式合成，不等待其它失败集。最终全局文字确认保留已明确制作或合成剧集的阶段、版本和结果，纯文字剧集仍进入审阅；样片确认、尾帧依赖、报价、预算和资源归属校验继续生效。
+
+`GET /api/dramas/:id/settings/impact` 预览全剧风格的后续生成范围；`GET /api/dramas/:id/cast/:castId/impact` 返回真实资产影响。统一返回 `{kind,revision,castId?,segments,episodes,affectedSegments,assetIds,directSegments,continuitySegments,message}`，保留旧的直接引用 `segments/episodes` 计数。每个段含 `id/episodeId/episodeNumber/episodeTitle/segmentIndex/revision/videoStatus/hasVideo`；资产范围包含手动图片、声音引用与本体所关联的造型。尾帧续接只列会因已有或生成中的直接引用视频更新而受影响的后续段，独立出片无此范围。全剧风格的资产范围排除已指定独立风格或完整图片提示词的资产。章节影响继续使用 `GET /api/dramas/:id/chapters/:chapterId/impact`；所有影响接口只读，不自动标记过期或重新生成。
+
+`PATCH /api/dramas/:id/workflow/style` 接收 `{expectedRevision,styleName,stylePrompt}`，风格名称为 1–60 字，说明为 1–10000 字，返回更新后的短剧概览。配置、资产、分镜及制作阶段均可只保存风格；在作品锁内检查 CAS 和相关活跃文字作业，仅更新 `settings.styleName/stylePrompt` 并递增制作版本，保留画幅、拆集、模型、阶段及已有媒体。风格保存不重写旧分镜、不自动生图或生成视频，也不产生生成费用。
+
 `POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。短剧绑定开放上下文读取、结构化建议及必要提问，按当前阶段限制操作；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt/media`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用文字建议后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
 
 `media` 仅在 `guideStep` 为 `completed` 或空字符串的制作台可用，必须提供真实 `targetId`；`changes` 仅接受 `action`、`targetRevision` 和段操作必需的 `episodeId`。`action` 沿用上述精确操作，`targetRevision` 必填且可为 0。提案只进入真实预检，用户确认范围与费用后才调用 execute，不直接排队或代替用户授权。

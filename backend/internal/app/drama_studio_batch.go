@@ -134,7 +134,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 				continue
 			}
 			snapshots = append(snapshots, source.view)
-			if dramaGuideActive(p) {
+			if dramaGuideActive(p) && p.GuideStep != model.DramaGuideStory {
 				plan.view.Items = append(plan.view.Items, DramaStudioBatchItem{TargetID: id, TargetKind: "segment", EpisodeID: source.view.EpisodeID, TargetRevision: source.view.TargetRevision, SegmentIndex: source.view.SegmentIndex, Status: "blocked", Reason: "请先确认剧本与分镜文字"})
 				continue
 			}

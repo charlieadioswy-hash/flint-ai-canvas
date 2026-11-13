@@ -128,7 +128,7 @@ func (r *Repository) ResetDramaGuideEpisodes(projectID, sourceFormat string, epi
 }
 
 func (r *Repository) CompleteDramaGuideEpisodes(projectID string) error {
-	return r.db.Model(&model.DramaEpisode{}).Where("project_id = ?", projectID).
+	return r.db.Model(&model.DramaEpisode{}).Where("project_id = ? AND stage IN ? AND video_requests_only = ?", projectID, []string{model.DramaEpisodePrompts, model.DramaEpisodeReview}, false).
 		Updates(map[string]any{"approved": true, "stage": model.DramaEpisodeReview, "media_released": false, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
 }
 

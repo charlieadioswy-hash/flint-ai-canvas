@@ -40,9 +40,6 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 		if err != nil {
 			return err
 		}
-		if err := requireDramaGuideComplete(p); err != nil {
-			return err
-		}
 		episode, err := tx.DramaEpisode(projectID, episodeID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return NewAppError(http.StatusNotFound, "剧集不存在或不属于当前短剧")
@@ -52,6 +49,15 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 		}
 		if episode.Revision != *req.ExpectedRevision {
 			return dramaGuideConflict("本集内容已改变，请刷新后重新合成")
+		}
+		if dramaGuideActive(p) {
+			readiness, err := dramaWorkflowEpisodeReadiness(tx, p, episode)
+			if err != nil {
+				return err
+			}
+			if !readiness.TextReady {
+				return BadAuthRequest(readiness.BlockingReason)
+			}
 		}
 		active, err := tx.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
 		if err != nil {
@@ -123,7 +129,15 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 			renderJob = queuedRender
 			return nil
 		}
-		changed, err := tx.UpdateDramaEpisodeIfRevision(episodeID, episode.Revision, map[string]any{"stage": model.DramaEpisodeRender, "error": "", "final_stale": episode.FinalResourceID != ""})
+		fields := map[string]any{"stage": model.DramaEpisodeRender, "error": "", "final_stale": episode.FinalResourceID != ""}
+		if dramaGuideActive(p) {
+			if err := tx.RestrictDramaImplicitMedia(projectID); err != nil {
+				return err
+			}
+			p.MediaRequestsOnly = true
+			fields["video_requests_only"] = true
+		}
+		changed, err := tx.UpdateDramaEpisodeIfRevision(episodeID, episode.Revision, fields)
 		if err != nil {
 			return err
 		}
