@@ -699,6 +699,9 @@ func (s *Service) RegenerateDramaCast(userID string, projectID string, castID st
 	if cast.Locked {
 		return nil, BadAuthRequest("设定已锁定，请先解锁")
 	}
+	if !dramaCastHasImageDefinition(*cast) {
+		return nil, BadAuthRequest("请先补充资产描述或图片提示词，再生成参考图")
+	}
 	// queued 表示用户明确请求：手动生图模式下即使资产尚未整体放行也会生成。
 	if err := s.repo.UpdateDramaCastFields(cast.ID, map[string]any{"image_status": model.DramaMediaQueued}); err != nil {
 		return nil, err

@@ -136,6 +136,30 @@ func TestDramaStudioCastGenerationDoesNotRetryOtherLooks(t *testing.T) {
 	}
 }
 
+func TestDramaStudioCastImageAllowedBeforeStoryConfirmation(t *testing.T) {
+	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideStory} {
+		t.Run(step, func(t *testing.T) {
+			svc, fake, projectID, _ := dramaStudioFixture(t)
+			casts, _ := svc.repo.DramaCasts(projectID)
+			if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Updates(map[string]any{"guide_step": step, "status": model.DramaStatusPaused}).Error; err != nil {
+				t.Fatal(err)
+			}
+			view, err := svc.PreflightDramaStudioAction("usr-drama", projectID, DramaStudioActionRequest{Action: "cast_image", TargetID: casts[0].ID})
+			if err != nil || !view.Ready {
+				t.Fatalf("optional asset image blocked: %+v %v", view, err)
+			}
+			if _, err := svc.ExecuteDramaStudioAction("usr-drama", projectID, confirmedDramaStudioRequest(view)); err != nil {
+				t.Fatal(err)
+			}
+			runDramaTicks(t, svc, projectID, 5)
+			p, _ := svc.repo.DramaProduction(projectID)
+			if p.GuideStep != step || fake.byKind["image"] != 1 || fake.byKind["video"] != 0 {
+				t.Fatalf("asset image advanced stage or unrelated media: %+v %+v", p, fake.byKind)
+			}
+		})
+	}
+}
+
 func TestDramaStudioReprocessReusesSuccessfulTask(t *testing.T) {
 	svc, fake, projectID, detail := dramaStudioFixture(t)
 	svc.dramaTailFrameHook = func(_, _ string) (string, error) { return "", errors.New("尾帧处理失败") }

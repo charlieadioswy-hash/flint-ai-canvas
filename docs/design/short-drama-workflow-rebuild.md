@@ -98,4 +98,5 @@
 | W04a | 38bc7bfb | Claude CLI 独立范围回归，人工 review；Guide/SelectedChapters 专项 3.849s、gofmt/diff 通过 | 素材类型与本次范围真实保存；保留预留正文及章节 ID，整体替换必须显式选范围；确认后仅提取选中正文 |
 | W04b | a9b77c61 | Claude CLI 实现及独立 review；正文导入真实 DOM 10 项通过、步骤状态 7 项通过；整体 typecheck、Prettier/diff 通过 | 六步状态、导入入口、逐章草稿与 CAS 审阅、系统/个人风格与基础配置组件；路由和页面壳在后续集成批次提交 |
 | W05a | f2def163 | Claude CLI 初稿、独立 review；React/ReactQuery DOM 10 项、60 断言通过；整体 typecheck/Prettier/diff 通过；真实浏览器验证存量项目分镜、编辑与预览 | 分镜卡、文字红绿进度、失败集/局部重试、无聊天媒体预检、队列、预览和已有资产包/剪映/成片下载组件；未进行真实付费媒体生成 |
-| W07a | 本功能批次 | Claude CLI 范围解析与提示词、独立 review；production 全包 0.399s、app 提取/Bible/Guide/Dispatch 专项 5.222s、handler 新旧路由专项 11.986s；gofmt/diff 通过 | 按类型与集/章节范围查漏；保留已有人工文字、图片及历史；空结果正常成功；独立队列不推进全局阶段，预算与重试沿用现有任务 |
+| W07a | d22ef8f2 | Claude CLI 范围解析与提示词、独立 review；production 全包 0.399s、app 提取/Bible/Guide/Dispatch 专项 5.222s、handler 新旧路由专项 11.986s；gofmt/diff 通过 | 按类型与集/章节范围查漏；保留已有人工文字、图片及历史；空结果正常成功；独立队列不推进全局阶段，预算与重试沿用现有任务 |
+| W07b | 本功能批次 | 独立 review；app 名称草稿、单图、段补图与原校验专项通过 3.159s；gofmt/diff 通过 | 三类资产允许纯名称草稿；缺少描述/图片提示词时各显式生成入口阻塞；资产/分镜文字确认期可按需生单图，保持原阶段 |

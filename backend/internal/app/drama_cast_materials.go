@@ -54,6 +54,10 @@ func dramaCastHasImageStyle(cast model.DramaCast) bool {
 	return strings.TrimSpace(cast.ImageStyleID) != "" || strings.TrimSpace(cast.ImageStyleName) != "" || strings.TrimSpace(cast.ImageStylePrompt) != ""
 }
 
+func dramaCastHasImageDefinition(cast model.DramaCast) bool {
+	return strings.TrimSpace(cast.Appearance) != "" || strings.TrimSpace(cast.Description) != "" || strings.TrimSpace(cast.ImagePrompt) != ""
+}
+
 // 编排函数是预览和实际提交的唯一入口。自定义提示词是完整正文，不再追加作品旧画风。
 func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast model.DramaCast) string {
 	assets := settings.Assets.Normalized()

@@ -48,7 +48,7 @@ func TestDramaManualCastDraftValidation(t *testing.T) {
 	}
 	for _, req := range []CreateDramaCastRequest{
 		{Kind: "look", Name: "x", Appearance: "x"}, {Kind: "character", Name: " ", Appearance: "x"},
-		{Kind: "scene", Name: "x", Appearance: " "}, {Kind: "prop", Name: strings.Repeat("中", 61), Appearance: "x"},
+		{Kind: "prop", Name: strings.Repeat("中", 61), Appearance: "x"},
 		{Kind: "prop", Name: "x", Appearance: strings.Repeat("中", 1001)}, {Kind: "prop", Name: "x", Appearance: "x", ImageStylePrompt: strings.Repeat("中", 4001)},
 		{Kind: "character", Name: "x", Appearance: "x", ImagePrompt: strings.Repeat("中", 12001)},
 	} {
@@ -62,6 +62,44 @@ func TestDramaManualCastDraftValidation(t *testing.T) {
 	jobs, err := svc.repo.RecentDramaJobs(project, 100)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("saving drafts must not queue jobs: %+v %v", jobs, err)
+	}
+}
+
+func TestDramaNameOnlyCastDraftRequiresDefinitionBeforeImage(t *testing.T) {
+	for _, kind := range []string{"character", "scene", "prop"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, fake := newDramaTestService(t)
+			project := newDramaMaterialProject(t, svc, "名称草稿")
+			before, _ := svc.repo.DramaProduction(project)
+			cast, err := svc.CreateDramaCast("usr-drama", project, CreateDramaCastRequest{ExpectedRevision: &before.Revision, Kind: kind, Name: "  待补充  "})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cast.Name != "待补充" || cast.Appearance != "" || cast.Description != "" || cast.ImagePrompt != "" || cast.ImageStatus != model.DramaMediaDraft {
+				t.Fatalf("name-only draft acquired invented definition or active media: %+v", cast)
+			}
+			preflight, err := svc.PreflightDramaStudioAction("usr-drama", project, DramaStudioActionRequest{Action: "cast_image", TargetID: cast.ID})
+			if err != nil || preflight.Ready || !strings.Contains(preflight.Reason, "只有名称") {
+				t.Fatalf("missing definition not blocked: %+v %v", preflight, err)
+			}
+			if _, err := svc.ExecuteDramaStudioAction("usr-drama", project, confirmedDramaStudioRequest(preflight)); err == nil {
+				t.Fatal("name-only draft was queued through explicit confirmation")
+			}
+			if _, err := svc.RegenerateDramaCast("usr-drama", project, cast.ID, false); err == nil {
+				t.Fatal("legacy generation bypassed missing definition")
+			}
+			row, _ := svc.repo.DramaCast(project, cast.ID)
+			if row.ImageStatus != model.DramaMediaDraft || len(fake.requests) != 0 {
+				t.Fatal("blocked operation generated media or changed draft status")
+			}
+			if err := svc.repo.UpdateDramaCastFields(cast.ID, map[string]any{"image_prompt": "用户明确填写的图片设定"}); err != nil {
+				t.Fatal(err)
+			}
+			preflight, err = svc.PreflightDramaStudioAction("usr-drama", project, DramaStudioActionRequest{Action: "cast_image", TargetID: cast.ID})
+			if err != nil || !preflight.Ready {
+				t.Fatalf("explicit image prompt did not unblock preflight: %+v %v", preflight, err)
+			}
+		})
 	}
 }
 

@@ -40,7 +40,7 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 		limit        int
 		required     bool
 	}{
-		{strings.TrimSpace(req.Appearance), "外观描述", 1000, !dramaGuideActive(p)},
+		{strings.TrimSpace(req.Appearance), "外观描述", 1000, false},
 		{strings.TrimSpace(req.Description), "说明", 1000, false},
 		{strings.TrimSpace(req.VoiceInstructions), "声音说明", 500, false},
 	} {

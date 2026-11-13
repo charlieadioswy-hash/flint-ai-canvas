@@ -94,8 +94,8 @@ func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, 
 			v.Reason = reason
 		}
 	}
-	if dramaGuideActive(p) && req.Action != "segment_prompt" {
-		blocked("请先完成文字创作引导")
+	if dramaGuideActive(p) && req.Action != "segment_prompt" && !(req.Action == "cast_image" && (p.GuideStep == model.DramaGuideAssets || p.GuideStep == model.DramaGuideStory)) {
+		blocked("请先确认剧本与分镜文字")
 	}
 	if req.Action == "segment_assets" {
 		return s.prepareDramaStudioSegmentAssets(repo, userID, req, plan, settings, snapshot)
@@ -108,6 +108,9 @@ func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, 
 		plan.cast, v.TargetRevision = cast, cast.Revision
 		snapshot = append(snapshot, cast)
 		v.Message = "仅生成「" + cast.Name + "」参考图"
+		if !dramaCastHasImageDefinition(*cast) {
+			blocked("资产「" + cast.Name + "」只有名称，请先补充描述或图片提示词")
+		}
 		if cast.Locked {
 			blocked("设定已锁定，请先解锁")
 		}

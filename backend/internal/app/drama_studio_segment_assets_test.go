@@ -209,6 +209,9 @@ func TestDramaStudioSegmentAssetsInactiveAssetsDoNotBlockCompletion(t *testing.T
 func TestDramaStudioSegmentAssetsSkipsQueuedAndActiveJobs(t *testing.T) {
 	svc, fake, projectID, detail := dramaStudioFixture(t)
 	casts, _ := svc.repo.DramaCasts(projectID)
+	if err := svc.repo.UpdateDramaCastFields(casts[2].ID, map[string]any{"appearance": "白发老者"}); err != nil {
+		t.Fatal(err)
+	}
 	setDramaStudioAssetReferences(t, fake, detail.Segments[0].ID, casts[0].ID, casts[1].ID, casts[2].ID)
 	if err := svc.repo.UpdateDramaCastFields(casts[0].ID, map[string]any{"image_status": model.DramaMediaQueued}); err != nil {
 		t.Fatal(err)
@@ -228,6 +231,26 @@ func TestDramaStudioSegmentAssetsSkipsQueuedAndActiveJobs(t *testing.T) {
 	stillRunning, _ := svc.repo.DramaJob(projectID, job.ID)
 	if stillRunning.Status != model.DramaJobRunning {
 		t.Fatalf("existing asset job changed: %+v", stillRunning)
+	}
+}
+
+func TestDramaStudioSegmentAssetsRejectsNameOnlyDependency(t *testing.T) {
+	svc, fake, projectID, detail := dramaStudioFixture(t)
+	casts, _ := svc.repo.DramaCasts(projectID)
+	cast := casts[0]
+	if err := svc.repo.UpdateDramaCastFields(cast.ID, map[string]any{"appearance": "", "description": "", "image_prompt": "", "image_status": model.DramaMediaDraft}); err != nil {
+		t.Fatal(err)
+	}
+	setDramaStudioAssetReferences(t, fake, detail.Segments[0].ID, cast.ID)
+	view, err := svc.PreflightDramaStudioAction("usr-drama", projectID, DramaStudioActionRequest{Action: "segment_assets", TargetID: detail.Segments[0].ID})
+	if err != nil || view.Ready || !strings.Contains(view.Reason, "只有名称") {
+		t.Fatalf("name-only dependency not blocked: %+v %v", view, err)
+	}
+	if _, err := svc.ExecuteDramaStudioAction("usr-drama", projectID, confirmedDramaStudioRequest(view)); err == nil {
+		t.Fatal("name-only dependency queued")
+	}
+	if fake.byKind["image"] != 0 || fake.byKind["video"] != 0 {
+		t.Fatal("preflight executed media")
 	}
 }
 

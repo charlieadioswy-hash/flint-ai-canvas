@@ -100,6 +100,9 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 		if cast.Locked {
 			blocked("资产「" + cast.Name + "」已锁定，请先解锁")
 		}
+		if !dramaCastHasImageDefinition(cast) {
+			blocked("资产「" + cast.Name + "」只有名称，请先补充描述或图片提示词")
+		}
 		choice := settings.Models.imageFor(cast.Kind)
 		ratio := production.AssetImageRatio
 		if cast.Kind == "character" {
