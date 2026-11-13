@@ -129,14 +129,32 @@
     min-height: 100%;
 }
 
+.drama-project-topbar:has(.drama-workflow-steps) {
+    flex-wrap: wrap;
+}
+
+.drama-project-topbar:has(.drama-workflow-steps) h1 {
+    flex: 1 1 120px;
+    max-width: none;
+}
+
+.drama-project-topbar:has(.drama-workflow-steps) .drama-project-topbar-controls {
+    order: 1;
+    flex: 1 0 100%;
+    overflow: hidden;
+}
+
 .drama-workflow-steps {
     display: flex;
-    flex-wrap: wrap;
+    max-width: 100%;
+    overflow-x: auto;
     gap: var(--space-1);
+    overscroll-behavior-inline: contain;
 }
 
 .drama-workflow-steps button {
     display: inline-flex;
+    flex: none;
     align-items: center;
     gap: var(--space-1);
     min-height: 32px;
@@ -308,12 +326,6 @@
     .drama-workflow-source-body,
     .drama-workflow-configuration {
         grid-template-columns: 1fr;
-    }
-
-    .drama-workflow-steps {
-        max-width: 100%;
-        overflow-x: auto;
-        flex-wrap: nowrap;
     }
 }
 
