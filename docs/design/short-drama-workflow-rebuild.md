@@ -95,4 +95,5 @@
 | W01 | c5be01e9 | Claude CLI 实现、独立 review；导入与原编码专项 11 通过；真实 DOCX 6331 字/247 行；Prettier 通过 | 新旧入口共用读取器，详细创建页已接入；新工作台上传交互待整合验收 |
 | W02 | 9ef56a33 | Claude CLI 实现及补充回归，独立 review；17 项真实 DOM 回归、130 断言通过，Prettier/diff 通过 | 普通预检/显式确认、报价变化、补图后重检、注销/目标切换/迟到回执隔离；任务已提交后刷新失败不允许重复执行 |
 | W03 | 9c7a87f6 | Claude CLI 新接口与回归产物，独立 review；app 专项 2.446s、handler 专项 10.497s；gofmt/diff 检查通过 | 制作期正文 CAS、活跃文字任务拦截和章节影响集接口已实现；不自动重写旧产物 |
-| W04a | 本功能批次 | Claude CLI 独立范围回归，人工 review；Guide/SelectedChapters 专项 3.849s、gofmt/diff 通过 | 素材类型与本次范围真实保存；保留预留正文及章节 ID，整体替换必须显式选范围；确认后仅提取选中正文 |
+| W04a | 38bc7bfb | Claude CLI 独立范围回归，人工 review；Guide/SelectedChapters 专项 3.849s、gofmt/diff 通过 | 素材类型与本次范围真实保存；保留预留正文及章节 ID，整体替换必须显式选范围；确认后仅提取选中正文 |
+| W04b | 本功能批次 | Claude CLI 实现及独立 review；正文导入真实 DOM 10 项通过、步骤状态 7 项通过；整体 typecheck、Prettier/diff 通过 | 六步状态、导入入口、逐章草稿与 CAS 审阅、系统/个人风格与基础配置组件；路由和页面壳在后续集成批次提交 |

@@ -1,0 +1,326 @@
+.drama-workflow-entry {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-block: var(--space-5);
+    padding: var(--space-6) var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+}
+
+.drama-workflow-entry-heading {
+    text-align: center;
+}
+
+.drama-workflow-entry-heading h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-title);
+    line-height: var(--lh-heading);
+}
+
+.drama-workflow-entry-heading p,
+.drama-workflow-file-hint,
+.drama-workflow-note,
+.drama-workflow-pending p {
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-body);
+}
+
+.drama-workflow-entry-formats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.drama-workflow-entry-formats button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    min-height: 88px;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-muted, transparent);
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.drama-workflow-entry-formats button[aria-checked="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft, var(--surface));
+}
+
+.drama-workflow-entry-formats button:focus-visible,
+.drama-workflow-steps button:focus-visible,
+.drama-workflow-chapters button:focus-visible,
+.drama-workflow-config-form button:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--accent));
+    outline-offset: 2px;
+}
+
+.drama-workflow-entry-formats span,
+.drama-workflow-chapters span {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-composer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.drama-workflow-composer-bottom,
+.drama-workflow-source-head,
+.drama-workflow-source-actions,
+.drama-workflow-editor-bar,
+.drama-workflow-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.drama-workflow-entry-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.drama-workflow-entry-steps li {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-entry-steps li::before {
+    margin-right: var(--space-1);
+    content: counter(workflow-step);
+    counter-increment: workflow-step;
+}
+
+.drama-workflow-entry-steps {
+    counter-reset: workflow-step;
+}
+
+.drama-workflow-notice {
+    color: var(--danger, var(--text-primary));
+}
+
+.drama-workflow-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+}
+
+.drama-workflow-page {
+    min-height: 100%;
+}
+
+.drama-workflow-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.drama-workflow-steps button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: 32px;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.drama-workflow-steps button[aria-current="step"] {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.drama-workflow-steps button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.drama-workflow-steps span {
+    display: inline-grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    border-radius: var(--radius-full, 999px);
+    background: var(--surface-muted, var(--border));
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-height: 0;
+    padding: var(--space-4);
+}
+
+.drama-workflow-assets {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drama-workflow-source-body,
+.drama-workflow-configuration {
+    display: grid;
+    grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+    gap: var(--space-4);
+    min-height: 420px;
+}
+
+.drama-workflow-chapters,
+.drama-workflow-editor,
+.drama-workflow-style-preview,
+.drama-workflow-config-form {
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+
+.drama-workflow-chapters button {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+}
+
+.drama-workflow-chapters button[aria-selected="true"] {
+    border-left-color: var(--accent);
+    background: var(--accent-soft, transparent);
+}
+
+.drama-workflow-editor,
+.drama-workflow-config-form,
+.drama-workflow-style-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+}
+
+.drama-workflow-editor textarea {
+    min-height: 320px;
+    resize: vertical;
+}
+
+.drama-workflow-style-cover {
+    display: grid;
+    min-height: 220px;
+    place-items: center;
+    border-radius: var(--radius-lg);
+    background: var(--surface-muted, var(--border));
+    color: var(--text-secondary);
+}
+
+.drama-workflow-style-cover img {
+    width: 100%;
+    height: 240px;
+    object-fit: cover;
+    border-radius: inherit;
+}
+
+.drama-workflow-replacement-chapter {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+}
+
+.drama-workflow-config-form fieldset {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.drama-workflow-config-form label,
+.drama-workflow-cast-form label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-more {
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border);
+}
+
+.drama-workflow-pending,
+.drama-workflow-footer {
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.drama-workflow-cast-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drama-workflow-cast-form input,
+.drama-workflow-cast-form textarea {
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+@media (max-width: 760px) {
+    .drama-workflow-entry-formats,
+    .drama-workflow-source-body,
+    .drama-workflow-configuration {
+        grid-template-columns: 1fr;
+    }
+
+    .drama-workflow-steps {
+        max-width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .drama-workflow-entry button,
+    .drama-workflow-steps button,
+    .drama-workflow-chapters button {
+        transition: none;
+    }
+}
