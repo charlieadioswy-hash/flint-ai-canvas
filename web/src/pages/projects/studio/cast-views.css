@@ -1,0 +1,68 @@
+.drama-cast-views-body,
+.drama-cast-view-card,
+.drama-cast-view-form,
+.drama-cast-view-form label,
+.drama-cast-view-history > div {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.drama-cast-views-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-4);
+    max-height: 65vh;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.drama-cast-view-card {
+    align-content: start;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-3);
+}
+
+.drama-cast-view-image {
+    display: grid;
+    place-items: center;
+    height: 180px;
+    overflow: hidden;
+    background: var(--muted);
+    border-radius: var(--radius-md);
+}
+
+.drama-cast-view-image img {
+    max-width: 100%;
+    max-height: 180px;
+    object-fit: contain;
+}
+
+.drama-cast-views-actions,
+.drama-cast-view-references {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.drama-cast-view-history img,
+.drama-cast-view-references img {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+}
+
+.drama-cast-view-form {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+}
+
+.drama-cast-view-parameters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+}

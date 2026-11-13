@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -127,6 +128,12 @@ func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDr
 		}
 		if cast.ParentID != "" {
 			return BadAuthRequest("请通过角色造型入口调整造型")
+		}
+		if err := tx.RequireNoDramaCastViews(project.ID, castID); err != nil {
+			if errors.Is(err, repository.ErrDramaCastViewChanged) {
+				return dramaGuideConflict("该资产仍有独立视图，请先删除视图后再删除资产")
+			}
+			return err
 		}
 		refs, err := tx.DramaCastDeleteReferences(userID, project.ID, castID)
 		if err != nil {

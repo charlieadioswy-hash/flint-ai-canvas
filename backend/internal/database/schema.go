@@ -173,6 +173,7 @@ func Models() []any {
 		&model.UserFeedback{},
 		&model.DramaProduction{},
 		&model.DramaCast{},
+		&model.DramaCastView{},
 		&model.DramaEpisode{},
 		&model.DramaShot{},
 		&model.DramaShotMedia{},

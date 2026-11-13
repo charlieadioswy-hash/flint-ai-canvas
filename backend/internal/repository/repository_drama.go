@@ -700,6 +700,9 @@ func (r *Repository) DeleteDramaProductionData(projectID string) error {
 		if err := New(tx).DeleteDramaShotMediaForProject(projectID); err != nil {
 			return err
 		}
+		if err := New(tx).DeleteDramaCastViews(projectID); err != nil {
+			return err
+		}
 		for _, entity := range []any{&model.DramaJob{}, &model.DramaTake{}, &model.DramaSegment{}, &model.DramaShot{}, &model.DramaEpisode{}, &model.DramaCast{}, &model.DramaProduction{}} {
 			if err := tx.Where("project_id = ?", projectID).Delete(entity).Error; err != nil {
 				return err
@@ -1117,6 +1120,12 @@ func (r *Repository) MarkDramaSegmentVideoStale(episodeID string, index int) (bo
 // 段级手动参考中的造型同步回退到角色本体，重新编号后提示词与视频过期。
 func (r *Repository) DeleteDramaCastLook(projectID, lookID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := New(tx).DramaProductionForUpdate(projectID); err != nil {
+			return err
+		}
+		if err := New(tx).RequireNoDramaCastViews(projectID, lookID); err != nil {
+			return err
+		}
 		var look model.DramaCast
 		if err := tx.First(&look, "id = ? AND project_id = ? AND parent_id <> ''", lookID, projectID).Error; err != nil {
 			return err

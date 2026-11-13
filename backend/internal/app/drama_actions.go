@@ -607,6 +607,9 @@ func (s *Service) DeleteDramaCastLook(userID, projectID, lookID string, restyleS
 	if look.ParentID == "" {
 		return nil, BadAuthRequest("只能删除造型")
 	}
+	if err := s.repo.RequireNoDramaCastViews(project.ID, lookID); err != nil {
+		return nil, dramaGuideConflict("该造型仍有独立视图，请先删除视图后再删除造型")
+	}
 	affected := 0
 	if restyleSegments {
 		if affected, err = s.restyleDramaCastSegments(project.ID, look.ID); err != nil {
@@ -614,7 +617,7 @@ func (s *Service) DeleteDramaCastLook(userID, projectID, lookID string, restyleS
 		}
 	}
 	if err := s.repo.DeleteDramaCastLook(project.ID, lookID); err != nil {
-		return nil, err
+		return nil, dramaCastViewError(err)
 	}
 	s.wakeDramaScheduler()
 	return map[string]any{"affectedSegments": affected}, nil

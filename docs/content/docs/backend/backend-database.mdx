@@ -246,6 +246,8 @@ description: 影策后端核心持久化表与状态边界
 
 ## 短剧独立风格与跨作品素材（Schema 103）
 
+版本 113 `drama_cast_views` 新建 `drama_cast_views`。每条视图保存 `project_id/cast_id`、独立 `revision/config_json`，以及当前 `current_take_id/resource_id` 和在途 `pending_take_id/task_id`。`source_hash` 记录主体设定、造型本体与风格等真实来源，迟到产物只追加历史。`drama_takes.kind=cast_view`、`owner_id=view_id` 保存每视图独立版本；不覆盖主体图片、不伪装成造型。删除视图仍保留 Take；删除所属资产/造型前检查视图，删除作品时清理视图槽。配置参考、当前图片和历史资源纳入引用与孤儿清理保护；保存、生成与采用沿用生产锁、资源行锁与版本校验。
+
 资产 AI 辅助不新增表：`drama_takes.kind=cast_desc/cast_prompt/cast_voice` 的 `owner_id` 为真实资产 ID，入队时绑定 Task；来源版本保存在任务 metadata，采用时同时检查 Take 归属、任务状态和资产 Revision。`cast_voice.resource_id` 保存真实试听音频，未采用和已采用的历史资源都受短剧引用保护。外观与提示词必须显式采用后分别更新平铺字段与 `definition_json` 同名字段，原文定义和未知键保留；声音采用复用 `voice_profiles`，不修改原角色库卡或媒体。
 
 版本 112 `drama_character_library` 为 `drama_casts` 增加 `definition_json`（text）、`library_asset_id` 和 `library_version_id`（各 36 字符）。完整人物 JSON 保留未知键与原始人物定义；平铺字段继续作为当前已保存的名称、外观、说明和声线。已有行只增加空字段，不回填或猜测年龄、性别、背景。新提取人物有原文定义时逐字保存全文，不把模型推测补成作者设定；无定义时保存提取器的已明确字段。来源只用于溯源，作品编辑不回写库卡，也不自动跟随角色库更新。导入以作品 Revision、目标角色 Revision 和库当前版本共同校验，形象与声音由现有资源和版本绑定复用；另存只创建独立 `assets`、`asset_versions`、`asset_representations` 和可选 `character_voice_bindings`，不改变来源作品或旧库卡。

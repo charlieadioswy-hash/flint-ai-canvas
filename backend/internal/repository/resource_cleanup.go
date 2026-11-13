@@ -99,6 +99,17 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		if err := tx.Model(&model.DramaShotMedia{}).Pluck("config_json", &shotOptions).Error; err != nil {
 			return err
 		}
+		var viewOptions []string
+		if err := tx.Model(&model.DramaCastView{}).Pluck("config_json", &viewOptions).Error; err != nil {
+			return err
+		}
+		for _, document := range viewOptions {
+			for _, id := range resourceIDs {
+				if dramaCastViewConfigReferences(document, id) {
+					return ErrResourceCleanupStillReferenced
+				}
+			}
+		}
 		for _, document := range shotOptions {
 			for _, id := range resourceIDs {
 				if strings.Contains(document, `"`+id+`"`) {
@@ -122,6 +133,7 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			{&model.DramaEpisode{}, "final_resource_id IN ?"},
 			{&model.DramaTake{}, "resource_id IN ?"},
 			{&model.DramaShotMedia{}, "resource_id IN ?"},
+			{&model.DramaCastView{}, "resource_id IN ?"},
 		} {
 			var count int64
 			if err := tx.Model(check.model).Where(check.query, resourceIDs).Count(&count).Error; err != nil {

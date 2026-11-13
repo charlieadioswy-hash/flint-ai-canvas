@@ -36,6 +36,12 @@ description: 信封、错误码与 OpenAPI
 
 确认后调用 `POST /api/dramas/:id/actions/batch/execute`，原请求加必需的 `baseRevision/confirmationToken`。全部目标在同一作品锁内完成重检，统一限制隐式媒体，再原子入队所有 `ready` 目标；任何内容、依赖或报价变化使整批不写，HTTP 409 的 `details.batch` 给出逐项冲突。数据库写失败整批回滚，已排队、已有成功结果与阻塞项继续逐项跳过。成功返回相同结构，入队项为 `queued`；重复确认范围内全部目标均已排队或成功时返回跳过，不重新生成或收费；仍有阻塞或无效目标且确认快照变化时要求重新预检，不能把新阻塞误报成无变化。单项与批量均在持久入队后返回真实结果：恢复制作失败时仍报告已入队，附 `dispatchPending=true` 与 `warnings`，用户可继续制作，无需重新提交生成。该批次确认不创建计费订单，实际任务派发仍按原准入与冻结规则处理。
 
+### 短剧资产独立多视图
+
+`GET /api/dramas/:id/cast/:castId/views` 返回 `{views}`，每项有独立 `revision/config/taskId/resourceId/status/takes`。`POST` 同路径创建，`PUT …/:viewId` 编辑，接受 `{expectedRevision,expectedCastRevision,viewRevision,config:{name,direction,prompt,imageOptions}}`；新增视图版本为 0。角色本体、造型、场景和道具均支持正面、背面、左/右侧、俯视、局部和自定义视图，每资产最多 24 个。视图不占用造型或主体图片版本，保存不生成媒体；正在生成的视图不能修改或删除。
+
+空模型、画幅和分辨率先继承该资产，再继承作品。两组参考的 `null`/省略表示继承本资产，`[]` 明确清空；真实主体图自动加入主体参考，造型本体图固定排第一，全部参考仍按模型能力校验。`POST …/:viewId/preflight` 返回当前作品/视图版本、报价和令牌；`execute` 必须带 `{expectedRevision,viewRevision,confirmationToken,clientOperationId}`，同标识重放不重复计费。`adopt` 带 `{expectedRevision,viewRevision,takeId}` 只切换该视图成功的历史图片；`DELETE` 带作品和视图版本。设定或风格变化后旧结果只进历史，显式采用不会覆盖主体图或自动生成视频。删除视图保留已付费 Take；仍有视图时须先处理视图才能删除所属资产/造型。
+
 ### 短剧资产 AI 辅助
 
 `GET /api/dramas/:id/cast/:castId/assistance` 读取资产真实辅助任务与历史结果；`POST …/preflight`、`POST …/execute` 接受 `{purpose,expectedRevision,castRevision,model,instruction,sampleText,voiceKey,sourceResourceId}`。`purpose` 为 `fill_description`（外观草稿）、`image_prompt`（图片反推提示词）或 `voice_sample`（模型音色试听）。预检只返回就绪原因、报价和确认令牌；执行另需 `confirmationToken/clientOperationId`，重新校验作品、资产、报价、预算与资源并原子创建 Task、账单和资产归属的 Take。未知回执沿用原提交标识，失败重做必须重新预检，不允许通用任务重试绕过确认。

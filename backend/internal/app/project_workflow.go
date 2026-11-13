@@ -425,6 +425,9 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	if handled, err := s.RegisterDramaCastAssistanceTaskOutput(task); handled || err != nil {
 		return err
 	}
+	if handled, err := s.RegisterDramaCastViewTaskOutput(task); handled || err != nil {
+		return err
+	}
 	if handled, err := s.RegisterDramaShotMediaTaskOutput(task); handled || err != nil {
 		return err
 	}

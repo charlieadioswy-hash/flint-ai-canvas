@@ -68,6 +68,7 @@ import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoiceField, CastVoicePreview } from "./cast-voice";
 import { CastImageOptions } from "./cast-image-options";
+import { CastViews } from "./cast-views";
 import { CastLooks } from "./cast-looks";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { CastCreateDialog } from "./cast-create-dialog";
@@ -479,6 +480,7 @@ export function CastEditor({
             </Field>
             <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
             <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} onDirtyChange={setImageOptionsDirty} />
+            <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />
             {isLook ? (
                 <Field label="默认适用章节" hint="留空表示不限，按本季原著章节设置">
                     <div className="drama-look-form-range">
