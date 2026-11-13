@@ -1,0 +1,99 @@
+.drama-workflow-batch {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-batch-preview {
+    display: grid;
+    gap: var(--space-3);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-batch-price {
+    font-weight: 600;
+}
+
+.drama-workflow-batch-preview [role="alert"] {
+    color: var(--status-error);
+}
+
+.drama-workflow-batch-items {
+    max-height: 360px;
+    overflow: auto;
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-md);
+}
+
+.drama-workflow-batch-item {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--drama-line);
+}
+
+.drama-workflow-batch-item:last-child {
+    border-bottom: 0;
+}
+
+.drama-workflow-batch-item > div {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.drama-workflow-batch-item p {
+    margin-top: var(--space-1);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-batch-item[data-status="queued"] > div > span,
+.drama-workflow-batch-item[data-status="skipped_ready"] > div > span {
+    color: var(--status-success);
+}
+
+.drama-workflow-batch-item[data-status="failed"] > div > span,
+.drama-workflow-batch-item[data-status="conflict"] > div > span {
+    color: var(--status-error);
+}
+
+.drama-workflow-batch-item[data-status="blocked"] > div > span {
+    color: var(--status-warning);
+}
+
+.drama-workflow-batch-segment {
+    position: relative;
+    min-width: 0;
+}
+
+.drama-workflow-batch-check {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+}
+
+.drama-workflow-batch-check input,
+.drama-workflow-batch-episode input {
+    accent-color: var(--workspace-accent);
+}
+
+.drama-workflow-batch-segment[data-selected="true"] > article {
+    border-color: var(--workspace-accent);
+}
+
+.drama-workflow-batch-episode {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}

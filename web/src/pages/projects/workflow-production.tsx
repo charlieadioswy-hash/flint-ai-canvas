@@ -6,6 +6,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { getDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
+import { useUserStore } from "@/stores/use-user-store";
 
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
 import { SimpleStudioSegmentEditor } from "./simple-studio-segment-editor";
@@ -18,6 +19,7 @@ import { dramaKeys, useDramaCast, useDramaInvalidate } from "./studio/use-studio
 import { useDramaMediaAction } from "./studio/use-drama-media-action";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowSegmentCard } from "./workflow-segment-card";
+import { WorkflowBatch } from "./workflow-batch";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
@@ -71,6 +73,8 @@ function readyVideos(detail?: DramaEpisodeDetail) {
 
 export function WorkflowProduction({ summary, step, onChanged, embedded = false }: WorkflowProductionProps) {
     const projectId = summary.project.id;
+    const userId = useUserStore((state) => state.user?.id || "");
+    const selectionOwner = `${userId}:${projectId}`;
     const { episodeId: routeEpisodeId = "" } = useParams();
     const navigate = useNavigate();
     const [search, setSearch] = useSearchParams();
@@ -81,6 +85,11 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
     const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
     const [exportProjectId, setExportProjectId] = useState<string>();
+    const [selection, setSelection] = useState<{ owner: string; ids: Set<string> }>(() => ({ owner: selectionOwner, ids: new Set() }));
+    const selected = selection.owner === selectionOwner ? selection.ids : new Set<string>();
+    const selectionRef = useRef(selected);
+    selectionRef.current = selected;
+    useEffect(() => setSelection({ owner: selectionOwner, ids: new Set() }), [selectionOwner]);
     const jumpRequest = useRef(0);
     const scope = useRef({ projectId, search: search.toString() });
     scope.current = { projectId, search: search.toString() };
@@ -168,6 +177,25 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
     const textProcessed = textProgress.total ? Math.min(100, Math.round(((textProgress.completed + textProgress.failed) / textProgress.total) * 100)) : 0;
     const openDetail = queries.find((query) => query.data?.episode.id === activeEpisodeId)?.data;
     const currentEpisode = episodes.find((episode) => episode.id === activeEpisodeId);
+    const selectedLabels = Object.fromEntries(
+        queries.flatMap((query) => {
+            const detail = query.data;
+            return detail ? detail.segments.map((segment) => [segment.id, `第 ${detail.episode.number} 集 · 第 ${segment.index + 1} 段${segment.title ? ` · ${segment.title}` : ""}`]) : [];
+        }),
+    );
+    const selectSegments = (ids: string[], checked: boolean) => {
+        const next = new Set(selectionRef.current);
+        for (const id of ids) {
+            if (checked) next.add(id);
+            else next.delete(id);
+        }
+        if (next.size > 200) {
+            message.info("每批最多选择 200 段，请缩小范围");
+            return;
+        }
+        selectionRef.current = next;
+        setSelection({ owner: selectionOwner, ids: next });
+    };
 
     const replaceQuery = (episodeId: string | undefined, mutate: (next: URLSearchParams) => void, replace = true) => {
         const next = keepWorkflowQuery(search, step);
@@ -300,6 +328,17 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                         ) : null}
                     </div>
                 </div>
+                {step === "story" ? (
+                    <WorkflowBatch
+                        projectId={projectId}
+                        revision={summary.production.revision}
+                        targetIds={[...selected]}
+                        targetLabels={selectedLabels}
+                        actions={textConfirmed ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
+                        onChanged={() => refresh()}
+                        onClearSelection={() => selectSegments([...selected], false)}
+                    />
+                ) : null}
                 {step === "story" && visibleEpisodes.length ? (
                     <section className="drama-workflow-production-progress" aria-label="文字制作进度">
                         <div className="drama-workflow-production-progress-meta">
@@ -358,6 +397,22 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                           </p>
                                       </div>
                                       <div className="drama-workflow-production-actions">
+                                          {segments.length ? (
+                                              <label className="drama-workflow-batch-episode">
+                                                  <input
+                                                      type="checkbox"
+                                                      aria-label={`选择第 ${episode.number} 集筛选出的 ${segments.length} 段`}
+                                                      checked={segments.every((segment) => selected.has(segment.id))}
+                                                      onChange={(event) =>
+                                                          selectSegments(
+                                                              segments.map((segment) => segment.id),
+                                                              event.target.checked,
+                                                          )
+                                                      }
+                                                  />
+                                                  选择本集 {segments.length} 段
+                                              </label>
+                                          ) : null}
                                           <Button size="small" onClick={() => replaceQuery(episode.id, (next) => next.set("step", "preview"))}>
                                               视频预览
                                           </Button>
@@ -386,16 +441,20 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                   {detail?.segments.length && !segments.length ? <p className="drama-workflow-production-empty">本集没有符合此状态的剧情段</p> : null}
                                   <div className="drama-workflow-production-grid">
                                       {shown.map((segment) => (
-                                          <WorkflowSegmentCard
-                                              key={segment.id}
-                                              episodeNumber={episode.number}
-                                              segment={segment}
-                                              shots={detail?.shots.filter((shot) => shot.segmentIndex === segment.index) || []}
-                                              textConfirmed={textConfirmed}
-                                              onOpen={() => openSegment(episode.id, segment.index)}
-                                              onGenerate={() => requestVideo(episode, segment)}
-                                              onWritePrompt={() => requestPrompt(episode, segment)}
-                                          />
+                                          <div key={segment.id} className="drama-workflow-batch-segment" data-selected={selected.has(segment.id)}>
+                                              <label className="drama-workflow-batch-check">
+                                                  <input type="checkbox" aria-label={`选择第 ${episode.number} 集第 ${segment.index + 1} 段`} checked={selected.has(segment.id)} onChange={(event) => selectSegments([segment.id], event.target.checked)} />
+                                              </label>
+                                              <WorkflowSegmentCard
+                                                  episodeNumber={episode.number}
+                                                  segment={segment}
+                                                  shots={detail?.shots.filter((shot) => shot.segmentIndex === segment.index) || []}
+                                                  textConfirmed={textConfirmed}
+                                                  onOpen={() => openSegment(episode.id, segment.index)}
+                                                  onGenerate={() => requestVideo(episode, segment)}
+                                                  onWritePrompt={() => requestPrompt(episode, segment)}
+                                              />
+                                          </div>
                                       ))}
                                   </div>
                                   {segments.length > PREVIEW_LIMIT ? (

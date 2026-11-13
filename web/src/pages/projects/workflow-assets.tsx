@@ -10,6 +10,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { AssetSchemePicker } from "./asset-scheme";
 import { CAST_KIND_LABEL } from "./drama-shared";
 import { GuideAssets } from "./guide-panels";
+import { WorkflowAssetScope } from "./workflow-asset-scope";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { dramaKeys } from "./studio/use-studio";
@@ -84,7 +85,6 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
     }, [summary.production.settings.assets, revision]);
 
     const projectCast = cast.filter((item) => belongsToProject(item, projectId));
-    const visible = projectCast.filter((item) => item.kind === kind);
     const counts = Object.fromEntries(KINDS.map((item) => [item, projectCast.filter((entry) => entry.kind === item && !entry.parentId).length])) as Record<DramaCastKind, number>;
     const episodes = summary.episodes.filter((episode) => episode.id);
     const selectedEpisodes = episodeIds.filter((id) => episodes.some((episode) => episode.id === id));
@@ -352,23 +352,21 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                         正在读取本作品资产
                     </p>
                 ) : null}
-                {counts[kind] ? (
-                    <GuideAssets
-                        cast={visible}
-                        busy={frozen}
-                        loading={loading}
-                        onEdit={(item) => {
-                            if (!frozen) setEditingId(item.id);
-                        }}
-                        onGenerate={(item) => {
-                            if (!frozen) onGenerate(item);
-                        }}
-                    />
-                ) : !loading && !error ? (
-                    <p className="drama-workflow-assets-status" role="status">
-                        暂无{CAST_KIND_LABEL[kind]}，可按正文增量提取，或输入名称新增。
-                    </p>
-                ) : null}
+                <WorkflowAssetScope summary={summary} cast={projectCast} kind={kind} busy={frozen} onChanged={onChanged}>
+                    {(visible) => (
+                        <GuideAssets
+                            cast={visible}
+                            busy={frozen}
+                            loading={loading}
+                            onEdit={(item) => {
+                                if (!frozen) setEditingId(item.id);
+                            }}
+                            onGenerate={(item) => {
+                                if (!frozen) onGenerate(item);
+                            }}
+                        />
+                    )}
+                </WorkflowAssetScope>
             </div>
 
             <details className="drama-workflow-assets-scheme" open={schemeOpen} onToggle={(event) => setSchemeOpen(event.currentTarget.open)}>

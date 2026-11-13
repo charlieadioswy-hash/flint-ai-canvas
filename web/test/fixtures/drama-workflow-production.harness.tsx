@@ -107,6 +107,10 @@ mock.module("@/pages/projects/studio/use-drama-media-action", () => ({
 mock.module("@/pages/projects/studio/drama-media-action-dialog", () => ({
     DramaMediaActionDialog: () => null,
 }));
+mock.module("@/pages/projects/workflow-batch", () => ({
+    WorkflowBatch: ({ targetIds, actions, onClearSelection }: { targetIds: string[]; actions: string[]; onClearSelection?: () => void }) =>
+        createElement("section", { "data-batch-targets": [...targetIds].sort().join(","), "data-batch-actions": actions.join(",") }, createElement("button", { onClick: onClearSelection }, "清空批量选择")),
+}));
 mock.module("@/pages/projects/studio/queue-bar", () => ({
     QueueBar: ({ onJump }: { onJump: (job: { id: string; episodeId?: string; shotId?: string; kind: string }) => void }) =>
         createElement(
@@ -442,9 +446,38 @@ test("文字尚未确认时视频按钮不绕过后台", async () => {
         const button = [...view.host.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === "生成视频第 1 集第 1 段");
         expect(button?.hasAttribute("disabled")).toBe(true);
         expect(button?.getAttribute("title")).toBe("需要先确认文字");
+        expect(view.host.querySelector("[data-batch-actions]")?.getAttribute("data-batch-actions")).toBe("segment_prompt");
         await click(view.host, "编辑第 1 集第 1 段");
         await click(view.host, "编辑器生成");
         expect(calls.videos).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("跨集批量选择使用真实段 ID，切筛选与集数保留选择，清空只影响勾选", async () => {
+    const view = await renderProduction("story", summary("completed", [ready, preview]));
+    const batchTargets = () => view.host.querySelector("[data-batch-targets]")?.getAttribute("data-batch-targets");
+    const check = async (label: string) => {
+        const input = view.host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+        expect(input).toBeTruthy();
+        await act(async () => {
+            input!.click();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    };
+    try {
+        await check("选择第 1 集第 2 段");
+        await check("选择第 3 集第 2 段");
+        expect(batchTargets()).toBe("preview-2,segment-2");
+        await select(view.host, "筛选段状态", "ready");
+        expect(batchTargets()).toBe("preview-2,segment-2");
+        await select(view.host, "选择集数", "ep-ready");
+        expect(batchTargets()).toBe("preview-2,segment-2");
+        await click(view.host, "清空批量选择");
+        expect(batchTargets()).toBe("");
+        expect(calls.actions).toHaveLength(0);
+        expect(calls.videos).toHaveLength(0);
     } finally {
         await view.dispose();
     }

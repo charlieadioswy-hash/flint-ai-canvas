@@ -369,10 +369,15 @@ test("配置确认进行中点击回看正文，不应把成功推进误拦成�
         await click(button(mounted.host, "确认正文与拆集"));
         const next = makeSummary("project-a", "assets", 2);
         summaries.set("project-a", next);
-        await act(async () => { confirms[0].pending.resolve(next); await settle(); });
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
         expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("资产确认时子组件回报父层忙状态，不应拦截确认成功后进入分镜", async () => {
@@ -380,15 +385,23 @@ test("资产确认时子组件回报父层忙状态，不应拦截确认成功�
     try {
         const assets = makeSummary("project-a", "assets", 2);
         summaries.set("project-a", assets);
-        await act(async () => { mounted.query.setQueryData(summaryKey("project-a"), assets); await settle(); });
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
         await click(button(mounted.host, "确认资产并继续"));
         expect(confirms[0]).toMatchObject({ input: { expectedStep: "assets", expectedRevision: 2 } });
         const next = makeSummary("project-a", "story", 3);
         summaries.set("project-a", next);
-        await act(async () => { confirms[0].pending.resolve(next); await settle(); });
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("story");
         expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("作品切换后上一作品的迟到确认不会导航或修改当前作品缓存", async () => {
