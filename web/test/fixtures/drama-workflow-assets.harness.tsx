@@ -101,6 +101,7 @@ mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/pages/projects/drama-shared", () => ({ CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" } }));
 mock.module("@/pages/projects/workflow-asset-scope", () => ({ WorkflowAssetScope: ({ cast, kind, children }: any) => children(cast.filter((item: any) => item.kind === kind)) }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
+mock.module("@/pages/projects/workflow-character-library", () => ({ WorkflowCharacterLibrary: () => null }));
 mock.module("@/pages/projects/studio/use-studio", () => ({ dramaKeys: { summary: (id: string) => ["drama", id], cast: (id: string) => ["drama", id, "cast"], chapters: (id: string) => ["drama", id, "chapters"] } }));
 mock.module("@/pages/projects/guide-panels", () => ({
     GuideAssets: ({ cast, busy, loading, onEdit, onGenerate }: { cast: DramaCast[]; busy: boolean; loading: boolean; onEdit: (cast: DramaCast) => void; onGenerate: (cast: DramaCast) => void }) =>

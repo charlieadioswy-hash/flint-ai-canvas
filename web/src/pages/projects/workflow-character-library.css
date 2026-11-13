@@ -1,0 +1,171 @@
+.drama-character-library-tools,
+.drama-character-dialog header,
+.drama-character-dialog footer,
+.drama-character-search,
+.drama-character-pagination {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.drama-character-library-tools select,
+.drama-character-dialog select {
+    min-height: var(--user-control-height, 34px);
+    max-width: 100%;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.drama-character-dialog {
+    display: flex;
+    flex-direction: column;
+    max-height: min(88dvh, 960px);
+    color: var(--text-primary);
+}
+
+.drama-character-dialog header,
+.drama-character-dialog footer {
+    flex-shrink: 0;
+    padding: var(--space-4);
+}
+
+.drama-character-dialog header {
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border);
+}
+
+.drama-character-dialog h2,
+.drama-character-dialog h3,
+.drama-character-dialog p {
+    margin: 0;
+}
+
+.drama-character-dialog h2 {
+    font-size: var(--fs-title);
+}
+.drama-character-dialog h3 {
+    font-size: var(--fs-body);
+}
+.drama-character-dialog p,
+.drama-character-dialog small {
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+}
+.drama-character-dialog [role="alert"] {
+    color: var(--status-error);
+}
+
+.drama-character-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: var(--space-4);
+}
+
+.drama-character-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.drama-character-library-grid,
+.drama-character-structured {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+    gap: var(--space-3);
+}
+
+.drama-character-library-grid > button {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    background: var(--surface);
+    text-align: left;
+}
+
+.drama-character-library-grid > button[aria-pressed="true"] {
+    border-color: var(--accent);
+}
+.drama-character-dialog button:focus-visible,
+.drama-character-library-tools select:focus-visible,
+.drama-character-dialog select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.drama-character-dialog img,
+.drama-character-no-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 240px;
+    height: 140px;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    color: var(--text-secondary);
+}
+
+.drama-character-library-preview {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+.drama-character-dialog pre {
+    margin: 0;
+    max-height: 240px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: inherit;
+    font-size: var(--fs-ui);
+}
+.drama-character-dialog details summary {
+    cursor: pointer;
+}
+.drama-character-dialog fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.drama-character-representations {
+    display: flex;
+    gap: var(--space-3);
+    overflow-x: auto;
+    padding-top: var(--space-2);
+}
+.drama-character-representations > label {
+    display: grid;
+    flex: 0 0 140px;
+    gap: var(--space-1);
+}
+.drama-character-dialog audio {
+    display: block;
+    max-width: 100%;
+    margin-top: var(--space-2);
+}
+.drama-character-dialog footer {
+    justify-content: flex-end;
+    border-top: 1px solid var(--border);
+}
+.drama-character-dialog footer p {
+    flex: 1 1 220px;
+}

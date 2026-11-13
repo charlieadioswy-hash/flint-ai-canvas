@@ -94,6 +94,7 @@ type DramaProduction struct {
 
 // DramaCast 是全剧设定（角色 / 场景），镜头引用它的参考图保持一致性。
 type DramaCast struct {
+	DramaCharacterDefinition
 	Revision    int64  `json:"revision"`
 	ID          string `json:"id" gorm:"primaryKey;size:36"`
 	ProjectID   string `json:"projectId" gorm:"index;size:36;index:idx_drama_casts_project_kind,priority:1;index:idx_drama_cast_source,unique,priority:1,where:source_cast_id <> ''"`

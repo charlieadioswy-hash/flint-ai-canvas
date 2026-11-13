@@ -543,6 +543,9 @@ export type DramaSegmentAudioReference = { castId: string; name: string; label?:
 export type DramaCastKind = "character" | "prop" | "scene";
 
 export type DramaCast = {
+    definitionJson?: string;
+    libraryAssetId?: string;
+    libraryVersionId?: string;
     revision?: number;
     id: string;
     projectId: string;

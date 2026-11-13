@@ -55,7 +55,7 @@ func dramaCastHasImageStyle(cast model.DramaCast) bool {
 }
 
 func dramaCastHasImageDefinition(cast model.DramaCast) bool {
-	return strings.TrimSpace(cast.Appearance) != "" || strings.TrimSpace(cast.Description) != "" || strings.TrimSpace(cast.ImagePrompt) != ""
+	return strings.TrimSpace(cast.Appearance) != "" || strings.TrimSpace(cast.Description) != "" || strings.TrimSpace(cast.ImagePrompt) != "" || dramaCharacterStructuredText(cast, true) != ""
 }
 
 // 编排函数是预览和实际提交的唯一入口。自定义提示词是完整正文，不再追加作品旧画风。
@@ -73,7 +73,11 @@ func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast
 	style, rules = production.StripFrameDirectives(style), production.StripFrameDirectives(rules)
 	prompt := strings.TrimSpace(cast.ImagePrompt)
 	if prompt == "" {
-		prompt = production.CastImagePrompt(assets, cast.Kind, cast.Name, firstNonEmpty(cast.Appearance, cast.Description, cast.Role), style, rules)
+		appearance := firstNonEmpty(cast.Appearance, cast.Description, cast.Role)
+		if structured := dramaCharacterStructuredText(cast, true); structured != "" {
+			appearance += "\n已保存的人物补充设定（与旧描述冲突时以此处为准）：\n" + structured
+		}
+		prompt = production.CastImagePrompt(assets, cast.Kind, cast.Name, appearance, style, rules)
 	} else if independentStyle && style != "" && !strings.Contains(prompt, style) {
 		prompt = "本素材画风以以下设定为准，覆盖正文中的旧画风要求：" + style + "。\n" + prompt
 	}

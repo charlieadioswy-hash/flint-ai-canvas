@@ -305,6 +305,7 @@ func validateDramaImportMedia(repo *repository.Repository, userID string, cast m
 
 func dramaImportedCastFields(copy, current model.DramaCast) map[string]any {
 	fields := map[string]any{
+		"definition_json": copy.DefinitionJSON, "library_asset_id": copy.LibraryAssetID, "library_version_id": copy.LibraryVersionID,
 		"source_project_id": copy.SourceProjectID, "source_cast_id": copy.SourceCastID,
 		"name": copy.Name, "aliases_json": copy.AliasesJSON, "role": copy.Role, "description": copy.Description,
 		"appearance": copy.Appearance, "image_prompt": copy.ImagePrompt,

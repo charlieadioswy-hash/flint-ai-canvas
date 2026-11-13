@@ -1137,7 +1137,7 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 			} else {
 				instructions = truncateRunes(instructions, 500)
 			}
-			base = addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", Name: name, AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: description, Appearance: appearance, VoiceInstructions: instructions, Importance: len(bible.Characters) - index, CreatedAt: now, UpdatedAt: now})
+			base = addBase(model.DramaCast{DramaCharacterDefinition: dramaExtractedCharacterDefinition(character), ID: newID(), ProjectID: r.project.ID, Kind: "character", Name: name, AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: description, Appearance: appearance, VoiceInstructions: instructions, Importance: len(bible.Characters) - index, CreatedAt: now, UpdatedAt: now})
 		}
 		if lookNames[base.ID] == nil {
 			lookNames[base.ID] = map[string]bool{}
@@ -1923,6 +1923,9 @@ func (r *dramaRun) castSummary(kind string, limit int) string {
 			}
 			if cast.VoiceInstructions != "" {
 				b.WriteString("声音：" + cast.VoiceInstructions + "\n")
+			}
+			if structured := dramaCharacterStructuredText(cast, false); structured != "" {
+				b.WriteString("已保存的人物补充设定（与旧描述冲突时以此处为准）：\n" + structured + "\n")
 			}
 			continue
 		}

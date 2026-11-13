@@ -11,6 +11,7 @@ import { AssetSchemePicker } from "./asset-scheme";
 import { CAST_KIND_LABEL } from "./drama-shared";
 import { GuideAssets } from "./guide-panels";
 import { WorkflowAssetScope } from "./workflow-asset-scope";
+import { WorkflowCharacterLibrary } from "./workflow-character-library";
 import { WorkflowImpact } from "./workflow-impact";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
@@ -67,6 +68,7 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
     const [editingId, setEditingId] = useState<string>();
     const [schemeOpen, setSchemeOpen] = useState(false);
     const [scheme, setScheme] = useState<SchemeDraft | null>(null);
+    const [libraryState, setLibraryState] = useState({ dirty: false, busy: false });
     const mutationLock = useRef(false);
     const latest = useRef({ onChanged, onGenerate, onDirtyChange, revision, frozen: busy, schemeStale: false });
 
@@ -182,13 +184,13 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
     });
 
     const pending = extract.isPending || create.isPending || saveScheme.isPending;
-    const frozen = locked || pending;
+    const frozen = locked || pending || libraryState.busy;
     latest.current = { onChanged, onGenerate, onDirtyChange, revision, frozen, schemeStale };
     const rangeStale = extract.isError && (staleConflict(extract.error) || extract.variables?.expectedRevision !== revision);
-    const dirty = schemeDirty || Boolean(addDraft.name.trim());
+    const dirty = schemeDirty || Boolean(addDraft.name.trim()) || libraryState.dirty;
     useEffect(() => {
-        latest.current.onDirtyChange?.(dirty, pending || busy);
-    }, [dirty, pending, busy]);
+        latest.current.onDirtyChange?.(dirty, pending || busy || libraryState.busy);
+    }, [dirty, pending, busy, libraryState.busy]);
     useEffect(() => () => latest.current.onDirtyChange?.(false, false), []);
 
     const startExtract = () => {
@@ -241,6 +243,16 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                     </button>
                 ))}
             </div>
+
+            {kind === "character" ? (
+                <WorkflowCharacterLibrary
+                    summary={summary}
+                    cast={projectCast}
+                    busy={locked || pending}
+                    onChanged={onChanged}
+                    onDirtyChange={(dirty, busy) => setLibraryState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                />
+            ) : null}
 
             <form
                 className="drama-workflow-assets-extract"
