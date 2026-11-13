@@ -21,6 +21,7 @@ import { promptReady, secondsLabel, SegmentStatus, SegmentVideo, videoWaitLabel 
 import { DramaTakeList } from "./take-list";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { WorkflowShotMediaDialog } from "../workflow-shot-media-dialog";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
 const CAMERAS = ["固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
@@ -435,6 +436,7 @@ function ShotCard({
     onDelete?: () => void;
 }) {
     const { modal } = App.useApp();
+    const [mediaOpen, setMediaOpen] = useState(false);
     const names = useMemo(
         () =>
             [...castById.values()]
@@ -489,6 +491,9 @@ function ShotCard({
                         />
                     </Tooltip>
                 ) : null}
+                <Button size="small" disabled={busy} onClick={() => setMediaOpen(true)}>
+                    图片与视频
+                </Button>
                 <Button size="small" type={editing ? "primary" : "default"} icon={<Pencil className="size-3.5" />} aria-pressed={editing} onClick={onEdit}>
                     {editing ? "完成" : "编辑"}
                 </Button>
@@ -509,6 +514,7 @@ function ShotCard({
                         ))}
                 </dl>
             )}
+            <WorkflowShotMediaDialog open={mediaOpen} projectId={shot.projectId} shot={shot} onClose={() => setMediaOpen(false)} />
         </li>
     );
 }

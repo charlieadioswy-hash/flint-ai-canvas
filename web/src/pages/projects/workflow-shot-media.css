@@ -1,0 +1,109 @@
+.drama-shot-media {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.drama-shot-media-tabs,
+.drama-shot-media-reference-row,
+.drama-shot-media-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.drama-shot-media-tabs button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.drama-shot-media-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+    gap: 24px;
+    max-height: 70vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.drama-shot-media-config,
+.drama-shot-media-output,
+.drama-shot-media-references,
+.drama-shot-media-take {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.drama-shot-media label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    font-size: 12px;
+}
+
+.drama-shot-media-parameters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.drama-shot-media-model {
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: 0;
+}
+
+.drama-shot-media-model:disabled {
+    opacity: 0.5;
+}
+
+.drama-shot-media label.drama-shot-media-audio {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+}
+
+.drama-shot-media-reference {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.drama-shot-media-reference img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: var(--radius);
+}
+
+.drama-shot-media-output img,
+.drama-shot-media-output video {
+    width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    border-radius: var(--radius);
+}
+
+.drama-shot-media-take,
+.drama-shot-media-quote {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+}
+
+.drama-shot-media-quote p + button {
+    margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+    .drama-shot-media-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

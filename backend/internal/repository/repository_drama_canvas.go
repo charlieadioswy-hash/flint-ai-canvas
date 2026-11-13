@@ -212,5 +212,10 @@ func (r *Repository) dramaResourceReferences(userID string, resourceIDs []string
 	for _, take := range takes {
 		references = append(references, ResourceDirectReference{Kind: DramaResourceReferenceKind, ID: take.ID, Title: "短剧版本", ResourceID: take.ResourceID})
 	}
+	shotReferences, err := r.DramaShotMediaResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	references = append(references, shotReferences...)
 	return references, nil
 }

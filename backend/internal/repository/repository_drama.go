@@ -697,6 +697,9 @@ func (r *Repository) CancelUnboundDramaRenderJob(projectID, jobID string) (bool,
 
 func (r *Repository) DeleteDramaProductionData(projectID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := New(tx).DeleteDramaShotMediaForProject(projectID); err != nil {
+			return err
+		}
 		for _, entity := range []any{&model.DramaJob{}, &model.DramaTake{}, &model.DramaSegment{}, &model.DramaShot{}, &model.DramaEpisode{}, &model.DramaCast{}, &model.DramaProduction{}} {
 			if err := tx.Where("project_id = ?", projectID).Delete(entity).Error; err != nil {
 				return err

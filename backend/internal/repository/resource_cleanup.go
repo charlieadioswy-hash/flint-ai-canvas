@@ -35,7 +35,7 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			}
 		}
 		var current []model.Resource
-		query := tx.Where("id IN ?", resourceIDs)
+		query := tx.Where("id IN ?", resourceIDs).Order("id")
 		if r.Dialect() == "postgres" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
@@ -95,6 +95,17 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 				}
 			}
 		}
+		var shotOptions []string
+		if err := tx.Model(&model.DramaShotMedia{}).Pluck("config_json", &shotOptions).Error; err != nil {
+			return err
+		}
+		for _, document := range shotOptions {
+			for _, id := range resourceIDs {
+				if strings.Contains(document, `"`+id+`"`) {
+					return ErrResourceCleanupStillReferenced
+				}
+			}
+		}
 		for _, check := range []struct {
 			model any
 			query string
@@ -110,6 +121,7 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			{&model.DramaSegment{}, "tail_frame_resource_id IN ?"},
 			{&model.DramaEpisode{}, "final_resource_id IN ?"},
 			{&model.DramaTake{}, "resource_id IN ?"},
+			{&model.DramaShotMedia{}, "resource_id IN ?"},
 		} {
 			var count int64
 			if err := tx.Model(check.model).Where(check.query, resourceIDs).Count(&count).Error; err != nil {

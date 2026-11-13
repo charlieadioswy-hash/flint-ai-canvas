@@ -248,6 +248,8 @@ description: 影策后端核心持久化表与状态边界
 
 版本 110 `drama_cast_image_options` 为 `drama_casts` 增加 `image_options_json`（text）：保存单资产图片模型、画幅、分辨率、主体参考与风格参考的资源 ID。空项继承作品设置；造型的本体图仍固定排在参考图第一位。保存以作品和资产两种 Revision 校验，不启动生成、不改现有图片或自定义提示词；预检、报价与 worker 使用同一参数解析。两组参考均纳入素材引用与孤儿清理保护。
 
+版本 111 `drama_shot_media` 新建 `drama_shot_media` 表，以 `(project_id, shot_id, kind)` 唯一标识真实 `drama_shots` 的独立图片或视频。`config_json` 保存模型、提示词、规格、普通参考与首尾帧；`revision` 用于 CAS，`current_take_id/resource_id` 与 `pending_take_id/task_id` 分开保存当前采用和在途任务。版本复用 `drama_takes`，新增 `kind=shot_image/shot_video`，`owner_id` 为真实短剧镜头 ID；任务入队时就原子绑定真实 Task，产物就绪后才写入 Resource。`script_hash`、媒体版本和任务绑定共同阻止迟到结果覆盖改稿或主动采用。资源引用检查保护配置、当前产物和历史版本，孤儿清理在资源行锁内再次检查；保存、入队与采用在同一资源锁下重验资源。整个作品删除时清除媒体槽，删镜头与重新提取保留已付费的历史产物。
+
 版本 103 `drama_cast_styles_import` 为 `drama_casts` 增加以下字段，已有图片、外观与造型关系保持不变：
 
 | 列 | 含义 |

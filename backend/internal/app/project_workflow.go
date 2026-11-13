@@ -422,6 +422,9 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	if strings.TrimSpace(task.ProjectID) == "" || task.Status != model.TaskStatusSucceeded {
 		return nil
 	}
+	if handled, err := s.RegisterDramaShotMediaTaskOutput(task); handled || err != nil {
+		return err
+	}
 	if strings.TrimSpace(task.InputJSON) == "" {
 		return nil
 	}
