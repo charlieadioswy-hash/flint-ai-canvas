@@ -62,6 +62,8 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
         return () => {
             mounted.current = false;
             readGeneration.current += 1;
+            // 失效旧读取时同步空闲代次，StrictMode 重放后不能留下不存在的待读取。
+            finishedRead.current = readGeneration.current;
         };
     }, []);
     useEffect(() => {

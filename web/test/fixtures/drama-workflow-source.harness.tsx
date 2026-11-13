@@ -335,7 +335,7 @@ async function settle() {
     for (let index = 0; index < 8; index += 1) await Bun.sleep(10);
 }
 
-async function mount(render: (props: { summary: DramaSummary; onChanged: () => void }) => ReactNode, initial: DramaSummary) {
+async function mount(render: (props: { summary: DramaSummary; onChanged: () => void }) => ReactNode, initial: DramaSummary, strict = false) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
     const container = document.createElement("div");
     document.body.append(container);
@@ -345,7 +345,8 @@ async function mount(render: (props: { summary: DramaSummary; onChanged: () => v
     const update = async (next: DramaSummary) => {
         current = next;
         await act(async () => {
-            root.render(createElement(QueryClientProvider, { client }, render({ summary: current, onChanged: () => changed.push(current.project.id) })));
+            const content = createElement(QueryClientProvider, { client }, render({ summary: current, onChanged: () => changed.push(current.project.id) }));
+            root.render(strict ? createElement(StrictMode, {}, content) : content);
             await settle();
         });
         await act(async () => {
@@ -396,6 +397,33 @@ async function edit(node: HTMLInputElement | HTMLTextAreaElement, value: string)
         await settle();
     });
 }
+
+test("StrictMode 空白入口允许连续输入正文并保存，效果重放不伪造文件读取", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1), true);
+    try {
+        const content = "第1章 回家\n秦子文带弟弟回到了小区。";
+        const complete = `${content}\n窗外突然变成了森林。`;
+        expect(field(view.container, "短剧正文").disabled).toBe(false);
+        expect(button(view.container, "保存并确认正文").disabled).toBe(true);
+        await edit(field(view.container, "短剧正文"), content);
+        expect(field(view.container, "短剧正文").value).toBe(content);
+        await edit(field(view.container, "短剧正文"), complete);
+        expect(field(view.container, "短剧正文").value).toBe(complete);
+        expect(button(view.container, "保存并确认正文").disabled).toBe(false);
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0].chapters[0].text).toContain("窗外突然变成了森林。");
+        expect(fileReads).toHaveLength(0);
+        await act(async () => {
+            pendingCreates[0].resolve(summaryOf("strict-created", 1));
+            await settle();
+        });
+        expect(navigations).toEqual(["/projects/strict-created/guide"]);
+    } finally {
+        await view.dispose();
+    }
+});
 
 test("首屏渲染两章正文，不因章节选择提前引用而崩溃", async () => {
     resetFixture();
@@ -755,9 +783,9 @@ async function tap(container: HTMLElement, label: string) {
     });
 }
 
-test("一句创意默认收起，空正文显式采用后仍需保存且重复点击只创建一次", async () => {
+test("StrictMode 创意默认收起，空正文显式采用后仍需保存且重复点击只创建一次", async () => {
     resetFixture();
-    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1), true);
     try {
         expect(view.container.querySelector('[aria-label="独立创意任务"]')).toBeNull();
         await tap(view.container, "一句想法生成正文");
