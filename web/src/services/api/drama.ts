@@ -653,6 +653,18 @@ export function getDramaChapter(projectId: string, chapterId: string, signal?: A
     return http.get<{ chapter: { id: string; title: string; sourceText: string; wordCount: number; position: number } }>(`${base(projectId)}/chapters/${encodeURIComponent(chapterId)}`, { signal });
 }
 
+export type DramaChapterImpact = {
+    chapterId: string;
+    revision: number;
+    episodes: Array<Pick<DramaEpisode, "id" | "number" | "title" | "stage">>;
+    message: string;
+};
+
+/** 正文保存前查询引用它的集；保存本身不会自动重新改编。 */
+export function getDramaChapterImpact(projectId: string, chapterId: string, signal?: AbortSignal) {
+    return http.get<DramaChapterImpact>(`${base(projectId)}/chapters/${encodeURIComponent(chapterId)}/impact`, { signal });
+}
+
 export function getDramaEpisode(projectId: string, episodeId: string, signal?: AbortSignal) {
     return http.get<DramaEpisodeDetail>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}`, { signal });
 }

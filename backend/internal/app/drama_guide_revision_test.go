@@ -133,7 +133,7 @@ func TestDramaGuideCompletedRejectsVersionedTextEdits(t *testing.T) {
 			return fixture.svc.UpdateDramaSegment("usr-drama", projectID, fixture.shot.EpisodeID, 0, UpdateDramaSegmentRequest{ExpectedRevision: &staleRevision, VideoPromptOverride: &changed})
 		}},
 		{name: "chapter", edit: func() error {
-			_, err := fixture.svc.UpdateDramaChapter("usr-drama", projectID, chapters[0].ID, UpdateDramaChapterRequest{ExpectedRevision: &revision, Text: &changed})
+			_, err := fixture.svc.UpdateDramaChapter("usr-drama", projectID, chapters[0].ID, UpdateDramaChapterRequest{ExpectedRevision: &staleRevision, Text: &changed})
 			return err
 		}},
 		{name: "setup", edit: func() error {

@@ -215,6 +215,9 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.ProduceDramaChapters(userID, c.Param("id"), req)
 	}))
+	r.GET("/dramas/:id/chapters/:chapterId/impact", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.DramaChapterImpact(userID, c.Param("id"), c.Param("chapterId"))
+	}))
 	r.GET("/dramas/:id/chapters/:chapterId", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		chapter, err := svc.DramaChapter(userID, c.Param("id"), c.Param("chapterId"))
 		return gin.H{"chapter": chapter}, err

@@ -324,7 +324,14 @@ func (s *Service) UpdateDramaChapter(userID, projectID, chapterID string, req Up
 	if len(fields) == 0 {
 		return *unit, nil
 	}
-	if err := s.withDramaGuideEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+	if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		active, err := tx.DramaTextJobsActive(projectID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return dramaGuideConflict("文字任务正在进行，请完成后再修改正文")
+		}
 		return tx.UpdateDramaChapterSource(project.ID, unit.ID, fields)
 	}); err != nil {
 		return model.ProjectUnit{}, err
