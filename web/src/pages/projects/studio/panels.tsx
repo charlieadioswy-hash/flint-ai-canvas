@@ -399,7 +399,7 @@ export function CastEditor({
             return regenerateDramaCast(projectId, cast.id, restyle);
         },
         onSuccess: (result) => {
-            message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的视频需重新生成` : "正在重新生成参考图");
+            message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "正在重新生成参考图");
             onChanged();
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
@@ -409,7 +409,7 @@ export function CastEditor({
     const [libraryOpen, setLibraryOpen] = useState(false);
     const imageAdopted = (result: Awaited<ReturnType<typeof setDramaCastImage>>) => {
         if (result.unchanged) message.info("已在使用这张图");
-        else message.success(result.affectedSegments ? `已替换并锁定形象；${result.affectedSegments} 个剧情段的视频需重新生成` : "已替换并锁定形象，之后的剧情段视频按这张图生成");
+        else message.success(result.affectedSegments ? `已替换并锁定形象；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "已替换并锁定形象，之后的剧情段视频按这张图生成");
         onChanged();
     };
     const upload = useMutation({
@@ -503,7 +503,7 @@ export function CastEditor({
             {isCharacter ? <CastLooks projectId={projectId} character={cast} looks={looks} restyle={restyle} onChanged={onChanged} /> : null}
             <div className="drama-editor-impact">
                 <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
-                    让引用它的剧情段视频重新生成
+                    将引用视频标记为待更新
                 </Checkbox>
                 {impact ? (
                     <span>
@@ -850,7 +850,9 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
     const regenerateAll = useMutation({
         mutationFn: (kind: DramaCastKind) => regenerateDramaCasts(projectId, kind, restyleSegments),
         onSuccess: (result, kind) => {
-            message.success(`已按当前方案重做 ${result.queued} 个${CAST_KIND_LABEL[kind]}参考图${result.skipped ? `，${result.skipped} 个已锁定或正在生成` : ""}${result.affectedSegments ? `，${result.affectedSegments} 个剧情段需重新生成` : ""}`);
+            message.success(
+                `已按当前方案重做 ${result.queued} 个${CAST_KIND_LABEL[kind]}参考图${result.skipped ? `，${result.skipped} 个已锁定或正在生成` : ""}${result.affectedSegments ? `，${result.affectedSegments} 个剧情段的视频已标记为待更新` : ""}`,
+            );
             onChanged();
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
@@ -947,7 +949,7 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                         </span>
                                     </div>
                                     <Checkbox checked={restyleSegments} onChange={(event) => setRestyleSegments(event.target.checked)}>
-                                        同时让引用它们的剧情段视频重新生成
+                                        将引用视频标记为待更新
                                     </Checkbox>
                                     {CAST_KINDS.map((kind) => (
                                         <Button
@@ -957,7 +959,7 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                             onClick={() =>
                                                 modal.confirm({
                                                     title: `按当前方案重做 ${countOf(kind)} 个${CAST_KIND_LABEL[kind]}参考图？`,
-                                                    content: `每张参考图都会重新生成并计费${restyleSegments ? "，引用它们且已生成的剧情段视频需要重新生成" : ""}。旧版本保留在版本记录中。`,
+                                                    content: `每张参考图都会重新生成并计费${restyleSegments ? "，引用它们的视频将标记为待更新" : ""}。旧版本保留在版本记录中。`,
                                                     okText: "开始重做",
                                                     cancelText: "取消",
                                                     centered: true,

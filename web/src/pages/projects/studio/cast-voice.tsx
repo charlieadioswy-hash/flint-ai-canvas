@@ -99,7 +99,7 @@ export function CastVoiceField({ projectId, cast, restyle, onChanged }: { projec
     const sampleId = cast.voiceSampleResourceId || "";
     const player = useSamplePlayer(sampleId);
     const done = (result: { affectedSegments: number }, text: string) => {
-        message.success(result.affectedSegments ? `${text}；${result.affectedSegments} 个剧情段的视频需重新生成` : text);
+        message.success(result.affectedSegments ? `${text}；${result.affectedSegments} 个剧情段的视频已标记为待更新` : text);
         void queryClient.invalidateQueries({ queryKey: VOICE_PROFILES_KEY });
         onChanged();
     };

@@ -79,7 +79,7 @@ export function CastLooks({ projectId, character, looks, restyle, onChanged }: {
     const fileRef = useRef<HTMLInputElement>(null);
     const uploadLookRef = useRef<DramaCast | undefined>(undefined);
     const done = (text: string, affected?: number) => {
-        message.success(affected ? `${text}；${affected} 个剧情段的视频需重新生成` : text);
+        message.success(affected ? `${text}；${affected} 个剧情段的视频已标记为待更新` : text);
         setAdding(false);
         setEditingId(undefined);
         onChanged();
