@@ -10,13 +10,13 @@ export const workspaceRoutePages = {
     inspirations: preloadableLazy(() => import("@/pages/inspirations")),
     model3d: preloadableLazy(() => import("@/pages/model3d")),
     screenCreation: preloadableLazy(() => import("@/pages/screen-creation")),
-    projectGuide: preloadableLazy(() => import("@/pages/projects/guide")),
+    projectGuide: preloadableLazy(() => import("@/pages/projects/workflow")),
     ecommerce: preloadableLazy(() => import("@/pages/ecommerce")),
     imageWorkbench: preloadableLazy(() => import("@/pages/workbench/image-workbench-route")),
     videoWorkbench: preloadableLazy(() => import("@/pages/workbench/video-workbench-page")),
     projects: preloadableLazy(() => import("@/pages/projects")),
     projectDetail: preloadableLazy(() => import("@/pages/projects/detail")),
-    projectCreate: preloadableLazy(() => import("@/pages/projects/create")),
+    projectCreate: preloadableLazy(() => import("@/pages/projects/workflow-create")),
     skills: preloadableLazy(() => import("@/pages/skills")),
     skillWorkbench: preloadableLazy(() => import("@/pages/skills/skill-workbench-route")),
     plugins: preloadableLazy(() => import("@/pages/plugins")),
@@ -51,7 +51,7 @@ function warm(key: keyof typeof workspaceRoutePages) {
 
 export function preloadWorkspaceRoute(pathnameOrSlug: string) {
     // 根路径就是创作页，预加载时仍映射到其内部模块名。
-    const segments = pathnameOrSlug.replace(/^\//, "").split("/").filter(Boolean);
+    const segments = pathnameOrSlug.split(/[?#]/, 1)[0].replace(/^\//, "").split("/").filter(Boolean);
     const slug = segments[0] || "create";
     // 具体画布项目由 /canvas/:id 自己加载；不要在认证恢复阶段额外预加载画布列表。
     if (slug === "canvas" && segments.length > 1) return;

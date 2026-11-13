@@ -86,7 +86,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
                     <h2>基础配置</h2>
                     <p>风格、画幅和模型只在这里调整。确认前不会调用生成。</p>
                 </header>
-                <fieldset disabled={disabled}>
+                <fieldset disabled={disabled} inert={disabled}>
                     <label>
                         <span>视觉风格</span>
                         <button type="button" disabled={disabled} onClick={() => setPickerOpen(true)}>

@@ -49,9 +49,7 @@ import { ScriptView } from "./studio/script-view";
 import { Storyboard, type EpisodeEmpty } from "./studio/storyboard";
 import { dramaKeys, isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
 import { progressFillStyle } from "@/lib/progress-fill";
-import { activeDramaGuide, dramaProjectPath } from "./guide-state";
-import { useStudioAgent } from "./studio/use-studio-agent";
-import SimpleStudioPage from "./simple-studio";
+import DramaWorkflowPage from "./workflow";
 import { dramaStudioPath, isAdvancedDramaStudio } from "./studio/studio-route";
 import "./drama.css";
 
@@ -66,7 +64,7 @@ const AWAITING_MEDIA_BANNER = {
 
 export default function DramaStudioPage() {
     const [search] = useSearchParams();
-    return isAdvancedDramaStudio(search) ? <AdvancedDramaStudioPage /> : <SimpleStudioPage />;
+    return isAdvancedDramaStudio(search) ? <AdvancedDramaStudioPage /> : <DramaWorkflowPage />;
 }
 
 function AdvancedDramaStudioPage() {
@@ -107,8 +105,7 @@ function AdvancedDramaStudioPage() {
     const shots = useMemo(() => detail?.shots || [], [detail]);
     const currentShot = shots.find((shot) => shot.id === shotParam);
 
-    const openSimpleStudio = useCallback(() => navigate(dramaStudioPath(projectId, episodeId, searchParams, "simple")), [navigate, projectId, episodeId, searchParams]);
-    useStudioAgent(projectId, summary, summaryQuery.isError, openSimpleStudio);
+    const openSimpleStudio = useCallback(() => navigate(dramaStudioPath(projectId, routeEpisodeId || episodeId, searchParams, "simple")), [navigate, projectId, routeEpisodeId, episodeId, searchParams]);
     const activePage = useRef<{ projectId: string; episodeId: string } | null>({ projectId, episodeId: routeEpisodeId });
     useEffect(() => {
         activePage.current = { projectId, episodeId: routeEpisodeId };
@@ -340,7 +337,6 @@ function AdvancedDramaStudioPage() {
         );
 
     const { production } = summary;
-    if (activeDramaGuide(production.guideStep)) return <Navigate to={dramaProjectPath(projectId, production.guideStep)} replace />;
     const runLabel = running ? "暂停" : production.status === "draft" ? "开始制作" : "继续制作";
     const doneEpisodes = episodes.filter((episode) => episode.stage === "done" && !episode.finalStale).length;
     const progress = episodes.length ? doneEpisodes / episodes.length : 0;
@@ -434,6 +430,7 @@ function AdvancedDramaStudioPage() {
                     </nav>
                     {/* 窄屏只保留图标（全部生成保留集数），文字由 aria-label 与 title 提供。 */}
                     <div className="drama-topbar-actions">
+                        <Button onClick={openSimpleStudio}>简易制作台</Button>
                         <Dropdown
                             trigger={["click"]}
                             placement="bottomRight"

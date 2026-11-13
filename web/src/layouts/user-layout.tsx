@@ -22,12 +22,19 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const canvasEditor = /^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
     const productWorkspace = !adminWorkspace && !canvasEditor;
+    const dramaWorkspace = pathname === "/projects" || pathname.startsWith("/projects/");
     const userId = useUserStore((state) => state.user?.id);
     // Agent 停靠在画布右侧时，工作区让出同样的宽度，画布、顶栏和角落控件都不被遮挡。
     const agentDock = useAgentPanelDock();
     const agentDocked = Boolean(userId) && canvasEditor && agentDock.active;
     const creationWorkspace = pathname === "/" || pathname === "/create";
     const wasCanvasEditorRef = useRef(canvasEditor);
+    useLayoutEffect(() => {
+        if (!dramaWorkspace) return;
+        const agent = useGlobalAgentStore.getState();
+        agent.setDrama(null);
+        agent.setDramaReference(null);
+    }, [dramaWorkspace]);
     // 从画布编辑器回到创作首页时收起 Agent：画布里停靠在右侧的面板到首页会变成浮窗，挡住首页。
     // 只收起面板，对话和运行照常继续；在绘制前收起，首页不会先闪出浮窗。
     useLayoutEffect(() => {
@@ -51,7 +58,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     // 所有登录页面共用同一个面板实例：跨路由不卸载，对话、运行和事件流都不中断。
     const globalAgent = userId ? (
         <Suspense fallback={null}>
-            <GlobalAgentPanel key={userId} />
+            <GlobalAgentPanel key={userId} hidden={dramaWorkspace} />
         </Suspense>
     ) : null;
 

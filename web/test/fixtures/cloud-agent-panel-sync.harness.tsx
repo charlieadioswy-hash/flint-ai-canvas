@@ -297,6 +297,7 @@ type MountOptions = {
     floatingDrama?: boolean;
     initiallyOpen?: boolean;
     studioMode?: boolean;
+    hidden?: boolean;
 };
 async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, guideProjectId?: string, options: MountOptions = {}) {
     local = options.localConversations || [initial];
@@ -354,21 +355,27 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
             : null,
     });
     const root = createRoot(host);
-    await act(async () => {
-        root.render(
-            options.strictMode ? (
-                <React.StrictMode>
-                    <CanvasCloudAgentPanel />
-                </React.StrictMode>
-            ) : (
-                <CanvasCloudAgentPanel />
-            ),
+    const renderPanel = (hidden = options.hidden ?? false) =>
+        options.strictMode ? (
+            <React.StrictMode>
+                <CanvasCloudAgentPanel hidden={hidden} />
+            </React.StrictMode>
+        ) : (
+            <CanvasCloudAgentPanel hidden={hidden} />
         );
+    await act(async () => {
+        root.render(renderPanel());
         await settle();
     });
     return {
         host,
         root,
+        setHidden: async (hidden: boolean) => {
+            await act(async () => {
+                root.render(renderPanel(hidden));
+                await settle();
+            });
+        },
         close: async () => {
             await act(async () => root.unmount());
             host.remove();
@@ -376,6 +383,78 @@ async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversat
     };
 }
 afterAll(() => dom.happyDOM.abort());
+
+test("短剧页隐藏通用画布 Agent 时仍接收 SSE，回到画布恢复原会话和打开状态", async () => {
+    const active = chat("canvas-background", makeRun("canvas-running", "running"));
+    const mounted = await mount(active, [active]);
+    try {
+        const observation = subscriptions.at(-1)!;
+        const count = subscriptions.length;
+        expect(mounted.host.querySelector(".canvas-agent-panel")).not.toBeNull();
+        await mounted.setHidden(true);
+        expect(mounted.host.querySelector(".canvas-agent-panel")).toBeNull();
+        expect(useGlobalAgentStore.getState().open).toBe(true);
+        expect(observation.closed).toBe(false);
+        expect(subscriptions).toHaveLength(count);
+        await act(async () => {
+            observation.event({ eventId: "while-hidden", runId: active.run!.id, seq: 5, type: "assistant_delta", payload: { messageId: "background-answer", text: "后台仍然接收结果" }, createdAt: active.updatedAt });
+        });
+        await mounted.setHidden(false);
+        expect(mounted.host.textContent).toContain("后台仍然接收结果");
+        expect(useGlobalAgentStore.getState().open).toBe(true);
+        expect(subscriptions).toHaveLength(count);
+        expect(canceled).toHaveLength(0);
+        expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("隐藏期间不消费新的画布预填、不响应快捷键，返回后只填入一次", async () => {
+    const mounted = await mount(chat("hidden-canvas", null), [], null, undefined, { hidden: true, initiallyOpen: false, strictMode: true });
+    try {
+        await act(async () => {
+            const canvas = useGlobalAgentStore.getState().canvas!;
+            useGlobalAgentStore.getState().setCanvas({ ...canvas, prefillRequest: { id: 91, text: "稍后才填入的要求" } });
+            window.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "j", ctrlKey: true }));
+            await settle();
+        });
+        expect(useGlobalAgentStore.getState().open).toBe(false);
+        expect(mounted.host.textContent).toBe("");
+        expect(generated).toBe(0);
+        await mounted.setHidden(false);
+        await act(async () => {
+            window.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "j", ctrlKey: true }));
+            await settle();
+        });
+        expect(useGlobalAgentStore.getState().open).toBe(true);
+        expect(composer.prompt).toBe("稍后才填入的要求");
+        await mounted.setHidden(true);
+        await mounted.setHidden(false);
+        expect(composer.prompt).toBe("稍后才填入的要求");
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("隐藏的遗留短剧上下文不会启动引导或自动提交预填", async () => {
+    const initial = chat("hidden-old-guide", null);
+    const mounted = await mount(initial, [], null, "old-project", {
+        hidden: true,
+        strictMode: true,
+        startupRequest: { id: 1, text: "旧引导自动开始", autoSubmit: true, requireIdle: true },
+        prefillRequest: { id: 2, text: "旧短剧预填", autoSubmit: true },
+    });
+    try {
+        expect(mounted.host.textContent).toBe("");
+        expect(createInputs).toHaveLength(0);
+        expect(sent).toHaveLength(0);
+        expect(local.every((item) => !item.localDramaStartupRequested)).toBe(true);
+    } finally {
+        await mounted.close();
+    }
+});
 function configureModels(ambiguous: boolean) {
     const entry = (id: string, model: string, price: number) =>
         createModelChannel({ id, scope: "system", models: [model], modelCosts: [{ model, channelModelId: `${id}-${model}`, capability: "text", billingMode: "fixed_request", unitPriceMicrocredits: price }] });

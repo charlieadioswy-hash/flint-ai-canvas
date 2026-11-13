@@ -178,24 +178,25 @@ function isDramaConversation(conversation: CloudAgentConversation) {
  * 画布编辑器通过 useGlobalAgentStore 发布当前画布；发送时有画布就绑定该画布，
  * 离开画布后下一轮不再携带画布 ID（后端只开放无画布工具）。
  */
-export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
+export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidden = false }: { hidden?: boolean }) {
     // 只订阅渲染要用的字段。画布每次选中、拖动或编辑都会重发上下文；订阅整份会让面板和全部消息跟着重渲染。
     // 选中节点只在发送时读取，审批目标节点状态只在有审批时订阅（见 approvalTargetGenerating）。
-    const drama = useGlobalAgentStore((state) => state.drama);
+    const drama = useGlobalAgentStore((state) => (hidden ? null : state.drama));
     const embeddedDrama = Boolean(drama?.host);
     const dramaStudio = Boolean(drama?.studioMode);
+    // 短剧页隐藏面板时不接入短剧上下文：否则 hidden 只是不渲染，引导会话恢复、预填和自动启动仍会跑。
     const dramaProjectId = drama?.projectId || "";
-    const dramaReference = useGlobalAgentStore((state) => (state.dramaReference?.projectId === state.drama?.projectId ? state.dramaReference : null));
-    const dramaReferenceFocus = useGlobalAgentStore((state) => state.dramaReferenceFocus);
-    const canvasId = useGlobalAgentStore((state) => (state.drama ? "" : (state.canvas?.canvasId ?? "")));
-    const domainProjectId = useGlobalAgentStore((state) => state.drama?.projectId || state.canvas?.domainProjectId);
+    const dramaReference = useGlobalAgentStore((state) => (hidden || state.dramaReference?.projectId !== state.drama?.projectId ? null : state.dramaReference));
+    const dramaReferenceFocus = useGlobalAgentStore((state) => (hidden ? 0 : state.dramaReferenceFocus));
+    const canvasId = useGlobalAgentStore((state) => (drama ? "" : (state.canvas?.canvasId ?? "")));
+    const domainProjectId = useGlobalAgentStore((state) => drama?.projectId || state.canvas?.domainProjectId);
     const nodeCount = useGlobalAgentStore((state) => state.canvas?.nodeCount ?? 0);
     const references = useGlobalAgentStore((state) => state.canvas?.references ?? EMPTY_REFERENCES);
-    const prefillRequest = useGlobalAgentStore((state) => (state.drama ? (state.drama.prefillRequest ?? null) : (state.canvas?.prefillRequest ?? null)));
+    const prefillRequest = useGlobalAgentStore((state) => (hidden ? null : drama ? (drama.prefillRequest ?? null) : (state.canvas?.prefillRequest ?? null)));
     const startupRequest = drama?.startupRequest;
     const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
-    const insertAgentMarkdown = useGlobalAgentStore((state) => (state.drama ? undefined : state.canvas?.insertAgentMarkdown));
-    const open = useGlobalAgentStore((state) => (state.drama?.onOpenStudio ? false : state.open || Boolean(state.drama?.host)));
+    const insertAgentMarkdown = useGlobalAgentStore((state) => (drama ? undefined : state.canvas?.insertAgentMarkdown));
+    const open = useGlobalAgentStore((state) => (hidden ? false : state.drama?.onOpenStudio ? false : state.open || Boolean(state.drama?.host)));
     const onOpen = useGlobalAgentStore((state) => state.openAgent);
     const onCollapse = useGlobalAgentStore((state) => state.closeAgent);
     const setDocked = useGlobalAgentStore((state) => state.setDocked);
@@ -387,7 +388,10 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     }, []);
     // ⌘/Ctrl+J：任何页面打开 Agent 并把光标放进输入框；焦点已在 Agent 里时收起。
     useEffect(() => {
+        if (hidden) return;
+        let active = true;
         const focusComposer = (attempt = 0) => {
+            if (!active) return;
             const input = document.querySelector<HTMLElement>('.canvas-agent-panel [aria-label="Agent 输入"]');
             if (input) input.focus();
             else if (attempt < 10) window.setTimeout(() => focusComposer(attempt + 1), 50);
@@ -406,8 +410,11 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             focusComposer();
         };
         window.addEventListener("keydown", onKeyDown);
-        return () => window.removeEventListener("keydown", onKeyDown);
-    }, []);
+        return () => {
+            active = false;
+            window.removeEventListener("keydown", onKeyDown);
+        };
+    }, [hidden]);
     const panelLayout = useAgentPanelLayout(dock);
     const lastSeqRef = useRef(0);
     const replayCursorRef = useRef({ runId: "", seq: 0 });
@@ -633,6 +640,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const statusColor = status === "failed" ? "var(--status-error)" : status === "waiting_approval" ? "var(--status-warning)" : status === "running" || status === "queued" ? "var(--status-success)" : theme.node.muted;
 
     useEffect(() => {
+        if (hidden) return;
         if (dramaProjectId && guideReadyProject !== dramaProjectId) return;
         // 画布页卸载后预填撤回；新画布页的编号从 1 重新开始，不能被上一页的编号挡住。
         if (!prefillRequest) {
@@ -682,6 +690,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
         setPrompt((current) => appendAgentPromptPrefill(current, prefillRequest.displayText || prefillRequest.text));
         prefilledSubmissionRef.current = prefillRequest;
     }, [
+        hidden,
         prefillRequest,
         dramaProjectId,
         guideReadyProject,
@@ -1530,8 +1539,10 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     // 发起新一轮：输入框发送、回答提问、点选项卡片、重试待确认请求，以及队列出队都走这里。
     // 队列项带着入队时的设置快照，幂等键就是队列项 ID；其余入口用当前设置。
     const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean; outboxItem?: AgentOutboxItem; composerExtras?: ComposerExtras }): Promise<"sent" | "skipped" | "failed"> => {
+        if (hidden && !options?.outboxItem) return "skipped";
         if (dramaProjectId && (guideReadyProject !== dramaProjectId || (run && run.dramaProjectId !== dramaProjectId))) return "skipped";
-        if (!dramaProjectId && run?.dramaProjectId) return "skipped";
+        if (!dramaProjectId && (run?.dramaProjectId || pendingSubmission.current?.request?.dramaProjectId)) return "skipped";
+        if (hidden && conversations.some((item) => item.id === activeConversationId && isDramaConversation(item))) return "skipped";
         const outboxItem = options?.outboxItem;
         const composerExtras = outboxItem ? undefined : options?.composerExtras;
         if (!accountIsCurrent() || cloudOpeningRef.current || (canvasId && !cloudHistoryReady && !pendingSubmission.current?.request) || (modelRestoreError && !pendingSubmission.current?.request && !outboxItem)) return "skipped";
@@ -3109,6 +3120,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
             </AnimatePresence>
         </>
     );
+
+    if (hidden) return null;
 
     return (
         <>

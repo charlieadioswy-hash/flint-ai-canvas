@@ -12,8 +12,8 @@ import { deleteDrama, listDramas, type DramaListItem, type DramaStatus } from "@
 import { formatCredits, MediaThumb, STATUS_LABEL } from "./drama-shared";
 import { progressFillStyle } from "@/lib/progress-fill";
 import { RelativeTime } from "@/components/ui/product/relative-time";
-import { DramaGuideEntry } from "./guide-entry";
-import { activeDramaGuide, dramaProjectPath } from "./guide-state";
+import { DramaWorkflowEntry } from "./workflow-entry";
+import { dramaProjectPath } from "./guide-state";
 import "./drama.css";
 
 const PAGE_SIZES = [24, 48, 96];
@@ -24,7 +24,25 @@ const STATUS_FILTERS: Array<{ value: DramaStatus | "all"; label: string }> = [
     { value: "completed", label: "已完成" },
     { value: "draft", label: "未开始" },
 ];
-const ACCEPT = ".txt,.md,.markdown,text/plain,text/markdown";
+const ACCEPT = ".txt,.md,.markdown,.docx,text/plain,text/markdown";
+
+function dramaListStage(item: DramaListItem) {
+    if (item.hasDraftForm) return "草稿待完善";
+    if (item.guideStep === "configuring") return "配置中";
+    if (item.guideStep === "assets") return "配置中 · 主体资产";
+    if (item.guideStep === "story") return item.episodeCount ? `继续制作 · ${item.doneCount}/${item.episodeCount} 集成片` : "继续制作";
+    if (item.guideStep === "completed") return item.episodeCount ? `文字已就绪 · ${item.doneCount}/${item.episodeCount} 集成片` : "文字已就绪";
+    if (item.episodeCount) return `${item.doneCount}/${item.episodeCount} 集成片`;
+    if (item.status === "running") return "正在改编小说";
+    if (item.status === "draft") return "尚未开始";
+    return "等待分集";
+}
+
+function dramaListAction(item: DramaListItem) {
+    if (item.guideStep === "configuring" || item.guideStep === "assets") return "继续配置";
+    if (item.guideStep === "story" || item.guideStep === "completed" || item.episodeCount) return "继续制作";
+    return "打开制作台";
+}
 
 export default function DramaListPage() {
     const navigate = useNavigate();
@@ -116,8 +134,8 @@ export default function DramaListPage() {
         <WorkspacePage className="studio-collection-page drama-library">
             <div className="drama-root" {...dragProps}>
                 <div className="studio-band">
-                    <PageHeader title="短剧" description="上传一本小说，流水线自动改编、拆集、建角色、出分镜并合成成片。" meta={<span className="app-projects-header-meta">{total} 部</span>} actions={total ? actions : undefined} />
-                    <DramaGuideEntry showSteps={!total} />
+                    <PageHeader title="短剧" description="导入正文，逐步确认分集、风格与资产，再制作分镜和视频。" meta={<span className="app-projects-header-meta">{total} 部</span>} actions={total ? actions : undefined} />
+                    <DramaWorkflowEntry showSteps={!total} />
                     {total ? (
                         <CollectionToolbar
                             label="短剧浏览工具"
@@ -183,7 +201,7 @@ export default function DramaListPage() {
                         <div>
                             <FileUp className="size-8" />
                             <strong>松开即可开始新短剧</strong>
-                            <span>TXT / Markdown，自动识别编码与章节</span>
+                            <span>TXT / Markdown / DOCX，自动识别编码与章节</span>
                         </div>
                     </div>
                 ) : null}
@@ -227,16 +245,15 @@ function DramaCover({ item }: { item: DramaListItem }) {
 function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => void }) {
     const progress = item.episodeCount ? Math.round((item.doneCount / item.episodeCount) * 100) : 0;
     const needsAction = item.status === "paused" && Boolean(item.pauseReason);
-    const guided = activeDramaGuide(item.guideStep);
     const path = item.hasDraftForm ? `/projects/new?draft=${encodeURIComponent(item.project.id)}` : dramaProjectPath(item.project.id, item.guideStep);
-    const stage = guided ? "创作引导中 · 点击继续" : item.episodeCount ? `${item.doneCount}/${item.episodeCount} 集成片` : item.status === "running" ? "正在改编小说" : item.status === "draft" ? "尚未开始" : "等待分集";
+    const stage = dramaListStage(item);
     return (
         <article className={`drama-library-card is-${item.status}`}>
             <Link to={path} className="drama-library-open" aria-label={`打开《${item.project.name}》`}>
                 <DramaCover item={item} />
                 <span className={`drama-chip drama-library-badge is-${needsAction ? "paused" : item.status}`}>
                     <span className="drama-dot" />
-                    {needsAction ? "需要处理" : STATUS_LABEL[item.status]}
+                    {needsAction ? "需要处理" : item.status === "completed" && (!item.episodeCount || item.doneCount < item.episodeCount) ? "待制作视频" : STATUS_LABEL[item.status]}
                 </span>
                 <div className="drama-library-body">
                     <h3 title={item.project.name}>{item.project.name}</h3>
@@ -267,7 +284,7 @@ function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => vo
                     placement="bottomRight"
                     menu={{
                         items: [
-                            { key: "open", icon: <ExternalLink className="size-3.5" />, label: <Link to={path}>{item.hasDraftForm ? "编辑草稿" : guided ? "继续创作引导" : "打开制作台"}</Link> },
+                            { key: "open", icon: <ExternalLink className="size-3.5" />, label: <Link to={path}>{item.hasDraftForm ? "编辑草稿" : dramaListAction(item)}</Link> },
                             { type: "divider" },
                             { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除作品", onClick: onDelete },
                         ],
