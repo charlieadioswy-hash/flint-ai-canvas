@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import type { DramaCast, DramaSummary } from "@/services/api/drama";
 import { CAST_KIND_LABEL } from "../drama-shared";
+import { WorkflowCastAssistance } from "../workflow-cast-assistance";
 import { CastEditor, castEditorFormKey } from "./panels";
 import { useOpenDramaCanvas } from "./use-studio";
 import "./cast-editor-dialog.css";
@@ -37,6 +38,7 @@ function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged, ch
                     <Button type="text" icon={<X className="size-4" />} aria-label="关闭资产设定" onClick={onClose} />
                 </header>
                 <div className="drama-cast-dialog-body thin-scrollbar">
+                    {current ? <WorkflowCastAssistance summary={summary} cast={current} onChanged={onChanged} /> : null}
                     {current ? children : null}
                     {current ? (
                         <CastEditor

@@ -36,6 +36,12 @@ description: 信封、错误码与 OpenAPI
 
 确认后调用 `POST /api/dramas/:id/actions/batch/execute`，原请求加必需的 `baseRevision/confirmationToken`。全部目标在同一作品锁内完成重检，统一限制隐式媒体，再原子入队所有 `ready` 目标；任何内容、依赖或报价变化使整批不写，HTTP 409 的 `details.batch` 给出逐项冲突。数据库写失败整批回滚，已排队、已有成功结果与阻塞项继续逐项跳过。成功返回相同结构，入队项为 `queued`；重复确认范围内全部目标均已排队或成功时返回跳过，不重新生成或收费；仍有阻塞或无效目标且确认快照变化时要求重新预检，不能把新阻塞误报成无变化。单项与批量均在持久入队后返回真实结果：恢复制作失败时仍报告已入队，附 `dispatchPending=true` 与 `warnings`，用户可继续制作，无需重新提交生成。该批次确认不创建计费订单，实际任务派发仍按原准入与冻结规则处理。
 
+### 短剧资产 AI 辅助
+
+`GET /api/dramas/:id/cast/:castId/assistance` 读取资产真实辅助任务与历史结果；`POST …/preflight`、`POST …/execute` 接受 `{purpose,expectedRevision,castRevision,model,instruction,sampleText,voiceKey,sourceResourceId}`。`purpose` 为 `fill_description`（外观草稿）、`image_prompt`（图片反推提示词）或 `voice_sample`（模型音色试听）。预检只返回就绪原因、报价和确认令牌；执行另需 `confirmationToken/clientOperationId`，重新校验作品、资产、报价、预算与资源并原子创建 Task、账单和资产归属的 Take。未知回执沿用原提交标识，失败重做必须重新预检，不允许通用任务重试绕过确认。
+
+文字任务返回可编辑草稿，不自动覆盖设定；反推只接受本人已就绪图片，模型必须支持图片输入。试听使用真实音频模型、音色和不超过 1000 字的朗读文本，不表示声音克隆。`POST …/adopt` 接受 `{expectedRevision,castRevision,takeId,text?}`，只采用本资产成功且来源版本未变化的结果。外观上限 1000 字、生图提示词上限 12000 字；逐字原始说明和未知结构化字段保持，既有图片保留并提示过期，不自动重新生成。声音采用时才绑定 VoiceProfile；未采用的试听也绑定历史 Take，避免被孤儿清理。所有操作保留当前制作阶段。
+
 ### 简易流程逐集推进与影响提示
 
 `GET /api/dramas/:id/workflow/readiness` 返回 `{revision,guideStep,episodes}`。每集包含 `episodeId/number/title/revision/textReady/canGenerateVideo/canRender/blockingReason?/segmentCount/readyVideos`；按真实镜头、段提示词、集版本及相关活跃文字作业判断就绪。另一集的剧本或提示词失败、生成中，不阻塞已就绪集；作品级资产文字提取或分集规划仍受保护。只浏览页面、查询就绪或预检不改变阶段和媒体授权。

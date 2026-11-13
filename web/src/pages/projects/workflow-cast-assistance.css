@@ -1,0 +1,57 @@
+.drama-cast-assistance {
+    margin-block-end: var(--space-4);
+}
+
+.drama-cast-assistance-actions,
+.drama-cast-assistance-result-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.drama-cast-assistance-dialog,
+.drama-cast-assistance-form,
+.drama-cast-assistance-form > label,
+.drama-cast-assistance-results,
+.drama-cast-assistance-results article {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.drama-cast-assistance-form {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.drama-cast-assistance-source {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.drama-cast-assistance-source > :first-child {
+    max-width: 120px;
+    max-height: 120px;
+    object-fit: contain;
+}
+
+.drama-cast-assistance-results {
+    max-height: 360px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-block-start: var(--space-3);
+    border-block-start: 1px solid var(--border);
+}
+
+.drama-cast-assistance-results article {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.drama-cast-assistance-result-head {
+    justify-content: space-between;
+}

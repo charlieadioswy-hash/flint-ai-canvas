@@ -54,6 +54,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if taskHasDramaShotMediaOrigin(task.InputJSON) {
 		return nil, BadAuthRequest("镜头媒体重做需要新的报价确认，请在镜头图片与视频中重新预检并生成")
 	}
+	if metadata, _ := dramaCastAssistanceTaskMetadata(task); metadata.Source == "drama_cast_assistance" {
+		return nil, BadAuthRequest("资产辅助任务重做需要新的报价确认，请在资产 AI 辅助中重新预检并生成")
+	}
 	if task.AgentRunID != "" || task.GenerationID != "" || strings.HasPrefix(task.Operation, "cloud_agent") || taskHasAgentOrigin(task.InputJSON) {
 		return nil, BadAuthRequest("Agent 重试需要新的幂等键和预算校验，请回到 Agent 对话重新发送")
 	}
