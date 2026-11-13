@@ -27,15 +27,17 @@ import { useUserStore } from "@/stores/use-user-store";
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { MediaThumb, useResourceMediaUrl } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
+import { WorkflowShotAudioEditor } from "./workflow-shot-audio";
 import "./workflow-shot-media.css";
 
 type Props = { open: boolean; projectId: string; shot?: DramaShot; onClose: () => void; onChanged?: () => void };
 type Quote = { preview: DramaShotMediaPreflight; request: DramaShotMediaAction; uncertain?: boolean };
 type PickerRole = "reference" | "first" | "last";
+type VisualMediaKind = Exclude<DramaShotMediaKind, "audio">;
 
 const STATE: Record<string, string> = { idle: "待生成", ready: "可使用", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消", stale: "已有变更，请核对版本" };
 
-function MediaPreview({ resourceId, kind }: { resourceId?: string; kind: DramaShotMediaKind }) {
+function MediaPreview({ resourceId, kind }: { resourceId?: string; kind: VisualMediaKind }) {
     const url = useResourceMediaUrl(resourceId || "", kind === "video" ? "playback" : "original");
     if (!resourceId) return <p className="text-sm text-muted-foreground">还没有采用的{kind === "image" ? "镜头图片" : "镜头视频"}</p>;
     if (kind === "image") return <MediaThumb resourceId={resourceId} alt="当前镜头图片" />;
@@ -68,10 +70,10 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
         });
     };
     return (
-        <AppModal open centered width={1060} title={`镜头 ${props.shot.position + 1} · 图片与视频`} footer={null} onCancel={() => leave(props.onClose)} maskClosable={!busy} closable={!busy}>
+        <AppModal open centered width={1060} title={`镜头 ${props.shot.position + 1} · 图片、视频与音频`} footer={null} onCancel={() => leave(props.onClose)} maskClosable={!busy} closable={!busy}>
             <div className="drama-shot-media">
                 <nav className="drama-shot-media-tabs" aria-label="镜头媒体类型">
-                    {(["image", "video"] as const).map((value) => (
+                    {(["image", "video", "audio"] as const).map((value) => (
                         <Button
                             key={value}
                             aria-pressed={kind === value}
@@ -84,17 +86,17 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                                 })
                             }
                         >
-                            {value === "image" ? "镜头图片" : "镜头视频"}
+                            {value === "image" ? "镜头图片" : value === "video" ? "镜头视频" : "镜头音频"}
                         </Button>
                     ))}
                 </nav>
-                <ShotMediaEditor key={kind} {...props} kind={kind} onDirtyChange={setDirty} onBusyChange={setBusy} />
+                {kind === "audio" ? <WorkflowShotAudioEditor {...props} onDirtyChange={setDirty} onBusyChange={setBusy} /> : <ShotMediaEditor key={kind} {...props} kind={kind} onDirtyChange={setDirty} onBusyChange={setBusy} />}
             </div>
         </AppModal>
     );
 }
 
-function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChange, onBusyChange }: Props & { shot: DramaShot; userId: string; kind: DramaShotMediaKind; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void }) {
+function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChange, onBusyChange }: Props & { shot: DramaShot; userId: string; kind: VisualMediaKind; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void }) {
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();

@@ -2,12 +2,12 @@ import type { DramaModelChoice } from "./drama";
 import { http } from "./request";
 import type { GenerationTask } from "./task-center";
 
-export type DramaShotMediaKind = "image" | "video";
+export type DramaShotMediaKind = "image" | "video" | "audio";
 
 export type DramaShotMediaConfig = {
     model: DramaModelChoice;
     prompt: string;
-    operation: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "reference_to_video";
+    operation: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "reference_to_video" | "audio";
     aspectRatio: string;
     resolution: string;
     seconds?: number;
@@ -15,13 +15,15 @@ export type DramaShotMediaConfig = {
     referenceResourceIds: string[];
     firstFrameResourceId?: string;
     lastFrameResourceId?: string;
+    audioVoice?: string;
+    audioInstructions?: string;
 };
 
 export type DramaShotMediaTake = {
     id: string;
     projectId: string;
     ownerId: string;
-    kind: "shot_image" | "shot_video";
+    kind: "shot_image" | "shot_video" | "shot_audio";
     version: number;
     resourceId: string;
     taskId: string;

@@ -29,6 +29,8 @@ type DramaShotMediaConfig struct {
 	ReferenceResourceIDs []string         `json:"referenceResourceIds"`
 	FirstFrameResourceID string           `json:"firstFrameResourceId,omitempty"`
 	LastFrameResourceID  string           `json:"lastFrameResourceId,omitempty"`
+	AudioVoice           string           `json:"audioVoice,omitempty"`
+	AudioInstructions    string           `json:"audioInstructions,omitempty"`
 }
 
 type DramaShotMediaSaveRequest struct {
@@ -84,7 +86,9 @@ type dramaShotMediaPlan struct {
 	request    CreateTaskRequest
 }
 
-func validDramaShotMediaKind(kind string) bool { return kind == "image" || kind == "video" }
+func validDramaShotMediaKind(kind string) bool {
+	return kind == "image" || kind == "video" || kind == "audio"
+}
 
 func dramaShotScriptHash(shot model.DramaShot) string {
 	// UpdatedAt is persistence metadata; all script and dependency fields remain
@@ -112,6 +116,9 @@ func (s *Service) dramaShotMediaScope(userID, projectID, shotID, kind string) (*
 }
 
 func defaultDramaShotMediaConfig(shot model.DramaShot, p model.DramaProduction, kind string) DramaShotMediaConfig {
+	if kind == "audio" {
+		return DramaShotMediaConfig{Prompt: shot.Dialogue, Operation: "audio", ReferenceResourceIDs: []string{}}
+	}
 	settings := parseDramaSettings(p.SettingsJSON)
 	config := DramaShotMediaConfig{Model: settings.Models.Image, Prompt: shot.ImagePrompt, Operation: "text_to_image", AspectRatio: settings.AspectRatio, Resolution: "1K", ReferenceResourceIDs: []string{}}
 	if kind == "video" {
@@ -211,6 +218,12 @@ func dramaShotMediaReferenceIDs(config DramaShotMediaConfig) []string {
 }
 
 func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, userID, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+	if kind == "audio" {
+		return normalizeDramaShotAudioConfig(config)
+	}
+	if config.AudioVoice != "" || config.AudioInstructions != "" {
+		return config, BadAuthRequest("音色与演绎要求只用于独立镜头音频")
+	}
 	config.Prompt = strings.TrimSpace(config.Prompt)
 	config.FirstFrameResourceID = strings.TrimSpace(config.FirstFrameResourceID)
 	config.LastFrameResourceID = strings.TrimSpace(config.LastFrameResourceID)
@@ -374,6 +387,9 @@ func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, pro
 }
 
 func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string, shot model.DramaShot, kind string, config DramaShotMediaConfig) (map[string]any, error) {
+	if kind == "audio" {
+		return dramaShotAudioInput(shot, config), nil
+	}
 	providerConfig := map[string]any{"size": config.AspectRatio, "count": "1"}
 	if config.Model.ChannelID != "" {
 		providerConfig["channelId"], providerConfig["model"], providerConfig["channelModelKey"] = config.Model.ChannelID, config.Model.ModelKey, config.Model.ModelKey

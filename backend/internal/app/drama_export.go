@@ -396,6 +396,8 @@ type dramaAssetShot struct {
 	DurationMs   int64  `json:"durationMs,omitempty"`
 	ImagePrompt  string `json:"imagePrompt,omitempty"`
 	VideoPrompt  string `json:"videoPrompt,omitempty"`
+	Audio        string `json:"audio,omitempty"`
+	AudioText    string `json:"audioText,omitempty"`
 }
 
 var dramaCastKindFolder = map[string]string{"character": "角色", "scene": "场景", "prop": "道具"}
@@ -571,6 +573,7 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 		prompts.WriteString("\n" + synopsis + "\n")
 	}
 	shotNumber := 0
+	hasStandaloneAudio := false
 	for _, index := range dedupeInts(indexes) {
 		segmentShots := shotsBySegment[index]
 		segment := segmentByIndex[index]
@@ -599,6 +602,11 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 				Position: shot.Position, SegmentIndex: shot.SegmentIndex, Scene: shot.Scene, Speaker: shot.Speaker, Dialogue: shot.Dialogue,
 				Action: shot.Action, ShotSize: shot.ShotSize, Camera: shot.Camera, DurationMs: shot.DurationMs,
 			}
+			shotItem.Audio, shotItem.AudioText, err = s.packDramaShotAudio(userID, folder, shot, req, archive)
+			if err != nil {
+				return err
+			}
+			hasStandaloneAudio = hasStandaloneAudio || shotItem.Audio != ""
 			shotNumber++
 			if req.Prompts {
 				shotItem.ImagePrompt, shotItem.VideoPrompt = shot.ImagePrompt, shot.VideoPrompt
@@ -623,6 +631,9 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 	}
 	if req.Prompts {
 		archive.addData(folder+"/提示词.md", []byte(prompts.String()))
+	}
+	if hasStandaloneAudio {
+		archive.addData(folder+"/镜头音频/使用说明.txt", []byte("此目录为显式采用的独立镜头音频。音频未自动混入成片或剪映时间线；需要时请在剪辑软件中自行放置并调整时长。\n"))
 	}
 	manifest.Episodes = append(manifest.Episodes, item)
 	return nil

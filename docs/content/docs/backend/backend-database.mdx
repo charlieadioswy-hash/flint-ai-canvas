@@ -265,6 +265,8 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 版本 111 `drama_shot_media` 新建 `drama_shot_media` 表，以 `(project_id, shot_id, kind)` 唯一标识真实 `drama_shots` 的独立图片或视频。`config_json` 保存模型、提示词、规格、普通参考与首尾帧；`revision` 用于 CAS，`current_take_id/resource_id` 与 `pending_take_id/task_id` 分开保存当前采用和在途任务。版本复用 `drama_takes`，新增 `kind=shot_image/shot_video`，`owner_id` 为真实短剧镜头 ID；任务入队时就原子绑定真实 Task，产物就绪后才写入 Resource。`script_hash`、媒体版本和任务绑定共同阻止迟到结果覆盖改稿或主动采用。资源引用检查保护配置、当前产物和历史版本，孤儿清理在资源行锁内再次检查；保存、入队与采用在同一资源锁下重验资源。整个作品删除时清除媒体槽，删镜头与重新提取保留已付费的历史产物。
 
+独立镜头音频复用同表的 `kind=audio` 与 `drama_takes.kind=shot_audio`，不新增迁移。`config_json` 保存朗读文本、模型音色与演绎要求；真实 Task 完成时只记录历史音频资源并清除 pending，等待用户试听后显式采用，保留原已采用版本。资产包的音频与朗读文本取自当前采用 Take，不取尚未生成的配置草稿；不改成片或剪映的音轨。
+
 版本 103 `drama_cast_styles_import` 为 `drama_casts` 增加以下字段，已有图片、外观与造型关系保持不变：
 
 | 列 | 含义 |

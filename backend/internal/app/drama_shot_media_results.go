@@ -63,6 +63,9 @@ func (s *Service) DramaShotMedia(userID, projectID, shotID, kind string) (DramaS
 			result.Status, result.Error = take.Status, take.Error
 			if take.Status == "ready" && row.ResourceID != take.ResourceID {
 				result.Status = "stale"
+				if kind == "audio" {
+					result.Status = "awaiting_adoption"
+				}
 			}
 		}
 	}
@@ -102,7 +105,7 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 		return true, errors.New("镜头任务结果缺少已保存资源")
 	}
 	resource, err := s.repo.ResourceForUser(task.UserID, resourceID)
-	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind {
+	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind || kind == "audio" && !isSupportedVoiceSampleMimeType(resource.MimeType) {
 		return true, errors.New("镜头任务结果尚未就绪或媒体类型不匹配")
 	}
 	take.ResourceID, take.DurationMs = resource.ID, resource.DurationMs
@@ -114,7 +117,7 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 			return err
 		}
 		resource, err := repo.ResourceForUser(task.UserID, take.ResourceID)
-		if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind {
+		if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind || kind == "audio" && !isSupportedVoiceSampleMimeType(resource.MimeType) {
 			return errors.New("镜头任务结果尚未就绪或媒体类型不匹配")
 		}
 		row, err := repo.DramaShotMedia(task.ProjectID, take.OwnerID, kind)
@@ -150,7 +153,7 @@ func (s *Service) AdoptDramaShotMedia(userID, projectID, shotID, kind string, re
 		return DramaShotMediaView{}, err
 	}
 	resource, err := s.repo.ResourceForUser(userID, take.ResourceID)
-	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind {
+	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind || kind == "audio" && !isSupportedVoiceSampleMimeType(resource.MimeType) {
 		return DramaShotMediaView{}, BadAuthRequest("只能采用已保存且类型相符的镜头产物")
 	}
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
@@ -165,7 +168,7 @@ func (s *Service) AdoptDramaShotMedia(userID, projectID, shotID, kind string, re
 			return BadAuthRequest("镜头产物已变化，请重新载入")
 		}
 		resource, err := repo.ResourceForUser(userID, take.ResourceID)
-		if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind {
+		if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != kind || kind == "audio" && !isSupportedVoiceSampleMimeType(resource.MimeType) {
 			return BadAuthRequest("只能采用已保存且类型相符的镜头产物")
 		}
 		row, err := repo.DramaShotMedia(projectID, shotID, kind)

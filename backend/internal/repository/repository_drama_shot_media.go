@@ -59,7 +59,7 @@ func (r *Repository) DramaShotMediaTake(projectID, shotID, kind, takeID string) 
 
 func (r *Repository) DramaShotMediaTakeForTask(projectID, taskID string) (*model.DramaTake, error) {
 	var take model.DramaTake
-	if err := r.db.Where("project_id = ? AND task_id = ? AND kind IN ?", projectID, taskID, []string{"shot_image", "shot_video"}).First(&take).Error; err != nil {
+	if err := r.db.Where("project_id = ? AND task_id = ? AND kind IN ?", projectID, taskID, []string{"shot_image", "shot_video", "shot_audio"}).First(&take).Error; err != nil {
 		return nil, err
 	}
 	return &take, nil
@@ -76,6 +76,13 @@ func (r *Repository) CompleteDramaShotMediaTask(take *model.DramaTake, row *mode
 		}
 		if stored.RowsAffected != 1 {
 			return ErrDramaShotMediaChanged
+		}
+		if take.Kind == "shot_audio" {
+			// Audio always waits for an explicit audition/adoption. The queued slot
+			// still leaves its pending state when the paid result is preserved.
+			return tx.Model(&model.DramaShotMedia{}).
+				Where("id = ? AND revision = ? AND task_id = ? AND pending_take_id = ?", row.ID, revision, take.TaskID, take.ID).
+				Updates(map[string]any{"pending_take_id": "", "status": "awaiting_adoption", "updated_at": time.Now()}).Error
 		}
 		if !activate {
 			return nil

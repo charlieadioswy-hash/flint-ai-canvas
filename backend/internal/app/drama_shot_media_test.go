@@ -174,7 +174,7 @@ func TestDramaShotMediaScriptEditKeepsOutputOnlyInHistory(t *testing.T) {
 
 func TestDramaShotMediaOwnershipCASAndQuoteChanges(t *testing.T) {
 	s, db, view := shotMediaFixture(t)
-	for _, scope := range []struct{ user, project, shot, kind string }{{"other", "drama-project", "real-shot", "video"}, {"user", "drama-project", "missing", "video"}, {"user", "drama-project", "real-shot", "audio"}} {
+	for _, scope := range []struct{ user, project, shot, kind string }{{"other", "drama-project", "real-shot", "video"}, {"user", "drama-project", "missing", "video"}, {"user", "drama-project", "real-shot", "binary"}} {
 		if _, err := s.DramaShotMedia(scope.user, scope.project, scope.shot, scope.kind); err == nil {
 			t.Fatalf("invalid scope accepted: %+v", scope)
 		}

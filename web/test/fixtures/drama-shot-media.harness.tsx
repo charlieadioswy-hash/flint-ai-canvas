@@ -86,6 +86,7 @@ mock.module("@/pages/projects/drama-shared", () => ({
     MediaThumb: ({ resourceId, alt }: { resourceId: string; alt: string }) => <img data-resource={resourceId} alt={alt} />,
     useResourceMediaUrl: (id: string) => (id ? `https://test.invalid/${id}` : ""),
 }));
+mock.module("@/pages/projects/workflow-shot-audio", () => ({ WorkflowShotAudioEditor: () => <p>独立镜头音频编辑器</p> }));
 mock.module("@/services/api/drama-shot-media", () => ({
     getDramaShotMedia: async (_projectId: string, _shotId: string, kind: DramaShotMediaKind) => {
         if (readsFail) throw new Error("状态读取失败");
@@ -362,5 +363,16 @@ test("切换作品后迟到提交不操作新作品或触发刷新", async () =>
         expect(button(view.host, "关闭媒体").disabled).toBe(false);
     } finally {
         await view.close();
+    }
+});
+
+test("镜头媒体音频标签打开独立音频编辑器", async () => {
+    const ui = await mount();
+    try {
+        await click(ui.host, "镜头音频");
+        expect(ui.host.textContent).toContain("独立镜头音频编辑器");
+        expect(executions).toHaveLength(0);
+    } finally {
+        await ui.close();
     }
 });
