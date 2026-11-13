@@ -7,7 +7,6 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
-import { decodeNovelText } from "@/lib/canvas/canvas-document";
 import { analyzeNovel, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName, type NovelAnalysis } from "@/lib/drama/novel-parse";
 import { defaultChapterSelection, groupChapterEpisodes } from "@/lib/drama/chapter-selection";
 import { ApiError } from "@/services/api/request";
@@ -40,9 +39,8 @@ import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./s
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { DramaStylePicker } from "./style-picker";
 import { ChapterPickList } from "./chapter-pick-list";
+import { readDramaSourceFile } from "./drama-source-file";
 import "./drama.css";
-
-const MAX_FILE_BYTES = 40 * 1024 * 1024;
 
 /** 从画布“交给短剧自动制作”带来的预填内容；canvasId 是创建后要关联的原画布（已关联项目的画布不带）。 */
 type DramaCreatePrefill = { name?: string; sourceFormat?: DramaSourceFormat; text: string; canvasId?: string };
@@ -67,6 +65,15 @@ export default function DramaCreatePage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const fileReadSequence = useRef(0);
+    const fileReaderMounted = useRef(true);
+    const [readingFile, setReadingFile] = useState(false);
+    useEffect(() => {
+        fileReaderMounted.current = true;
+        return () => {
+            fileReaderMounted.current = false;
+        };
+    }, []);
     const [dragOver, setDragOver] = useState(false);
     const location = useLocation();
     const [searchParams] = useSearchParams();
@@ -199,6 +206,10 @@ export default function DramaCreatePage() {
     }, [estimate, budgetCredits]);
 
     const loadText = (text: string, fileName?: string) => {
+        if (!fileName) {
+            fileReadSequence.current += 1;
+            setReadingFile(false);
+        }
         const result = analyzeNovel(text, { perEpisode });
         if (!result.chapters.length) {
             message.error("没有读取到正文，请检查文件内容");
@@ -210,15 +221,17 @@ export default function DramaCreatePage() {
         if (!fileName && !name) setName(result.chapters[0]?.title.slice(0, 20) || "未命名短剧");
     };
     const loadFile = async (file: File) => {
-        if (!/\.(txt|md|markdown)$/i.test(file.name)) {
-            message.warning("目前支持 TXT 与 Markdown 文件");
-            return;
+        const sequence = ++fileReadSequence.current;
+        const isCurrent = () => fileReaderMounted.current && sequence === fileReadSequence.current;
+        setReadingFile(true);
+        try {
+            const text = await readDramaSourceFile(file);
+            if (isCurrent()) loadText(text, file.name);
+        } catch (error) {
+            if (isCurrent()) message.error(error instanceof Error ? error.message : "文件读取失败，请重试");
+        } finally {
+            if (isCurrent()) setReadingFile(false);
         }
-        if (file.size > MAX_FILE_BYTES) {
-            message.warning("文件超过 40MB，请拆分后上传");
-            return;
-        }
-        loadText(decodeNovelText(await file.arrayBuffer()), file.name);
     };
     const routeState = location.state as { file?: File; prefill?: DramaCreatePrefill } | null;
     const handedFile = routeState?.file;
@@ -416,10 +429,10 @@ export default function DramaCreatePage() {
                                 </span>
                                 <h2>拖入{SOURCE_FORMAT_LABEL[sourceFormat].title}文件，剩下的交给流水线</h2>
                                 <p>
-                                    TXT 或 Markdown，自动识别 GBK / UTF-8 编码与“第 N 章 / 第 N 集”标题。可以只放第 1 集，做完再在制作台追加下一集；
+                                    支持 30MB 以内的 TXT、Markdown 和 DOCX，自动识别文字编码与“第 N 章 / 第 N 集”标题。可以只放第 1 集，做完再在制作台追加下一集；
                                     {sourceFormat === "novel" ? "引号里的对白会逐字保留为台词。" : "台词逐字保留，不会被改写。"}
                                 </p>
-                                <Button type="primary" size="large" icon={<FileUp className="size-4" />} onClick={() => fileInputRef.current?.click()}>
+                                <Button type="primary" size="large" loading={readingFile} icon={<FileUp className="size-4" />} onClick={() => fileInputRef.current?.click()}>
                                     选择{SOURCE_FORMAT_LABEL[sourceFormat].title}文件
                                 </Button>
                                 <button type="button" className="drama-link inline-flex items-center gap-1" onClick={() => setPasteMode(true)}>
@@ -437,7 +450,7 @@ export default function DramaCreatePage() {
                                 <input
                                     ref={fileInputRef}
                                     type="file"
-                                    accept=".txt,.md,.markdown,text/plain,text/markdown"
+                                    accept=".txt,.md,.markdown,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                     className="hidden"
                                     onChange={(event) => {
                                         const file = event.target.files?.[0];
