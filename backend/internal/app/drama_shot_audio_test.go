@@ -1,7 +1,16 @@
 package app
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -178,5 +187,154 @@ func TestDramaShotAudioAssetPackageIncludesOnlyExplicitlyAdoptedAudio(t *testing
 	}
 	if files != 1 || notes != 1 || manifests != 1 {
 		t.Fatalf("standalone audio archive = files:%d notes:%d manifest:%d", files, notes, manifests)
+	}
+}
+
+func TestDramaShotAudioAssetPackageStreamsRealSelectedEpisodeAudio(t *testing.T) {
+	s, db, first := shotAudioFixture(t)
+	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "episode").Update("number", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&model.DramaEpisode{ID: "episode-two", ProjectID: "drama-project", Number: 2, Title: "第二集", Stage: model.DramaEpisodeDone},
+		&model.DramaShot{ID: "second-audio-shot", ProjectID: "drama-project", EpisodeID: "episode-two", Position: 0, Speaker: "秦子文", Dialogue: "第二集台词", DurationMs: 2000},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	secondConfig := first.Config
+	secondConfig.Prompt = "第二集尚未采用的新文本"
+	zero := int64(0)
+	second, err := s.SaveDramaShotMedia("user", "drama-project", "second-audio-shot", "audio", DramaShotMediaSaveRequest{ExpectedRevision: &zero, Config: secondConfig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wave := func(samples []int16) []byte {
+		data := make([]byte, 44+len(samples)*2)
+		copy(data, "RIFF")
+		binary.LittleEndian.PutUint32(data[4:8], uint32(len(data)-8))
+		copy(data[8:16], "WAVEfmt ")
+		binary.LittleEndian.PutUint32(data[16:20], 16)
+		binary.LittleEndian.PutUint16(data[20:22], 1)
+		binary.LittleEndian.PutUint16(data[22:24], 1)
+		binary.LittleEndian.PutUint32(data[24:28], 8000)
+		binary.LittleEndian.PutUint32(data[28:32], 16000)
+		binary.LittleEndian.PutUint16(data[32:34], 2)
+		binary.LittleEndian.PutUint16(data[34:36], 16)
+		copy(data[36:40], "data")
+		binary.LittleEndian.PutUint32(data[40:44], uint32(len(samples)*2))
+		for i, sample := range samples {
+			binary.LittleEndian.PutUint16(data[44+i*2:], uint16(sample))
+		}
+		return data
+	}
+	firstBytes, secondBytes := wave([]int16{0, 1000, -1000, 2000, -2000, 0}), wave([]int16{0, 3000, -3000, 4000, -4000, 0})
+	upload := func(identity string, data []byte) *model.Resource {
+		t.Helper()
+		resource, err := s.UploadResourceFile("user", identity+".wav", int64(len(data)), "audio", 0, 0, 1, bytes.NewReader(data), identity)
+		if err != nil || resource.Provider != "local" || resource.Kind != "audio" || !strings.Contains(resource.MimeType, "wav") {
+			t.Fatalf("real local audio upload = %+v, %v", resource, err)
+		}
+		return resource
+	}
+	firstResource, secondResource := upload("zip-audio-first", firstBytes), upload("zip-audio-second", secondBytes)
+	for _, item := range []struct {
+		media    DramaShotMediaView
+		resource *model.Resource
+		text     string
+	}{{first, firstResource, "第一集已采用的朗读文本"}, {second, secondResource, "第二集已采用的朗读文本"}} {
+		take := model.DramaTake{ID: item.resource.ID + "-take", ProjectID: "drama-project", OwnerID: item.media.ShotID, Kind: "shot_audio", ResourceID: item.resource.ID, Version: 1, Prompt: item.text}
+		if err := db.Create(&take).Error; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AdoptDramaShotMedia("user", "drama-project", item.media.ShotID, "audio", DramaShotMediaAdoptRequest{ExpectedRevision: &item.media.Revision, TakeID: take.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	audition := upload("zip-audio-unadopted", wave([]int16{0, 7000, -7000, 0}))
+	if err := db.Create(&model.DramaTake{ID: "zip-unadopted-take", ProjectID: "drama-project", OwnerID: "real-shot", Kind: "shot_audio", ResourceID: audition.ID, Version: 2, Prompt: "尚未采用的试听"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var selectedArchive *DramaArchive
+	for _, selected := range [][]string{{"episode"}, {"episode-two"}, {"episode-two", "episode"}} {
+		archive, err := s.PrepareDramaAssetPackage("user", "drama-project", DramaAssetPackageRequest{EpisodeIDs: selected, Media: true, Prompts: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		selectedArchive = archive
+		var output bytes.Buffer
+		if err := s.WriteDramaArchive(context.Background(), "user", archive, &output); err != nil {
+			t.Fatal(err)
+		}
+		reader, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string][]byte{}
+		var manifest dramaAssetManifest
+		audioFiles, notes, manifests := 0, 0, 0
+		for _, file := range reader.File {
+			body, err := file.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, readErr := io.ReadAll(body)
+			closeErr := body.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatal(errors.Join(readErr, closeErr))
+			}
+			files[file.Name] = data
+			if strings.Contains(file.Name, "/镜头音频/") && strings.HasSuffix(file.Name, ".wav") {
+				audioFiles++
+			}
+			if strings.HasSuffix(file.Name, "/镜头音频/使用说明.txt") {
+				notes++
+				if !strings.Contains(string(data), "未自动混入成片或剪映时间线") {
+					t.Fatal("independent audio mixing limitation missing from streamed ZIP")
+				}
+			}
+			if strings.HasSuffix(file.Name, "/"+dramaAssetManifestFile) {
+				manifests++
+				if err := json.Unmarshal(data, &manifest); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if manifests != 1 || len(manifest.Episodes) != len(selected) || audioFiles != len(selected) || notes != len(selected) {
+			t.Fatalf("selected episodes %v streamed unexpected contents: manifest:%d episodes:%d audio:%d notes:%d", selected, manifests, len(manifest.Episodes), audioFiles, notes)
+		}
+		for _, episode := range manifest.Episodes {
+			if len(episode.Shots) != 1 {
+				t.Fatalf("streamed episode shots = %+v", episode)
+			}
+			shot := episode.Shots[0]
+			wanted, wantedText, episodeID := firstBytes, "第一集已采用的朗读文本", "episode"
+			if episode.Number == 2 {
+				wanted, wantedText, episodeID = secondBytes, "第二集已采用的朗读文本", "episode-two"
+			} else if episode.Number != 1 {
+				t.Fatalf("unexpected episode in stream: %+v", episode)
+			}
+			if !containsString(selected, episodeID) || !strings.HasSuffix(shot.Audio, ".wav") || !bytes.Equal(files[shot.Audio], wanted) || shot.AudioText != wantedText || len(files[path.Dir(shot.Audio)+"/使用说明.txt"]) == 0 {
+				t.Fatalf("selected audio bytes, real extension or adopted text mismatch: %+v", shot)
+			}
+		}
+	}
+	var foreign bytes.Buffer
+	if err := s.WriteDramaArchive(context.Background(), "other", selectedArchive, &foreign); err == nil {
+		t.Fatal("streaming audio download ignored resource ownership")
+	}
+	if _, err := zip.NewReader(bytes.NewReader(foreign.Bytes()), int64(foreign.Len())); err == nil {
+		t.Fatal("unauthorized partial download was finalized as a complete ZIP")
+	}
+	if err := os.Remove(filepath.Join(s.dataDir, "resources", firstResource.ObjectKey)); err != nil {
+		t.Fatal(err)
+	}
+	var unavailable bytes.Buffer
+	if err := s.WriteDramaArchive(context.Background(), "user", selectedArchive, &unavailable); err == nil {
+		t.Fatal("missing physical audio was silently downloaded as a complete asset package")
+	}
+	if _, err := zip.NewReader(bytes.NewReader(unavailable.Bytes()), int64(unavailable.Len())); err == nil {
+		t.Fatal("missing audio download was finalized as a complete ZIP")
 	}
 }
