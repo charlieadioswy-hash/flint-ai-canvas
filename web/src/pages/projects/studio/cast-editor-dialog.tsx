@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button } from "antd";
 import { X } from "lucide-react";
 
@@ -14,6 +15,7 @@ export type CastEditorDialogProps = {
     castId?: string;
     onClose: () => void;
     onChanged: () => void;
+    children?: ReactNode;
 };
 
 /** 与原设定页共用编辑器，关闭或切换作品、设定后销毁本次表单。 */
@@ -21,7 +23,7 @@ export function CastEditorDialog(props: CastEditorDialogProps) {
     return props.castId ? <CastEditorDialogSession key={`${props.summary.project.id}:${props.castId}`} {...props} /> : null;
 }
 
-function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged }: CastEditorDialogProps) {
+function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged, children }: CastEditorDialogProps) {
     const projectId = summary.project.id;
     const current = cast.find((item) => item.id === castId && item.projectId === projectId);
     const canvas = useOpenDramaCanvas(summary);
@@ -35,6 +37,7 @@ function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged }: 
                     <Button type="text" icon={<X className="size-4" />} aria-label="关闭资产设定" onClick={onClose} />
                 </header>
                 <div className="drama-cast-dialog-body thin-scrollbar">
+                    {current ? children : null}
                     {current ? (
                         <CastEditor
                             key={castEditorFormKey(current)}

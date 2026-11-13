@@ -11,6 +11,7 @@ import { AssetSchemePicker } from "./asset-scheme";
 import { CAST_KIND_LABEL } from "./drama-shared";
 import { GuideAssets } from "./guide-panels";
 import { WorkflowAssetScope } from "./workflow-asset-scope";
+import { WorkflowImpact } from "./workflow-impact";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { dramaKeys } from "./studio/use-studio";
@@ -441,7 +442,9 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                     const ticket = operation.capture();
                     if (operation.isCurrent(ticket)) refreshProject(ticket);
                 }}
-            />
+            >
+                {editingId ? <WorkflowImpact projectId={projectId} revision={summary.production.revision} castId={editingId} /> : null}
+            </CastEditorDialog>
         </section>
     );
 }

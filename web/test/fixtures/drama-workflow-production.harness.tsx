@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, type ReactNode } from "react";
+import { create } from "zustand";
 import type { Root } from "react-dom/client";
-import type { DramaEpisodeDetail, DramaEpisodeRow, DramaSegment, DramaShot, DramaStudioActionRequest, DramaSummary } from "@/services/api/drama";
+import type { DramaEpisodeDetail, DramaEpisodeRow, DramaSegment, DramaShot, DramaStudioActionRequest, DramaSummary, DramaWorkflowReadiness } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/project/guide?step=story&mode=simple" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -32,8 +33,13 @@ const calls = {
     actions: [] as DramaStudioActionRequest[],
     changed: 0,
     episodes: [] as string[],
+    renders: [] as Array<[string, number]>,
 };
 let episodeOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | undefined;
+let readinessOverride: (() => Promise<DramaWorkflowReadiness>) | undefined;
+const userStore = create(() => ({ user: { id: "user" } }));
+mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
+mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
 
 beforeEach(() => {
     calls.retried = [];
@@ -41,7 +47,9 @@ beforeEach(() => {
     calls.actions = [];
     calls.changed = 0;
     calls.episodes = [];
+    calls.renders = [];
     episodeOverride = undefined;
+    readinessOverride = undefined;
     details.clear();
     for (const [id, value] of initialDetails) details.set(id, value);
 });
@@ -77,6 +85,11 @@ mock.module("@/services/api/drama", () => ({
     },
     retryFailedDrama: async (_projectId: string, episodeId: string, target?: "text" | "render") => {
         calls.retried.push([episodeId, target]);
+        return { jobs: 1 };
+    },
+    getDramaWorkflowReadiness: async () => (readinessOverride ? readinessOverride() : workflowReadiness()),
+    renderDramaEpisode: async (_projectId: string, episodeId: string, input: { expectedRevision: number }) => {
+        calls.renders.push([episodeId, input.expectedRevision]);
         return { jobs: 1 };
     },
 }));
@@ -142,7 +155,7 @@ mock.module("@/pages/projects/studio/asset-transfer", () => ({
         createElement("section", { role: "dialog", "aria-label": "导出资产包", "data-project": projectId, "data-episodes": episodes.map((episode) => episode.id).join(",") }, createElement("button", { onClick: onClose }, "关闭导出")),
 }));
 mock.module("@/pages/projects/simple-studio-final-card", () => ({
-    SimpleEpisodeFinalCard: ({ episode }: { episode: DramaEpisodeRow }) => createElement("article", { "data-final": episode.id }, `第 ${episode.number} 集成片`),
+    SimpleEpisodeFinalCard: ({ episode, blockingReason }: { episode: DramaEpisodeRow; blockingReason?: string }) => createElement("article", { "data-final": episode.id, "data-blocking-reason": blockingReason }, `第 ${episode.number} 集成片`),
 }));
 mock.module("@/pages/projects/drama-shared", () => ({
     MediaThumb: () => createElement("span", null, "缩略图"),
@@ -254,6 +267,25 @@ const initialDetails = new Map<string, DramaEpisodeDetail>([
 ]);
 const details = new Map(initialDetails);
 
+function workflowReadiness(readyIds: string[] = []): DramaWorkflowReadiness {
+    return {
+        revision: 4,
+        guideStep: "story",
+        episodes: [...details.values()].map(({ episode, segments }) => ({
+            episodeId: episode.id,
+            number: episode.number,
+            title: episode.title,
+            revision: episode.revision,
+            textReady: readyIds.includes(episode.id),
+            canGenerateVideo: readyIds.includes(episode.id),
+            canRender: false,
+            blockingReason: readyIds.includes(episode.id) ? undefined : "本集文字与提示词尚未就绪",
+            segmentCount: segments.length,
+            readyVideos: 0,
+        })),
+    };
+}
+
 function summary(step: DramaSummary["production"]["guideStep"], episodes: DramaEpisodeRow[]): DramaSummary {
     return {
         project: {
@@ -317,7 +349,7 @@ function LocationProbe() {
     return createElement("output", { "data-location": `${location.pathname}${location.search}` });
 }
 
-async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide") {
+async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide", waitForQueries = true) {
     const host = document.createElement("div");
     document.body.append(host);
     const root: Root = createRoot(host);
@@ -353,7 +385,7 @@ async function renderProduction(step: "story" | "preview", data: DramaSummary, p
             ),
         );
     });
-    await waitFor(() => client.isFetching() === 0);
+    if (waitForQueries) await waitFor(() => client.isFetching() === 0);
     await settle();
     return {
         host,
@@ -446,10 +478,83 @@ test("文字尚未确认时视频按钮不绕过后台", async () => {
         const button = [...view.host.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === "生成视频第 1 集第 1 段");
         expect(button?.hasAttribute("disabled")).toBe(true);
         expect(button?.getAttribute("title")).toBe("需要先确认文字");
-        expect(view.host.querySelector("[data-batch-actions]")?.getAttribute("data-batch-actions")).toBe("segment_prompt");
+        expect(view.host.textContent).toContain("本集文字与提示词尚未就绪");
         await click(view.host, "编辑第 1 集第 1 段");
         await click(view.host, "编辑器生成");
         expect(calls.videos).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("story 中就绪集可直接请求视频和编辑器生成，不等待另一失败集", async () => {
+    readinessOverride = async () => workflowReadiness([ready.id]);
+    const view = await renderProduction("story", summary("story", [ready, failed]));
+    try {
+        expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(false);
+        expect(view.host.textContent).toContain("本集文字已就绪，可独立生成视频");
+        expect(view.host.textContent).toContain("分镜模型超时");
+        expect(view.host.querySelector("[data-batch-actions]")?.getAttribute("data-batch-actions")).toContain("segment_video");
+        await click(view.host, "生成视频第 1 集第 1 段");
+        await click(view.host, "编辑第 1 集第 1 段");
+        await click(view.host, "编辑器生成");
+        expect(calls.videos.map((call) => call[0])).toEqual([ready.id, ready.id]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("本集 readiness 读取失败或 production/episode 版本过期均不放行视频", async () => {
+    for (const invalid of ["failed", "production-version", "episode-version"]) {
+        readinessOverride = async () => {
+            if (invalid === "failed") throw new Error("readiness unavailable");
+            const result = workflowReadiness([ready.id]);
+            if (invalid === "production-version") result.revision--;
+            else result.episodes.find((row) => row.episodeId === ready.id)!.revision--;
+            return result;
+        };
+        const view = await renderProduction("story", summary("story", [ready]));
+        try {
+            expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(true);
+            await click(view.host, "编辑第 1 集第 1 段");
+            await click(view.host, "编辑器生成");
+            expect(calls.videos).toEqual([]);
+            expect(view.host.querySelector("[data-editor]")).not.toBeNull();
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("readiness 加载时保持禁用，返回当前本集版本后才启用", async () => {
+    const pending = deferred<DramaWorkflowReadiness>();
+    readinessOverride = () => pending.promise;
+    const view = await renderProduction("story", summary("story", [ready]), undefined, false);
+    try {
+        expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(true);
+        await act(async () => {
+            pending.resolve(workflowReadiness([ready.id]));
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        await waitFor(() => view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled === false);
+    } finally {
+        pending.resolve(workflowReadiness([ready.id]));
+        await view.dispose();
+    }
+});
+
+test("story 已就绪集失败合成按本集版本重试，不调用受全局阶段限制的旧重试", async () => {
+    readinessOverride = async () => {
+        const result = workflowReadiness([preview.id]);
+        result.episodes.find((row) => row.episodeId === preview.id)!.canRender = true;
+        return result;
+    };
+    const view = await renderProduction("preview", summary("story", [preview, failed]));
+    try {
+        expect(view.host.querySelector("[data-final='ep-preview']")?.getAttribute("data-blocking-reason")).toBe("");
+        await click(view.host, "重试本集成片");
+        expect(calls.renders).toEqual([[preview.id, 2]]);
+        expect(calls.retried).toEqual([]);
     } finally {
         await view.dispose();
     }

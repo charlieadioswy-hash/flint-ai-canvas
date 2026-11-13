@@ -80,6 +80,61 @@ export type DramaStudioBatchView = {
 export const preflightDramaStudioBatch = (projectId: string, request: DramaStudioBatchRequest) => http.post<DramaStudioBatchView>(`/dramas/${projectId}/actions/batch/preflight`, request);
 export const executeDramaStudioBatch = (projectId: string, request: DramaStudioBatchRequest) => http.post<DramaStudioBatchView>(`/dramas/${projectId}/actions/batch/execute`, request);
 
+export type DramaWorkflowEpisodeReadiness = {
+    episodeId: string;
+    number: number;
+    title: string;
+    revision: number;
+    textReady: boolean;
+    canGenerateVideo: boolean;
+    canRender: boolean;
+    blockingReason?: string;
+    segmentCount: number;
+    readyVideos: number;
+};
+
+export type DramaWorkflowReadiness = {
+    revision: number;
+    guideStep: string;
+    episodes: DramaWorkflowEpisodeReadiness[];
+};
+
+export type DramaWorkflowAffectedSegment = {
+    id: string;
+    episodeId: string;
+    episodeNumber: number;
+    episodeTitle: string;
+    segmentIndex: number;
+    revision: number;
+    videoStatus: string;
+    hasVideo: boolean;
+};
+
+export type DramaWorkflowImpact = {
+    kind: "style" | "cast";
+    revision: number;
+    castId?: string;
+    segments: number;
+    episodes: number;
+    affectedSegments: number;
+    assetIds: string[];
+    directSegments: DramaWorkflowAffectedSegment[];
+    continuitySegments: DramaWorkflowAffectedSegment[];
+    message: string;
+};
+
+export function getDramaWorkflowReadiness(projectId: string, signal?: AbortSignal) {
+    return http.get<DramaWorkflowReadiness>(`${base(projectId)}/workflow/readiness`, { signal });
+}
+
+export function updateDramaWorkflowStyle(projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string }) {
+    return http.patch<DramaSummary>(`${base(projectId)}/workflow/style`, input);
+}
+
+export function getDramaSettingsImpact(projectId: string, signal?: AbortSignal) {
+    return http.get<DramaWorkflowImpact>(`${base(projectId)}/settings/impact`, { signal });
+}
+
 // 短剧自动制作：章节只承载小说原文，集是剧本、分镜与成片的基石。编排全部在服务端完成。
 
 export type DramaModelChoice = {
@@ -874,7 +929,7 @@ export function deleteDramaCastLook(projectId: string, lookId: string, restyleSe
 }
 
 export function getDramaCastImpact(projectId: string, castId: string, signal?: AbortSignal) {
-    return http.get<{ segments: number; episodes: number }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/impact`, { signal });
+    return http.get<DramaWorkflowImpact>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/impact`, { signal });
 }
 
 /** restyleSegments=true 时引用该设定的剧情段视频标记过期，需要重新生成；段提示词保持不变。 */

@@ -46,6 +46,8 @@ const summaries = new Map<string, DramaSummary>();
 const notices: Array<{ kind: string; text: string }> = [];
 const confirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
 const sourceSaves: Array<{ projectId: string; chapterId: string; pending: Deferred<{ chapter: { id: string; title: string; sourceText: string } }> }> = [];
+const styleSaves: Array<{ projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string }; pending: Deferred<DramaSummary> }> = [];
+let queueJobs: Array<{ id: string; kind: string; status: string; createdAt: string }> = [];
 let chapterReads = 0;
 const userStore = create(() => ({ user: { id: "user-a" } }));
 const noop = () => undefined;
@@ -99,9 +101,10 @@ mock.module("@/pages/projects/workflow-assets", () => ({
     },
 }));
 mock.module("@/pages/projects/workflow-production", () => ({ WorkflowProduction: ({ summary }: { summary: DramaSummary }) => <div>分镜制作 {summary.project.name}</div> }));
+mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => <p>真实风格影响范围</p> }));
 mock.module("@/pages/projects/workflow-configuration", () => ({
-    WorkflowConfiguration: ({ settings, onChange, disabled }: { settings: DramaSettings; onChange: (value: DramaSettings) => void; disabled: boolean }) => (
-        <input aria-label="风格配置" disabled={disabled} value={settings.styleName} onChange={(event) => onChange({ ...settings, styleName: event.target.value })} />
+    WorkflowConfiguration: ({ settings, onChange, disabled, styleOnly }: { settings: DramaSettings; onChange: (value: DramaSettings) => void; disabled: boolean; styleOnly?: boolean }) => (
+        <input aria-label="风格配置" data-style-only={styleOnly} disabled={disabled} value={settings.styleName} onChange={(event) => onChange({ ...settings, styleName: event.target.value })} />
     ),
 }));
 mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: [] } } }) }));
@@ -116,7 +119,7 @@ mock.module("@/pages/projects/drama-shared", () => ({
 mock.module("@/pages/projects/drama-source-file", () => ({ readDramaSourceFile: async () => "替换正文" }));
 const summaryKey = (projectId: string) => ["drama", projectId, "summary"];
 mock.module("@/pages/projects/studio/use-studio", () => ({
-    dramaKeys: { summary: summaryKey, chapters: (projectId: string) => ["drama", projectId, "chapters"] },
+    dramaKeys: { summary: summaryKey, chapters: (projectId: string) => ["drama", projectId, "chapters"], jobs: (projectId: string) => ["drama", projectId, "jobs"] },
     useDramaSummary: (projectId: string) => useQuery({ queryKey: summaryKey(projectId), queryFn: async () => summaries.get(projectId)! }),
     useDramaCast: () => ({ cast: [], isLoading: false, refetch: async () => ({ data: [] }) }),
 }));
@@ -142,6 +145,12 @@ mock.module("@/services/api/drama", () => ({
         throw new Error("本组回归不提交制作范围");
     },
     retryFailedDrama: async () => ({ jobs: 0 }),
+    listDramaJobs: async () => ({ jobs: queueJobs }),
+    updateDramaWorkflowStyle: (projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string }) => {
+        const pending = deferred<DramaSummary>();
+        styleSaves.push({ projectId, input: structuredClone(input), pending });
+        return pending.promise;
+    },
 }));
 
 const { default: WorkflowPage } = await import("@/pages/projects/workflow");
@@ -164,6 +173,8 @@ async function mount(path = "/projects/project-a/guide?step=review", strict = fa
     notices.length = 0;
     confirms.length = 0;
     sourceSaves.length = 0;
+    styleSaves.length = 0;
+    queueJobs = [];
     chapterReads = 0;
     summaries.clear();
     summaries.set("project-a", makeSummary("project-a"));
@@ -484,6 +495,132 @@ test("服务端 revision 更新保留本地配置草稿，重新载入后再允�
         await click(button(mounted.host, "重新载入配置"));
         expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("其他设备保存的风格");
         expect(button(mounted.host, "确认配置并提取资产").disabled).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("已完成流程可 CAS 只保存风格，保留阶段、集和模型，不再确认推进", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        expect(mounted.host.querySelector('[aria-label="风格配置"]')?.getAttribute("data-style-only")).toBe("true");
+        expect(mounted.host.textContent).toContain("真实风格影响范围");
+        await fill(mounted.host, "风格配置", "后续采用的风格");
+        await click(button(mounted.host, "保存风格"));
+        expect(styleSaves[0]).toMatchObject({ projectId: "project-a", input: { expectedRevision: 7, styleName: "后续采用的风格", stylePrompt: "原始提示" } });
+        expect(Object.keys(styleSaves[0].input).sort()).toEqual(["expectedRevision", "styleName", "stylePrompt"]);
+        const next = makeSummary("project-a", "completed", 8);
+        next.production.settings.styleName = "后续采用的风格";
+        summaries.set("project-a", next);
+        await act(async () => {
+            styleSaves[0].pending.resolve(next);
+            await settle();
+        });
+        expect(confirms).toHaveLength(0);
+        expect(mounted.router.state.location.search).toBe("?step=style");
+        expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.guideStep).toBe("completed");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("风格保存失败保留草稿，未保存时拦截切步和外部路由", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        await fill(mounted.host, "风格配置", "保存失败也要保留");
+        await click(button(mounted.host, "保存风格"));
+        await act(async () => {
+            styleSaves[0].pending.reject(new Error("暂时不能保存"));
+            await settle();
+        });
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("保存失败也要保留");
+        await click(button(mounted.host, "分集分镜与视频"));
+        expect(mounted.router.state.location.search).toBe("?step=style");
+        await mounted.go("/projects/project-a/guide?step=story");
+        expect(mounted.host.querySelector('[role="dialog"]')).not.toBeNull();
+        await click(button(mounted.host, "继续编辑"));
+        await click(button(mounted.host, "放弃风格调整"));
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("原始风格");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("风格迟到响应不覆盖更新 revision，账号切换后不提示成功", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        await fill(mounted.host, "风格配置", "保存中的风格");
+        await click(button(mounted.host, "保存风格"));
+        const newer = makeSummary("project-a", "completed", 10);
+        newer.production.settings.styleName = "最新风格";
+        summaries.set("project-a", newer);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), newer);
+            styleSaves[0].pending.resolve(makeSummary("project-a", "completed", 8));
+            await settle();
+        });
+        expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.revision).toBe(10);
+        await fill(mounted.host, "风格配置", "另一次保存");
+        await click(button(mounted.host, "保存风格"));
+        await act(async () => {
+            userStore.setState({ user: { id: "user-b" } });
+            await settle();
+        });
+        const count = notices.length;
+        await act(async () => {
+            styleSaves[1].pending.resolve(makeSummary("project-a", "completed", 11));
+            await settle();
+        });
+        expect(notices).toHaveLength(count);
+        expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.revision).toBe(10);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("仅历史媒体失败不展示文字重试，当前资产提取失败才可重试文字", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets");
+    try {
+        const assets = makeSummary("project-a", "assets", 7);
+        assets.production.stage = "produce";
+        assets.jobCounts.failed = 5;
+        assets.inbox = [{ id: "video-failed", kind: "segment_failed", media: "video", severity: "error", title: "视频失败", detail: "视频失败", segmentIndex: 0 }];
+        summaries.set("project-a", assets);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        expect(mounted.host.textContent).not.toContain("重试失败的文字任务");
+        const extraction = structuredClone(assets);
+        extraction.production.stage = "bible";
+        queueJobs = [{ id: "bible-failed", kind: "bible", status: "failed", createdAt: "2026-01-01" }];
+        summaries.set("project-a", extraction);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), extraction);
+            await settle();
+        });
+        await act(async () => {
+            await settle();
+        });
+        expect(mounted.host.textContent).toContain("重试失败的文字任务");
     } finally {
         await mounted.close();
     }

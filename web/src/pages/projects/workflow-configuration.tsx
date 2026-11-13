@@ -27,7 +27,7 @@ function styleInstructions(preset: CanvasStylePreset) {
     return [preset.prompt, preset.profile?.negativePrompt ? `禁止：${preset.profile.negativePrompt}` : ""].filter(Boolean).join("\n");
 }
 
-export function WorkflowConfiguration({ summary, settings, onChange, disabled }: { summary: DramaSummary; settings: DramaSettings; onChange: (settings: DramaSettings) => void; disabled: boolean }) {
+export function WorkflowConfiguration({ summary, settings, onChange, disabled, styleOnly = false }: { summary: DramaSummary; settings: DramaSettings; onChange: (settings: DramaSettings) => void; disabled: boolean; styleOnly?: boolean }) {
     const catalog = useDramaModelCatalog();
     const [pickerOpen, setPickerOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
@@ -52,6 +52,11 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
 
     const patch = (change: Partial<DramaSettings>) => {
         if (disabled) return;
+        if (styleOnly) {
+            if (change.styleName === undefined && change.stylePrompt === undefined) return;
+            onChange({ ...settings, styleName: change.styleName ?? settings.styleName, stylePrompt: change.stylePrompt ?? settings.stylePrompt });
+            return;
+        }
         onChange({ ...settings, ...change, mediaMode: "manual" });
     };
 
@@ -84,7 +89,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
             <div className="drama-workflow-config-form thin-scrollbar">
                 <header>
                     <h2>基础配置</h2>
-                    <p>风格、画幅和模型只在这里调整。确认前不会调用生成。</p>
+                    <p>{styleOnly ? "当前只修改后续制作的风格。其他参数在详细制作台调整，保存不会重新生成已有产物。" : "风格、画幅和模型只在这里调整。确认前不会调用生成。"}</p>
                 </header>
                 <fieldset disabled={disabled} inert={disabled}>
                     <label>
@@ -96,11 +101,13 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
                     <Button disabled={disabled} onClick={() => setLibraryOpen(true)}>
                         从风格库选择（含我的风格）
                     </Button>
+                </fieldset>
+                <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly}>
                     <label>
                         <span>对白语言</span>
                         <Select
                             aria-label="对白语言"
-                            disabled={disabled}
+                            disabled={disabled || styleOnly}
                             value={settings.language}
                             options={[...new Set([...LANGUAGES, settings.language].filter(Boolean))].map((value) => ({ value, label: value }))}
                             onChange={(language) => patch({ language })}
@@ -110,7 +117,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
                         <span>画幅</span>
                         <div className="drama-tabs" role="radiogroup" aria-label="画幅">
                             {RATIOS.map((ratio) => (
-                                <button key={ratio.value} type="button" role="radio" className="drama-tab" aria-checked={settings.aspectRatio === ratio.value} disabled={disabled} onClick={() => patch({ aspectRatio: ratio.value })}>
+                                <button key={ratio.value} type="button" role="radio" className="drama-tab" aria-checked={settings.aspectRatio === ratio.value} disabled={disabled || styleOnly} onClick={() => patch({ aspectRatio: ratio.value })}>
                                     {ratio.label}
                                 </button>
                             ))}
@@ -148,7 +155,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled }:
                             <span>视频衔接</span>
                             <Select
                                 aria-label="视频衔接"
-                                disabled={disabled}
+                                disabled={disabled || styleOnly}
                                 value={continuity}
                                 options={[
                                     { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoOption && !videoOption.tailFrameChain) },

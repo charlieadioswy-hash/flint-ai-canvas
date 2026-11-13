@@ -1,0 +1,30 @@
+.drama-workflow-impact {
+    margin-block: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-impact strong {
+    color: var(--text-primary);
+}
+
+.drama-workflow-impact p {
+    margin-block: var(--space-2);
+}
+
+.drama-workflow-impact details + details {
+    margin-top: var(--space-2);
+}
+
+.drama-workflow-impact ul {
+    max-height: 160px;
+    overflow: auto;
+    padding-left: var(--space-4);
+}
+
+.drama-workflow-impact li span {
+    margin-left: var(--space-2);
+}

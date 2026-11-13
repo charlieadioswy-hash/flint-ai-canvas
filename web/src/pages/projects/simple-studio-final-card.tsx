@@ -16,6 +16,7 @@ export function SimpleEpisodeFinalCard({
     episode,
     detail,
     unavailable,
+    blockingReason,
     onChanged,
 }: {
     projectId: string;
@@ -23,6 +24,7 @@ export function SimpleEpisodeFinalCard({
     episode: DramaEpisodeRow;
     detail?: DramaEpisodeDetail;
     unavailable: boolean;
+    blockingReason?: string;
     onChanged: () => void | Promise<unknown>;
 }) {
     const { message } = App.useApp();
@@ -48,7 +50,7 @@ export function SimpleEpisodeFinalCard({
         onError: (error) => message.error(error instanceof Error ? error.message : "本集视频合成失败"),
     });
     const rendering = mutation.isPending || Boolean(renderJob && !awaitingSubmission) || (episode.stage === "render" && !renderError && !awaitingSubmission);
-    const blocked = unavailable ? "最新内容读取失败，请刷新后合成" : !current ? "正在读取本集视频" : !segments.length ? "本集还没有剧情段" : ready !== segments.length ? `还有 ${segments.length - ready} 段视频未就绪或需要更新` : "";
+    const blocked = unavailable ? "最新内容读取失败，请刷新后合成" : blockingReason || (!current ? "正在读取本集视频" : !segments.length ? "本集还没有剧情段" : ready !== segments.length ? `还有 ${segments.length - ready} 段视频未就绪或需要更新` : "");
     const status = rendering ? (renderJob?.status === "running" ? "正在合成" : "合成排队中") : awaitingSubmission ? "等待提交合成" : renderError ? "合成失败" : stale ? "成片待更新" : resourceId ? "成片已就绪" : "待合成";
     const tone = rendering ? "busy" : awaitingSubmission ? "blocked" : renderError ? "failed" : stale ? "stale" : resourceId ? "ready" : "idle";
     const compose = () => {

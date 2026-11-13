@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Select } from "antd";
 import { ChevronDown, Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { getDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
+import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
@@ -20,6 +20,7 @@ import { useDramaMediaAction } from "./studio/use-drama-media-action";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowSegmentCard } from "./workflow-segment-card";
 import { WorkflowBatch } from "./workflow-batch";
+import { WorkflowImpact } from "./workflow-impact";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
@@ -107,6 +108,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
         (episodeId?: string) => {
             void invalidate(episodeId);
             void queryClient.invalidateQueries({ queryKey: dramaKeys.episodes(projectId) });
+            void queryClient.invalidateQueries({ queryKey: ["drama", projectId, "workflow-readiness"] });
             return onChanged();
         },
         [invalidate, onChanged, projectId, queryClient],
@@ -137,6 +139,11 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
     const retry = useMutation({
         mutationFn: ({ episodeId, target, ticket }: { episodeId: string; target: "text" | "render"; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
+            if (target === "render" && !textConfirmed) {
+                const ready = episodeReadiness(episodeId);
+                if (!ready?.canRender) throw new Error(mediaBlocker(episodeId) || "本集视频或合成任务尚未就绪");
+                return renderDramaEpisode(ticket.projectId, episodeId, { expectedRevision: ready.revision });
+            }
             return retryFailedDrama(ticket.projectId, episodeId, target);
         },
         onSuccess: (result, { episodeId, target, ticket }) => {
@@ -153,7 +160,29 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
     const indexParam = search.get("segment");
     const segmentIndex = indexParam !== null && /^\d+$/.test(indexParam) ? Number(indexParam) : undefined;
     const status = search.get("status") || "all";
-    const textConfirmed = summary.production.guideStep === "completed" || !summary.production.guideStep;
+    const guideStep = summary.guide?.step || summary.production.guideStep;
+    const textConfirmed = guideStep === "completed" || !guideStep;
+    const readiness = useQuery({
+        queryKey: ["drama", projectId, "workflow-readiness", userId, summary.production.revision],
+        queryFn: ({ signal }) => getDramaWorkflowReadiness(projectId, signal),
+        enabled: Boolean(projectId && userId && guideStep === "story"),
+        refetchInterval: jobsActive ? 2_500 : false,
+    });
+    const readinessCurrent = !readiness.isError && readiness.data?.revision === summary.production.revision && readiness.data.guideStep === guideStep;
+    const episodeReadiness = (episodeId: string) => {
+        if (!readinessCurrent) return undefined;
+        const row = readiness.data?.episodes.find((item) => item.episodeId === episodeId);
+        const query = queries.find((query) => query.data?.episode.id === episodeId);
+        const detail = query?.data;
+        return row && detail && !query.isError && row.revision === detail.episode.revision ? row : undefined;
+    };
+    const videoAllowed = (episodeId: string) => textConfirmed || Boolean(episodeReadiness(episodeId)?.canGenerateVideo);
+    const mediaBlocker = (episodeId: string) => {
+        if (textConfirmed) return "";
+        if (guideStep !== "story") return "请先确认资产文字设定，再推进分集制作";
+        if (readiness.isError) return "本集制作状态读取失败，请刷新后再生成";
+        return episodeReadiness(episodeId)?.blockingReason || (videoAllowed(episodeId) ? "" : "正在核对本集文字与提示词，请稍后或刷新");
+    };
     const textProgress = visibleEpisodes.reduce(
         (result, episode) => {
             const query = queries[episodes.findIndex((item) => item.id === episode.id)];
@@ -224,8 +253,8 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
         );
     };
     const requestVideo = (episode: DramaEpisodeRow, segment: DramaSegment) => {
-        if (!textConfirmed) {
-            message.info("需要先确认文字");
+        if (!videoAllowed(episode.id)) {
+            message.info(mediaBlocker(episode.id));
             return;
         }
         if (segment.videoReprocessable) media.requestAction({ action: "segment_reprocess", targetId: segment.id, episodeId: episode.id, episodeNumber: episode.number, segmentTitle: segment.title, targetRevision: segment.revision });
@@ -334,7 +363,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                         revision={summary.production.revision}
                         targetIds={[...selected]}
                         targetLabels={selectedLabels}
-                        actions={textConfirmed ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
+                        actions={textConfirmed || readinessCurrent ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
                         onChanged={() => refresh()}
                         onClearSelection={() => selectSegments([...selected], false)}
                     />
@@ -379,7 +408,9 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                     ? visibleEpisodes.map((episode) => {
                           const query = queries[episodes.findIndex((item) => item.id === episode.id)];
                           const detail = query?.data;
-                          const segments = (detail?.segments || []).filter((segment) => status === "all" || segmentState(segment, textConfirmed ? "video" : "prompt").tone === status);
+                          const episodeCanGenerate = videoAllowed(episode.id);
+                          const blocker = mediaBlocker(episode.id);
+                          const segments = (detail?.segments || []).filter((segment) => status === "all" || segmentState(segment, episodeCanGenerate ? "video" : "prompt").tone === status);
                           const located = episode.id === activeEpisodeId && segmentIndex !== undefined && segments.some((segment, index) => segment.index === segmentIndex && index >= PREVIEW_LIMIT);
                           const showAll = expanded.has(episode.id) || located;
                           const shown = showAll ? segments : segments.slice(0, PREVIEW_LIMIT);
@@ -395,6 +426,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                           <p>
                                               {episode.stats.segments} 段 · {episode.shotCount} 镜 · {episode.stats.videoReady} 段视频就绪
                                           </p>
+                                          {blocker ? <p role="status">{blocker}</p> : guideStep === "story" ? <p role="status">本集文字已就绪，可独立生成视频；其他集可继续处理。</p> : null}
                                       </div>
                                       <div className="drama-workflow-production-actions">
                                           {segments.length ? (
@@ -449,7 +481,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                                   episodeNumber={episode.number}
                                                   segment={segment}
                                                   shots={detail?.shots.filter((shot) => shot.segmentIndex === segment.index) || []}
-                                                  textConfirmed={textConfirmed}
+                                                  textConfirmed={episodeCanGenerate}
                                                   onOpen={() => openSegment(episode.id, segment.index)}
                                                   onGenerate={() => requestVideo(episode, segment)}
                                                   onWritePrompt={() => requestPrompt(episode, segment)}
@@ -512,7 +544,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                               size="small"
                                               icon={<RefreshCw className="size-3.5" />}
                                               loading={retry.isPending && retry.variables?.episodeId === episode.id && retry.variables.target === "render"}
-                                              disabled={retry.isPending}
+                                              disabled={retry.isPending || (!textConfirmed && !episodeReadiness(episode.id)?.canRender)}
                                               onClick={() => retry.mutate({ episodeId: episode.id, target: "render", ticket: operation.capture() })}
                                           >
                                               重试本集成片
@@ -526,7 +558,15 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                                   ) : null}
                                   <div className="drama-workflow-production-preview-grid">
                                       <div className="drama-workflow-production-final">
-                                          <SimpleEpisodeFinalCard projectId={projectId} title={summary.project.name} episode={episode} detail={detail} unavailable={Boolean(query?.isError)} onChanged={() => refresh(episode.id)} />
+                                          <SimpleEpisodeFinalCard
+                                              projectId={projectId}
+                                              title={summary.project.name}
+                                              episode={episode}
+                                              detail={detail}
+                                              unavailable={Boolean(query?.isError)}
+                                              blockingReason={mediaBlocker(episode.id) || (!textConfirmed && !episodeReadiness(episode.id)?.canRender ? "本集视频或合成任务尚未就绪" : "")}
+                                              onChanged={() => refresh(episode.id)}
+                                          />
                                       </div>
                                   </div>
                               </section>
@@ -550,18 +590,20 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false 
                     onNavigate={(index, shotId) => openSegment(activeEpisodeId, index, shotId)}
                     onGenerate={(segment, model) => {
                         if (!currentEpisode) return;
-                        openSegment(activeEpisodeId, null);
-                        if (!textConfirmed) {
-                            message.info("需要先确认文字");
+                        if (!videoAllowed(currentEpisode.id)) {
+                            message.info(mediaBlocker(currentEpisode.id));
                             return;
                         }
+                        openSegment(activeEpisodeId, null);
                         media.requestVideo(currentEpisode, segment, model);
                     }}
                     onOpenCast={(id) => setCastSelection({ projectId, id })}
                 />
             ) : null}
             {castSelection?.projectId === projectId ? (
-                <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => void refresh()} />
+                <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => void refresh()}>
+                    <WorkflowImpact projectId={projectId} revision={summary.production.revision} castId={castSelection.id} />
+                </CastEditorDialog>
             ) : null}
             {exportProjectId === projectId ? <AssetPackageModal key={projectId} open projectId={projectId} episodes={episodes} onClose={() => setExportProjectId(undefined)} /> : null}
             <DramaMediaActionDialog controller={media} />
