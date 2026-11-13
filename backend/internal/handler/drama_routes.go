@@ -126,6 +126,13 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.UpdateDramaGuideSource(userID, c.Param("id"), req)
 	}))
+	r.POST("/dramas/:id/cast/extract", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.ExtractDramaAssetsRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.ExtractDramaAssets(userID, c.Param("id"), req)
+	}))
 	r.POST("/dramas/:id/guide/confirm", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.ConfirmDramaGuideRequest
 		if err := bindDramaJSON(c, &req); err != nil {

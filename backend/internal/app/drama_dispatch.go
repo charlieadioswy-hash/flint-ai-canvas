@@ -120,14 +120,32 @@ func (s *Service) dramaDispatchWaits(p *model.DramaProduction) (func(job DramaJo
 		return nil, err
 	}
 	productionWait := dramaProductionWait(p)
+	extractionBudgetWait := ""
+	if p.BudgetMicrocredits > 0 {
+		for _, job := range queued {
+			if scope, _ := dramaAssetExtraction(&job); scope != nil {
+				totals, err := s.dramaBillingTotals(p)
+				if err != nil {
+					return nil, err
+				}
+				if totals.ChargedMicrocredits()+totals.HeldMicrocredits() >= p.BudgetMicrocredits {
+					extractionBudgetWait = dramaBudgetPauseReason
+				}
+				break
+			}
+		}
+	}
 	limit := policy.Task.ActiveTaskLimit
 	return func(job DramaJobView) string {
 		position, ok := ahead[job.ID]
 		if job.Status != model.DramaJobQueued || !ok {
 			return ""
 		}
-		if productionWait != "" {
+		if productionWait != "" && job.AssetKind == "" {
 			return productionWait
+		}
+		if job.AssetKind != "" && extractionBudgetWait != "" {
+			return extractionBudgetWait
 		}
 		if limit > 0 && active >= int64(limit) {
 			return fmt.Sprintf("等待账号空位：同时排队或运行的任务已达 %d 个上限（含画布等其他任务），有任务完成后自动提交", limit)

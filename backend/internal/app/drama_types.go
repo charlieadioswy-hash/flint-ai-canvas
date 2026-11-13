@@ -511,20 +511,23 @@ type DramaInboxItem struct {
 }
 
 type DramaJobView struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	Status           string `json:"status"`
-	Label            string `json:"label"`
-	Error            string `json:"error,omitempty"`
-	EpisodeID        string `json:"episodeId,omitempty"`
-	ShotID           string `json:"shotId,omitempty"`
-	TaskID           string `json:"taskId,omitempty"`
-	CostMicrocredits int64  `json:"costMicrocredits"`
-	Attempt          int    `json:"attempt"`
-	CreatedAt        string `json:"createdAt"`
-	StartedAt        string `json:"startedAt,omitempty"`
-	FinishedAt       string `json:"finishedAt,omitempty"`
-	UpdatedAt        string `json:"updatedAt"`
+	ID               string   `json:"id"`
+	Kind             string   `json:"kind"`
+	Status           string   `json:"status"`
+	Label            string   `json:"label"`
+	Error            string   `json:"error,omitempty"`
+	EpisodeID        string   `json:"episodeId,omitempty"`
+	ShotID           string   `json:"shotId,omitempty"`
+	TaskID           string   `json:"taskId,omitempty"`
+	CostMicrocredits int64    `json:"costMicrocredits"`
+	Attempt          int      `json:"attempt"`
+	CreatedAt        string   `json:"createdAt"`
+	StartedAt        string   `json:"startedAt,omitempty"`
+	FinishedAt       string   `json:"finishedAt,omitempty"`
+	UpdatedAt        string   `json:"updatedAt"`
+	AssetKind        string   `json:"assetKind,omitempty"`
+	SourceChapterIDs []string `json:"sourceChapterIds,omitempty"`
+	SourceEpisodeIDs []string `json:"sourceEpisodeIds,omitempty"`
 	// ProviderStage 是生成中任务的上游进度文案（如“候车 · 前面 3 条”），只在上游已接收任务时给出。
 	ProviderStage string `json:"providerStage,omitempty"`
 	// Wait 是排队作业还没提交的原因（作品暂停、账号同时任务已满、本池同时生成数已满）；下一轮就会提交时为空。

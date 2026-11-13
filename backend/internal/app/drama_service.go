@@ -591,6 +591,9 @@ func (s *Service) DramaEpisodeDetail(userID string, projectID string, episodeID 
 
 func dramaJobView(job model.DramaJob) DramaJobView {
 	view := DramaJobView{ID: job.ID, Kind: job.Kind, Status: job.Status, Label: job.Label, Error: job.Error, EpisodeID: job.EpisodeID, ShotID: job.ShotID, TaskID: job.TaskID, CostMicrocredits: job.CostMicrocredits, Attempt: job.Attempt, CreatedAt: job.CreatedAt.Format(time.RFC3339), UpdatedAt: job.UpdatedAt.Format(time.RFC3339)}
+	if scope, _ := dramaAssetExtraction(&job); scope != nil {
+		view.AssetKind, view.SourceChapterIDs, view.SourceEpisodeIDs = scope.AssetKind, scope.SourceChapterIDs, scope.SourceEpisodeIDs
+	}
 	if job.StartedAt != nil {
 		view.StartedAt = job.StartedAt.Format(time.RFC3339)
 	}

@@ -188,12 +188,33 @@ func ExtractJSONObject(raw string) (string, error) {
 }
 
 func ParseBible(raw string, chapters ...Chapter) (Bible, error) {
+	return parseBible(raw, "", chapters...)
+}
+
+// ParseBibleForKind 只解析本次请求的一类设定。kind 必须是 character、scene 或 prop。
+// 模型夹带的其他种类在角色原文校验之前丢弃，损坏的非本类字段不能阻止所选种类处理。
+func ParseBibleForKind(raw string, kind string, chapters ...Chapter) (Bible, error) {
+	switch kind {
+	case "character", "scene", "prop":
+	default:
+		return Bible{}, fmt.Errorf("未知的作品圣经提取类型：%s", kind)
+	}
+	return parseBible(raw, kind, chapters...)
+}
+
+func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 	var bible Bible
 	text, err := ExtractJSONObject(raw)
 	if err != nil {
 		var recovered bool
 		text, recovered = repairBibleJSON(raw)
 		if !recovered {
+			return bible, err
+		}
+	}
+	if kind != "" {
+		text, err = scopeBibleJSON(text, kind)
+		if err != nil {
 			return bible, err
 		}
 	}
@@ -261,7 +282,7 @@ func ParseBible(raw string, chapters ...Chapter) (Bible, error) {
 		}
 	}
 	bible.Props = props
-	if len(bible.Characters) == 0 {
+	if kind == "" && len(bible.Characters) == 0 {
 		return bible, errors.New("作品圣经没有识别到角色")
 	}
 	return bible, nil

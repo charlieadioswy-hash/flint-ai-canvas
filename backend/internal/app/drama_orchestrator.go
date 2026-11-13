@@ -144,6 +144,9 @@ func (s *Service) tickDrama(productionRow *model.DramaProduction) error {
 		return err
 	}
 	run := &dramaRun{s: s, production: productionRow, project: project, settings: parseDramaSettings(productionRow.SettingsJSON), meta: parseDramaBibleMeta(productionRow.BibleJSON)}
+	if handled, err := run.tickAssetExtraction(); handled || err != nil {
+		return err
+	}
 	if productionRow.Status != model.DramaStatusRunning {
 		// 暂停后已派发的任务仍会完成：照常回写结果（视频入库、抽尾帧），否则段会一直停在“生成中”，下一段也拿不到首帧。
 		status := productionRow.Status
@@ -203,6 +206,11 @@ func (r *dramaRun) persistJobs() error {
 		current, err := tx.DramaProductionForUpdate(r.project.ID)
 		if err != nil {
 			return err
+		}
+		if scoped, err := tx.DramaAssetExtractionJobs(r.project.ID, model.DramaJobQueued, model.DramaJobRunning); err != nil {
+			return err
+		} else if len(scoped) > 0 {
+			return repository.ErrDramaGuideChanged
 		}
 		if (dramaGuideActive(current) || dramaGuideActive(r.production)) && (current.GuideStep != r.production.GuideStep || current.Revision != r.production.Revision) {
 			return repository.ErrDramaGuideChanged
@@ -404,6 +412,9 @@ func (r *dramaRun) failJob(job *model.DramaJob, reason string) error {
 	}
 	switch job.Kind {
 	case model.DramaJobBible, model.DramaJobPlan:
+		if scope, _ := dramaAssetExtraction(job); scope != nil {
+			return nil
+		}
 		r.production.Status = model.DramaStatusPaused
 		r.production.PauseReason = "作品改编失败：" + truncateRunes(reason, 200)
 	case model.DramaJobCastImage:
@@ -847,6 +858,10 @@ func (r *dramaRun) dispatch() error {
 	if err != nil {
 		return err
 	}
+	return r.dispatchJobs(queued)
+}
+
+func (r *dramaRun) dispatchJobs(queued []model.DramaJob) error {
 	sortDramaJobsForDispatch(queued)
 	// 预算按订单口径保守判断：流水线与画布精修的实收加上所有未结算订单的冻结额。每轮只汇总一次，
 	// 本轮新提交任务的冻结额逐项累加；同时把流水线实收回写到 spent_microcredits 缓存。
@@ -881,6 +896,10 @@ func (r *dramaRun) dispatch() error {
 			case strings.Contains(message, "同时排队或运行的任务最多"):
 				return nil
 			case strings.Contains(message, "积分不足"):
+				if scope, _ := dramaAssetExtraction(job); scope != nil {
+					recordDramaAttempt(job, "", "rejected", message, 0)
+					return r.failJob(job, message)
+				}
 				r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaCreditsReason
 				return nil
 			case strings.Contains(message, "维护"):
@@ -947,7 +966,7 @@ func (r *dramaRun) markRunning(job *model.DramaJob) error {
 func (r *dramaRun) applyJob(job *model.DramaJob, task *model.Task) error {
 	switch job.Kind {
 	case model.DramaJobBible:
-		return r.applyBible(task)
+		return r.applyBibleJob(job, task)
 	case model.DramaJobPlan:
 		return r.applyPlan(job, task)
 	case model.DramaJobScript:
@@ -975,19 +994,62 @@ func dramaTaskText(task *model.Task) (string, error) {
 }
 
 func (r *dramaRun) applyBible(task *model.Task) error {
+	return r.applyBibleJob(nil, task)
+}
+
+func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
+	scope, err := dramaAssetExtraction(job)
+	if err != nil {
+		return err
+	}
 	text, err := dramaTaskText(task)
 	if err != nil {
 		return err
 	}
-	chapters, err := r.loadChapters(nil)
+	var sourceIDs []string
+	if scope != nil {
+		sourceIDs = scope.SourceChapterIDs
+	}
+	chapters, err := r.loadChapters(sourceIDs)
 	if err != nil {
 		return err
 	}
-	bible, err := production.ParseBible(text, chapters...)
+	var bible production.Bible
+	if scope != nil {
+		if len(chapters) != len(scope.SourceChapterIDs) {
+			return errors.New("资产提取来源正文已变化，请刷新后重新查漏")
+		}
+		bible, err = production.ParseBibleForKind(text, scope.AssetKind, chapters...)
+	} else {
+		bible, err = production.ParseBible(text, chapters...)
+	}
 	if err != nil {
 		return fmt.Errorf("作品圣经解析失败：%w", err)
 	}
-	existing, err := r.s.repo.DramaCasts(r.project.ID)
+	if scope != nil {
+		return r.s.repo.Transaction(func(tx *repository.Repository) error {
+			current, err := tx.DramaProductionForUpdate(r.project.ID)
+			if err != nil {
+				return err
+			}
+			if err := r.applyBibleCasts(tx, bible, true); err != nil {
+				return err
+			}
+			return tx.UpdateDramaGuideIf(r.project.ID, current.Revision, current.GuideStep, map[string]any{})
+		})
+	}
+	if err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
+		return err
+	}
+	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
+	r.production.BibleJSON = string(meta)
+	r.meta = parseDramaBibleMeta(string(meta))
+	r.production.Stage = model.DramaStageProduce
+	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
+}
+
+func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production.Bible, scoped bool) error {
+	existing, err := repo.DramaCasts(r.project.ID)
 	if err != nil {
 		return err
 	}
@@ -1001,6 +1063,14 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 		if cast.ParentID == "" {
 			key := cast.Kind + "|" + production.NormalizeName(cast.Name)
 			byName[key] = append(byName[key], cast)
+			if scoped {
+				for _, alias := range decodeStringList(cast.AliasesJSON) {
+					aliasKey := cast.Kind + "|" + production.NormalizeName(alias)
+					if aliasKey != key {
+						byName[aliasKey] = append(byName[aliasKey], cast)
+					}
+				}
+			}
 			positions[cast.Kind] = max(positions[cast.Kind], cast.Position+1)
 			if cast.Kind == "character" && strings.TrimSpace(cast.Description) != "" {
 				byDefinition[cast.Description] = append(byDefinition[cast.Description], cast)
@@ -1016,6 +1086,9 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 	now := time.Now()
 	casts := make([]model.DramaCast, 0, len(bible.Characters)+len(bible.Props)+len(bible.Scenes))
 	addBase := func(cast model.DramaCast) model.DramaCast {
+		if scoped {
+			cast.ImageStatus = model.DramaMediaDraft
+		}
 		cast.Position = positions[cast.Kind]
 		positions[cast.Kind]++
 		casts = append(casts, cast)
@@ -1057,7 +1130,11 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 			}
 			lookCounts[base.ID]++
 			lookNames[base.ID][key] = true
-			casts = append(casts, model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: base.ID, Name: base.Name, LookName: truncateRunes(look.Name, 60), Appearance: truncateRunes(look.Appearance, 1000), LookFromChapter: int(look.FromChapter), LookToChapter: int(look.ToChapter), Position: base.Position*100 + lookCounts[base.ID], CreatedAt: now, UpdatedAt: now})
+			cast := model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: base.ID, Name: base.Name, LookName: truncateRunes(look.Name, 60), Appearance: truncateRunes(look.Appearance, 1000), LookFromChapter: int(look.FromChapter), LookToChapter: int(look.ToChapter), Position: base.Position*100 + lookCounts[base.ID], CreatedAt: now, UpdatedAt: now}
+			if scoped {
+				cast.ImageStatus = model.DramaMediaDraft
+			}
+			casts = append(casts, cast)
 		}
 	}
 	for _, prop := range bible.Props {
@@ -1072,14 +1149,7 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 			addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "scene", Name: name, AliasesJSON: "[]", Description: truncateRunes(scene.Description, 1000), Appearance: truncateRunes(scene.Appearance, 1000), CreatedAt: now, UpdatedAt: now})
 		}
 	}
-	if err := r.s.repo.CreateDramaCasts(casts); err != nil {
-		return err
-	}
-	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
-	r.production.BibleJSON = string(meta)
-	r.meta = parseDramaBibleMeta(string(meta))
-	r.production.Stage = model.DramaStageProduce
-	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
+	return repo.CreateDramaCasts(casts)
 }
 
 func nonEmpty(values ...string) []string {
@@ -1762,17 +1832,33 @@ func (r *dramaRun) loadChapters(ids []string) ([]production.Chapter, error) {
 }
 
 func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
-	chapters, err := r.loadChapters(nil)
+	scope, err := dramaAssetExtraction(job)
 	if err != nil {
 		return nil, false, err
+	}
+	var sourceIDs []string
+	if scope != nil {
+		sourceIDs = scope.SourceChapterIDs
+	}
+	chapters, err := r.loadChapters(sourceIDs)
+	if err != nil {
+		return nil, false, err
+	}
+	if scope != nil && len(chapters) != len(scope.SourceChapterIDs) {
+		return nil, false, errors.New("资产提取来源正文已变化，请刷新后重新查漏")
 	}
 	skill, err := r.s.dramaWritingSkill(r.project.UserID, r.settings.BibleSkill, "资产提取")
 	if err != nil {
 		return nil, false, err
 	}
 	prompt := production.BiblePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill)
+	systemPrompt := production.BibleSystemPrompt()
+	if scope != nil {
+		prompt = production.BibleExtractionPrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, scope.AssetKind)
+		systemPrompt = production.BibleExtractionSystemPrompt(scope.AssetKind)
+	}
 	input := map[string]any{
-		"config":      map[string]any{"systemPrompt": production.BibleSystemPrompt()},
+		"config":      map[string]any{"systemPrompt": systemPrompt},
 		"textOptions": map[string]any{"stream": true, "thinkingLevel": r.settings.TextThinking.levelFor(DramaStepBible)},
 		"metadata":    map[string]any{"source": "drama_production", "domainProjectId": r.project.ID},
 	}

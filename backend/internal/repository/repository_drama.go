@@ -28,10 +28,11 @@ func (r *Repository) DramaProduction(projectID string) (*model.DramaProduction, 
 }
 
 // RunningDramaProductions 返回需要调度循环推进的项目：运行中的项目，以及暂停或已完成但仍有已派发任务的项目。
-// 后者只回收任务结果（已付费的视频、尾帧），不再派发新工作。
+// 后者回收已付费结果；另允许派发用户显式提交、与全局制作状态独立的资产查漏文字任务。
 func (r *Repository) RunningDramaProductions(limit int) ([]model.DramaProduction, error) {
 	var productions []model.DramaProduction
-	pending := r.db.Model(&model.DramaJob{}).Select("project_id").Where("status = ?", model.DramaJobRunning)
+	pending := r.db.Model(&model.DramaJob{}).Select("project_id").Where("status = ? OR (status = ? AND kind = ? AND payload_json LIKE ?)", model.DramaJobRunning,
+		model.DramaJobQueued, model.DramaJobBible, dramaAssetExtractionPayloadLike)
 	err := r.db.Where("status = ? OR project_id IN (?)", model.DramaStatusRunning, pending).Order("updated_at asc").Limit(limit).Find(&productions).Error
 	return productions, err
 }

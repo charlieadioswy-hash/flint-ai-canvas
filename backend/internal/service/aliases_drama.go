@@ -12,6 +12,7 @@ type (
 	DramaSegmentView              = app.DramaSegmentView
 	UpdateDramaCastRequest        = app.UpdateDramaCastRequest
 	CreateDramaCastRequest        = app.CreateDramaCastRequest
+	ExtractDramaAssetsRequest     = app.ExtractDramaAssetsRequest
 	DeleteDramaCastRequest        = app.DeleteDramaCastRequest
 	DramaCastImagePromptRequest   = app.DramaCastImagePromptRequest
 	ImportDramaCastRequest        = app.ImportDramaCastRequest

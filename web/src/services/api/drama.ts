@@ -307,6 +307,9 @@ export type DramaJob = {
     label: string;
     error?: string;
     episodeId?: string;
+    assetKind?: "character" | "scene" | "prop";
+    sourceChapterIds?: string[];
+    sourceEpisodeIds?: string[];
     shotId?: string;
     taskId?: string;
     costMicrocredits: number;
@@ -621,6 +624,11 @@ export function saveDramaGuideSource(projectId: string, input: { expectedRevisio
 
 export function confirmDramaGuide(projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }) {
     return http.post<DramaSummary>(`${base(projectId)}/guide/confirm`, input);
+}
+
+/** 仅查漏选定种类；保留已有资产文字、图片和历史。 */
+export function extractDramaCast(projectId: string, input: { expectedRevision: number; kind: "character" | "scene" | "prop"; episodeIds?: string[]; chapterIds?: string[] }) {
+    return http.post<{ job: DramaJob; revision: number }>(`${base(projectId)}/cast/extract`, input);
 }
 
 export function startDrama(projectId: string) {

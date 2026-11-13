@@ -17,6 +17,7 @@ description: 信封、错误码与 OpenAPI
 | `POST /api/dramas/:id/guide/confirm` | `{expectedStep,expectedRevision,settings?}`；确认方案时可提交最终设置；依次放行资产提取、剧本文字链路、结束引导，返回概览 |
 | `PATCH /api/dramas/:id/settings` | 可选 `guideConversationId` 首次绑定已有 Agent 会话；必须属于当前用户和同一短剧项目，不能覆盖已绑定的其他会话；仅绑定会话不递增内容 revision |
 | `POST /api/dramas/:id/cast` | `{expectedRevision?,kind,name,aliases?,appearance?,description?,voiceInstructions?,imagePrompt?,imageStyleId?,imageStyleName?,imageStylePrompt?}`；引导项目仅 assets/story 阶段可新增且必须提供当前版本，普通制作台可省略版本；`kind` 为 `character/scene/prop`，返回 `{cast}`，只保存文字，不自动生图 |
+| `POST /api/dramas/:id/cast/extract` | `{expectedRevision,kind,episodeIds?,chapterIds?}`；`kind` 严格为 `character/scene/prop`，两个范围互斥且显式空数组拒绝，均省略时锁定当前已加入制作的全部章节；跨项目或预留章节拒绝。首次全量资产建档后，可在 assets/story 或制作台增量提取 / 重新查漏。返回 `{job,revision}`，任务含 `assetKind/sourceChapterIds/sourceEpisodeIds`；只新增缺失同类资产，保留已有人工设定、图片与历史，不自动生图，不推进全局引导或覆盖作品圣经。复用原 Bible 模型、技能、计费、并发与失败结果恢复，重试保留来源范围 |
 | `DELETE /api/dramas/:id/cast/:castId` | JSON `{expectedRevision}`；仅 assets/story 引导项目删除未使用资产，返回 `{deleted:true,castId}`。分镜、段参考、造型、画布引用与在途任务受保护；保留媒体文件与任务历史 |
 
 进行中的引导项目保存正文、设置、资产文字、镜头及剧情段提示词时，统一携带当前 `production.revision` 作为 `expectedRevision`；这些文字变更与异步文字结果落库递增该版本。版本变化返回冲突，刷新后重新审阅。相关文字任务仍在运行时拒绝覆盖其输入；实体 revision 继续保护异步结果，不另要求前端提交实体版本。纯会话绑定保留归属、首次绑定和传入版本校验，不递增内容版本；图片状态变化也不使文字版本变化。传统项目及引导完成后的制作台保持既有编辑合同。阶段确认不放行视频、成片或批量图片；单张参考图继续使用原设定重生接口，零图片可以完成引导。两个引导接口拒绝传统项目，不能隐式开启引导。
