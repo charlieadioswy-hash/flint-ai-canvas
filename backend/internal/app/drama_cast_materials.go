@@ -61,6 +61,10 @@ func dramaCastHasImageDefinition(cast model.DramaCast) bool {
 // 编排函数是预览和实际提交的唯一入口。自定义提示词是完整正文，不再追加作品旧画风。
 func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast model.DramaCast) string {
 	assets := settings.Assets.Normalized()
+	imageOptions, _ := parseDramaCastImageOptions(cast.ImageOptionsJSON)
+	if cast.Kind == "character" && imageOptions.Ratio != "" {
+		assets.CharacterRatio = imageOptions.Ratio
+	}
 	style, rules := settings.StylePrompt, meta.VisualRules
 	independentStyle := dramaCastHasImageStyle(cast)
 	if independentStyle {
@@ -79,9 +83,15 @@ func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast
 			prompt = identity + "\n" + prompt
 		}
 	}
+	if references := dramaCastReferenceInstructions(cast); references != "" {
+		prompt += "\n" + references
+	}
 	ratio := production.AssetImageRatio
 	if cast.Kind == "character" {
 		ratio = assets.CharacterRatio
+	}
+	if imageOptions.Ratio != "" {
+		ratio = imageOptions.Ratio
 	}
 	ratioHint := production.WithAssetRatio("", ratio)
 	if !strings.HasSuffix(prompt, ratioHint) {

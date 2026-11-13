@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"yingce/backend/internal/model"
-	"yingce/backend/internal/production"
 	"yingce/backend/internal/repository"
 )
 
@@ -80,7 +79,6 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 			visited[id] = 2
 			return nil
 		}
-		operation := "text_to_image"
 		if cast.ParentID != "" {
 			if err := include(cast.ParentID); err != nil {
 				return err
@@ -91,7 +89,6 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 					return err
 				}
 			}
-			operation = "image_to_image"
 		}
 		if mediaBusyStatus(cast.ImageStatus) || busy[id] {
 			waiting++
@@ -104,27 +101,12 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 		if !dramaCastHasImageDefinition(cast) {
 			blocked("资产「" + cast.Name + "」只有名称，请先补充描述或图片提示词")
 		}
-		choice := settings.Models.imageFor(cast.Kind)
-		ratio := production.AssetImageRatio
-		if cast.Kind == "character" {
-			ratio = settings.Assets.CharacterRatio
+		imagePlan, err := s.dramaCastImagePlanFor(repo, userID, settings, cast)
+		if err != nil {
+			blocked(err.Error())
 		}
-		imageRequest := s.dramaImageRequestFor(choice, ratio, settings.Assets.ResolutionFor(cast.Kind))
-		snapshot = append(snapshot, imageRequest)
-		if imageRequest.Issue != "" {
-			blocked(imageRequest.Issue)
-		}
-		options := map[string]any{}
-		if imageRequest.Size != "" {
-			options["size"] = imageRequest.Size
-		}
-		if imageRequest.Resolution != "" {
-			options["imageResolution"] = imageRequest.Resolution
-		}
-		intent := ModelRequestIntent{Capability: "image", Operation: operation, Options: options}
-		if cast.ParentID != "" {
-			intent.Inputs = map[string]int{"image": 1}
-		}
+		choice, intent := imagePlan.Choice, imagePlan.Intent
+		snapshot = append(snapshot, imagePlan)
 		if s.dramaTaskHook == nil {
 			if err := s.requireDramaModelOption(userID, "image", choice); err != nil {
 				blocked(err.Error())

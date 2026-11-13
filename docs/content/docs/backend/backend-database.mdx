@@ -246,6 +246,8 @@ description: 影策后端核心持久化表与状态边界
 
 ## 短剧独立风格与跨作品素材（Schema 103）
 
+版本 110 `drama_cast_image_options` 为 `drama_casts` 增加 `image_options_json`（text）：保存单资产图片模型、画幅、分辨率、主体参考与风格参考的资源 ID。空项继承作品设置；造型的本体图仍固定排在参考图第一位。保存以作品和资产两种 Revision 校验，不启动生成、不改现有图片或自定义提示词；预检、报价与 worker 使用同一参数解析。两组参考均纳入素材引用与孤儿清理保护。
+
 版本 103 `drama_cast_styles_import` 为 `drama_casts` 增加以下字段，已有图片、外观与造型关系保持不变：
 
 | 列 | 含义 |

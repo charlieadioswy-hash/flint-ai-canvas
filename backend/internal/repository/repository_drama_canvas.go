@@ -151,11 +151,22 @@ func (r *Repository) dramaResourceReferences(userID string, resourceIDs []string
 	references := []ResourceDirectReference{}
 	projects := r.db.Model(&model.DramaProduction{}).Select("project_id").Where("user_id = ?", userID)
 	var casts []model.DramaCast
-	if err := r.db.Select("id", "name", "image_resource_id", "voice_sample_resource_id").Where("project_id IN (?) AND (image_resource_id IN ? OR voice_sample_resource_id IN ?)", projects, resourceIDs, resourceIDs).Find(&casts).Error; err != nil {
+	if err := r.db.Select("id", "name", "image_resource_id", "voice_sample_resource_id", "image_options_json").Where("project_id IN (?) AND (image_resource_id IN ? OR voice_sample_resource_id IN ? OR (image_options_json IS NOT NULL AND image_options_json <> ''))", projects, resourceIDs, resourceIDs).Find(&casts).Error; err != nil {
 		return nil, err
 	}
 	for _, cast := range casts {
-		for _, resourceID := range []string{cast.ImageResourceID, cast.VoiceSampleResourceID} {
+		var options struct {
+			SubjectReferenceIDs []string `json:"subjectReferenceIds"`
+			StyleReferenceIDs   []string `json:"styleReferenceIds"`
+		}
+		if cast.ImageOptionsJSON != "" {
+			if err := json.Unmarshal([]byte(cast.ImageOptionsJSON), &options); err != nil {
+				return nil, err
+			}
+		}
+		ids := append([]string{cast.ImageResourceID, cast.VoiceSampleResourceID}, options.SubjectReferenceIDs...)
+		ids = append(ids, options.StyleReferenceIDs...)
+		for _, resourceID := range ids {
 			if resourceID != "" && slices.Contains(resourceIDs, resourceID) {
 				references = append(references, ResourceDirectReference{Kind: DramaResourceReferenceKind, ID: cast.ID, Title: cast.Name, ResourceID: resourceID})
 			}

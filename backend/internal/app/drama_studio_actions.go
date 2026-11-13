@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"yingce/backend/internal/model"
-	"yingce/backend/internal/production"
 	"yingce/backend/internal/repository"
 )
 
@@ -129,14 +128,12 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		if mediaBusyStatus(cast.ImageStatus) {
 			blocked("该资产参考图正在生成或排队")
 		}
-		operation := "text_to_image"
 		if cast.ParentID != "" {
 			base, err := repo.DramaCast(projectID, cast.ParentID)
 			if err != nil {
 				return plan, err
 			}
 			snapshot = append(snapshot, base)
-			operation = "image_to_image"
 			if (base.ImageStatus != model.DramaMediaReady || base.ImageResourceID == "") && !options.pendingParents[base.ID] {
 				blocked("请先生成角色本体「" + base.Name + "」参考图")
 				v.MissingCasts = append(v.MissingCasts, DramaStudioMissingCast{ID: base.ID, Name: base.Name})
@@ -146,27 +143,12 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 				}
 			}
 		}
-		choice = settings.Models.imageFor(cast.Kind)
-		ratio := production.AssetImageRatio
-		if cast.Kind == "character" {
-			ratio = settings.Assets.CharacterRatio
+		imagePlan, err := s.dramaCastImagePlanFor(repo, userID, settings, *cast)
+		if err != nil {
+			blocked(err.Error())
 		}
-		imageRequest := s.dramaImageRequestFor(choice, ratio, settings.Assets.ResolutionFor(cast.Kind))
-		snapshot = append(snapshot, imageRequest)
-		if imageRequest.Issue != "" {
-			blocked(imageRequest.Issue)
-		}
-		options := map[string]any{}
-		if imageRequest.Size != "" {
-			options["size"] = imageRequest.Size
-		}
-		if imageRequest.Resolution != "" {
-			options["imageResolution"] = imageRequest.Resolution
-		}
-		intent = ModelRequestIntent{Capability: "image", Operation: operation, Options: options}
-		if cast.ParentID != "" {
-			intent.Inputs = map[string]int{"image": 1}
-		}
+		choice, intent = imagePlan.Choice, imagePlan.Intent
+		snapshot = append(snapshot, imagePlan)
 	} else {
 		if req.Action != "segment_video" && req.Action != "segment_prompt" && req.Action != "segment_reprocess" {
 			return plan, BadAuthRequest("不支持的制作操作")

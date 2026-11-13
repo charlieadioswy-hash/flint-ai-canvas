@@ -83,6 +83,18 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		if len(logReferences) > 0 {
 			return ErrResourceCleanupStillReferenced
 		}
+		// 配置引用也在资源锁内重检，避免保存了参考图后被旧清理快照删除。
+		var castOptions []string
+		if err := tx.Model(&model.DramaCast{}).Where("image_options_json IS NOT NULL AND image_options_json <> ''").Pluck("image_options_json", &castOptions).Error; err != nil {
+			return err
+		}
+		for _, document := range castOptions {
+			for _, id := range resourceIDs {
+				if strings.Contains(document, `"`+id+`"`) {
+					return ErrResourceCleanupStillReferenced
+				}
+			}
+		}
 		for _, check := range []struct {
 			model any
 			query string

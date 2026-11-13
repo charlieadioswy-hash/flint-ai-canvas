@@ -2002,7 +2002,6 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 	assets := r.settings.Assets
 	// 造型以所属角色参考图识别身份，年龄、体态和服装按本次造型，仍使用作品的参考图方案。
 	var baseImage *model.DramaCast
-	operation := "text_to_image"
 	if cast.ParentID != "" {
 		base, baseErr := r.s.repo.DramaCast(r.project.ID, cast.ParentID)
 		if baseErr != nil {
@@ -2013,33 +2012,43 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 			return nil, true, nil
 		}
 		baseImage = base
-		operation = "image_to_image"
 	}
 	prompt := buildDramaCastImagePrompt(r.settings, r.meta, *cast)
-	// 资产参考图统一横版 16:9，与作品画幅无关：场景要容纳完整空间，道具要留足展示余量。
-	// 角色按参考图方案的画幅（内置方案均为 16:9，自定义方案可改）。画幅通过尺寸参数约束，
-	// 不只靠提示词；模型给不出接近的尺寸时直接失败并说明原因，不退回模型默认的方图。
-	ratio := r.castImageRatio(cast.Kind)
-	request := r.imageRequest(cast.Kind)
-	if request.Issue != "" {
-		return nil, false, errors.New(request.Issue)
+	plan, err := r.s.dramaCastImagePlanFor(r.s.repo, r.project.UserID, r.settings, *cast)
+	if err != nil {
+		return nil, false, err
 	}
 	metadata := r.metadata(job)
-	metadata["assetMode"], metadata["assetRatio"] = assets.Mode, ratio
+	metadata["assetMode"], metadata["assetRatio"] = assets.Mode, plan.Ratio
+	metadata["subjectReferenceIds"], metadata["styleReferenceIds"] = plan.Options.SubjectReferenceIDs, plan.Options.StyleReferenceIDs
 	if assets.SourceSkillID != "" {
 		metadata["assetSourceSkillId"], metadata["assetSourcePath"] = assets.SourceSkillID, assets.SourcePath
 	}
 	config := map[string]any{"count": "1"}
-	request.apply(config)
+	plan.Request.apply(config)
 	input := map[string]any{"config": config, "metadata": metadata}
+	refs := []any{}
 	if baseImage != nil {
+		if _, err := r.s.repo.ResourceForUser(r.project.UserID, baseImage.ImageResourceID); err != nil {
+			return nil, false, err
+		}
 		ref, refErr := r.s.dramaResourceReference(baseImage.ImageResourceID, "参考图1", "reference_image")
 		if refErr != nil {
 			return nil, false, refErr
 		}
-		input["referenceImages"] = []any{ref}
+		refs = append(refs, ref)
 	}
-	task, err := r.createTaskWith(job, r.settings.Models.imageFor(cast.Kind), "image", operation, prompt, input)
+	for _, resource := range plan.Resources {
+		ref, err := r.s.dramaResourceReference(resource.ID, fmt.Sprintf("参考图%d", len(refs)+1), "reference_image")
+		if err != nil {
+			return nil, false, err
+		}
+		refs = append(refs, ref)
+	}
+	if len(refs) > 0 {
+		input["referenceImages"] = refs
+	}
+	task, err := r.createTaskWith(job, plan.Choice, "image", plan.Intent.Operation, prompt, input)
 	return task, false, err
 }
 

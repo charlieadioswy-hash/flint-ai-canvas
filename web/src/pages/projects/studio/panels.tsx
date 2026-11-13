@@ -67,6 +67,7 @@ import { uploadResourceFile } from "@/services/api/resources";
 import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoiceField, CastVoicePreview } from "./cast-voice";
+import { CastImageOptions } from "./cast-image-options";
 import { CastLooks } from "./cast-looks";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { CastCreateDialog } from "./cast-create-dialog";
@@ -97,7 +98,21 @@ export type CastRatios = { character: string };
 
 /** 媒体轮询不重置输入，切换设定或服务端表单内容变化时重新回填。 */
 export function castEditorFormKey(cast: DramaCast) {
-    return JSON.stringify([cast.id, cast.name, cast.lookName, cast.appearance, cast.aliasesJson, cast.voiceInstructions, cast.imagePrompt, cast.imageStyleId, cast.imageStyleName, cast.imageStylePrompt, cast.lookFromChapter, cast.lookToChapter]);
+    return JSON.stringify([
+        cast.id,
+        cast.name,
+        cast.lookName,
+        cast.appearance,
+        cast.aliasesJson,
+        cast.voiceInstructions,
+        cast.imagePrompt,
+        cast.imageStyleId,
+        cast.imageStyleName,
+        cast.imageStylePrompt,
+        cast.lookFromChapter,
+        cast.lookToChapter,
+        cast.imageOptionsJson,
+    ]);
 }
 
 const castImageLoading = <span className="drama-cast-media-state is-loading" role="status" aria-label="参考图加载中" />;
@@ -353,6 +368,7 @@ export function CastEditor({
     const [from, setFrom] = useState<number | null>(cast.lookFromChapter || null);
     const [to, setTo] = useState<number | null>(cast.lookToChapter || null);
     const [restyle, setRestyle] = useState(true);
+    const [imageOptionsDirty, setImageOptionsDirty] = useState(false);
     const isLook = Boolean(cast.parentId);
     const impactQuery = useQuery({ queryKey: dramaKeys.castImpact(projectId, cast.id), queryFn: ({ signal }) => getDramaCastImpact(projectId, cast.id, signal) });
     const imageDirty = (["imagePrompt", "imageStyleId", "imageStyleName", "imageStylePrompt"] as const).some((key) => (imageFields[key] || "") !== (cast[key] || ""));
@@ -462,6 +478,7 @@ export function CastEditor({
                 <Input.TextArea value={appearance} maxLength={1000} disabled={busy} autoSize={{ minRows: 4, maxRows: 10 }} onChange={(event) => setAppearance(event.target.value)} aria-label={APPEARANCE_LABEL[cast.kind]} />
             </Field>
             <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+            <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} onDirtyChange={setImageOptionsDirty} />
             {isLook ? (
                 <Field label="默认适用章节" hint="留空表示不限，按本季原著章节设置">
                     <div className="drama-look-form-range">
@@ -528,8 +545,8 @@ export function CastEditor({
                     type="primary"
                     className="drama-editor-wide"
                     icon={<RefreshCw className="size-4" />}
-                    disabled={cast.locked || busy || !parentReady || !name.trim() || !appearance.trim()}
-                    title={!parentReady ? "请先生成或上传角色本体图" : undefined}
+                    disabled={cast.locked || busy || imageOptionsDirty || !parentReady || !name.trim() || !appearance.trim()}
+                    title={imageOptionsDirty ? "请先保存图片生成配置" : !parentReady ? "请先生成或上传角色本体图" : undefined}
                     loading={regenerate.isPending}
                     onClick={() => regenerate.mutate()}
                 >

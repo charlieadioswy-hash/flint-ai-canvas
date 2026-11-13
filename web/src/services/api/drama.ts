@@ -36,7 +36,8 @@ export type DramaStudioActionPreflight = {
 
 export const preflightDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<DramaStudioActionPreflight>(`/dramas/${projectId}/actions/preflight`, request);
 
-export const executeDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<{ queued: number; action: DramaStudioAction; targetId: string; warnings?: string[]; dispatchPending?: boolean }>(`/dramas/${projectId}/actions/execute`, request);
+export const executeDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) =>
+    http.post<{ queued: number; action: DramaStudioAction; targetId: string; warnings?: string[]; dispatchPending?: boolean }>(`/dramas/${projectId}/actions/execute`, request);
 
 export type DramaStudioBatchAction = "cast_image" | "segment_video" | "segment_prompt" | "segment_assets";
 export type DramaStudioBatchStatus = "ready" | "queued" | "already_queued" | "skipped_ready" | "blocked" | "conflict" | "failed";
@@ -487,6 +488,7 @@ export type DramaSegmentAudioReference = { castId: string; name: string; label?:
 export type DramaCastKind = "character" | "prop" | "scene";
 
 export type DramaCast = {
+    revision?: number;
     id: string;
     projectId: string;
     kind: DramaCastKind;
@@ -499,6 +501,7 @@ export type DramaCast = {
     imageStyleId?: string;
     imageStyleName?: string;
     imageStylePrompt?: string;
+    imageOptionsJson?: string;
     sourceProjectId?: string;
     sourceCastId?: string;
     voiceInstructions: string;
@@ -517,6 +520,18 @@ export type DramaCast = {
     lookFromChapter?: number;
     lookToChapter?: number;
 };
+
+export type DramaCastImageOptions = {
+    model: DramaModelChoice;
+    ratio: string;
+    resolution: string;
+    subjectReferenceIds: string[];
+    styleReferenceIds: string[];
+};
+
+export function updateDramaCastImageOptions(projectId: string, castId: string, expectedRevision: number, expectedCastRevision: number, options: DramaCastImageOptions) {
+    return http.put<{ cast: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image-options`, { expectedRevision, expectedCastRevision, options });
+}
 
 export type DramaListItem = {
     project: Project;

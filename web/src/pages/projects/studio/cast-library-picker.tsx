@@ -51,7 +51,21 @@ function uploadedResourceId(uploaded: Awaited<ReturnType<typeof uploadImage>>) {
 }
 
 /** 从素材库挑一张图作为设定参考图；选中后与上传形象图一样直接替换并锁定。 */
-export function CastLibraryPicker({ open, cast, onClose, onPick, segment = false }: { open: boolean; cast: Pick<DramaCast, "kind" | "name">; onClose: () => void; onPick: (resourceId: string, name: string) => Promise<unknown>; segment?: boolean }) {
+export function CastLibraryPicker({
+    open,
+    cast,
+    onClose,
+    onPick,
+    segment = false,
+    referenceGroup,
+}: {
+    open: boolean;
+    cast: Pick<DramaCast, "kind" | "name">;
+    onClose: () => void;
+    onPick: (resourceId: string, name: string) => Promise<unknown>;
+    segment?: boolean;
+    referenceGroup?: "主体" | "风格";
+}) {
     const assets = useAssetStore((state) => state.assets);
     const externalAssetSources = useExternalAssetSources(open);
     const character = cast.kind === "character";
@@ -87,11 +101,14 @@ export function CastLibraryPicker({ open, cast, onClose, onPick, segment = false
             items={items}
             categoryLabels={{ ...CATEGORY_LABELS, ...externalAssetSources.categoryLabels }}
             folders={externalAssetSources.folders}
-            title={segment ? "添加本段参考图" : `选择「${cast.name}」的${CAST_KIND_LABEL[cast.kind]}参考图`}
+            title={referenceGroup ? `添加${referenceGroup}参考图` : segment ? "添加本段参考图" : `选择「${cast.name}」的${CAST_KIND_LABEL[cast.kind]}参考图`}
             eyebrow="短剧设定"
-            confirmLabel={() => (segment ? "添加到本段参考" : "用作参考图并锁定")}
+            confirmLabel={() => (referenceGroup ? `添加到${referenceGroup}参考` : segment ? "添加到本段参考" : "用作参考图并锁定")}
             emptyDescription={character ? "先在素材库中添加图片或角色卡。" : "先在素材库中添加图片。"}
-            footerNote={externalAssetSources.error || (segment ? "添加图片仅影响当前剧情段，移除参考不会删除原素材" : "选中的图片会替换当前参考图并锁定，之后不会被重新生成覆盖")}
+            footerNote={
+                externalAssetSources.error ||
+                (referenceGroup ? "图片用于下次生成；添加和移除参考不会替换现有成图，也不会删除原素材" : segment ? "添加图片仅影响当前剧情段，移除参考不会删除原素材" : "选中的图片会替换当前参考图并锁定，之后不会被重新生成覆盖")
+            }
             onClose={onClose}
             onConfirm={async (ids, pickedItems) => {
                 const pool = new Map([...items, ...(pickedItems || [])].map((item) => [item.id, item]));

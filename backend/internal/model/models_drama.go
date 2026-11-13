@@ -108,6 +108,8 @@ type DramaCast struct {
 	ImageStyleID     string `json:"imageStyleId" gorm:"size:64"`
 	ImageStyleName   string `json:"imageStyleName" gorm:"size:120"`
 	ImageStylePrompt string `json:"imageStylePrompt" gorm:"type:text"`
+	// 空值沿用作品配置；主体与风格参考保存资源 ID，不复制图片。
+	ImageOptionsJSON string `json:"imageOptionsJson,omitempty" gorm:"type:text"`
 	// 导入只保留来源关联，编辑目标记录不会回写来源作品。
 	SourceProjectID string `json:"sourceProjectId,omitempty" gorm:"size:36"`
 	SourceCastID    string `json:"sourceCastId,omitempty" gorm:"size:36;index:idx_drama_cast_source,unique,priority:2,where:source_cast_id <> ''"`
