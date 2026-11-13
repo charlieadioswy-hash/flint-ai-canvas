@@ -86,7 +86,7 @@ export type DramaAssetScheme = {
     characterPrompt: string;
 };
 
-export type DramaAssetSchemeCatalog = { schemes: DramaAssetScheme[]; scenePrompt: string; characterVariables: string[]; sceneVariables: string[] };
+export type DramaAssetSchemeCatalog = { schemes: DramaAssetScheme[]; sceneSchemes: { id: string; name: string; description: string; prompt: string }[]; scenePrompt: string; characterVariables: string[]; sceneVariables: string[] };
 
 /** 剧情段怎么切：智能按场景与冲突切、单段不超过模型上限；固定每段 segmentSeconds 秒；范围在 segmentMin–MaxSeconds 之间。 */
 export type DramaSegmentMode = "auto" | "fixed" | "range";

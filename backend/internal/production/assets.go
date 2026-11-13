@@ -86,6 +86,24 @@ func AssetSchemes() []AssetScheme {
 
 func DefaultScenePrompt() string { return defaultScenePrompt }
 
+type SceneAssetScheme struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+}
+
+// 选择模板后仍保存完整 ScenePrompt，不新增另一套执行参数。
+func SceneAssetSchemes() []SceneAssetScheme {
+	return []SceneAssetScheme{
+		{ID: "wide", Name: "空间全景", Description: "单幅空镜，展示空间、出入口与光源。", Prompt: defaultScenePrompt},
+		{ID: "fourview", Name: "场景四宫格", Description: "同一空间四个视角，保持结构、陈设与光照一致。", Prompt: `{{项目画风}}。场景四宫格设定图：{{场景名称}}。{{场景设定}}。
+横版画面按 2×2 等分为四格，依次展示同一场景的入口全景、反向全景、左侧空间和右侧空间。
+四格必须是同一时间、同一地点；建筑结构、门窗、家具、物件位置与光源方向保持一致，不添加原设定以外的新空间。
+各格均为空镜，无人物，无文字、水印、装饰边框。{{画面规则}}`},
+	}
+}
+
 func assetScheme(mode string) (AssetScheme, bool) {
 	for _, scheme := range assetSchemes {
 		if scheme.Mode == mode {

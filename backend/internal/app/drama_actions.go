@@ -765,14 +765,15 @@ func (s *Service) restyleDramaCastSegments(projectID, castID string) (int, error
 
 // DramaAssetSchemeCatalog 是参考图方案目录：内置方案的默认提示词与可用变量。
 type DramaAssetSchemeCatalog struct {
-	Schemes            []production.AssetScheme `json:"schemes"`
-	ScenePrompt        string                   `json:"scenePrompt"`
-	CharacterVariables []string                 `json:"characterVariables"`
-	SceneVariables     []string                 `json:"sceneVariables"`
+	Schemes            []production.AssetScheme      `json:"schemes"`
+	SceneSchemes       []production.SceneAssetScheme `json:"sceneSchemes"`
+	ScenePrompt        string                        `json:"scenePrompt"`
+	CharacterVariables []string                      `json:"characterVariables"`
+	SceneVariables     []string                      `json:"sceneVariables"`
 }
 
 func (s *Service) DramaAssetSchemes() DramaAssetSchemeCatalog {
-	return DramaAssetSchemeCatalog{Schemes: production.AssetSchemes(), ScenePrompt: production.DefaultScenePrompt(), CharacterVariables: production.CharacterAssetVariables, SceneVariables: production.SceneAssetVariables}
+	return DramaAssetSchemeCatalog{Schemes: production.AssetSchemes(), SceneSchemes: production.SceneAssetSchemes(), ScenePrompt: production.DefaultScenePrompt(), CharacterVariables: production.CharacterAssetVariables, SceneVariables: production.SceneAssetVariables}
 }
 
 type RegenerateDramaCastsRequest struct {

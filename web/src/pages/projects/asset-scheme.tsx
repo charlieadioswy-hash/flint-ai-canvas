@@ -212,6 +212,28 @@ export function AssetSchemePicker({
                         </Button>
                     </div>
                 </div>
+                {tab === "scene" ? (
+                    <div className="drama-tabs" role="radiogroup" aria-label="场景参考图模板">
+                        {catalog.sceneSchemes?.map((item) => (
+                            <button
+                                key={item.id}
+                                type="button"
+                                role="radio"
+                                className="drama-tab"
+                                aria-checked={prompt.trim() === item.prompt.trim()}
+                                title={item.description}
+                                onClick={() => {
+                                    if (prompt.trim() === item.prompt.trim()) return;
+                                    const apply = () => setPrompt(item.prompt);
+                                    if (modified) modal.confirm({ title: `使用「${item.name}」？`, content: "会替换当前场景提示词草稿。保存后仅影响后续生成，已有图片不会改变。", okText: "使用模板", cancelText: "保留当前", onOk: apply });
+                                    else apply();
+                                }}
+                            >
+                                {item.name}
+                            </button>
+                        ))}
+                    </div>
+                ) : null}
                 <div className="drama-assets-variables" aria-label="插入变量">
                     <span>插入变量</span>
                     {variables.map((variable) => (
