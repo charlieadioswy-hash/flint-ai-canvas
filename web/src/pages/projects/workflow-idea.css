@@ -1,0 +1,72 @@
+.drama-workflow-idea {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+
+.drama-workflow-idea h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-title);
+}
+.drama-workflow-idea p {
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-body);
+}
+.drama-workflow-idea-controls,
+.drama-workflow-idea-confirm,
+.drama-workflow-idea-progress {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+.drama-workflow-idea label,
+.drama-workflow-idea-result {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+}
+.drama-workflow-idea-model {
+    width: min(100%, 300px);
+}
+.drama-workflow-idea select {
+    min-height: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    padding: var(--space-1) var(--space-2);
+}
+.drama-workflow-idea-confirm {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+.drama-workflow-idea-result > button {
+    align-self: flex-end;
+}
+.drama-workflow-idea-progress .ant-progress {
+    max-width: 240px;
+}
+.drama-workflow-idea select:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--accent));
+    outline-offset: 2px;
+}
+
+.drama-workflow-idea-entry {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.drama-workflow-idea-entry > button {
+    align-self: flex-start;
+}

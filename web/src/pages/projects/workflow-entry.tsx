@@ -16,6 +16,7 @@ import { defaultAssetSettings, useAssetSchemes } from "./asset-scheme";
 import { useDramaModelCatalog } from "./drama-model-picker";
 import { SOURCE_FORMAT_LABEL } from "./drama-shared";
 import { DRAMA_SOURCE_FILE_MAX_BYTES, formatDramaSourceFileSize, readDramaSourceFile } from "./drama-source-file";
+import { WorkflowIdea } from "./workflow-idea";
 import "./workflow.css";
 
 const FORMATS: Array<{ value: DramaSourceFormat; icon: typeof ScrollText }> = [
@@ -41,6 +42,13 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
     const [text, setText] = useState("");
     const [fileName, setFileName] = useState("");
     const [reading, setReading] = useState(false);
+    const [ideaOpen, setIdeaOpen] = useState(false);
+    const [ideaState, setIdeaState] = useState({ dirty: false, busy: false });
+    const [closeIdeaConfirm, setCloseIdeaConfirm] = useState(false);
+    const [adoption, setAdoption] = useState<{ text: string; format: DramaSourceFormat; generation: number }>();
+    const creating = useRef(false);
+    const activity = useRef({ ideaState, adoption });
+    activity.current = { ideaState, adoption };
     const fileRef = useRef<HTMLInputElement>(null);
     const textRef = useRef<TextAreaRef>(null);
     const mounted = useRef(false);
@@ -90,6 +98,7 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
     const create = useMutation({
         mutationFn: async () => {
             if (!current()) throw new Error("登录状态已变更，请重新操作");
+            if (activity.current.ideaState.busy || activity.current.adoption) throw new Error("请先完成当前创意操作");
             if (readGeneration.current !== finishedRead.current) throw new Error("文件还在读取，请稍候");
             const input = text.trim();
             if (!input) throw new Error("请先上传或粘贴正文");
@@ -121,13 +130,17 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
         onError: (error) => {
             if (current()) message.error(error instanceof Error ? error.message : "创建失败");
         },
+        onSettled: () => {
+            creating.current = false;
+        },
     });
-    const loadFile = (file: File, pending = readDramaSourceFile(file)) => {
+    const loadFile = (file: File, pending?: Promise<string>) => {
+        if (!current() || creating.current || activity.current.ideaState.busy || activity.current.adoption) return;
         const generation = readGeneration.current + 1;
         readGeneration.current = generation;
         setReading(true);
         setFileName("");
-        void pending
+        void (pending || readDramaSourceFile(file))
             .then((content) => {
                 if (!current() || readGeneration.current !== generation) return;
                 setText(content);
@@ -136,6 +149,7 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
             })
             .catch((error: unknown) => {
                 if (!current() || readGeneration.current !== generation) return;
+                if (file === initialFile) consumedFile.current = file;
                 setFileName("");
                 message.error(error instanceof Error ? error.message : "文件读取失败，请重试");
             })
@@ -147,12 +161,30 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
             });
     };
     useEffect(() => {
-        if (!initialFile || consumedFile.current === initialFile) return;
+        if (!initialFile || consumedFile.current === initialFile || create.isPending || ideaState.busy || adoption) return;
         if (initialRead.current?.file !== initialFile) initialRead.current = { file: initialFile, promise: readDramaSourceFile(initialFile) };
         loadFile(initialFile, initialRead.current.promise);
-    }, [initialFile]);
+    }, [initialFile, create.isPending, ideaState.busy, adoption]);
+    const applyIdea = (content: string, sourceFormat: DramaSourceFormat) => {
+        if (!current() || creating.current || readGeneration.current !== finishedRead.current) return;
+        readGeneration.current += 1;
+        finishedRead.current = readGeneration.current;
+        setText(content);
+        setFormat(sourceFormat);
+        setFileName("");
+        consumedFile.current = initialFile || null;
+        setAdoption(undefined);
+        setIdeaOpen(false);
+        setCloseIdeaConfirm(false);
+    };
+    const adoptIdea = (content: string, sourceFormat: DramaSourceFormat) => {
+        if (!current() || creating.current || activity.current.ideaState.busy || readGeneration.current !== finishedRead.current || !content.trim()) return;
+        if (text.trim() || fileName) setAdoption({ text: content, format: sourceFormat, generation: readGeneration.current });
+        else applyIdea(content, sourceFormat);
+    };
     const problem = catalog.isError || assets.isError;
-    const ready = Boolean(text.trim() && settings && !problem && !reading);
+    const sourceFrozen = create.isPending || reading || ideaState.busy || Boolean(adoption);
+    const ready = Boolean(text.trim() && settings && !problem && !sourceFrozen);
     return (
         <section className="drama-workflow-entry" aria-label="导入短剧正文">
             <div className="drama-workflow-entry-heading">
@@ -161,7 +193,7 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
             </div>
             <div className="drama-workflow-entry-formats" role="radiogroup" aria-label="素材类型">
                 {FORMATS.map(({ value, icon: Icon }) => (
-                    <button key={value} type="button" role="radio" aria-checked={format === value} disabled={create.isPending} onClick={() => setFormat(value)}>
+                    <button key={value} type="button" role="radio" aria-checked={format === value} disabled={sourceFrozen} onClick={() => setFormat(value)}>
                         <Icon className="size-4" aria-hidden="true" />
                         <strong>{SOURCE_FORMAT_LABEL[value].title}</strong>
                         <span>{SOURCE_FORMAT_LABEL[value].detail}</span>
@@ -172,12 +204,14 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
                 <Input.TextArea
                     ref={textRef}
                     value={text}
-                    disabled={create.isPending || reading}
+                    disabled={sourceFrozen}
                     onChange={(event) => {
+                        if (creating.current || activity.current.ideaState.busy || activity.current.adoption || readGeneration.current !== finishedRead.current) return;
                         readGeneration.current += 1;
                         finishedRead.current = readGeneration.current;
                         setText(event.target.value);
                         setFileName("");
+                        consumedFile.current = initialFile || null;
                     }}
                     autoSize={{ minRows: 6, maxRows: 14 }}
                     aria-label="短剧正文"
@@ -185,15 +219,77 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
                 />
                 <div className="drama-workflow-composer-bottom">
                     <div>
-                        <Button type="text" size="small" icon={<Upload className="size-4" />} loading={reading} disabled={create.isPending} onClick={() => fileRef.current?.click()}>
+                        <Button type="text" size="small" icon={<Upload className="size-4" />} loading={reading} disabled={sourceFrozen} onClick={() => fileRef.current?.click()}>
                             上传 TXT / MD / DOCX
                         </Button>
                         <p className="drama-workflow-file-hint">{fileName ? `已读取 ${fileName}` : `支持 TXT、MD、Markdown 和 DOCX，不超过 ${formatDramaSourceFileSize(DRAMA_SOURCE_FILE_MAX_BYTES)}。旧版 Word（.doc）请先另存为 DOCX。`}</p>
                     </div>
-                    <Button type="primary" loading={create.isPending} disabled={!ready} onClick={() => create.mutate()}>
+                    <Button
+                        type="primary"
+                        loading={create.isPending}
+                        disabled={!ready}
+                        onClick={() => {
+                            if (!creating.current && ready) {
+                                creating.current = true;
+                                create.mutate();
+                            }
+                        }}
+                    >
                         保存并确认正文
                     </Button>
                 </div>
+            </div>
+            <div className="drama-workflow-idea-entry">
+                <Button
+                    type="text"
+                    aria-expanded={ideaOpen}
+                    disabled={create.isPending || reading || ideaState.busy || Boolean(adoption)}
+                    onClick={() => {
+                        if (ideaOpen && ideaState.dirty) setCloseIdeaConfirm(true);
+                        else setIdeaOpen((previous) => !previous);
+                    }}
+                >
+                    一句想法生成正文（可选）
+                </Button>
+                {ideaOpen ? (
+                    <WorkflowIdea
+                        disabled={create.isPending || reading || Boolean(adoption || closeIdeaConfirm)}
+                        onAdopt={adoptIdea}
+                        onDirtyChange={(dirty, busy) => setIdeaState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                    />
+                ) : null}
+                {closeIdeaConfirm ? (
+                    <div className="drama-workflow-idea-confirm" role="region" aria-label="确认收起创意草稿">
+                        <p>创意草稿尚未采用，是否先收起？</p>
+                        <Button onClick={() => setCloseIdeaConfirm(false)}>继续创意扩写</Button>
+                        <Button
+                            onClick={() => {
+                                setCloseIdeaConfirm(false);
+                                setIdeaOpen(false);
+                            }}
+                        >
+                            收起创意草稿
+                        </Button>
+                    </div>
+                ) : null}
+                {adoption ? (
+                    <div className="drama-workflow-idea-confirm" role="region" aria-label="确认替换为AI正文">
+                        <p>现有正文{fileName ? `（${fileName}）` : ""}将替换为这份 AI 扩写草稿；确认后仍需保存并确认正文。</p>
+                        <Button onClick={() => setAdoption(undefined)}>保留现有正文</Button>
+                        <Button
+                            type="primary"
+                            onClick={() => {
+                                if (!current() || adoption.generation !== readGeneration.current) {
+                                    setAdoption(undefined);
+                                    return;
+                                }
+                                applyIdea(adoption.text, adoption.format);
+                            }}
+                        >
+                            确认采用AI正文
+                        </Button>
+                    </div>
+                ) : null}
             </div>
             {showSteps ? (
                 <ol className="drama-workflow-entry-steps">
@@ -223,6 +319,7 @@ function WorkflowEntry({ showSteps = false, initialFile, focusInput = false, use
                 className="drama-workflow-file-input"
                 accept=".txt,.md,.markdown,.docx,text/plain,text/markdown"
                 aria-label="上传正文文件"
+                disabled={sourceFrozen}
                 onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (file) loadFile(file);

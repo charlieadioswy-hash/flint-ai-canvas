@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, StrictMode, type ReactNode } from "react";
+import { createElement, StrictMode, useEffect, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import type { DramaChapterRef, DramaModelCatalog, DramaSettings, DramaSourceFormat, DramaSummary } from "@/services/api/drama";
 import type { LocalUser } from "@/stores/use-user-store";
@@ -14,15 +14,11 @@ for (const [key, value] of Object.entries({
     HTMLElement: browser.HTMLElement,
     HTMLInputElement: browser.HTMLInputElement,
     HTMLTextAreaElement: browser.HTMLTextAreaElement,
-    HTMLInputElement: browser.HTMLInputElement,
-    HTMLTextAreaElement: browser.HTMLTextAreaElement,
     HTMLButtonElement: browser.HTMLButtonElement,
     HTMLSelectElement: browser.HTMLSelectElement,
     Element: browser.Element,
     Node: browser.Node,
     SVGElement: browser.SVGElement,
-    Event: browser.Event,
-    InputEvent: browser.InputEvent,
     Event: browser.Event,
     InputEvent: browser.InputEvent,
     File: browser.File,
@@ -53,6 +49,7 @@ const createCalls: Array<{ name: string; sourceFormat: DramaSourceFormat; chapte
 type SourceWrite = { expectedRevision: number; chapters?: Array<{ title: string; text: string }>; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] };
 const sourceWrites: Array<{ projectId: string; input: SourceWrite }> = [];
 let fileReads: Deferred<string>[] = [];
+const ideaAdoptions: Array<(text: string, format: DramaSourceFormat) => void> = [];
 
 function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
@@ -140,6 +137,24 @@ mock.module("@/pages/projects/drama-source-file", () => ({
         const pending = deferred<string>();
         fileReads.push(pending);
         return pending.promise;
+    },
+}));
+mock.module("@/pages/projects/workflow-idea", () => ({
+    WorkflowIdea: ({ disabled, onAdopt, onDirtyChange }: { disabled?: boolean; onAdopt: (text: string, format: DramaSourceFormat) => void; onDirtyChange: (dirty: boolean, busy: boolean) => void }) => {
+        ideaAdoptions.push(onAdopt);
+        const [state, setState] = useState({ dirty: false, busy: false });
+        useEffect(() => {
+            onDirtyChange(state.dirty, state.busy);
+        }, [state]);
+        useEffect(() => () => onDirtyChange(false, false), []);
+        return createElement(
+            "div",
+            { "aria-label": "独立创意任务", "data-disabled": String(Boolean(disabled)) },
+            createElement("button", { disabled, onClick: () => onAdopt("第1集\nAI扩写的完整剧本", "script") }, "采用扩写样稿"),
+            createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: true }) }, "模拟扩写开始"),
+            createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: false }) }, "模拟扩写完成"),
+            createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: false }) }, "填写创意草稿"),
+        );
     },
 }));
 mock.module("@/pages/projects/drama-model-picker", () => ({
@@ -304,6 +319,7 @@ function resetFixture() {
     navigations.length = 0;
     createCalls.length = 0;
     sourceWrites.length = 0;
+    ideaAdoptions.length = 0;
     fileReads = [];
     pendingWrites.length = 0;
     pendingCreates.length = 0;
@@ -729,5 +745,167 @@ test("首个上传文件在 StrictMode 只读取一次，失败不标记已读�
         container.remove();
         client.clear();
         client.unmount();
+    }
+});
+
+async function tap(container: HTMLElement, label: string) {
+    await act(async () => {
+        button(container, label).click();
+        await settle();
+    });
+}
+
+test("一句创意默认收起，空正文显式采用后仍需保存且重复点击只创建一次", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')).toBeNull();
+        await tap(view.container, "一句想法生成正文");
+        expect(createCalls).toHaveLength(0);
+        expect(field(view.container, "短剧正文").value).toBe("");
+        await tap(view.container, "采用扩写样稿");
+        expect(field(view.container, "短剧正文").value).toBe("第1集\nAI扩写的完整剧本");
+        expect(createCalls).toHaveLength(0);
+        expect(view.container.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')?.textContent).toContain("剧本");
+        await act(async () => {
+            const save = button(view.container, "保存并确认正文");
+            save.click();
+            save.click();
+            await settle();
+        });
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0].sourceFormat).toBe("script");
+        expect(createCalls[0].chapters[0].text).toContain("AI扩写的完整剧本");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("已有人工正文必须确认替换，取消保留原文，采用不会创建作品", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await edit(field(view.container, "短剧正文"), "第一章\n人工原文");
+        await tap(view.container, "一句想法生成正文");
+        await tap(view.container, "采用扩写样稿");
+        expect(view.container.querySelector('[aria-label="确认替换为AI正文"]')).not.toBeNull();
+        expect(field(view.container, "短剧正文").value).toContain("人工原文");
+        expect(field(view.container, "短剧正文").disabled).toBe(true);
+        expect(button(view.container, "保存并确认正文").disabled).toBe(true);
+        await tap(view.container, "保留现有正文");
+        expect(field(view.container, "短剧正文").value).toContain("人工原文");
+        await tap(view.container, "采用扩写样稿");
+        await tap(view.container, "确认采用AI正文");
+        expect(field(view.container, "短剧正文").value).toContain("AI扩写的完整剧本");
+        expect(createCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("上传文件读取与创意采用互斥，文件正文采用AI前确认并清除旧文件标题", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "一句想法生成正文");
+        const adopt = ideaAdoptions.at(-1)!;
+        const input = field(view.container, "上传正文文件") as HTMLInputElement;
+        await act(async () => {
+            Object.defineProperty(input, "files", { configurable: true, value: [new File(["原文"], "文件标题.txt")] });
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')?.getAttribute("data-disabled")).toBe("true");
+        await act(async () => {
+            adopt("不能覆盖在读文件", "script");
+            await settle();
+        });
+        expect(field(view.container, "短剧正文").value).toBe("");
+        await act(async () => {
+            fileReads[0].resolve("第一章\n已上传的正文");
+            await settle();
+        });
+        expect(view.container.textContent).toContain("已读取 文件标题.txt");
+        await tap(view.container, "采用扩写样稿");
+        expect(field(view.container, "短剧正文").value).toContain("已上传的正文");
+        await tap(view.container, "确认采用AI正文");
+        expect(view.container.textContent).not.toContain("已读取 文件标题.txt");
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls[0].name).not.toBe("文件标题");
+        expect(createCalls[0].sourceFormat).toBe("script");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("创意任务运行时冻结导入与创建，作品创建时旧采用和文件事件不能改正文", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await edit(field(view.container, "短剧正文"), "第一章\n当前正文");
+        await tap(view.container, "一句想法生成正文");
+        await tap(view.container, "模拟扩写开始");
+        expect(button(view.container, "保存并确认正文").disabled).toBe(true);
+        expect(button(view.container, "一句想法生成正文").disabled).toBe(true);
+        expect(field(view.container, "上传正文文件").disabled).toBe(true);
+        expect(field(view.container, "短剧正文").disabled).toBe(true);
+        await tap(view.container, "模拟扩写完成");
+        const adopt = ideaAdoptions.at(-1)!;
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')?.getAttribute("data-disabled")).toBe("true");
+        await act(async () => {
+            adopt("旧采用不应回填", "script");
+            const input = field(view.container, "上传正文文件");
+            Object.defineProperty(input, "files", { configurable: true, value: [new File(["无效"], "late.txt")] });
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(fileReads).toHaveLength(0);
+        expect(field(view.container, "短剧正文").value).toContain("当前正文");
+        expect(view.container.querySelector('[aria-label="确认替换为AI正文"]')).toBeNull();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("创意旧采用回调不能跨账号或在卸载后修改导入页", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    await tap(view.container, "一句想法生成正文");
+    const adopt = ideaAdoptions.at(-1)!;
+    await act(async () => {
+        userStore.getState().setUser({ id: "user-b", username: "b", displayName: "B", role: "user", status: "active" });
+        await settle();
+        adopt("账号A的正文", "script");
+        await settle();
+    });
+    expect(field(view.container, "短剧正文").value).toBe("");
+    expect(view.container.querySelector('[aria-label="确认替换为AI正文"]')).toBeNull();
+    await view.dispose();
+    await act(async () => {
+        adopt("卸载后不能采用", "script");
+        await settle();
+    });
+    expect(createCalls).toHaveLength(0);
+    expect(navigations).toHaveLength(0);
+});
+
+test("未采用创意收起前确认，收起不影响已有导入正文", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await edit(field(view.container, "短剧正文"), "导入正文");
+        await tap(view.container, "一句想法生成正文");
+        await tap(view.container, "填写创意草稿");
+        await tap(view.container, "一句想法生成正文");
+        expect(view.container.querySelector('[aria-label="确认收起创意草稿"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')).not.toBeNull();
+        await tap(view.container, "收起创意草稿");
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')).toBeNull();
+        expect(field(view.container, "短剧正文").value).toBe("导入正文");
+        expect(createCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
     }
 });
