@@ -36,7 +36,48 @@ export type DramaStudioActionPreflight = {
 
 export const preflightDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<DramaStudioActionPreflight>(`/dramas/${projectId}/actions/preflight`, request);
 
-export const executeDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<{ queued: number; action: DramaStudioAction; targetId: string }>(`/dramas/${projectId}/actions/execute`, request);
+export const executeDramaStudioAction = (projectId: string, request: DramaStudioActionRequest) => http.post<{ queued: number; action: DramaStudioAction; targetId: string; warnings?: string[]; dispatchPending?: boolean }>(`/dramas/${projectId}/actions/execute`, request);
+
+export type DramaStudioBatchAction = "cast_image" | "segment_video" | "segment_prompt" | "segment_assets";
+export type DramaStudioBatchStatus = "ready" | "queued" | "already_queued" | "skipped_ready" | "blocked" | "conflict" | "failed";
+export type DramaStudioBatchRequest = {
+    action: DramaStudioBatchAction;
+    targetIds: string[];
+    videoModel?: DramaModelChoice;
+    baseRevision?: number;
+    confirmationToken?: string;
+};
+export type DramaStudioBatchItem = {
+    targetId: string;
+    targetKind: "cast" | "segment";
+    name?: string;
+    episodeId?: string;
+    segmentIndex?: number;
+    targetRevision: number;
+    sourceTargetIds?: string[];
+    status: DramaStudioBatchStatus;
+    reason?: string;
+    amountMicrocredits: number;
+    priced: boolean;
+    missingCasts?: { id: string; name: string }[];
+    warnings?: string[];
+};
+export type DramaStudioBatchView = {
+    action: DramaStudioBatchAction;
+    targetIds: string[];
+    baseRevision: number;
+    ready: boolean;
+    reason?: string;
+    confirmationToken: string;
+    amountMicrocredits: number;
+    priced: boolean;
+    items: DramaStudioBatchItem[];
+    counts: Record<DramaStudioBatchStatus, number>;
+    warnings?: string[];
+    dispatchPending?: boolean;
+};
+export const preflightDramaStudioBatch = (projectId: string, request: DramaStudioBatchRequest) => http.post<DramaStudioBatchView>(`/dramas/${projectId}/actions/batch/preflight`, request);
+export const executeDramaStudioBatch = (projectId: string, request: DramaStudioBatchRequest) => http.post<DramaStudioBatchView>(`/dramas/${projectId}/actions/batch/execute`, request);
 
 // 短剧自动制作：章节只承载小说原文，集是剧本、分镜与成片的基石。编排全部在服务端完成。
 

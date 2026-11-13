@@ -22,6 +22,7 @@ type (
 	DramaEstimateRequest          = app.DramaEstimateRequest
 	GenerateDramaSegmentsRequest  = app.GenerateDramaSegmentsRequest
 	DramaStudioActionRequest      = app.DramaStudioActionRequest
+	DramaStudioBatchRequest       = app.DramaStudioBatchRequest
 	DramaListRequest              = app.DramaListRequest
 	RegenerateDramaCastsRequest   = app.RegenerateDramaCastsRequest
 	ReleaseDramaMediaRequest      = app.ReleaseDramaMediaRequest

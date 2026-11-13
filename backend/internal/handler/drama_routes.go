@@ -56,6 +56,20 @@ func bindDramaJSON(c *gin.Context, target any) error {
 }
 
 func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.POST("/dramas/:id/actions/batch/preflight", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaStudioBatchRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.PreflightDramaStudioBatch(userID, c.Param("id"), req)
+	}))
+	r.POST("/dramas/:id/actions/batch/execute", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaStudioBatchRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.ExecuteDramaStudioBatch(userID, c.Param("id"), req)
+	}))
 	r.POST("/dramas/:id/actions/preflight", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.DramaStudioActionRequest
 		if err := bindDramaJSON(c, &req); err != nil {

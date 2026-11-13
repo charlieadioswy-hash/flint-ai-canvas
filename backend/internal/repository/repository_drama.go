@@ -1342,14 +1342,23 @@ func (r *Repository) RequestDramaSegmentVideoExact(projectID, segmentID string, 
 	})
 }
 
-func (r *Repository) RequestDramaSegmentPromptExact(projectID, segmentID string, revision int64, invalidateLater bool) error {
+func (r *Repository) RequestDramaSegmentPromptExact(projectID, segmentID string, revision int64, invalidateLater, allowPending bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var segment model.DramaSegment
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND id = ?", projectID, segmentID).First(&segment).Error; err != nil {
 			return err
 		}
-		if segment.Revision != revision || segment.PromptStatus == "" || segment.PromptStatus == model.DramaMediaQueued || segment.PromptStatus == model.DramaMediaRunning || segment.VideoStatus == model.DramaMediaQueued || segment.VideoStatus == model.DramaMediaRunning {
+		if segment.Revision != revision || segment.PromptStatus == "" && !allowPending || segment.PromptStatus == model.DramaMediaQueued || segment.PromptStatus == model.DramaMediaRunning || segment.VideoStatus == model.DramaMediaQueued || segment.VideoStatus == model.DramaMediaRunning {
 			return ErrDramaGuideChanged
+		}
+		if allowPending && segment.PromptStatus == "" {
+			var active int64
+			if err := tx.Model(&model.DramaJob{}).Where("project_id = ? AND shot_id = ? AND kind = ? AND status IN ?", projectID, segmentID, model.DramaJobSegmentPrompt, []string{model.DramaJobQueued, model.DramaJobRunning}).Count(&active).Error; err != nil {
+				return err
+			}
+			if active > 0 {
+				return ErrDramaGuideChanged
+			}
 		}
 		fields := map[string]any{"prompt_status": "", "prompt_error": ""}
 		if segment.VideoStatus != "" {

@@ -51,14 +51,21 @@ type DramaStudioActionPreflight struct {
 }
 
 type dramaStudioActionPlan struct {
-	view            DramaStudioActionPreflight
-	production      *model.DramaProduction
-	segment         *model.DramaSegment
-	cast            *model.DramaCast
-	casts           []model.DramaCast
-	jobID           string
-	videoModelJSON  *string
-	invalidateLater bool
+	view               DramaStudioActionPreflight
+	production         *model.DramaProduction
+	segment            *model.DramaSegment
+	cast               *model.DramaCast
+	casts              []model.DramaCast
+	sourceCasts        []model.DramaCast
+	jobID              string
+	videoModelJSON     *string
+	invalidateLater    bool
+	allowPendingPrompt bool
+}
+
+type dramaStudioActionOptions struct {
+	pendingParents     map[string]bool
+	allowPendingPrompt bool
 }
 
 // PreflightDramaStudioAction does not enqueue work. Both the card and Agent use this preview.
@@ -71,7 +78,11 @@ func (s *Service) PreflightDramaStudioAction(userID, projectID string, req Drama
 }
 
 func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, projectID string, req DramaStudioActionRequest) (dramaStudioActionPlan, error) {
-	plan := dramaStudioActionPlan{view: DramaStudioActionPreflight{Action: req.Action, TargetID: req.TargetID, MissingCasts: []DramaStudioMissingCast{}, Warnings: []string{}}}
+	return s.prepareDramaStudioActionWithOptions(repo, userID, projectID, req, dramaStudioActionOptions{})
+}
+
+func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repository, userID, projectID string, req DramaStudioActionRequest, options dramaStudioActionOptions) (dramaStudioActionPlan, error) {
+	plan := dramaStudioActionPlan{view: DramaStudioActionPreflight{Action: req.Action, TargetID: req.TargetID, MissingCasts: []DramaStudioMissingCast{}, Warnings: []string{}}, allowPendingPrompt: options.allowPendingPrompt}
 	v := &plan.view
 	if strings.TrimSpace(req.TargetID) == "" {
 		return plan, BadAuthRequest("请选择具体的资产或剧情段")
@@ -125,11 +136,13 @@ func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, 
 			}
 			snapshot = append(snapshot, base)
 			operation = "image_to_image"
-			if base.ImageStatus != model.DramaMediaReady || base.ImageResourceID == "" {
+			if (base.ImageStatus != model.DramaMediaReady || base.ImageResourceID == "") && !options.pendingParents[base.ID] {
 				blocked("请先生成角色本体「" + base.Name + "」参考图")
 				v.MissingCasts = append(v.MissingCasts, DramaStudioMissingCast{ID: base.ID, Name: base.Name})
-			} else if _, err := repo.ResourceForUser(userID, base.ImageResourceID); err != nil {
-				return plan, err
+			} else if base.ImageStatus == model.DramaMediaReady && base.ImageResourceID != "" {
+				if _, err := repo.ResourceForUser(userID, base.ImageResourceID); err != nil {
+					return plan, err
+				}
 			}
 		}
 		choice = settings.Models.imageFor(cast.Kind)
@@ -225,7 +238,7 @@ func (s *Service) prepareDramaStudioAction(repo *repository.Repository, userID, 
 			if dramaGuideActive(p) && p.GuideStep != model.DramaGuideStory {
 				blocked("请先确认资产文字设定")
 			}
-			if mediaBusyStatus(segment.PromptStatus) || segment.PromptStatus == "" {
+			if mediaBusyStatus(segment.PromptStatus) || segment.PromptStatus == "" && !options.allowPendingPrompt {
 				blocked("本段提示词正在撰写或等待撰写")
 			}
 			if mediaBusyStatus(segment.VideoStatus) {
@@ -405,42 +418,7 @@ func (s *Service) ExecuteDramaStudioAction(userID, projectID string, req DramaSt
 			return err
 		}
 		plan.production.MediaRequestsOnly = true
-		switch req.Action {
-		case "cast_image":
-			changed, err := tx.UpdateDramaCastIf(plan.cast.ID, []string{plan.cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
-			if err != nil {
-				return err
-			}
-			if !changed {
-				return dramaGuideConflict("资产状态已改变，请重新确认")
-			}
-			return nil
-		case "segment_assets":
-			for _, cast := range plan.casts {
-				changed, err := tx.UpdateDramaCastImageRevision(cast.ID, cast.Revision, []string{cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
-				if err != nil {
-					return err
-				}
-				if !changed {
-					return dramaGuideConflict("资产状态已改变，请重新确认")
-				}
-			}
-			return nil
-		case "segment_video":
-			return tx.RequestDramaSegmentVideoExact(projectID, plan.segment.ID, plan.segment.Revision, plan.videoModelJSON, plan.invalidateLater)
-		case "segment_prompt":
-			return tx.RequestDramaSegmentPromptExact(projectID, plan.segment.ID, plan.segment.Revision, plan.invalidateLater)
-		case "segment_reprocess":
-			changed, err := tx.ReopenDramaSegmentVideoJob(plan.jobID, plan.segment.ID)
-			if err != nil {
-				return err
-			}
-			if !changed {
-				return dramaGuideConflict("视频结果已改变，请重新确认")
-			}
-			return nil
-		}
-		return BadAuthRequest("不支持的制作操作")
+		return applyDramaStudioAction(tx, req.Action, plan)
 	})
 	if err != nil {
 		return nil, dramaGuideError(err)
@@ -449,5 +427,47 @@ func (s *Service) ExecuteDramaStudioAction(userID, projectID string, req DramaSt
 	if req.Action == "segment_assets" {
 		queued = len(plan.casts)
 	}
-	return map[string]any{"queued": queued, "action": req.Action, "targetId": req.TargetID}, s.requestDramaWork(plan.production)
+	warnings, pending := s.finishDramaStudioEnqueue(plan.production)
+	return map[string]any{"queued": queued, "action": req.Action, "targetId": req.TargetID, "warnings": warnings, "dispatchPending": pending}, nil
+}
+
+// 单项和批量共用真实写路径；调用前必须完成全部预检与确认，批量不得边验证边写。
+func applyDramaStudioAction(tx *repository.Repository, action string, plan dramaStudioActionPlan) error {
+	projectID := plan.production.ProjectID
+	switch action {
+	case "cast_image":
+		changed, err := tx.UpdateDramaCastImageRevision(plan.cast.ID, plan.cast.Revision, []string{plan.cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return dramaGuideConflict("资产状态已改变，请重新确认")
+		}
+		return nil
+	case "segment_assets":
+		for _, cast := range plan.casts {
+			changed, err := tx.UpdateDramaCastImageRevision(cast.ID, cast.Revision, []string{cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
+			if err != nil {
+				return err
+			}
+			if !changed {
+				return dramaGuideConflict("资产状态已改变，请重新确认")
+			}
+		}
+		return nil
+	case "segment_video":
+		return tx.RequestDramaSegmentVideoExact(projectID, plan.segment.ID, plan.segment.Revision, plan.videoModelJSON, plan.invalidateLater)
+	case "segment_prompt":
+		return tx.RequestDramaSegmentPromptExact(projectID, plan.segment.ID, plan.segment.Revision, plan.invalidateLater, plan.allowPendingPrompt)
+	case "segment_reprocess":
+		changed, err := tx.ReopenDramaSegmentVideoJob(plan.jobID, plan.segment.ID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return dramaGuideConflict("视频结果已改变，请重新确认")
+		}
+		return nil
+	}
+	return BadAuthRequest("不支持的制作操作")
 }

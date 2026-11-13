@@ -22,7 +22,7 @@ description: 信封、错误码与 OpenAPI
 
 进行中的引导项目保存正文、设置、资产文字、镜头及剧情段提示词时，统一携带当前 `production.revision` 作为 `expectedRevision`；这些文字变更与异步文字结果落库递增该版本。版本变化返回冲突，刷新后重新审阅。相关文字任务仍在运行时拒绝覆盖其输入；实体 revision 继续保护异步结果，不另要求前端提交实体版本。纯会话绑定保留归属、首次绑定和传入版本校验，不递增内容版本；图片状态变化也不使文字版本变化。传统项目及引导完成后的制作台保持既有编辑合同。阶段确认不放行视频、成片或批量图片；单张参考图继续使用原设定重生接口，零图片可以完成引导。两个引导接口拒绝传统项目，不能隐式开启引导。
 
-普通制作台新增资产要求填写外观，活动引导允许先保存文档已有的名称与说明。跨作品导入沿用造型编辑的阶段保护，活动引导中拒绝执行；进入制作后导入成功会在同一事务递增制作版本，使此前的 Agent 建议失效，全部跳过或导入失败不会递增。
+普通制作台与活动引导均允许先保存仅名称的资产草稿，生成图片前必须补充描述或图片提示词。跨作品导入沿用造型编辑的阶段保护，活动引导中拒绝执行；进入制作后导入成功会在同一事务递增制作版本，使此前的 Agent 建议失效，全部跳过或导入失败不会递增。
 
 引导中的有效建议写入成功后统一使版本增加一次；镜头文字实际无变化时也执行引导 CAS，不能用空修改绕过过期校验。引导完成和传统项目的镜头、资产文字、段提示词修改也接受当前 `production.revision` 作为 `expectedRevision`，保存后递增版本；详细台不传版本的实际文字保存同样递增版本，使旧 Agent 建议失效。旧引导请求因完成阶段递增版本而返回冲突；正文和配置等引导专用版本请求不降级为制作台写入。页面可在本地成功写入后、刷新确认恰好增加一个版本且步骤未变时，让同一轮同原版本的独立建议继续使用新的 `expectedRevision`；原工具 `baseRevision` 与回放身份保持不变。该接续只在当前页面生效，不放开服务端 CAS，不接续普通手动保存、外部修改或相互覆盖的建议。
 
@@ -31,6 +31,10 @@ description: 信封、错误码与 OpenAPI
 `POST /api/dramas/:id/actions/preflight` 接收 `{action,targetId,episodeId?,targetRevision?,baseRevision?,videoModel?}`。`action` 仅为 `segment_video`、`segment_assets`、`cast_image`、`segment_prompt`、`segment_reprocess`；`targetId` 必须是当前作品的真实段或资产 ID，集 ID 与目标不匹配时拒绝。返回 `ready/reason`、真实目标及制作版本、`message`、`missingCasts`、`canUseText`、`reprocessable`、`warnings`、实际视频请求预演 `request?`、报价 `priced/amountMicrocredits` 和 `confirmationToken`，不排队、不生成媒体。缺图是否阻塞按实际模型能力判断；顺序续接等待上一段尾帧，样片审批及正在生成的任务仍受保护。`segment_assets` 的目标为剧情段，按本段实际选用的资产聚合缺失参考图，包含造型所需的本体依赖，统一返回生成范围与总报价；已有参考图或排队、运行中的图片任务继续复用。
 
 用户确认后调用 `POST /api/dramas/:id/actions/execute`，携带同一请求以及必需的 `targetRevision/baseRevision/confirmationToken`。服务端在制作行锁内重读目标、配置、依赖和报价；任一确认输入变化返回冲突，须重新预检。Token 是当前确认快照校验值，不是权限凭证，也不冻结模型路由或余额；执行及实际任务准入继续校验归属、模型、积分、预算和重复提交。段视频动作只排指定段，不放行整集或自动生成依赖图片；`segment_assets` 只批量入队已确认范围的缺失参考图，保留已就绪图片，不自动接续视频；两者均不重试范围外的资产或任务。作品进入精确媒体请求模式，阻止唤醒自动流程时隐式排入无关新任务，保留之前明确放行与排队的授权。尾帧续接重做已有视频会将后续旧视频标记待更新，保留资源且不自动重生成。`segment_reprocess` 仅重放最近一次已有成功任务的结果，不重新调用生成或重复扣费。详细制作台原整集放行接口保留原语义，「全部放行」可恢复原自动媒体模式。
+
+批量使用 `POST /api/dramas/:id/actions/batch/preflight`，请求 `{action,targetIds,videoModel?,baseRevision?}`；`action` 为 `cast_image/segment_video/segment_prompt/segment_assets`，必须显式提供 1–200 个真实资产或段 ID，空范围不代表全部，同作品可跨集选择，重复 ID 去重。返回 `{action,targetIds,baseRevision,ready,reason?,confirmationToken,amountMicrocredits,priced,items,counts}`；逐项状态为 `ready/already_queued/skipped_ready/blocked/conflict/failed`。提示词状态为空且没有真实活跃任务时仍可显式请求撰写，有排队或运行作业则跳过。只对可入队的真实目标求和报价，`segment_assets` 按去重后的资产及缺失父角色计算，`sourceTargetIds` 保留来源段归因；阻塞资产不拖累其它可执行资产。余额或剩余预算不足时整批可执行项不入队，并保留所需报价。模型已有成功视频但后处理失败的段须先重新处理，批量生成不重新调用付费生成。
+
+确认后调用 `POST /api/dramas/:id/actions/batch/execute`，原请求加必需的 `baseRevision/confirmationToken`。全部目标在同一作品锁内完成重检，统一限制隐式媒体，再原子入队所有 `ready` 目标；任何内容、依赖或报价变化使整批不写，HTTP 409 的 `details.batch` 给出逐项冲突。数据库写失败整批回滚，已排队、已有成功结果与阻塞项继续逐项跳过。成功返回相同结构，入队项为 `queued`；重复确认范围内全部目标均已排队或成功时返回跳过，不重新生成或收费；仍有阻塞或无效目标且确认快照变化时要求重新预检，不能把新阻塞误报成无变化。单项与批量均在持久入队后返回真实结果：恢复制作失败时仍报告已入队，附 `dispatchPending=true` 与 `warnings`，用户可继续制作，无需重新提交生成。该批次确认不创建计费订单，实际任务派发仍按原准入与冻结规则处理。
 
 `POST /api/agent/runs` 及续轮请求增加 `dramaProjectId`，与 `contextScope:["drama"]`、`permissionMode:"read_only"` 配套，不能同时传 `canvasId`、焦点节点或固定技能。运行返回与历史恢复视图保留 `dramaProjectId`，续轮和幂等身份比较也包含该字段。短剧绑定开放上下文读取、结构化建议及必要提问，按当前阶段限制操作；`drama_propose_changes` 通过既有 `tool_completed` 事件的 `result` 返回 `kind`（`setup/source/cast/cast_create/cast_delete/shot/segment_prompt/media`）、可选 `targetId`、`baseRevision` 和 `changes`。`cast_create` 不传 `targetId`，`changes` 必填资产 `kind` 与 `name`，其余为已有资产文字字段；`cast_delete` 必须提供当前作品真实 `targetId` 与 `changes.reason`。资产增删建议仅 assets/story 阶段可用，删除经页面明确确认后调用删除接口。所有建议的 `baseRevision` 都对应 `production.revision`。建议不写业务数据，不触发生成；用户应用文字建议后由短剧 API 校验保存，再单独确认阶段。建议以 `runId + toolCallId` 恢复，历史版本建议不能覆盖新内容。
 

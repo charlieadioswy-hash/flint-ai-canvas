@@ -74,6 +74,7 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 			return BadAuthRequest("剧情段引用的资产或角色本体不存在")
 		}
 		visited[id] = 1
+		plan.sourceCasts = append(plan.sourceCasts, cast)
 		snapshot = append(snapshot, cast, busy[id])
 		if cast.ImageStatus == model.DramaMediaReady && cast.ImageResourceID != "" {
 			visited[id] = 2
