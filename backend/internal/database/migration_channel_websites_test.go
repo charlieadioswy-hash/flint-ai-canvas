@@ -80,7 +80,7 @@ func TestChannelWebsiteMigrationPreservesChannelsAndSeparatesEndpoints(t *testin
 }
 
 func TestChannelWebsiteMigrationUpgradesPreviousVersion(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:channel-websites-v96?mode=memory&cache=shared"})
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:channel-websites-v105?mode=memory&cache=shared"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +94,21 @@ func TestChannelWebsiteMigrationUpgradesPreviousVersion(t *testing.T) {
 	}
 	if err := db.Migrator().DropColumn(&model.ModelChannel{}, "WebsiteID"); err != nil {
 		t.Fatal(err)
+	}
+	// This upgrade fixture records the pre-v106 plan. Keep its existing drama
+	// table slice on the old schema so later ALTER migrations run for real.
+	for _, statement := range []string{
+		"CREATE TABLE drama_casts (id text PRIMARY KEY, project_id text, kind text, name text, description text, appearance text, image_resource_id text)",
+		"INSERT INTO drama_casts (id, project_id, kind, name, description, appearance, image_resource_id) VALUES ('legacy-cast', 'legacy-project', 'character', '旧人物', '原文人物说明', '白衬衫', 'legacy-image')",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, column := range []string{"image_options_json", "definition_json", "library_asset_id", "library_version_id"} {
+		if db.Migrator().HasColumn("drama_casts", column) {
+			t.Fatalf("pre-v106 fixture unexpectedly contains later column %s", column)
+		}
 	}
 	stamp := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	row := model.ModelChannel{ID: "legacy-channel", Scope: model.ChannelScopeSystem, Name: "Legacy", BaseURL: "https://example.com/v1", APIFormat: "openai", APIKey: "synthetic-key", UpdatedAt: stamp}
@@ -133,5 +148,17 @@ func TestChannelWebsiteMigrationUpgradesPreviousVersion(t *testing.T) {
 	var sites int64
 	if err := db.Model(&model.ChannelWebsite{}).Count(&sites).Error; err != nil || sites != 1 {
 		t.Fatalf("website count=%d err=%v", sites, err)
+	}
+	var cast model.DramaCast
+	if err := db.First(&cast, "id = ?", "legacy-cast").Error; err != nil {
+		t.Fatal(err)
+	}
+	if cast.ProjectID != "legacy-project" || cast.Kind != "character" || cast.Name != "旧人物" || cast.Description != "原文人物说明" || cast.Appearance != "白衬衫" || cast.ImageResourceID != "legacy-image" {
+		t.Fatalf("later migrations altered existing drama data: %+v", cast)
+	}
+	for _, column := range []string{"image_options_json", "definition_json", "library_asset_id", "library_version_id"} {
+		if !db.Migrator().HasColumn("drama_casts", column) {
+			t.Fatalf("upgrade did not add later column %s", column)
+		}
 	}
 }
