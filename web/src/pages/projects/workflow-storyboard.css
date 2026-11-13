@@ -1,0 +1,111 @@
+.drama-storyboard,
+.drama-storyboard-config,
+.drama-storyboard-output {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+.drama-storyboard-toolbar,
+.drama-storyboard-shots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+.drama-storyboard-toolbar > .ant-select {
+    min-width: 240px;
+}
+.drama-storyboard-columns {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 1.65fr);
+    gap: 24px;
+    max-height: 70vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.drama-storyboard-config label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+}
+.drama-storyboard-config label.ant-checkbox-wrapper {
+    flex-direction: row;
+}
+.drama-storyboard-config fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.drama-storyboard-specs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.drama-storyboard-prompt {
+    max-height: 260px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 12px;
+    background: var(--muted);
+    border-radius: var(--radius);
+    font-size: 12px;
+}
+.drama-storyboard-references {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.drama-storyboard-references > div {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.drama-storyboard-references img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: var(--radius);
+}
+.drama-storyboard-output > img {
+    width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+    border-radius: var(--radius);
+}
+.drama-storyboard-grid {
+    display: grid;
+    gap: 8px;
+}
+.drama-storyboard-grid article {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 11px;
+    min-width: 0;
+}
+.drama-storyboard-grid img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: contain;
+}
+.drama-storyboard-quote {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+}
+.drama-storyboard-quote button {
+    margin-top: 8px;
+}
+@media (max-width: 720px) {
+    .drama-storyboard-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

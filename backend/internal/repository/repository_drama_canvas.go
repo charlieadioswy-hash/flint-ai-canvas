@@ -217,6 +217,11 @@ func (r *Repository) dramaResourceReferences(userID string, resourceIDs []string
 		return nil, err
 	}
 	references = append(references, shotReferences...)
+	boardReferences, err := r.DramaStoryboardResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	references = append(references, boardReferences...)
 	viewReferences, err := r.DramaCastViewResourceReferences(userID, resourceIDs)
 	if err != nil {
 		return nil, err

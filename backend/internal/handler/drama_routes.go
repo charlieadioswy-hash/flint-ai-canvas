@@ -60,6 +60,7 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerDramaCastAssistanceRoutes(r, svc)
 	registerDramaCharacterLibraryRoutes(r, svc)
 	registerDramaShotMediaRoutes(r, svc)
+	registerDramaStoryboardRoutes(r, svc)
 	r.PUT("/dramas/:id/cast/:castId/image-options", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaCastImageOptionsRequest
 		if err := bindDramaJSON(c, &req); err != nil {

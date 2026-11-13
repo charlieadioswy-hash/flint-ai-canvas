@@ -700,6 +700,9 @@ func (r *Repository) DeleteDramaProductionData(projectID string) error {
 		if err := New(tx).DeleteDramaShotMediaForProject(projectID); err != nil {
 			return err
 		}
+		if err := New(tx).DeleteDramaStoryboardForProject(projectID); err != nil {
+			return err
+		}
 		if err := New(tx).DeleteDramaCastViews(projectID); err != nil {
 			return err
 		}

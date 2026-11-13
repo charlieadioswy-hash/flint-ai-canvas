@@ -177,6 +177,8 @@ func Models() []any {
 		&model.DramaEpisode{},
 		&model.DramaShot{},
 		&model.DramaShotMedia{},
+		&model.DramaStoryboardBoard{},
+		&model.DramaStoryboardCell{},
 		&model.DramaTake{},
 		&model.DramaSegment{},
 		&model.DramaJob{},

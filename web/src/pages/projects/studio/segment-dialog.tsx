@@ -22,6 +22,7 @@ import { DramaTakeList } from "./take-list";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { WorkflowShotMediaDialog } from "../workflow-shot-media-dialog";
+import { WorkflowStoryboardDialog } from "../workflow-storyboard-dialog";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
 const CAMERAS = ["固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
@@ -107,6 +108,8 @@ export function SegmentDialog({
     const position = segments.findIndex((item) => item.index === segmentIndex);
     const segment = position >= 0 ? segments[position] : undefined;
     const shots = segment ? (detail?.shots || []).filter((shot) => shot.segmentIndex === segment.index) : [];
+    const [storyboardOpen, setStoryboardOpen] = useState(false);
+    useEffect(() => setStoryboardOpen(false), [segment?.id]);
     return (
         <AppModal
             open={Boolean(segment)}
@@ -134,6 +137,9 @@ export function SegmentDialog({
                             </div>
                         </div>
                         <div className="drama-sd-nav">
+                            <Button disabled={busy || !shots.length} onClick={() => setStoryboardOpen(true)}>
+                                宫格故事板
+                            </Button>
                             <Button icon={<Brush className="size-4" />} loading={canvasOpening} onClick={() => onOpenCanvas(segment)}>
                                 在画布中精修
                             </Button>
@@ -228,6 +234,13 @@ export function SegmentDialog({
                             <DramaTakeList projectId={detail.episode.projectId} ownerId={segment.id} kind="video" />
                         </aside>
                     </div>
+                    <WorkflowStoryboardDialog
+                        open={storyboardOpen}
+                        projectId={detail.episode.projectId}
+                        shots={shots}
+                        referenceResourceIds={segment.request.references.flatMap((reference) => (reference.resourceId ? [reference.resourceId] : []))}
+                        onClose={() => setStoryboardOpen(false)}
+                    />
                 </div>
             ) : null}
         </AppModal>

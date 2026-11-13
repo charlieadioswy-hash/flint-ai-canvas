@@ -117,6 +117,17 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 				}
 			}
 		}
+		var boardOptions []string
+		if err := tx.Model(&model.DramaStoryboardBoard{}).Pluck("config_json", &boardOptions).Error; err != nil {
+			return err
+		}
+		for _, document := range boardOptions {
+			for _, id := range resourceIDs {
+				if strings.Contains(document, `"`+id+`"`) {
+					return ErrResourceCleanupStillReferenced
+				}
+			}
+		}
 		for _, check := range []struct {
 			model any
 			query string
@@ -133,6 +144,8 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			{&model.DramaEpisode{}, "final_resource_id IN ?"},
 			{&model.DramaTake{}, "resource_id IN ?"},
 			{&model.DramaShotMedia{}, "resource_id IN ?"},
+			{&model.DramaStoryboardBoard{}, "resource_id IN ?"},
+			{&model.DramaStoryboardCell{}, "resource_id IN ?"},
 			{&model.DramaCastView{}, "resource_id IN ?"},
 		} {
 			var count int64

@@ -1183,6 +1183,23 @@ Tripo 适配器要求成功响应含显式整数 `code=0` 和非空 `data`，分
 
 install 的 Base URL、协议、能力和成本全部从服务端快照读取，不信任请求体。售价 = 成本 × (1 + 加价率)，向上取整到微积分；加价率 0–1000%，最多两位小数。推广期已过返回 404。API Key 只加密存入渠道，不写日志。
 
+## 短剧宫格故事板
+
+以下接口沿用 `/api/dramas` 登录、功能开关与作品归属校验。一个 Board 表示一次固定镜头、配置和原稿的生图尝试，不创建虚构镜头；仅接受同集 1–9 个唯一镜头和 2×2、2×3、3×3 布局。重做需创建新 Board，保留原图和历史。
+
+| 方法与路径 | 合同 |
+| --- | --- |
+| `GET /dramas/:id/episodes/:episodeId/storyboards` | 最近 30 个故事板，含真实任务状态、原图、裁片及镜头媒体版本；查询可补写已成功任务的真实资源，不创建生成任务 |
+| `POST /dramas/:id/storyboards` | `{clientOperationId,shotIds,rows,columns,config}`；`config` 复用独立镜头图片配置，补充要求由服务端与真实镜头的 `imagePrompt` 组合。创建草稿不生成、不扣费；同一标识和同一请求返回原记录，内容变化返回冲突 |
+| `GET /dramas/:id/storyboards/:boardId` | 读取原图、裁片、真实任务状态及采用状态；原稿变化标记 `stale`，历史资源继续可读 |
+| `POST /dramas/:id/storyboards/:boardId/preflight` | `{expectedRevision}`；校验流程、镜头原稿、模型能力、参考图片和预算，返回 `{boardId,revision,baseRevision,ready,reason,priced,amountMicrocredits,estimated,confirmationToken}` |
+| `POST /dramas/:id/storyboards/:boardId/execute` | `{expectedRevision,baseRevision,confirmationToken,clientOperationId}`；重新核对同一报价与原稿，原子创建真实 Task、账单并绑定 Board，返回真实任务。超时使用原标识和原请求核对回执；通用任务重试不允许绕过故事板预检 |
+| `POST /dramas/:id/storyboards/:boardId/split` | `{expectedRevision}`；仅裁切已成功并保存的真实原图，不调用模型。读取上限 64 MiB、解码上限 32 M 像素，支持 PNG、JPEG、WebP。每格保存独立 PNG Resource；全部成功才绑定 Cell，失败可重试且复用已上传裁片 |
+| `POST /dramas/:id/storyboards/:boardId/adopt` | `{expectedRevision,expectedMediaRevision,cellId}`；核验原图 Task、裁片资源和尺寸、当前镜头原稿及双版本，将裁片作为真实 `shot_image` Take 采用，返回镜头媒体视图。空白格、越权、取消、损坏或过期原稿不可采用 |
+
+裁切矩形按整数边界覆盖原图全部像素。采用不重新生成图片、不绕过独立镜头媒体的版本保护，也不自动启动视频生成。
+
+
 ## 短剧自动制作
 
 所有 `/api/dramas` 路径都需要登录 Cookie 并受 `shortDrama` 功能开关保护；对象归属在 service 中按当前用户校验，返回标准业务信封。

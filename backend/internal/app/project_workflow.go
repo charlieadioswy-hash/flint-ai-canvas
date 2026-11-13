@@ -431,6 +431,9 @@ func (s *Service) RegisterTaskOutputFromTask(task model.Task) error {
 	if handled, err := s.RegisterDramaShotMediaTaskOutput(task); handled || err != nil {
 		return err
 	}
+	if handled, err := s.RegisterDramaStoryboardTaskOutput(task); handled || err != nil {
+		return err
+	}
 	if strings.TrimSpace(task.InputJSON) == "" {
 		return nil
 	}
