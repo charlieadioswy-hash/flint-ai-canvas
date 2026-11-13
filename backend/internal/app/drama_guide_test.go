@@ -61,7 +61,7 @@ func TestDramaGuideBriefToWorkbenchWithoutMedia(t *testing.T) {
 	if len(fake.requests) != 0 {
 		t.Fatalf("draft must not dispatch work: %v", fake.byKind)
 	}
-	withSource, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{ExpectedRevision: draft.Production.Revision, Chapters: []DramaChapterInput{{Title: "退婚", Text: "萧炎遭遇退婚。"}, {Title: "立誓", Text: "少年立下三年之约。"}}})
+	withSource, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{ExpectedRevision: draft.Production.Revision, Chapters: []DramaChapterInput{{Title: "退婚", Text: "萧炎遭遇退婚。"}, {Title: "立誓", Text: "少年立下三年之约。"}}, SelectedChapters: []int{0, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestDramaGuideSourceReplacementRebuildsUnstartedEpisodes(t *testing.T) {
 	svc, _ := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc, DramaChapterInput{Title: "旧章节", Text: "旧正文"})
 	oldEpisodeID := draft.Episodes[0].ID
-	next, err := svc.UpdateDramaGuideSource("usr-drama", draft.Project.ID, UpdateDramaGuideSourceRequest{ExpectedRevision: draft.Production.Revision, SourceFormat: production.SourceScript, Chapters: []DramaChapterInput{{Title: "新一集", Text: "甲：你好。"}, {Title: "新二集", Text: "乙：再见。"}}})
+	next, err := svc.UpdateDramaGuideSource("usr-drama", draft.Project.ID, UpdateDramaGuideSourceRequest{ExpectedRevision: draft.Production.Revision, SourceFormat: production.SourceScript, Chapters: []DramaChapterInput{{Title: "新一集", Text: "甲：你好。"}, {Title: "新二集", Text: "乙：再见。"}}, SelectedChapters: []int{0, 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

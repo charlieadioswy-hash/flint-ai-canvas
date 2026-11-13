@@ -95,6 +95,23 @@ func (r *Repository) UpdateDramaGuideDraftFields(projectID string, fields map[st
 	return r.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Updates(fields).Error
 }
 
+// DramaGuideSourceChapters 为配置阶段的范围编辑读取全部正文，包含不参与当前制作的预留章。
+func (r *Repository) DramaGuideSourceChapters(projectID string) ([]model.ProjectUnit, error) {
+	var units []model.ProjectUnit
+	err := r.db.Where("project_id = ? AND kind = ?", projectID, model.ProjectUnitKindChapter).Order("position asc").Find(&units).Error
+	return units, err
+}
+
+// SetDramaGuideChapterSelection 只修改未开工章节的制作范围，保留正文和章节引用标识。
+func (r *Repository) SetDramaGuideChapterSelection(projectID string, selectedIDs []string) error {
+	query := r.db.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ?", projectID, model.ProjectUnitKindChapter)
+	if err := query.Update("status", model.ProjectUnitStatusReserved).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND id IN ?", projectID, model.ProjectUnitKindChapter, selectedIDs).
+		Update("status", model.ProjectUnitStatusReady).Error
+}
+
 func (r *Repository) ResetDramaGuideEpisodes(projectID, sourceFormat string, episodes []model.DramaEpisode, cursor int, done bool) error {
 	if err := r.db.Where("project_id = ?", projectID).Delete(&model.DramaEpisode{}).Error; err != nil {
 		return err

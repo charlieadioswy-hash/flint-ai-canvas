@@ -22,8 +22,10 @@ type DramaGuideView struct {
 
 type UpdateDramaGuideSourceRequest struct {
 	ExpectedRevision int64               `json:"expectedRevision"`
-	Chapters         []DramaChapterInput `json:"chapters"`
+	Chapters         []DramaChapterInput `json:"chapters,omitempty"`
 	SourceFormat     string              `json:"sourceFormat,omitempty"`
+	// nil 保留已有制作范围；显式空数组不表示全选。
+	SelectedChapters []int `json:"selectedChapters,omitempty"`
 }
 
 type ConfirmDramaGuideRequest struct {
@@ -305,14 +307,11 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 	if p.GuideStep != model.DramaGuideConfiguring {
 		return DramaSummary{}, BadAuthRequest("正文替换仅限制作方案确认前")
 	}
-	format := production.NormalizeSourceFormat(firstNonEmpty(req.SourceFormat, project.SourceType))
-	settings := parseDramaSettings(p.SettingsJSON)
-	if format != production.SourceNovel {
-		settings.EpisodeMode, settings.ChaptersPerEpisode = DramaEpisodeModeChapter, 1
-	}
-	chapters, episodes, cursor, done, err := prepareDramaSource(projectID, req.Chapters, nil, settings, format, time.Now())
-	if err != nil {
-		return DramaSummary{}, err
+	format := strings.TrimSpace(req.SourceFormat)
+	if format == "" {
+		format = production.NormalizeSourceFormat(project.SourceType)
+	} else if format != production.SourceNovel && format != production.SourceScript && format != production.SourceStoryboard {
+		return DramaSummary{}, BadAuthRequest("素材类型必须为小说、剧本或分镜")
 	}
 	expected := req.ExpectedRevision
 	err = s.withDramaGuideEdit(projectID, &expected, false, func(tx *repository.Repository) error {
@@ -323,7 +322,54 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 		if current.GuideStep != model.DramaGuideConfiguring {
 			return repository.ErrDramaGuideChanged
 		}
-		if err := tx.ReplaceDramaGuideSource(projectID, format, chapters, episodes, cursor, done); err != nil {
+		settings := parseDramaSettings(current.SettingsJSON)
+		if format != production.SourceNovel {
+			settings.EpisodeMode, settings.ChaptersPerEpisode = DramaEpisodeModeChapter, 1
+		}
+		input, selected := req.Chapters, req.SelectedChapters
+		var existing []model.ProjectUnit
+		if req.Chapters == nil {
+			stored, err := tx.DramaGuideSourceChapters(projectID)
+			if err != nil {
+				return err
+			}
+			existing = stored
+			input = make([]DramaChapterInput, 0, len(existing))
+			if selected == nil {
+				selected = make([]int, 0, len(existing))
+				for index, chapter := range existing {
+					if chapter.Status != model.ProjectUnitStatusReserved {
+						selected = append(selected, index)
+					}
+				}
+			}
+			for _, chapter := range existing {
+				input = append(input, DramaChapterInput{Title: chapter.Title, Text: chapter.SourceText})
+			}
+		} else if selected == nil {
+			return BadAuthRequest("替换正文时请明确选择本次制作的章节")
+		}
+		if len(selected) == 0 {
+			return BadAuthRequest("请至少选择一个本次制作的章节")
+		}
+		chapters, episodes, cursor, done, err := prepareDramaSource(projectID, input, selected, settings, format, existing, time.Now())
+		if err != nil {
+			return err
+		}
+		if req.Chapters == nil {
+			selectedIDs := make([]string, 0, len(selected))
+			for _, chapter := range chapters {
+				if chapter.Status == model.ProjectUnitStatusReady {
+					selectedIDs = append(selectedIDs, chapter.ID)
+				}
+			}
+			if err := tx.SetDramaGuideChapterSelection(projectID, selectedIDs); err != nil {
+				return err
+			}
+			if err := tx.ResetDramaGuideEpisodes(projectID, format, episodes, cursor, done); err != nil {
+				return err
+			}
+		} else if err := tx.ReplaceDramaGuideSource(projectID, format, chapters, episodes, cursor, done); err != nil {
 			return err
 		}
 		return tx.UpdateDramaGuideDraftFields(projectID, map[string]any{"settings_json": encodeDramaSettings(settings)})
@@ -334,7 +380,7 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 	return s.DramaSummary(userID, projectID)
 }
 
-func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInput []int, settings DramaSettings, format string, now time.Time) ([]model.ProjectUnit, []model.DramaEpisode, int, bool, error) {
+func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInput []int, settings DramaSettings, format string, existing []model.ProjectUnit, now time.Time) ([]model.ProjectUnit, []model.DramaEpisode, int, bool, error) {
 	if len(input) == 0 || len(input) > dramaMaxChapters {
 		return nil, nil, 0, false, BadAuthRequest("章节数量必须在 1 到 3000 之间")
 	}
@@ -360,6 +406,9 @@ func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInp
 			status = model.ProjectUnitStatusReady
 		}
 		chapter := model.ProjectUnit{ID: newID(), ProjectID: projectID, Kind: model.ProjectUnitKindChapter, Title: truncateRunes(firstNonEmpty(strings.TrimSpace(item.Title), fmt.Sprintf("第 %d 章", index+1)), 200), SourceText: text, WordCount: runes, Status: status, Position: index, CreatedAt: now, UpdatedAt: now}
+		if existing != nil {
+			chapter.ID, chapter.CreatedAt = existing[index].ID, existing[index].CreatedAt
+		}
 		chapters = append(chapters, chapter)
 		if selected[index] {
 			produced = append(produced, chapter)

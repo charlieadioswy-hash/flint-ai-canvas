@@ -615,7 +615,7 @@ export function updateDramaSettings(projectId: string, input: { settings?: Drama
     return http.patch<DramaSummary>(`${base(projectId)}/settings`, input);
 }
 
-export function saveDramaGuideSource(projectId: string, input: { expectedRevision: number; chapters: DramaChapterInput[]; sourceFormat?: DramaSourceFormat }) {
+export function saveDramaGuideSource(projectId: string, input: { expectedRevision: number; chapters?: DramaChapterInput[]; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] }) {
     return http.put<DramaSummary>(`${base(projectId)}/guide/source`, input);
 }
 
