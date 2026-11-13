@@ -698,7 +698,7 @@ test("新增名称参与离开保护，取消还原；旧方案弹层回调不�
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), []);
     try {
-        expect(view.container.textContent).toContain("暂无角色");
+        expect(view.container.textContent).toContain("尚未生成资产文字");
         expect(view.container.textContent).not.toContain("生成后会停在这里");
         await click(button(view.container, "快速新增"));
         await edit(field(view.container, "资产名称"), "待补设定的角色");
