@@ -1,0 +1,358 @@
+.drama-workflow-production {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    color: var(--foreground);
+    background: var(--background);
+}
+
+.drama-workflow-production-scroll {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-5);
+    container: drama-workflow-production / inline-size;
+}
+
+.drama-workflow-production-toolbar,
+.drama-workflow-production-episode > header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.drama-workflow-production-toolbar {
+    margin-bottom: var(--space-4);
+}
+
+.drama-workflow-production-toolbar h2 {
+    flex: none;
+    font-size: var(--fs-label);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.drama-workflow-production-filters {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.drama-workflow-production-episode-filter {
+    width: 180px;
+}
+
+.drama-workflow-production-status-filter {
+    width: 112px;
+}
+
+.drama-workflow-production-progress {
+    display: grid;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-production-progress-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    color: var(--drama-muted);
+}
+
+.drama-workflow-production-progress-meta .is-success {
+    color: var(--drama-ok);
+}
+
+.drama-workflow-production-progress-meta .is-failed {
+    color: var(--drama-err);
+}
+
+.drama-workflow-production-progress-track {
+    display: flex;
+    height: var(--space-2);
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: var(--drama-sunken);
+}
+
+.drama-workflow-production-progress-track > .is-success {
+    background: var(--drama-ok);
+}
+
+.drama-workflow-production-progress-track > .is-failed {
+    background: var(--drama-err);
+}
+
+.drama-workflow-production-episode {
+    margin-bottom: var(--space-7);
+}
+
+.drama-workflow-production-episode > header {
+    margin-bottom: var(--space-3);
+}
+
+.drama-workflow-production-episode header p,
+.drama-workflow-production-note {
+    margin-top: var(--space-1);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-production-number {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    background: var(--drama-sunken);
+    color: var(--drama-muted);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-production-episode h3 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+
+.drama-workflow-production-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-left: auto;
+}
+
+.drama-workflow-production-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.drama-workflow-segment,
+.drama-workflow-production-final {
+    min-width: 0;
+    height: 292px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+
+.drama-workflow-segment:focus-within,
+.drama-workflow-segment:hover,
+.drama-workflow-production-final:focus-within,
+.drama-workflow-production-final:hover {
+    border-color: var(--drama-line-strong);
+}
+
+.drama-workflow-segment-cover {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 92px;
+    overflow: hidden;
+    background: var(--drama-sunken);
+    color: var(--drama-faint);
+    cursor: pointer;
+}
+
+.drama-workflow-segment-cover img,
+.drama-workflow-segment-cover video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.drama-workflow-segment-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-1);
+    font-size: var(--fs-micro);
+}
+
+.drama-workflow-segment-duration,
+.drama-workflow-segment-edit {
+    position: absolute;
+    bottom: var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--drama-muted);
+    font-size: var(--fs-micro);
+}
+
+.drama-workflow-segment-duration {
+    left: var(--space-2);
+}
+
+.drama-workflow-segment-edit {
+    right: var(--space-2);
+}
+
+.drama-workflow-segment-copy,
+.drama-workflow-segment-prompt,
+.drama-workflow-segment-state {
+    padding-inline: var(--space-2);
+}
+
+.drama-workflow-segment-copy {
+    display: block;
+    padding-top: var(--space-2);
+    text-align: left;
+    cursor: pointer;
+}
+
+.drama-workflow-segment-copy strong,
+.drama-workflow-segment-copy p,
+.drama-workflow-segment-prompt {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+}
+
+.drama-workflow-segment-copy strong {
+    min-height: 2.4em;
+    font-size: var(--fs-tiny);
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.drama-workflow-segment-copy p,
+.drama-workflow-segment-prompt {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    line-height: 1.4;
+}
+
+.drama-workflow-segment-copy p {
+    min-height: 2.8em;
+    margin-top: var(--space-1);
+}
+
+.drama-workflow-segment-prompt {
+    min-height: 2.8em;
+    margin-top: var(--space-1);
+}
+
+.drama-workflow-segment-prompt.is-empty {
+    color: var(--drama-faint);
+}
+
+.drama-workflow-segment-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+    color: var(--drama-faint);
+    font-size: var(--fs-micro);
+}
+
+.drama-workflow-segment footer,
+.drama-workflow-production-final footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    justify-content: flex-end;
+    margin-top: auto;
+    padding: var(--space-2);
+    border-top: 1px solid var(--drama-line);
+}
+
+.drama-workflow-segment footer .ant-btn,
+.drama-workflow-production-final footer .ant-btn {
+    padding-inline: var(--space-1);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-production-error,
+.drama-workflow-production-empty,
+.drama-workflow-production-notice {
+    margin-bottom: var(--space-3);
+    padding: var(--space-4);
+    border-radius: var(--radius-lg);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-production-error {
+    background: color-mix(in oklab, var(--drama-err) 7%, var(--surface));
+    color: var(--drama-err);
+}
+
+.drama-workflow-production-error p,
+.drama-workflow-production-notice p {
+    margin-block: var(--space-2) var(--space-3);
+}
+
+.drama-workflow-production-empty,
+.drama-workflow-production-notice {
+    color: var(--drama-muted);
+    background: var(--surface);
+}
+
+.drama-workflow-production-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-3);
+}
+
+.drama-workflow-production-final {
+    height: auto;
+    min-height: 292px;
+}
+
+.drama-workflow-production > .drama-queue {
+    flex: none;
+    min-width: 0;
+}
+
+@container drama-workflow-production (min-width: 1240px) {
+    .drama-workflow-production-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+}
+
+@container drama-workflow-production (max-width: 980px) {
+    .drama-workflow-production-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@container drama-workflow-production (max-width: 680px) {
+    .drama-workflow-production-toolbar,
+    .drama-workflow-production-episode > header,
+    .drama-workflow-production-filters {
+        flex-wrap: wrap;
+    }
+
+    .drama-workflow-production-actions {
+        margin-left: 0;
+    }
+
+    .drama-workflow-production-grid,
+    .drama-workflow-production-preview-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .drama-workflow-production * {
+        scroll-behavior: auto;
+    }
+}
