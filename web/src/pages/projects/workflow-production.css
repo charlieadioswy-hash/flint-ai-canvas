@@ -11,7 +11,7 @@
     min-width: 0;
     min-height: 0;
     overflow: auto;
-    padding: var(--space-5);
+    padding: var(--space-4);
     container: drama-workflow-production / inline-size;
 }
 
@@ -24,7 +24,9 @@
 }
 
 .drama-workflow-production-toolbar {
-    margin-bottom: var(--space-4);
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--drama-line);
 }
 
 .drama-workflow-production-toolbar h2 {
@@ -308,18 +310,59 @@
 
 .drama-workflow-production-preview-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
+    width: min(100%, 1040px);
+    margin-inline: auto;
 }
 
 .drama-workflow-production-final {
     height: auto;
     min-height: 292px;
+    border-radius: var(--radius-sm);
+}
+.drama-workflow-production-final .drama-simple-card {
+    height: auto;
+    border: 0;
+    border-radius: 0;
+}
+.drama-workflow-production-final .drama-simple-cover {
+    height: auto;
+    min-height: 280px;
+    aspect-ratio: 16 / 9;
+}
+.drama-workflow-production-final .drama-simple-cover-empty {
+    gap: var(--space-3);
 }
 
 .drama-workflow-production > .drama-queue {
     flex: none;
     min-width: 0;
+}
+
+.drama-workflow-production-advanced {
+    margin-block: var(--space-4);
+    padding-block: var(--space-3);
+    border-top: 1px solid var(--drama-line);
+}
+
+.drama-workflow-production-advanced > summary {
+    cursor: pointer;
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    font-weight: 600;
+}
+
+.drama-workflow-production-advanced[open] > summary {
+    margin-bottom: var(--space-3);
+}
+.drama-workflow-production-advanced .drama-workflow-batch-episode {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    margin-block: var(--space-3);
+    font-size: var(--fs-tiny);
+    color: var(--drama-muted);
 }
 
 @container drama-workflow-production (min-width: 1240px) {
@@ -348,6 +391,9 @@
     .drama-workflow-production-grid,
     .drama-workflow-production-preview-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+    .drama-workflow-production-final .drama-simple-cover {
+        min-height: 180px;
     }
 }
 

@@ -1,0 +1,495 @@
+.drama-workflow-configuration {
+    display: grid;
+    grid-template-columns: minmax(280px, 23%) minmax(0, 1fr);
+    height: calc(100dvh - 230px);
+    min-height: 440px;
+    align-items: stretch;
+    gap: 0;
+}
+
+.drama-workflow-config-form,
+.drama-workflow-style-preview {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    background: transparent;
+}
+
+.drama-workflow-config-form {
+    padding-left: 0;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+}
+
+.drama-workflow-config-form header h2,
+.drama-workflow-style-preview h2,
+.drama-workflow-style-preview h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-title);
+    font-weight: 600;
+}
+
+.drama-workflow-config-form header p,
+.drama-workflow-style-preview p {
+    margin: var(--space-1) 0 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-body);
+}
+
+.drama-workflow-config-form fieldset {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.drama-workflow-config-form legend {
+    margin-bottom: var(--space-2);
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+    font-weight: 600;
+}
+
+.drama-workflow-config-form label {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+}
+
+.drama-character-template-select {
+    min-width: 0;
+}
+
+.drama-character-template-trigger {
+    display: flex;
+    width: 100%;
+    min-height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.drama-character-template-trigger[data-focus-visible] {
+    outline: 2px solid var(--workspace-accent);
+    outline-offset: 2px;
+}
+
+.drama-character-template-trigger[data-disabled] {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.drama-character-template-selected {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.drama-character-template-selected .drama-assets-template-preview {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 20px;
+}
+
+.drama-character-template-selected .is-symbol > svg {
+    width: 16px;
+    height: 16px;
+}
+
+.drama-character-template-selected > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drama-character-template-popup {
+    z-index: var(--z-popover);
+    display: flex;
+    width: min(720px, calc(100vw - 32px));
+    max-height: min(460px, calc(100dvh - 32px));
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+    padding: var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+}
+
+.drama-character-template-list {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    padding: var(--space-1);
+    margin: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.drama-character-template-option {
+    position: relative;
+    display: grid;
+    min-width: 0;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    outline: none;
+}
+
+.drama-character-template-option[data-focused] {
+    background: var(--surface-hover);
+}
+
+.drama-character-template-option[data-selected] {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+}
+
+.drama-character-template-option[data-focus-visible] {
+    outline: 2px solid var(--workspace-accent);
+    outline-offset: -2px;
+}
+
+.drama-character-template-check {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+    display: none;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--workspace-accent);
+}
+
+.drama-character-template-option[data-selected] .drama-character-template-check {
+    display: block;
+}
+
+.drama-character-template-option strong {
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    line-height: var(--lh-body);
+}
+
+.drama-character-template-option small {
+    color: var(--text-secondary);
+    font-size: var(--fs-tiny);
+}
+
+@media (max-width: 560px) {
+    .drama-character-template-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.drama-workflow-style-modes,
+.drama-workflow-style-categories,
+.drama-workflow-style-library-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.drama-workflow-style-modes button,
+.drama-workflow-style-categories button {
+    min-height: 32px;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-style-modes button[aria-pressed="true"],
+.drama-workflow-style-categories button[aria-pressed="true"] {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-workflow-style-modes button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: 0 var(--space-3);
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-style-modes button::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+}
+
+.drama-workflow-style-modes button[aria-pressed="true"] {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.drama-workflow-style-modes button[aria-pressed="true"]::before {
+    border: 5px solid var(--control-check-bg);
+    background: var(--control-check-fg);
+}
+
+.drama-workflow-style-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    padding: var(--space-1);
+}
+
+.drama-workflow-style-options button {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.drama-workflow-style-options button[aria-pressed="true"] {
+    border-color: var(--control-selected-border);
+    box-shadow: 0 0 0 1px var(--control-selected-border);
+}
+
+.drama-workflow-style-options img,
+.drama-workflow-style-placeholder {
+    display: grid;
+    width: 100%;
+    aspect-ratio: 1;
+    place-items: center;
+    object-fit: cover;
+    color: var(--text-tertiary);
+}
+
+.drama-workflow-style-options strong {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    padding: var(--space-2);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    font-weight: 500;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.drama-workflow-style-placeholder {
+    align-content: center;
+    gap: var(--space-1);
+    padding-bottom: var(--space-5);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-style-check {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 28px;
+    height: 28px;
+    padding: var(--space-1);
+    border-radius: 50%;
+    background: var(--control-check-bg);
+    color: var(--control-check-fg);
+}
+
+.drama-workflow-config-form button:focus-visible,
+.drama-workflow-style-gallery button:focus-visible {
+    outline: 2px solid var(--control-focus-ring);
+    outline-offset: 2px;
+}
+
+.drama-workflow-config-form button:disabled {
+    cursor: not-allowed;
+}
+
+.drama-workflow-more > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-block: var(--space-3);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-more > summary svg {
+    width: 16px;
+    height: 16px;
+}
+
+.drama-workflow-style-preview {
+    min-height: 0;
+    margin: var(--space-4) 0 var(--space-4) var(--space-4);
+    border-radius: var(--radius-lg);
+    background: var(--surface-hover);
+}
+
+.drama-workflow-style-preview > header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.drama-workflow-sample-label {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-style-gallery {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(110px, calc((100% - (var(--workflow-style-sample-count, 6) - 1) * var(--space-2)) / var(--workflow-style-sample-count, 6)));
+    gap: var(--space-2);
+    overflow-x: auto;
+    align-items: start;
+    padding-block: var(--space-1);
+}
+
+.drama-workflow-style-gallery button {
+    position: relative;
+    display: grid;
+    min-width: 0;
+    aspect-ratio: 1;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    cursor: zoom-in;
+}
+
+.drama-workflow-style-gallery img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.drama-workflow-style-gallery svg {
+    position: absolute;
+    right: var(--space-3);
+    bottom: var(--space-3);
+    width: 28px;
+    height: 28px;
+    padding: var(--space-1);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.drama-workflow-style-gallery button:disabled {
+    cursor: default;
+}
+
+.drama-workflow-style-image-error {
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-style-image-error svg {
+    position: static;
+    padding: 0;
+    background: transparent;
+}
+
+.drama-workflow-style-empty {
+    display: flex;
+    min-height: 360px;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    color: var(--text-tertiary);
+    text-align: center;
+}
+
+.drama-workflow-style-description p {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.drama-workflow-style-description details {
+    margin-top: var(--space-3);
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-style-caption {
+    margin-top: auto !important;
+}
+
+.drama-workflow-style-lightbox {
+    display: block;
+    width: 100%;
+    max-height: 75dvh;
+    object-fit: contain;
+}
+
+@media (max-width: 1100px) {
+    .drama-workflow-configuration {
+        grid-template-columns: minmax(260px, 30%) minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 760px) {
+    .drama-workflow-configuration {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .drama-workflow-config-form {
+        padding-right: 0;
+        border-right: 0;
+        overflow-y: visible;
+    }
+
+    .drama-workflow-style-preview {
+        min-height: 360px;
+        margin: 0;
+    }
+}

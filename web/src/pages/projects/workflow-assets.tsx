@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Input } from "antd";
-import { Plus, RefreshCw } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { App, Button, Input, Select } from "antd";
+import { ArrowRight, ChevronLeft, ChevronRight, Gem, MapPinned, Plus, UsersRound } from "lucide-react";
 
-import { ApiError } from "@/services/api/request";
-import { createDramaCast, extractDramaCast, listDramaChapters, updateDramaSettings, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { createDramaCast, updateDramaSettings, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { AssetSchemePicker } from "./asset-scheme";
 import { CAST_KIND_LABEL } from "./drama-shared";
 import { GuideAssets } from "./guide-panels";
 import { WorkflowAssetScope } from "./workflow-asset-scope";
+import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowCharacterLibrary } from "./workflow-character-library";
 import { WorkflowImpact } from "./workflow-impact";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
@@ -21,6 +21,9 @@ import "./workflow-assets.css";
 const KINDS = ["character", "scene", "prop"] as const satisfies readonly DramaCastKind[];
 
 export type WorkflowAssetsProps = {
+    variant?: "library" | "episode";
+    episodeId?: string;
+    onEpisodeChange?: (episodeId: string) => void;
     summary: DramaSummary;
     cast: DramaCast[];
     loading?: boolean;
@@ -30,15 +33,13 @@ export type WorkflowAssetsProps = {
     onChanged: () => void;
     onGenerate: (cast: DramaCast) => void;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+    onContinue?: () => void;
+    continueDisabled?: boolean;
+    continuing?: boolean;
 };
 
-type ExtractRange = "current" | "episodes";
 type AddDraft = { name: string };
 type SchemeDraft = { value: DramaAssetSettings; baseline: string; revision: number };
-
-function staleConflict(error: unknown) {
-    return error instanceof ApiError && (error.reason === "conflict" || error.status === 409);
-}
 
 function assetBaseline(settings: DramaAssetSettings) {
     return JSON.stringify(settings);
@@ -50,32 +51,47 @@ function belongsToProject(item: DramaCast, projectId: string) {
 
 export function WorkflowAssets(props: WorkflowAssetsProps) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return <WorkflowAssetsSession key={`${userId}:${props.summary.project.id}`} {...props} userId={userId} />;
+    return <WorkflowAssetsSession key={`${userId}:${props.summary.project.id}`} {...props} />;
 }
 
-function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, error, onRetry, onChanged, onGenerate, onDirtyChange, userId }: WorkflowAssetsProps & { userId: string }) {
+function WorkflowAssetsSession({
+    summary,
+    cast,
+    variant = "episode",
+    episodeId,
+    onEpisodeChange,
+    loading = false,
+    busy = false,
+    error,
+    onRetry,
+    onChanged,
+    onGenerate,
+    onDirtyChange,
+    onContinue,
+    continueDisabled = false,
+    continuing = false,
+}: WorkflowAssetsProps) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const projectId = summary.project.id;
     const revision = summary.production.revision;
+    const assetEditBlocked = (summary.guide?.step || summary.production.guideStep) === "configuring";
     const operation = useDramaOperationScope(projectId);
     const [kind, setKind] = useState<DramaCastKind>("character");
-    const [range, setRange] = useState<ExtractRange>("current");
-    const [episodeIds, setEpisodeIds] = useState<string[]>([]);
+    const [localEpisodeId, setLocalEpisodeId] = useState(() => summary.episodes.toSorted((left, right) => left.number - right.number)[0]?.id || "");
     const [addOpen, setAddOpen] = useState(false);
+    const [addKind, setAddKind] = useState<DramaCastKind>("character");
     const [addDraft, setAddDraft] = useState<AddDraft>({ name: "" });
     const [created, setCreated] = useState<DramaCast>();
+    const [revealShared, setRevealShared] = useState<{ episodeId: string; castId: string }>();
     const [editingId, setEditingId] = useState<string>();
     const [schemeOpen, setSchemeOpen] = useState(false);
     const [scheme, setScheme] = useState<SchemeDraft | null>(null);
     const [libraryState, setLibraryState] = useState({ dirty: false, busy: false });
+    const [editorState, setEditorState] = useState({ dirty: false, busy: false });
+    const [batchActivity, setBatchActivity] = useState<Partial<Record<DramaCastKind, boolean>>>({});
     const mutationLock = useRef(false);
     const latest = useRef({ onChanged, onGenerate, onDirtyChange, revision, frozen: busy, schemeStale: false });
-
-    const chapters = useQuery({
-        queryKey: [...dramaKeys.chapters(projectId), userId],
-        queryFn: ({ signal }) => listDramaChapters(projectId, signal),
-    });
 
     useEffect(() => {
         const current = summary.production.settings.assets;
@@ -89,9 +105,9 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
 
     const projectCast = cast.filter((item) => belongsToProject(item, projectId));
     const counts = Object.fromEntries(KINDS.map((item) => [item, projectCast.filter((entry) => entry.kind === item && !entry.parentId).length])) as Record<DramaCastKind, number>;
-    const episodes = summary.episodes.filter((episode) => episode.id);
-    const selectedEpisodes = episodeIds.filter((id) => episodes.some((episode) => episode.id === id));
-    const selectedChapters = (chapters.data?.chapters || []).filter((chapter) => !chapter.reserved);
+    const episodes = summary.episodes.filter((episode) => episode.id).toSorted((left, right) => left.number - right.number);
+    const selectedEpisodeId = episodeId ?? localEpisodeId;
+    const episodeIndex = episodes.findIndex((episode) => episode.id === selectedEpisodeId);
     const schemeDirty = Boolean(scheme && assetBaseline(scheme.value) !== scheme.baseline);
     const schemeStale = Boolean(scheme && scheme.revision !== revision);
     useEffect(() => {
@@ -108,33 +124,8 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
         latest.current.onChanged();
     };
 
-    const extract = useMutation({
-        mutationFn: async (input: { kind: DramaCastKind; range: ExtractRange; episodeIds: string[]; expectedRevision: number; ticket: ReturnType<typeof operation.capture> }) => {
-            if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
-            if (input.expectedRevision !== latest.current.revision) throw new Error("资产范围已有更新，未开始提取。请重新载入后再试。");
-            if (input.range === "episodes" && !input.episodeIds.length) throw new Error("请至少选择一集后再提取");
-            return extractDramaCast(input.ticket.projectId, {
-                expectedRevision: input.expectedRevision,
-                kind: input.kind,
-                ...(input.range === "episodes" ? { episodeIds: input.episodeIds } : {}),
-            });
-        },
-        onSuccess: (_result, input) => {
-            if (!operation.isCurrent(input.ticket)) return;
-            refreshProject(input.ticket);
-            message.success(`已排队提取遗漏的${CAST_KIND_LABEL[input.kind]}，保留已有设定`);
-        },
-        onError: (error, input) => {
-            if (!operation.isCurrent(input.ticket)) return;
-            message.error(staleConflict(error) ? "资产范围已有更新，未开始提取。请重新载入后再试。" : error instanceof Error ? error.message : "提取失败");
-        },
-        onSettled: () => {
-            mutationLock.current = false;
-        },
-    });
-
     const create = useMutation({
-        mutationFn: async (input: { kind: DramaCastKind; name: string; expectedRevision: number; ticket: ReturnType<typeof operation.capture> }) => {
+        mutationFn: async (input: { kind: DramaCastKind; name: string; expectedRevision: number; episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
             const name = input.name.trim();
             if (!name) throw new Error("请填写名称");
@@ -144,15 +135,16 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
         onSuccess: ({ cast: createdCast }, input) => {
             if (!operation.isCurrent(input.ticket)) return;
             setCreated(createdCast);
+            if (input.episodeId) setRevealShared({ episodeId: input.episodeId, castId: createdCast.id });
             setEditingId(createdCast.id);
             setAddDraft({ name: "" });
             setAddOpen(false);
             refreshProject(input.ticket);
-            message.success("已新增资产，可继续编辑文字设定");
+            message.success("已保存到作品共享资产，可继续编辑文字设定");
         },
         onError: (error, input) => {
             if (!operation.isCurrent(input.ticket)) return;
-            message.error(staleConflict(error) ? "作品已有更新，未新增。请重新载入后再试。" : error instanceof Error ? error.message : "新增失败");
+            message.error(error instanceof Error ? error.message : "新增失败");
         },
         onSettled: () => {
             mutationLock.current = false;
@@ -176,41 +168,30 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
         },
         onError: (error, input) => {
             if (!operation.isCurrent(input.ticket)) return;
-            message.error(staleConflict(error) ? "参考图方案已有更新，未保存。请重新载入或放弃修改。" : error instanceof Error ? error.message : "保存失败");
+            message.error(error instanceof Error ? error.message : "保存失败");
         },
         onSettled: () => {
             mutationLock.current = false;
         },
     });
 
-    const pending = extract.isPending || create.isPending || saveScheme.isPending;
-    const frozen = locked || pending || libraryState.busy;
+    const pending = create.isPending || saveScheme.isPending;
+    const batchBusy = KINDS.some((kind) => batchActivity[kind]);
+    const frozen = locked || pending || libraryState.busy || editorState.busy || batchBusy;
+    const assetFrozen = frozen || assetEditBlocked;
     latest.current = { onChanged, onGenerate, onDirtyChange, revision, frozen, schemeStale };
-    const rangeStale = extract.isError && (staleConflict(extract.error) || extract.variables?.expectedRevision !== revision);
-    const dirty = schemeDirty || Boolean(addDraft.name.trim()) || libraryState.dirty;
+    const dirty = schemeDirty || Boolean(addDraft.name.trim()) || libraryState.dirty || editorState.dirty;
     useEffect(() => {
-        latest.current.onDirtyChange?.(dirty, pending || busy || libraryState.busy);
-    }, [dirty, pending, busy, libraryState.busy]);
+        latest.current.onDirtyChange?.(dirty, pending || busy || libraryState.busy || editorState.busy || batchBusy);
+    }, [dirty, pending, busy, libraryState.busy, editorState.busy, batchBusy]);
     useEffect(() => () => latest.current.onDirtyChange?.(false, false), []);
 
-    const startExtract = () => {
-        if (frozen || mutationLock.current) return;
-        if (range === "episodes" && !selectedEpisodes.length) {
-            message.error("请至少选择一集后再提取");
-            return;
-        }
-        mutationLock.current = true;
-        const expectedRevision = revision;
-        const ticket = operation.capture();
-        extract.mutate({ kind, range, episodeIds: selectedEpisodes, expectedRevision, ticket });
-    };
-
     const submitAdd = () => {
-        if (frozen || mutationLock.current) return;
+        if (assetFrozen || mutationLock.current) return;
         mutationLock.current = true;
         const expectedRevision = revision;
         const ticket = operation.capture();
-        create.mutate({ kind, name: addDraft.name, expectedRevision, ticket });
+        create.mutate({ kind: addKind, name: addDraft.name, expectedRevision, episodeId: variant === "episode" ? selectedEpisodeId : "", ticket });
     };
 
     const submitScheme = () => {
@@ -222,118 +203,104 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
     const reloadScheme = () => {
         setScheme({ value: summary.production.settings.assets, baseline: assetBaseline(summary.production.settings.assets), revision });
     };
+    const openAdd = (nextKind: DramaCastKind) => {
+        if (assetFrozen) return;
+        if (addDraft.name.trim() && addKind !== nextKind) {
+            message.info(`请先保存或取消正在新增的${CAST_KIND_LABEL[addKind]}`);
+            return;
+        }
+        setAddKind(nextKind);
+        setAddOpen(true);
+    };
+    const selectEpisode = (id: string) => {
+        if (frozen || dirty || editingId || !episodes.some((episode) => episode.id === id)) return;
+        if (onEpisodeChange) onEpisodeChange(id);
+        else setLocalEpisodeId(id);
+    };
 
     return (
-        <section className="drama-workflow-assets" aria-label="主体资产">
+        <section className={`drama-workflow-assets is-${variant}`} aria-label="主体资产">
             <header className="drama-workflow-assets-head">
-                <div>
-                    <h2>主体资产</h2>
-                    <p>审阅文字设定，按需生成参考图；图片也可以稍后再生成。</p>
+                <div className="drama-workflow-assets-heading">
+                    <h2>{variant === "library" ? "主体资产" : "主体管理"}</h2>
+                    {variant === "episode" ? (
+                        <nav className="drama-workflow-assets-episode-nav" aria-label="主体管理选集">
+                            <Button
+                                type="text"
+                                icon={<ChevronLeft className="size-4" />}
+                                aria-label="上一集主体资产"
+                                disabled={frozen || dirty || Boolean(editingId) || episodeIndex <= 0}
+                                onClick={() => selectEpisode(episodes[episodeIndex - 1]?.id || "")}
+                            />
+                            <Select
+                                aria-label="主体管理剧集"
+                                value={selectedEpisodeId || undefined}
+                                placeholder="暂无剧集"
+                                disabled={frozen || dirty || Boolean(editingId) || !episodes.length}
+                                onChange={selectEpisode}
+                                options={episodes.map((episode) => ({ value: episode.id, label: `第${episode.number}集`, title: episode.title }))}
+                            />
+                            <Button
+                                type="text"
+                                icon={<ChevronRight className="size-4" />}
+                                aria-label="下一集主体资产"
+                                disabled={frozen || dirty || Boolean(editingId) || episodeIndex < 0 || episodeIndex >= episodes.length - 1}
+                                onClick={() => selectEpisode(episodes[episodeIndex + 1]?.id || "")}
+                            />
+                        </nav>
+                    ) : null}
                 </div>
-                <Button icon={<Plus className="size-3.5" />} disabled={frozen} onClick={() => setAddOpen(true)}>
-                    快速新增
-                </Button>
+                <div className="drama-workflow-assets-actions">
+                    {variant === "library" ? (
+                        <Button icon={<Plus className="size-3.5" />} disabled={assetFrozen} onClick={() => openAdd(kind)}>
+                            新增{CAST_KIND_LABEL[kind]}
+                        </Button>
+                    ) : null}
+                    {onContinue ? (
+                        <Button type="primary" icon={<ArrowRight className="size-3.5" />} disabled={continueDisabled || frozen || dirty} loading={continuing} onClick={onContinue}>
+                            编排剧本
+                        </Button>
+                    ) : null}
+                </div>
             </header>
 
-            <div className="drama-workflow-assets-tabs" role="tablist" aria-label="资产类型">
-                {KINDS.map((item) => (
-                    <button key={item} type="button" role="tab" aria-selected={kind === item} disabled={frozen && kind !== item} onClick={() => setKind(item)}>
-                        {CAST_KIND_LABEL[item]}
-                        <span>{counts[item]}</span>
-                    </button>
-                ))}
-            </div>
+            {assetEditBlocked ? <p role="status">请先完成风格设置，进入角色场景后再新增或编辑资产。</p> : null}
 
-            {kind === "character" ? (
-                <WorkflowCharacterLibrary
-                    summary={summary}
-                    cast={projectCast}
-                    busy={locked || pending}
-                    onChanged={onChanged}
-                    onDirtyChange={(dirty, busy) => setLibraryState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
-                />
-            ) : null}
-
-            <form
-                className="drama-workflow-assets-extract"
-                aria-label={`增量提取${CAST_KIND_LABEL[kind]}`}
-                onSubmit={(event) => {
-                    event.preventDefault();
-                    startExtract();
-                }}
-            >
-                <fieldset disabled={frozen}>
-                    <legend>增量提取{CAST_KIND_LABEL[kind]}文字</legend>
-                    <p>仅新增正文中遗漏的资产，保留已有设定和图片。</p>
-                    <div className="drama-workflow-assets-range" role="radiogroup" aria-label="提取范围">
-                        <label>
-                            <input type="radio" name="extract-range" value="current" checked={range === "current"} onChange={() => setRange("current")} />
-                            当前制作章节
-                            <small>{chapters.isLoading ? "正在读取章节" : chapters.isError ? "章节读取失败" : selectedChapters.length ? `使用已加入制作的 ${selectedChapters.length} 章` : "当前没有已加入制作的章节"}</small>
-                        </label>
-                        <label>
-                            <input type="radio" name="extract-range" value="episodes" checked={range === "episodes"} onChange={() => setRange("episodes")} />
-                            指定集
-                            <small>只使用本作品的集，必须至少选一集</small>
-                        </label>
+            {variant === "library" ? (
+                <div className="drama-workflow-assets-library-toolbar">
+                    <div className="drama-workflow-assets-tabs" role="group" aria-label="主体资产分类">
+                        {KINDS.map((item) => (
+                            <button key={item} type="button" aria-pressed={kind === item} disabled={frozen && kind !== item} onClick={() => setKind(item)}>
+                                {CAST_KIND_LABEL[item]}
+                                <span>{counts[item]}</span>
+                            </button>
+                        ))}
                     </div>
-                    {range === "episodes" ? (
-                        episodes.length ? (
-                            <div className="drama-workflow-assets-episodes" role="group" aria-label="选择要提取的集">
-                                {episodes.map((episode) => (
-                                    <label key={episode.id}>
-                                        <input
-                                            type="checkbox"
-                                            aria-label={`提取 ${episode.title || `第 ${episode.number} 集`}`}
-                                            checked={selectedEpisodes.includes(episode.id)}
-                                            onChange={(event) => setEpisodeIds(event.target.checked ? [...selectedEpisodes, episode.id] : selectedEpisodes.filter((id) => id !== episode.id))}
-                                        />
-                                        {episode.title || `第 ${episode.number} 集`}
-                                    </label>
-                                ))}
-                            </div>
-                        ) : (
-                            <p role="status">本作品还没有可选择的集。</p>
-                        )
-                    ) : null}
-                    {chapters.isError && range === "current" ? (
-                        <p role="alert">
-                            当前制作章节暂时无法读取。
-                            <Button size="small" onClick={() => void chapters.refetch()}>
-                                重试
-                            </Button>
-                        </p>
-                    ) : null}
-                    {rangeStale ? (
-                        <p role="alert">
-                            提取时的版本已过期，范围仍保留。请刷新作品后再重试。
-                            <Button size="small" icon={<RefreshCw className="size-3.5" />} onClick={() => latest.current.onChanged()}>
-                                刷新后重试
-                            </Button>
-                        </p>
-                    ) : null}
-                    {busy ? <p role="status">当前操作进行中，请完成后再提取或修改。</p> : null}
-                    <Button htmlType="submit" type="primary" loading={extract.isPending} disabled={frozen || (range === "current" && (chapters.isLoading || chapters.isError || !selectedChapters.length))}>
-                        提取{CAST_KIND_LABEL[kind]}文字
-                    </Button>
-                </fieldset>
-            </form>
+                    <WorkflowCharacterLibrary
+                        summary={summary}
+                        cast={projectCast}
+                        busy={locked || pending || assetEditBlocked}
+                        onChanged={onChanged}
+                        onDirtyChange={(dirty, busy) => setLibraryState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                    />
+                </div>
+            ) : null}
 
             {addOpen ? (
                 <form
                     className="drama-workflow-assets-add"
-                    aria-label={`快速新增${CAST_KIND_LABEL[kind]}`}
+                    aria-label={`快速新增${CAST_KIND_LABEL[addKind]}`}
                     onSubmit={(event) => {
                         event.preventDefault();
                         submitAdd();
                     }}
                 >
                     <fieldset disabled={frozen}>
-                        <legend>快速新增{CAST_KIND_LABEL[kind]}</legend>
+                        <legend>快速新增{CAST_KIND_LABEL[addKind]}</legend>
                         <p>先保存名称，再补充文字设定。这里不会猜测描述或开始生成图片。</p>
                         <label>
                             名称
-                            <Input aria-label="资产名称" maxLength={60} value={addDraft.name} onChange={(event) => setAddDraft((current) => ({ ...current, name: event.target.value }))} />
+                            <Input aria-label="资产名称" disabled={assetEditBlocked} maxLength={60} value={addDraft.name} onChange={(event) => setAddDraft((current) => ({ ...current, name: event.target.value }))} />
                         </label>
                         <div className="drama-workflow-assets-actions">
                             <Button
@@ -346,7 +313,7 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                             >
                                 取消
                             </Button>
-                            <Button htmlType="submit" type="primary" loading={create.isPending} disabled={frozen || !addDraft.name.trim()}>
+                            <Button htmlType="submit" type="primary" loading={create.isPending} disabled={assetFrozen || !addDraft.name.trim()}>
                                 保存资产
                             </Button>
                         </div>
@@ -354,7 +321,7 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                 </form>
             ) : null}
 
-            <div role="tabpanel" aria-label={`${CAST_KIND_LABEL[kind]}列表`}>
+            <div className="drama-workflow-assets-results" aria-label="角色、场景与道具列表">
                 {error ? (
                     <p role="alert">
                         资产读取失败，已加载的设定会保留。<Button onClick={onRetry || onChanged}>重试</Button>
@@ -365,22 +332,55 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                         正在读取本作品资产
                     </p>
                 ) : null}
-                <WorkflowAssetScope summary={summary} cast={projectCast} kind={kind} busy={frozen} onChanged={onChanged}>
-                    {(visible) => (
-                        <GuideAssets
-                            cast={visible}
-                            busy={frozen}
-                            loading={loading}
-                            onEdit={(item) => {
-                                if (!frozen) setEditingId(item.id);
-                            }}
-                            onGenerate={(item) => {
-                                if (!frozen) onGenerate(item);
-                            }}
-                        />
+                <WorkflowAssetScope
+                    key={variant}
+                    summary={summary}
+                    cast={projectCast}
+                    kind={variant === "library" ? kind : undefined}
+                    episodeId={variant === "episode" ? selectedEpisodeId : undefined}
+                    showToolbar={variant === "library"}
+                    sharedBeforeStoryboard={variant === "episode"}
+                    busy={assetFrozen}
+                    onChanged={onChanged}
+                >
+                    {(visible, refreshing, sharedCast) => (
+                        <div className="drama-workflow-assets-columns">
+                            {(variant === "library" ? [kind] : KINDS).map((columnKind) => (
+                                <WorkflowAssetColumn
+                                    key={`${selectedEpisodeId}:${columnKind}`}
+                                    summary={summary}
+                                    kind={columnKind}
+                                    cast={visible.filter((item) => item.kind === columnKind)}
+                                    sharedCast={sharedCast.filter((item) => item.kind === columnKind)}
+                                    revealSharedId={revealShared?.episodeId === selectedEpisodeId ? revealShared.castId : undefined}
+                                    busy={assetFrozen || refreshing}
+                                    loading={loading}
+                                    selectable={variant === "episode"}
+                                    onBusyChange={(busy) => setBatchActivity((previous) => (previous[columnKind] === busy ? previous : { ...previous, [columnKind]: busy }))}
+                                    onChanged={onChanged}
+                                    onAdd={() => openAdd(columnKind)}
+                                    onEdit={(item) => {
+                                        if (!assetFrozen) setEditingId(item.id);
+                                    }}
+                                    onGenerate={(item) => {
+                                        if (!assetFrozen) onGenerate(item);
+                                    }}
+                                />
+                            ))}
+                        </div>
                     )}
                 </WorkflowAssetScope>
             </div>
+
+            {variant === "episode" ? (
+                <WorkflowCharacterLibrary
+                    summary={summary}
+                    cast={projectCast}
+                    busy={locked || pending || assetEditBlocked}
+                    onChanged={onChanged}
+                    onDirtyChange={(dirty, busy) => setLibraryState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                />
+            ) : null}
 
             <details className="drama-workflow-assets-scheme" open={schemeOpen} onToggle={(event) => setSchemeOpen(event.currentTarget.open)}>
                 <summary>后续参考图方案</summary>
@@ -446,6 +446,7 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
                 summary={summary}
                 cast={editorCast}
                 castId={editingId}
+                onDirtyChange={(dirty, busy) => setEditorState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
                 onClose={() => {
                     setEditingId(undefined);
                     setCreated(undefined);
@@ -457,6 +458,143 @@ function WorkflowAssetsSession({ summary, cast, loading = false, busy = false, e
             >
                 {editingId ? <WorkflowImpact projectId={projectId} revision={summary.production.revision} castId={editingId} /> : null}
             </CastEditorDialog>
+        </section>
+    );
+}
+
+function WorkflowAssetColumn({
+    summary,
+    kind,
+    cast,
+    sharedCast,
+    revealSharedId,
+    busy,
+    loading,
+    selectable,
+    onChanged,
+    onBusyChange,
+    onAdd,
+    onEdit,
+    onGenerate,
+}: {
+    summary: DramaSummary;
+    kind: DramaCastKind;
+    cast: DramaCast[];
+    sharedCast: DramaCast[];
+    revealSharedId?: string;
+    busy: boolean;
+    loading: boolean;
+    selectable: boolean;
+    onChanged: () => void;
+    onBusyChange: (busy: boolean) => void;
+    onAdd: () => void;
+    onEdit: (cast: DramaCast) => void;
+    onGenerate: (cast: DramaCast) => void;
+}) {
+    const [selection, setSelection] = useState<Set<string>>(() => new Set());
+    const [sharedOpen, setSharedOpen] = useState(false);
+    const shouldRevealShared = Boolean(revealSharedId && sharedCast.some((item) => item.id === revealSharedId));
+    useEffect(() => {
+        if (shouldRevealShared) setSharedOpen(true);
+    }, [revealSharedId, shouldRevealShared]);
+    const ids = cast.map((item) => item.id);
+    const selected = [...ids, ...sharedCast.map((item) => item.id)].filter((id) => selection.has(id));
+    const selectedCurrent = ids.filter((id) => selection.has(id));
+    const allSelected = ids.length > 0 && selectedCurrent.length === ids.length;
+    const base = cast.filter((item) => !item.parentId);
+    const sharedBase = sharedCast.filter((item) => !item.parentId);
+    const sharedBaseIds = new Set(sharedBase.map((item) => item.id));
+    const sharedGroupCast = sharedCast.filter((item) => !item.parentId || sharedBaseIds.has(item.parentId));
+    const sharedLooks = sharedCast.filter((item) => item.parentId && cast.some((parent) => parent.id === item.parentId));
+    const label = CAST_KIND_LABEL[kind];
+    const Icon = kind === "character" ? UsersRound : kind === "scene" ? MapPinned : Gem;
+    const toggle = (item: DramaCast, checked: boolean) => {
+        if (busy) return;
+        setSelection((previous) => {
+            const next = new Set(previous);
+            if (checked) next.add(item.id);
+            else next.delete(item.id);
+            return next;
+        });
+    };
+    return (
+        <section className="drama-workflow-assets-column" aria-label={`${label}资产`}>
+            <header className="drama-workflow-assets-column-head">
+                <h3>
+                    <Icon className="size-4" aria-hidden />
+                    {label}
+                </h3>
+                <div className="drama-workflow-assets-column-actions">
+                    {selectable ? (
+                        <WorkflowBatch
+                            projectId={summary.project.id}
+                            revision={summary.production.revision}
+                            targetIds={selected}
+                            targetLabels={Object.fromEntries([...cast, ...sharedCast].map((item) => [item.id, item.name]))}
+                            actions={["cast_image"]}
+                            compact
+                            triggerLabel={`生成${label}图片`}
+                            scopeDescription={`范围：当前列表已选 ${selected.length} 项${label}及造型，包含已勾选的作品共享主体。`}
+                            disabled={busy || loading}
+                            onChanged={onChanged}
+                            onBusyChange={onBusyChange}
+                        />
+                    ) : null}
+                    <Button size="small" type="text" icon={<Plus className="size-3.5" />} aria-label={`新增${label}`} disabled={busy} onClick={onAdd}>
+                        新增
+                    </Button>
+                </div>
+            </header>
+            {selectable ? (
+                <label className="drama-workflow-assets-column-count">
+                    <input
+                        type="checkbox"
+                        aria-label={`选择本集全部${label}`}
+                        checked={allSelected}
+                        ref={(input) => {
+                            if (input) input.indeterminate = selectedCurrent.length > 0 && !allSelected;
+                        }}
+                        disabled={busy || loading || !ids.length}
+                        onChange={(event) => {
+                            const checked = event.target.checked;
+                            setSelection((previous) => {
+                                const next = new Set(previous);
+                                for (const id of ids) {
+                                    if (checked) next.add(id);
+                                    else next.delete(id);
+                                }
+                                return next;
+                            });
+                        }}
+                    />
+                    共 {base.length} 项{selected.length ? ` · 已选 ${selected.length} 项` : ""}
+                </label>
+            ) : null}
+            {base.length ? (
+                <GuideAssets
+                    cast={[...cast, ...sharedLooks]}
+                    sharedLookIds={new Set(sharedLooks.map((item) => item.id))}
+                    busy={busy}
+                    loading={loading}
+                    onEdit={onEdit}
+                    onGenerate={onGenerate}
+                    selectedIds={selectable ? selection : undefined}
+                    onSelect={selectable ? toggle : undefined}
+                />
+            ) : (
+                <div className="drama-workflow-assets-column-empty" role="status">
+                    <Icon className="size-7" aria-hidden />
+                    <strong>{loading ? `正在读取${label}` : sharedBase.length ? `本集暂无引用${label}` : `暂无${label}资产`}</strong>
+                    <p>{loading ? "请稍候" : sharedBase.length ? "可展开下方作品共享主体，或点击右上角新增。" : `可点击右上角新增${label}。`}</p>
+                </div>
+            )}
+            {sharedBase.length ? (
+                <details className="drama-workflow-assets-shared" open={sharedOpen} onToggle={(event) => setSharedOpen(event.currentTarget.open)}>
+                    <summary>作品共享 · 本集未引用（{sharedBase.length}）</summary>
+                    <p>这些主体已保存在作品中，可继续编辑、勾选或生成；引用到镜头后会显示在本集列表。</p>
+                    {sharedOpen ? <GuideAssets cast={sharedGroupCast} busy={busy} loading={loading} onEdit={onEdit} onGenerate={onGenerate} selectedIds={selectable ? selection : undefined} onSelect={selectable ? toggle : undefined} /> : null}
+                </details>
+            ) : null}
         </section>
     );
 }

@@ -26,6 +26,19 @@
     align-items: center;
     gap: var(--space-2);
 }
+.drama-workflow-idea-controls {
+    --drama-idea-control-height: 38px;
+    align-items: flex-end;
+}
+.drama-workflow-idea-controls > .ant-btn,
+.drama-workflow-idea-controls select {
+    height: var(--drama-idea-control-height);
+}
+.drama-workflow-idea-controls > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--drama-idea-control-height);
+}
 .drama-workflow-idea label,
 .drama-workflow-idea-result {
     display: flex;
@@ -34,7 +47,14 @@
     min-width: 0;
 }
 .drama-workflow-idea-model {
+    display: flex;
+    align-items: center;
     width: min(100%, 300px);
+    min-width: 0;
+    min-height: var(--drama-idea-control-height);
+}
+.drama-workflow-idea-model > span {
+    overflow-wrap: anywhere;
 }
 .drama-workflow-idea select {
     min-height: 32px;

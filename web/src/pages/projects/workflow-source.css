@@ -1,0 +1,683 @@
+.drama-source-page {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.drama-source-page.is-source {
+    width: 100%;
+    max-width: 1280px;
+    margin-inline: auto;
+}
+
+.drama-source-page.is-review > .drama-source-heading {
+    padding-bottom: var(--space-5);
+    border-bottom: 1px solid var(--border);
+}
+
+.drama-source-heading,
+.drama-source-bar,
+.drama-source-actions,
+.drama-source-input-modes,
+.drama-source-editor-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.drama-source-heading,
+.drama-source-bar,
+.drama-source-editor-heading {
+    justify-content: space-between;
+}
+
+.drama-source-heading h2,
+.drama-source-format-help h3,
+.drama-source-replacement h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-title);
+    line-height: var(--lh-heading);
+}
+
+.drama-source-heading p,
+.drama-source-format-help p,
+.drama-source-note {
+    margin: var(--space-2) 0 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-heading.is-upload {
+    justify-content: center;
+    padding-block: var(--space-6);
+    text-align: center;
+}
+
+.drama-source-import-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    align-items: stretch;
+    gap: var(--space-5);
+}
+
+.drama-source-import-panel,
+.drama-source-format-help,
+.drama-source-replacement {
+    min-width: 0;
+    padding: var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+
+.drama-source-import-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.drama-source-input-modes .ant-btn[aria-pressed="true"] {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-source-upload-zone {
+    display: flex;
+    width: 100%;
+    min-height: clamp(420px, 58vh, 640px);
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-8);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    text-align: center;
+    cursor: pointer;
+}
+
+.drama-source-upload-zone:not(:disabled):hover {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-hover-bg);
+}
+
+.drama-source-upload-zone:disabled {
+    cursor: default;
+}
+
+.drama-source-upload-zone > strong {
+    font-size: var(--fs-ui);
+}
+
+.drama-source-upload-zone > span:not(.drama-source-file-icon),
+.drama-source-upload-zone > small {
+    color: var(--text-secondary);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-file-icon {
+    position: relative;
+    display: grid;
+    width: var(--space-16);
+    height: var(--space-16);
+    margin-bottom: var(--space-2);
+    place-items: center;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--status-loading) 12%, transparent);
+    color: var(--status-loading);
+}
+
+.drama-source-file-icon .drama-source-ready-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: var(--space-5);
+    height: var(--space-5);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--status-success);
+}
+
+.drama-source-upload-zone > .drama-source-file-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 100%;
+    color: var(--status-loading);
+    overflow-wrap: anywhere;
+}
+
+.drama-source-upload-zone > .drama-source-upload-hint {
+    margin-top: var(--space-5);
+    font-size: var(--fs-label);
+}
+
+.drama-source-format-help h3 {
+    font-size: var(--fs-ui);
+}
+
+.drama-source-file-icon svg {
+    width: var(--space-8);
+    height: var(--space-8);
+}
+
+.drama-source-paste-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drama-source-paste-panel label,
+.drama-source-editor-heading label {
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+
+.drama-source-paste-panel textarea {
+    min-height: 300px;
+    resize: vertical;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-imported {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-imported > svg {
+    flex-shrink: 0;
+    margin-top: var(--space-1);
+    color: var(--status-success);
+}
+
+.drama-source-imported strong,
+.drama-source-imported span {
+    display: block;
+}
+
+.drama-source-imported span {
+    margin-top: var(--space-1);
+    color: var(--text-secondary);
+    line-height: var(--lh-body);
+}
+
+.drama-source-format-help h4 {
+    margin: var(--space-5) 0 var(--space-2);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-format-help ol,
+.drama-source-format-help ul {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding-left: var(--space-5);
+    color: var(--text-secondary);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-format-example {
+    margin: var(--space-4) 0 0;
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    line-height: var(--lh-body);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.drama-source-format-example > strong {
+    display: block;
+    margin-bottom: var(--space-3);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+    font-weight: 400;
+}
+
+.drama-source-format-example p {
+    margin: var(--space-2) 0 0;
+    font-size: var(--fs-label);
+}
+
+.drama-source-format-options {
+    color: var(--text-secondary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-format-options summary {
+    width: fit-content;
+    min-height: var(--space-8);
+    cursor: pointer;
+}
+
+.drama-source-format-options summary span {
+    margin-left: var(--space-3);
+    color: var(--control-selected-fg);
+}
+
+.drama-source-format-options[open] .drama-media-modes {
+    margin-top: var(--space-2);
+}
+
+.drama-source-bar {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    line-height: var(--lh-body);
+}
+
+.drama-source-scope {
+    padding-block: var(--space-1);
+}
+
+.drama-source-replacement p {
+    margin: var(--space-2) 0 var(--space-3);
+    color: var(--text-secondary);
+    line-height: var(--lh-body);
+}
+
+.drama-source-replacement-item {
+    display: flex;
+    min-height: var(--space-10);
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-replacement > .drama-source-actions {
+    justify-content: flex-end;
+    margin-top: var(--space-4);
+}
+
+.drama-source-review-layout {
+    display: grid;
+    min-height: 540px;
+    grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0;
+}
+
+.drama-source-chapter-list {
+    min-width: 0;
+    max-height: 720px;
+    overflow-y: auto;
+    padding: var(--space-2) var(--space-3) var(--space-2) 0;
+    border-right: 1px solid var(--border);
+}
+
+.drama-source-chapter-list > p {
+    margin: 0 0 var(--space-3);
+    padding: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-source-chapter-item {
+    margin: 0;
+    padding: 0;
+}
+
+.drama-source-chapter-item.is-selected {
+    border-radius: var(--radius-md);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-source-chapter-item.is-selected strong {
+    color: var(--control-selected-fg);
+}
+
+.drama-source-chapter-item > button {
+    display: flex;
+    width: 100%;
+    min-height: 56px;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-4) var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.drama-source-chapter-item > button > span {
+    display: none;
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-source-chapter-scope {
+    display: none;
+    min-height: var(--space-8);
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    cursor: pointer;
+}
+
+.drama-source-page.is-scope-adjustment .drama-source-chapter-scope {
+    display: flex;
+}
+
+.drama-source-page.is-scope-adjustment .drama-source-chapter-item > button > span {
+    display: block;
+}
+
+.drama-source-page input[type="checkbox"] {
+    accent-color: var(--control-check-bg);
+}
+
+.drama-source-editor {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+}
+
+.drama-source-edit-fields {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drama-source-edit-fields[hidden] {
+    display: none;
+}
+
+.drama-source-reading h3 {
+    margin: 0 0 var(--space-3);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    font-weight: 400;
+    line-height: var(--lh-body);
+}
+
+.drama-source-reading > div {
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    line-height: 1.95;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.drama-source-editor-heading > span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-source-body-label {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-source-editor textarea {
+    min-height: 400px;
+    flex: 1;
+    resize: vertical;
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-editor-footer {
+    padding-top: var(--space-2);
+}
+
+.drama-source-create-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    padding-top: var(--space-3);
+}
+
+.drama-source-form-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.drama-source-form-field > label,
+.drama-source-type-field > legend {
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    font-weight: 400;
+}
+
+.drama-source-form-field > label > span,
+.drama-source-type-field > legend > span {
+    margin-left: var(--space-1);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    font-weight: 400;
+}
+
+.drama-source-type-field {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.drama-source-type-field > legend {
+    margin-bottom: var(--space-2);
+}
+
+.drama-source-type-help {
+    margin: 0 0 var(--space-3);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-source-form-field > label > .drama-source-required,
+.drama-source-type-field > legend > .drama-source-required {
+    margin: 0 var(--space-1) 0 0;
+    color: var(--danger);
+    font-size: var(--fs-body);
+}
+
+.drama-source-type-cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.drama-source-type-card {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.drama-source-type-card.is-selected {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+}
+
+.drama-source-type-card input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    accent-color: var(--control-check-bg);
+}
+
+.drama-source-type-art {
+    display: block;
+    width: 100%;
+    height: 100px;
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+}
+
+.drama-source-type-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 30%;
+}
+
+.drama-source-type-card strong {
+    display: block;
+    padding: var(--space-2);
+    font-size: var(--fs-body);
+    font-weight: 400;
+    text-align: center;
+}
+
+.drama-source-type-card.is-selected strong {
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-source-type-card small {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    line-height: var(--lh-body);
+}
+
+.drama-source-origin {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-origin > span {
+    min-width: 0;
+    flex: 1;
+    overflow-wrap: anywhere;
+}
+
+.drama-source-origin > strong {
+    flex-shrink: 0;
+    color: var(--text-primary);
+}
+
+.drama-source-form-field > p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    line-height: var(--lh-body);
+}
+
+.drama-source-form-field select {
+    width: 100%;
+    min-height: var(--space-10);
+    padding-inline: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+}
+
+.drama-source-create-error {
+    margin: 0;
+    color: var(--danger, var(--text-primary));
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+}
+
+.drama-source-create-footer {
+    justify-content: flex-end;
+}
+
+.drama-source-upload-zone:focus-visible,
+.drama-source-format-options summary:focus-visible,
+.drama-source-chapter-item > button:focus-visible,
+.drama-source-page input[type="checkbox"]:focus-visible,
+.drama-source-form-field select:focus-visible,
+.drama-source-type-card:focus-within {
+    outline: var(--focus-ring-width) solid var(--control-selected-fg);
+    outline-offset: var(--space-1);
+}
+
+@media (max-width: 1000px) {
+    .drama-source-import-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+        gap: var(--space-4);
+    }
+
+    .drama-source-import-panel,
+    .drama-source-format-help,
+    .drama-source-editor {
+        padding: var(--space-4);
+    }
+}
+
+@media (max-width: 760px) {
+    .drama-source-import-layout,
+    .drama-source-review-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .drama-source-heading.is-upload {
+        padding-block: var(--space-2);
+    }
+
+    .drama-source-upload-zone {
+        min-height: 260px;
+        padding: var(--space-5);
+    }
+
+    .drama-source-chapter-list {
+        max-height: 240px;
+        padding-right: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .drama-source-editor textarea {
+        min-height: 320px;
+    }
+
+    .drama-source-type-cards {
+        gap: var(--space-2);
+    }
+
+    .drama-source-type-art {
+        height: 80px;
+    }
+}

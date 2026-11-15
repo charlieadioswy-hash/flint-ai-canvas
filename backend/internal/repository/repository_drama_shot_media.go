@@ -18,6 +18,12 @@ func (r *Repository) DramaShotMedia(projectID, shotID, kind string) (*model.Dram
 	return &row, nil
 }
 
+func (r *Repository) DramaEpisodeShotMedia(projectID, episodeID, kind string) ([]model.DramaShotMedia, error) {
+	var rows []model.DramaShotMedia
+	err := r.db.Where("project_id = ? AND episode_id = ? AND kind = ?", projectID, episodeID, kind).Find(&rows).Error
+	return rows, err
+}
+
 func (r *Repository) SaveDramaShotMediaConfig(row *model.DramaShotMedia, expected int64) error {
 	if expected == 0 {
 		return r.db.Create(row).Error
@@ -87,23 +93,40 @@ func (r *Repository) CompleteDramaShotMediaTask(take *model.DramaTake, row *mode
 		if !activate {
 			return nil
 		}
-		return tx.Model(&model.DramaShotMedia{}).
+		selected := tx.Model(&model.DramaShotMedia{}).
 			Where("id = ? AND revision = ? AND task_id = ? AND pending_take_id = ?", row.ID, revision, take.TaskID, take.ID).
 			Where("EXISTS (SELECT 1 FROM drama_shots WHERE drama_shots.id = ? AND drama_shots.project_id = ? AND drama_shots.updated_at = ?)", row.ShotID, row.ProjectID, scriptUpdatedAt).
-			Updates(map[string]any{"resource_id": take.ResourceID, "current_take_id": take.ID, "pending_take_id": "", "status": "ready", "updated_at": time.Now()}).Error
+			Updates(map[string]any{"resource_id": take.ResourceID, "current_take_id": take.ID, "pending_take_id": "", "status": "ready", "updated_at": time.Now()})
+		if selected.Error != nil {
+			return selected.Error
+		}
+		if selected.RowsAffected == 1 && row.Kind == "video" && (row.ResourceID != take.ResourceID || row.CurrentTakeID != take.ID) {
+			return markDramaShotVideoChanged(tx, row)
+		}
+		return nil
 	})
 }
 
 func (r *Repository) AdoptDramaShotMediaTake(row *model.DramaShotMedia, take *model.DramaTake, expected int64) error {
-	result := r.db.Model(&model.DramaShotMedia{}).Where("id = ? AND project_id = ? AND revision = ?", row.ID, row.ProjectID, expected).
-		Updates(map[string]any{"revision": expected + 1, "current_take_id": take.ID, "pending_take_id": "", "resource_id": take.ResourceID, "task_id": "", "status": "ready", "script_hash": row.ScriptHash, "updated_at": time.Now()})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrDramaShotMediaChanged
-	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.DramaShotMedia{}).Where("id = ? AND project_id = ? AND revision = ?", row.ID, row.ProjectID, expected).
+			Updates(map[string]any{"revision": expected + 1, "current_take_id": take.ID, "pending_take_id": "", "resource_id": take.ResourceID, "task_id": "", "status": "ready", "script_hash": row.ScriptHash, "updated_at": time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrDramaShotMediaChanged
+		}
+		if row.Kind == "video" && (row.ResourceID != take.ResourceID || row.CurrentTakeID != take.ID) {
+			return markDramaShotVideoChanged(tx, row)
+		}
+		return nil
+	})
+}
+
+func markDramaShotVideoChanged(tx *gorm.DB, row *model.DramaShotMedia) error {
+	return tx.Model(&model.DramaEpisode{}).Where("id = ? AND project_id = ?", row.EpisodeID, row.ProjectID).
+		Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "final_stale": gorm.Expr("final_resource_id <> ''"), "stage": model.DramaEpisodeReview, "video_requests_only": true, "error": "", "updated_at": time.Now()}).Error
 }
 
 func (r *Repository) DeleteDramaShotMediaForProject(projectID string) error {

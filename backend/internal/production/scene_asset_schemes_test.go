@@ -20,6 +20,9 @@ func TestSceneAssetSchemesRenderTheSelectedFullPrompt(t *testing.T) {
 		if strings.Contains(prompt, "{{") {
 			t.Fatalf("unexpanded variables in %s: %s", scheme.ID, prompt)
 		}
+		if strings.Count(prompt, AssetImageOutputContract) != 1 {
+			t.Fatalf("scene layout must remain one complete image: %s", prompt)
+		}
 		if scheme.ID == "fourview" && !strings.Contains(prompt, "2×2") {
 			t.Fatal("fourview template was replaced by the default scene prompt")
 		}

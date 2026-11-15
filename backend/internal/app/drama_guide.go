@@ -190,6 +190,12 @@ func (s *Service) dramaGuideView(p *model.DramaProduction) (*DramaGuideView, err
 }
 
 func (s *Service) validateDramaGuideSettings(userID string, settings DramaSettings) (DramaSettings, error) {
+	if err := settings.Storyboard.ValidateDirector(); err != nil {
+		return settings, BadAuthRequest(err.Error())
+	}
+	if err := settings.validateDramaType(); err != nil {
+		return settings, err
+	}
 	settings.MediaMode = DramaMediaManual
 	settings = settings.normalized()
 	if !production.ValidAspectRatio(settings.AspectRatio) {
@@ -225,12 +231,22 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 	}
 	settings := parseDramaSettings(p.SettingsJSON)
 	if req.Settings != nil {
-		if req.ExpectedStep != model.DramaGuideConfiguring {
+		switch req.ExpectedStep {
+		case model.DramaGuideConfiguring:
+			settings = *req.Settings
+		case model.DramaGuideAssets:
+			// 模式弹窗与编排剧本统一提交，只接收本页负责的生成参数。
+			settings.Storyboard.GenerationMode = req.Settings.Storyboard.GenerationMode
+			settings.Storyboard.DirectorTemplate = req.Settings.Storyboard.DirectorTemplate
+			settings.Storyboard.TargetShotCount = req.Settings.Storyboard.TargetShotCount
+			settings.Models.Image, settings.Models.Video = req.Settings.Models.Image, req.Settings.Models.Video
+			settings.AspectRatio, settings.VideoResolution = req.Settings.AspectRatio, req.Settings.VideoResolution
+			settings.VideoContinuity = req.Settings.VideoContinuity
+		default:
 			return DramaSummary{}, BadAuthRequest("只能在确认制作方案时更新设置")
 		}
-		settings = *req.Settings
 	}
-	if req.ExpectedStep == model.DramaGuideConfiguring {
+	if req.ExpectedStep == model.DramaGuideConfiguring || req.ExpectedStep == model.DramaGuideAssets && req.Settings != nil {
 		if settings, err = s.validateDramaGuideSettings(userID, settings); err != nil {
 			return DramaSummary{}, err
 		}
@@ -281,6 +297,9 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 			fields["settings_json"], fields["status"], fields["pause_reason"] = encodeDramaSettings(settings), model.DramaStatusRunning, ""
 			fields["guide_step"] = model.DramaGuideAssets
 		case model.DramaGuideAssets:
+			if req.Settings != nil {
+				fields["settings_json"] = encodeDramaSettings(settings)
+			}
 			fields["guide_step"] = model.DramaGuideStory
 			fields["status"], fields["pause_reason"] = model.DramaStatusRunning, ""
 		case model.DramaGuideStory:

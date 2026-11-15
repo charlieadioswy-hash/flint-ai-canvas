@@ -8,11 +8,13 @@ description: 从产品功能快速定位主要代码入口
 ## 短剧简易步骤工作流
 
 - 列表与创建入口：`web/src/pages/projects/index.tsx`、`workflow-entry.tsx`、`workflow-create.tsx`；正文导入、起草和审阅：`workflow-source.tsx`、`workflow-idea.tsx`。原详细创建保留在 `create.tsx`。
-- 六步页面协调：`pages/projects/workflow.tsx`，步骤准入与恢复：`workflow-state.ts`；配置：`workflow-configuration.tsx`，主体资产：`workflow-assets.tsx`，分集分镜与预览：`workflow-production.tsx`。`detail.tsx` 与 `studio/studio-route.ts` 保留简易／详细切换、深链接和定位，历史 guide 路由映射至步骤流程。
-- 业务请求：`web/src/services/api/drama.ts`；服务端 `app/project_workflow.go`、`drama_guide.go` 及现有短剧 API 继续校验阶段、版本、任务和确认点；`drama_orchestrator.go` 调度既有文字、资产与媒体任务。页面浏览步骤与服务端制作阶段独立。
-- 主体资产复用 `guide-panels.tsx` 中的 `GuideAssets`、详细台的 `studio/cast-editor-dialog.tsx` 及原角色／场景／道具写接口。无调用的旧 Agent 配置与剧本展示组件已移除，原文字提取、编辑、引用保护和用户确认继续复用。
+- 页面协调：`pages/projects/workflow.tsx` 与 `workflow-state.ts` 管理短剧创作六步（上传剧本、剧本格式、风格设置、角色场景、漫剧分镜、视频预览）、单集创作五步（从分集剧本开始）及作品管理四页（剧本设定、风格设置、主体资产、分集管理）。`detail.tsx` 与 `studio/studio-route.ts` 保留简易／详细切换、深链接和定位，页面浏览步骤与服务端制作阶段独立。
+- 配置与模式：`workflow-configuration.tsx` 管理风格与基础配置，`workflow-mode-dialog.tsx` 管理参考生视频、宫格图、智能导演、故事板四模式及对应参数；`app/drama_guide.go` 在确认事务内通过阶段与修订号 CAS 同时保存配置和推进，冲突不落配置、不推进。`internal/production/director.go`、`storyboard.go` 将导演模板与模式落实到分镜提示词。
+- 资产与分集：`workflow-assets.tsx` 同屏展示角色、场景、道具并复用原写接口与引用保护；`studio/cast-editor-dialog.tsx`、`panels.tsx` 管理设置、主图、历史版本、造型和多视图。`workflow-episodes.tsx` 负责真实分集筛选、选择、按集检查及合成／下载回执；生成批次继续使用实际剧情段范围。
+- 分镜与媒体：`workflow-production.tsx` 协调单集详情与预览，`workflow-storyboard-page.tsx` 提供左侧幕列表和右侧镜头卡片，`workflow-scene-splits.tsx`、`workflow-storyboard-dialog.tsx` 复用分幕与宫格／故事板操作；`workflow-shot-media-dialog.tsx` 调整独立镜头图片、视频和音频，报价确认及执行复用原媒体 API。
+- 业务请求：`web/src/services/api/drama.ts`、`drama-shot-media.ts`；服务端 `app/project_workflow.go`、`drama_guide.go`、`drama_workflow.go` 校验阶段、版本、真实就绪状态和确认点；`drama_orchestrator.go` 调度既有文字、资产与媒体任务。
 - 通用画布 Agent：`components/canvas/canvas-cloud-agent-panel.tsx` 与 `stores/use-global-agent-store.ts` 仅接入画布上下文；`layouts/user-layout.tsx` 在短剧路由隐藏同一个面板实例。专用短剧 context、引用、启动、proposal 与建议展示链已移除；历史短剧会话与空草稿不再被通用画布 Agent 恢复或续发。
-- 设计与范围：`docs/design/short-drama-workflow-rebuild.md`；HTTP API、数据库与待测清单分别记录契约、持久状态和运行验收边界。
+- 设计与范围：`docs/design/short-drama-workflow-rebuild.md`、`short-drama-ui-recheck.md`、`short-drama-workflow-v2.md`；HTTP API、数据库与待测清单分别记录契约、持久状态和运行验收边界。书单授权接入、独立音频混音与逐镜剪映导出尚未实现，浏览器视觉仍待验收。
 
 ## Wangsu 网宿协议
 
@@ -99,23 +101,23 @@ description: 从产品功能快速定位主要代码入口
 
 ## 短剧自动制作
 
-- 简易制作台：`web/src/pages/projects/workflow.tsx` 与 `workflow-production.tsx` 组织连续分集、剧情段／镜头编辑和真实状态；`workflow-segment-card.tsx`、`simple-studio-segment-editor.tsx` 复用段卡片与原编辑弹窗。`studio/studio-route.ts` 保留简易／详细视图与定位，`studio/project-topbar.tsx` 提供工作区顶栏。旧 `view`、`tab` 深链接继续进入详细台。
+- 简易制作台：`web/src/pages/projects/workflow.tsx` 协调创作与作品管理；`workflow-episodes.tsx` 管理分集，`workflow-production.tsx` 与 `workflow-storyboard-page.tsx` 组织单集、幕列表、镜头卡片和预览；`workflow-segment-card.tsx`、`simple-studio-segment-editor.tsx` 保留剧情段卡片与原编辑弹窗。`studio/studio-route.ts` 保留简易／详细视图与定位，`studio/project-topbar.tsx` 提供工作区顶栏。旧 `view`、`tab` 深链接继续进入详细台。
 - 媒体操作：`studio/use-drama-media-action.tsx` 与 `drama-media-action-dialog.tsx` 直接调用预检与执行接口，不经过短剧 Agent 建议。服务端 `app/drama_studio_actions.go` 及 `handler/drama_routes.go` 校验真实目标、作品／目标版本、范围、报价与显式确认；`segment_assets` 聚合本段缺失参考图及必要本体依赖，复用已有图片和在途任务，不放行整集或自动继续视频。
-- 剧集成片恢复：`RetryFailedDramaEpisodeRender` 与 `RetryDramaEpisodeRender` 只重试最新版本的失败合成，复用已有段视频。工作区侧栏闲置行为在 `components/layout/use-project-sidebar-idle.ts`，不写全局偏好。
+- 剧集成片恢复：`RetryFailedDramaEpisodeRender` 与 `RetryDramaEpisodeRender` 只重试最新版本的失败合成，复用已有已采用视频。工作区侧栏闲置行为在 `components/layout/use-project-sidebar-idle.ts`，不写全局偏好。
 - 设定与跨季素材：`app/drama_cast_materials.go`（手工草稿、独立风格、预览与生图共用的提示词编排），`app/drama_cast_import.go`（来源权限、同名匹配、角色造型映射与原子导入）；迁移 `database/drama_cast_styles_import.go`。前端 `studio/cast-create-dialog.tsx`、`cast-project-import.tsx`、`cast-image-fields.tsx`；`panels.tsx` 管理角色缩略图切换与独立造型列表，`cast-looks.tsx` 管理新增造型和图片预览。
 - 风格组合：`web/src/lib/drama/style-composition.ts` 分离表现形式与题材词库，生成稳定组合 ID；`drama-styles.ts` 是风格解析入口，`pages/projects/style-picker.tsx` 同时提供创建页选择器与素材编辑紧凑选择器。`drama.css` 的 reduced-motion 规则保留 rc-motion 完成事件，避免分镜弹窗停在进出场状态。
 - 段编辑的依赖失效：`repository/repository_drama.go` 的 `markLaterSegmentsStale` / `invalidateDramaSegment` 按作品衔接模式维护版本与排队任务；独立出片只影响本段，尾帧续接保留后续段级联失效。结果关联回归见 `app/drama_parallel_result_test.go`。
 
 - 纯逻辑：`backend/internal/production/`（作品圣经、分集与剧本提示词 `prompts.go`，模型输出解析 `parse.go`，分镜规则与时长 `storyboard.go` / `timing.go`，按视频模型上限切剧情段 `SegmentShotsForVideo`，段提示词素材稿 `segment_prompt.go` 与撰写要求 `segment_writer.go`，参考图方案 `assets.go`，用户分镜表直接导入 `storyboard_import.go`，原文台词逐句核对 `dialogue_check.go`）。
-- 调度循环：`backend/internal/app/drama_orchestrator.go`（同步任务结果 → 推导工作 → 按优先级派发，租约保证单项目单循环；成片时间线由各段视频拼接；短剧任务进入终态后 `wakeDramaAfterTask` 立即唤醒调度）；派发并发池（文字 / 参考图 / 段视频 / 成片各按“同时生成数”计算）、先集号后类型的优先级与排队原因 `dramaDispatchWaits` 在 `drama_dispatch.go`；段视频尾帧在调度循环外后台抽取，按视频资源去重并用租约防跨实例重复，见 `drama_tail_worker.go`；剧情段视频请求的组装、提交、回写与最后一帧抽取在 `drama_segment_video.go`（`prepareDramaSegment` 同时供预览与提交使用）。
+- 调度循环：`backend/internal/app/drama_orchestrator.go`（同步任务结果 → 推导工作 → 按优先级派发，租约保证单项目单循环；成片时间线由 `drama_shot_timeline.go` 装配；短剧任务进入终态后 `wakeDramaAfterTask` 立即唤醒调度）；派发并发池（文字 / 参考图 / 段视频 / 成片各按“同时生成数”计算）、先集号后类型的优先级与排队原因 `dramaDispatchWaits` 在 `drama_dispatch.go`；段视频尾帧在调度循环外后台抽取，按视频资源去重并用租约防跨实例重复，见 `drama_tail_worker.go`；剧情段视频请求的组装、提交、回写与最后一帧抽取在 `drama_segment_video.go`（`prepareDramaSegment` 同时供预览与提交使用）。
 - 服务与用户操作：`app/drama_service.go`（创建、保存及读取草稿、摘要、单集详情与剧情段视图）、`drama_actions.go`（审阅、镜头编辑、段提示词与段视频、设定重做、放行）、`drama_editing.go`（逐集追加、插到某一集前后与删除集（持有调度租约，集号平移在 `repository_drama.go` 的 `shiftDramaEpisodeNumbers`）、原文与素材类型修改、插入 / 删除镜头、上传并锁定参考图、台词核对）、`drama_models.go`（模型目录、视频能力 `dramaVideoProfile`、报价预估）；类型在 `drama_types.go`。
 - 持久化：`model/models_drama.go`、`repository/repository_drama.go`（调度与用户写入均为列级条件更新）；迁移 v66–v73、v76、v79–v80、v84、v87、v98、v100 在 `database/migrations.go`。HTTP：`handler/drama_routes.go`。
-- 渲染：`app/timeline_render_plan.go` / `task_render.go` 用 ffmpeg 合成，保留段视频自带的声音；按片段宽高比选择裁切或补黑边（`renderSegmentFit`），写入 AIGC 隐式标识（`renderAIGCLabel`）。媒体探测唯一入口 `app/media_probe.go`（宽高、时长、容器标签），存量视频尺寸修复在 `app/media_dimension_repair.go` 与 `repository/media_dimension_repair.go`。
+- 渲染：`app/drama_shot_timeline.go` 在存在逐镜视频选用时校验全部镜头的版本、资源归属、就绪状态与实际时长，按镜头顺序装配；未选用逐镜视频时沿用剧情段时间线。`drama_episode_render.go` 与 `drama_workflow.go` 共用该检查，`repository/repository_drama_shot_media.go` 在视频选用变化时增加剧集修订号并标记旧成片过期，`drama_orchestrator.go` 阻止旧合成回包覆盖当前版本。`app/timeline_render_plan.go` / `task_render.go` 用 ffmpeg 合成，保留视频自带的声音；按片段宽高比选择裁切或补黑边（`renderSegmentFit`），写入 AIGC 隐式标识（`renderAIGCLabel`）。媒体探测唯一入口 `app/media_probe.go`（宽高、时长、容器标签），存量视频尺寸修复在 `app/media_dimension_repair.go` 与 `repository/media_dimension_repair.go`。
 - 花费口径：`repository/drama_billing.go`（按计费订单汇总流水线与画布的实收、冻结额）、`app/drama_billing.go`（订单拆分与结算等待）；前端任务计费文案 `web/src/lib/generation-task-billing.ts`。
 - 专业编辑交付：手工时间线和内置编辑插件已移除；制作台通过剪映草稿/资产包交付。已有画布时间线字段仅保留存储、资源引用保护和工程包导入导出，节点已有字幕继续预览并用 `web/src/lib/timeline/srt-parser.ts` 下载 SRT。
 - 前端：`web/src/services/api/drama.ts`；`pages/projects/index.tsx`（作品列表）、`create.tsx`（上传与预估）、`detail.tsx`（制作台）。制作台子组件在 `pages/projects/studio/`：`storyboard.tsx`（剧情段卡片）、`segment-dialog.tsx`（剧情段弹窗：段视频、生成依据、镜头脚本与完整视频提示词）、`segment-parts.tsx`（状态、视频与生成依据共用组件）、`panels.tsx`（设定、待处理、制作设置）、`final-view.tsx`、`script-view.tsx`、`job-detail.tsx`；样式 `drama.css`。模型选择复用通用 `ModelPicker`（`drama-model-picker.tsx`、`lib/drama/model-choice.ts`）。
 - 回归：`internal/production/production_test.go`、`app/drama_orchestrator_test.go`、`app/drama_storyboard_test.go`、`app/drama_assets_test.go`、`web/src/lib/drama/*.test.ts`。
-- 导出与导入：剪映草稿 JSON 的纯生成在 `backend/internal/jianying/draft.go`；单集草稿、资产包清单与流式 ZIP 在 `app/drama_export.go`，路由在 `handler/drama_routes.go`（`streamDramaArchive`）。前端下载 `web/src/services/drama-export.ts`（隐藏表单提交到 iframe），导入的计划与写入 `services/drama-asset-import.ts`，按中央目录随机读取 ZIP `lib/zip-entries.ts`；弹窗在 `pages/projects/studio/asset-transfer.tsx`。
+- 导出与导入：剪映草稿 JSON 的纯生成在 `backend/internal/jianying/draft.go`，继续按剧情段导出；单集草稿、资产包清单与流式 ZIP 在 `app/drama_export.go`。`drama_shot_visual_export.go` 只打包所选集已采用的镜头图片／视频及版本提示词，`drama_shot_audio_export.go` 打包显式采用的独立音频；不会把独立音频混入成片。路由在 `handler/drama_routes.go`（`streamDramaArchive`）。前端下载 `web/src/services/drama-export.ts`（隐藏表单提交到 iframe），导入的计划与写入 `services/drama-asset-import.ts`，按中央目录随机读取 ZIP `lib/zip-entries.ts`；弹窗在 `pages/projects/studio/asset-transfer.tsx`。
 - 精修画布（后端）：`app/drama_canvas.go`（作品的精修画布、投送媒体的素材登记、版本记录与来源、段视频采用与尾帧补抽、画布花费计入预算 `dramaTotalSpent`、画布任务预算闸门 `ensureDramaCanvasBudget`）、`repository/repository_drama_canvas.go`（画布花费汇总、段视频采用事务、短剧持有资源的引用 `DramaResourceReferences`）；尾帧抽取与视频时长读取在 `drama_segment_video.go`（`saveDramaTailFrame`、`inspectDramaVideo`）。Agent 工具 `drama_get_context` / `drama_adopt_canvas_media` 在 `app/cloud_agent_drama.go`，只在 `Scope.Drama`（运行画布关联短剧）时暴露。
 - 精修画布（前端）：投送的纯函数在 `web/src/lib/canvas/drama-canvas-projection.ts`（节点、段框、过期判断、分镜转短剧原文），副作用在 `web/src/services/drama-canvas.ts`（找到或新建精修画布、跳转参数、素材登记、分镜画布关联到新短剧）；画布页编排 `pages/canvas/use-canvas-drama.ts`，侧栏 `components/canvas/canvas-drama-sidebar.tsx`，采用弹窗 `components/canvas/canvas-drama-adopt-modal.tsx`。查询键 `lib/drama/drama-query-keys.ts` 与文案 `lib/drama/drama-format.ts` 由制作台和画布共用；制作台入口 `studio/use-studio.ts` 的 `useOpenDramaCanvas`，版本记录 `studio/take-list.tsx`。
 

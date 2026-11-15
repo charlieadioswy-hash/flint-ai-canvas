@@ -6,6 +6,11 @@ import (
 )
 
 func (s StoryboardSettings) ValidateDirector() error {
+	switch s.GenerationMode {
+	case "", "reference_video", "grid_image", "smart_director", "storyboard":
+	default:
+		return fmt.Errorf("不支持的分镜生成模式")
+	}
 	if s.TargetShotCount < 0 || s.TargetShotCount > MaxScriptShots {
 		return fmt.Errorf("自定义镜头数需为 1 到 %d，0 表示智能", MaxScriptShots)
 	}

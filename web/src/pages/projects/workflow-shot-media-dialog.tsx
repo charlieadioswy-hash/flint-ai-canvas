@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Select, Switch } from "antd";
 import { ImagePlus, RefreshCw, Trash2 } from "lucide-react";
@@ -7,6 +7,7 @@ import { AssetLibraryPickerModal } from "@/components/assets/asset-library-picke
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
 import { formatDramaCredits } from "@/lib/drama/drama-format";
+import { CAMERA_PRESETS } from "@/lib/drama/director";
 import type { DramaShot } from "@/services/api/drama";
 import {
     adoptDramaShotMedia,
@@ -30,7 +31,20 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowShotAudioEditor } from "./workflow-shot-audio";
 import "./workflow-shot-media.css";
 
-type Props = { open: boolean; projectId: string; shot?: DramaShot; onClose: () => void; onChanged?: () => void };
+type Props = {
+    open: boolean;
+    projectId: string;
+    shot?: DramaShot;
+    onClose: () => void;
+    onChanged?: () => void;
+    presentation?: "dialog" | "page";
+    shots?: DramaShot[];
+    actLabel?: string;
+    initialKind?: DramaShotMediaKind;
+    onSelectShot?: (shot: DramaShot, kind: DramaShotMediaKind) => void;
+    onEditText?: () => void;
+    onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
+};
 type Quote = { preview: DramaShotMediaPreflight; request: DramaShotMediaAction; uncertain?: boolean };
 type PickerRole = "reference" | "first" | "last";
 type VisualMediaKind = Exclude<DramaShotMediaKind, "audio">;
@@ -52,9 +66,13 @@ export function WorkflowShotMediaDialog(props: Props) {
 function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
     const { modal } = App.useApp();
     const operation = useDramaOperationScope(props.projectId);
-    const [kind, setKind] = useState<DramaShotMediaKind>("image");
+    const [kind, setKind] = useState<DramaShotMediaKind>(props.initialKind || "image");
     const [dirty, setDirty] = useState(false);
     const [busy, setBusy] = useState(false);
+    const editingState = useRef(props.onDirtyChange);
+    editingState.current = props.onDirtyChange;
+    useEffect(() => editingState.current?.(dirty, busy), [dirty, busy]);
+    useEffect(() => () => editingState.current?.(false, false), []);
     const leave = (next: () => void) => {
         if (busy) return;
         if (!dirty) return next();
@@ -69,34 +87,107 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
             },
         });
     };
-    return (
-        <AppModal open centered width={1060} title={`镜头 ${props.shot.position + 1} · 图片、视频与音频`} footer={null} onCancel={() => leave(props.onClose)} maskClosable={!busy} closable={!busy}>
-            <div className="drama-shot-media">
-                <nav className="drama-shot-media-tabs" aria-label="镜头媒体类型">
-                    {(["image", "video", "audio"] as const).map((value) => (
-                        <Button
-                            key={value}
-                            aria-pressed={kind === value}
+    const tabs = (
+        <nav className="drama-shot-media-tabs" aria-label="镜头媒体类型">
+            {(["image", "video", "audio"] as const).map((value) => (
+                <Button
+                    key={value}
+                    aria-pressed={kind === value}
+                    disabled={busy}
+                    onClick={() =>
+                        kind !== value &&
+                        leave(() => {
+                            setDirty(false);
+                            setKind(value);
+                        })
+                    }
+                >
+                    {value === "image" ? "镜头图片" : value === "video" ? "镜头视频" : "镜头音频"}
+                </Button>
+            ))}
+        </nav>
+    );
+    const shotStrip =
+        props.shots?.length && props.onSelectShot ? (
+            <footer className="drama-shot-media-strip">
+                <strong>
+                    {props.actLabel || "本幕"} · 共 {props.shots.length} 镜
+                </strong>
+                <nav aria-label="本幕镜头" className="thin-scrollbar">
+                    {props.shots.map((shot) => (
+                        <ShotStripItem
+                            key={shot.id}
+                            shot={shot}
+                            active={shot.id === props.shot.id}
                             disabled={busy}
-                            onClick={() =>
-                                kind !== value &&
-                                leave(() => {
-                                    setDirty(false);
-                                    setKind(value);
-                                })
-                            }
-                        >
-                            {value === "image" ? "镜头图片" : value === "video" ? "镜头视频" : "镜头音频"}
-                        </Button>
+                            userId={props.userId}
+                            onClick={() => {
+                                if (shot.id !== props.shot.id) leave(() => props.onSelectShot?.(shot, kind));
+                            }}
+                        />
                     ))}
                 </nav>
-                {kind === "audio" ? <WorkflowShotAudioEditor {...props} onDirtyChange={setDirty} onBusyChange={setBusy} /> : <ShotMediaEditor key={kind} {...props} kind={kind} onDirtyChange={setDirty} onBusyChange={setBusy} />}
-            </div>
+            </footer>
+        ) : null;
+    const content = (
+        <div className={`drama-root drama-shot-media ${props.presentation === "page" ? "is-page" : "is-dialog"}`}>
+            {props.presentation === "page" ? (
+                <header className="drama-shot-media-header">
+                    <Button disabled={busy} onClick={() => leave(props.onClose)}>
+                        返回分镜
+                    </Button>
+                    <div>
+                        <h3>
+                            {props.actLabel} <span>分镜 {props.shot.position + 1}</span>
+                        </h3>
+                        <p>
+                            {props.shot.scene || "未命名场景"} · {(props.shot.durationMs / 1000).toFixed(1)} 秒
+                        </p>
+                    </div>
+                    {props.onEditText ? (
+                        <Button disabled={busy} onClick={() => leave(props.onEditText!)}>
+                            编辑分镜文字
+                        </Button>
+                    ) : null}
+                </header>
+            ) : null}
+            {kind === "audio" ? (
+                <WorkflowShotAudioEditor {...props} tabs={tabs} shotStrip={shotStrip} onDirtyChange={setDirty} onBusyChange={setBusy} />
+            ) : (
+                <ShotMediaEditor key={kind} {...props} tabs={tabs} shotStrip={shotStrip} kind={kind} onDirtyChange={setDirty} onBusyChange={setBusy} />
+            )}
+        </div>
+    );
+    return props.presentation === "page" ? (
+        content
+    ) : (
+        <AppModal open centered width={1380} flush title={`镜头 ${props.shot.position + 1} · 图片、视频与音频`} footer={null} onCancel={() => leave(props.onClose)} maskClosable={!busy} closable={!busy}>
+            {content}
         </AppModal>
     );
 }
 
-function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChange, onBusyChange }: Props & { shot: DramaShot; userId: string; kind: VisualMediaKind; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void }) {
+function ShotStripItem({ shot, active, disabled, userId, onClick }: { shot: DramaShot; active: boolean; disabled: boolean; userId: string; onClick: () => void }) {
+    const image = useQuery({ queryKey: ["drama-shot-media", userId, shot.projectId, shot.id, "image"], queryFn: ({ signal }) => getDramaShotMedia(shot.projectId, shot.id, "image", signal), staleTime: 20_000 });
+    return (
+        <button type="button" aria-label={`切换分镜 ${shot.position + 1}`} aria-pressed={active} disabled={disabled} onClick={onClick}>
+            <span>{image.data?.resourceId ? <MediaThumb resourceId={image.data.resourceId} alt={`分镜 ${shot.position + 1}`} /> : <span>{shot.shotSize || "待生成画面"}</span>}</span>
+            <strong>分镜 {shot.position + 1}</strong>
+        </button>
+    );
+}
+
+function ShotMediaEditor({
+    projectId,
+    shot,
+    userId,
+    kind,
+    onChanged,
+    onDirtyChange,
+    onBusyChange,
+    tabs,
+    shotStrip,
+}: Props & { shot: DramaShot; userId: string; kind: VisualMediaKind; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; tabs: ReactNode; shotStrip: ReactNode }) {
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();
@@ -109,6 +200,7 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
     const [notice, setNotice] = useState("");
     const [quote, setQuote] = useState<Quote>();
     const [picker, setPicker] = useState<PickerRole>();
+    const [previewTakeId, setPreviewTakeId] = useState("");
     const locked = useRef(false);
     const current = query.data;
     const dirty = Boolean(draft && baseline && JSON.stringify(draft) !== baseline.config);
@@ -196,20 +288,45 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
     const ratios = kind === "image" ? model?.imageRatios : model?.videoRatios;
     const resolutions = kind === "image" ? model?.imageResolutions : model?.videoResolutions;
     const isVideo = kind === "video";
+    const previewTake = current?.takes.find((take) => take.id === previewTakeId);
 
     if (query.isError && !current)
         return (
-            <div role="alert">
+            <div className="drama-shot-media-loading" role="alert">
+                {tabs}
                 读取镜头媒体失败 <Button onClick={() => void query.refetch()}>重试</Button>
             </div>
         );
-    if (query.isPending || !draft || !baseline) return <p role="status">正在读取镜头媒体…</p>;
+    if (query.isPending || !draft || !baseline)
+        return (
+            <div className="drama-shot-media-loading">
+                {tabs}
+                <p role="status">正在读取镜头媒体…</p>
+            </div>
+        );
 
     return (
         <>
             <div className="drama-shot-media-columns">
                 <section className="drama-shot-media-config" aria-label="镜头生成配置">
-                    <p className="text-sm text-muted-foreground">为当前镜头单独生成并采用图片或视频。</p>
+                    {tabs}
+                    <div className="drama-shot-media-operation" role="group" aria-label="镜头生成模式">
+                        {(isVideo
+                            ? ([
+                                  { value: "text_to_video", label: "文生视频" },
+                                  { value: "reference_to_video", label: "参考生视频" },
+                                  { value: "image_to_video", label: "首尾帧" },
+                              ] as const)
+                            : ([
+                                  { value: "text_to_image", label: "文生图" },
+                                  { value: "image_to_image", label: "参考生图" },
+                              ] as const)
+                        ).map((option) => (
+                            <button key={option.value} type="button" disabled={controlsDisabled} aria-pressed={draft.operation === option.value} onClick={() => patch({ operation: option.value })}>
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
                     <label>
                         <span>模型</span>
                         <fieldset disabled={controlsDisabled} className="drama-shot-media-model" inert={controlsDisabled}>
@@ -217,27 +334,6 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                         </fieldset>
                     </label>
                     <div className="drama-shot-media-parameters">
-                        <label>
-                            <span>模式</span>
-                            <Select
-                                aria-label="镜头生成模式"
-                                disabled={controlsDisabled}
-                                value={draft.operation}
-                                options={
-                                    isVideo
-                                        ? [
-                                              { value: "text_to_video", label: "文生视频" },
-                                              { value: "reference_to_video", label: "参考图生视频" },
-                                              { value: "image_to_video", label: "首尾帧生视频" },
-                                          ]
-                                        : [
-                                              { value: "text_to_image", label: "文生图" },
-                                              { value: "image_to_image", label: "参考图生图" },
-                                          ]
-                                }
-                                onChange={(value) => patch({ operation: value })}
-                            />
-                        </label>
                         <label>
                             <span>画幅</span>
                             <Select
@@ -264,10 +360,19 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                             </label>
                         ) : null}
                     </div>
-                    <label>
-                        <span>提示词</span>
-                        <Input.TextArea aria-label="镜头媒体提示词" disabled={controlsDisabled} value={draft.prompt} autoSize={{ minRows: 4, maxRows: 7 }} onChange={(event) => patch({ prompt: event.target.value })} />
-                    </label>
+                    {isVideo ? (
+                        <label>
+                            <span>运镜意图</span>
+                            <Select
+                                aria-label="添加镜头运镜意图"
+                                placeholder={shot.camera || "选择运镜，写入本次提示词"}
+                                value={undefined}
+                                disabled={controlsDisabled}
+                                options={CAMERA_PRESETS.map((value) => ({ value, label: value }))}
+                                onChange={(value) => patch({ prompt: `${draft.prompt.replace(/\n?【运镜意图】[^\n]*/g, "").trim()}\n【运镜意图】${value}`.trim() })}
+                            />
+                        </label>
+                    ) : null}
                     {isVideo ? (
                         <label className="drama-shot-media-audio">
                             <span>同步生成声音</span>
@@ -300,6 +405,10 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                             </div>
                         ) : null}
                     </div>
+                    <label className="drama-shot-media-prompt">
+                        <span>提示词</span>
+                        <Input.TextArea aria-label="镜头媒体提示词" disabled={controlsDisabled} value={draft.prompt} autoSize={{ minRows: 4, maxRows: 7 }} onChange={(event) => patch({ prompt: event.target.value })} />
+                    </label>
                     {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新载入后再操作。</p> : null}
                     {error ? <p role="alert">{error}</p> : null}
                     {notice ? <p role="status">{notice}</p> : null}
@@ -315,9 +424,6 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                             }
                         >
                             保存配置
-                        </Button>
-                        <Button disabled={controlsDisabled || stale || active} loading={busy === "preflight"} onClick={() => void check()}>
-                            预检生成
                         </Button>
                         <Button
                             icon={<RefreshCw className="size-3.5" />}
@@ -335,6 +441,9 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                         >
                             重新载入
                         </Button>
+                        <Button className="drama-shot-media-generate" type="primary" disabled={controlsDisabled || stale || active} loading={busy === "preflight"} onClick={() => void check()}>
+                            预检生成
+                        </Button>
                     </div>
                     {quote ? (
                         <div className="drama-shot-media-quote" aria-live="polite">
@@ -348,19 +457,45 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                         </div>
                     ) : null}
                 </section>
-                <aside className="drama-shot-media-output" aria-label="镜头媒体结果与版本">
-                    <strong>当前采用 · {STATE[current?.status || "idle"] || current?.status}</strong>
-                    <MediaPreview resourceId={current?.resourceId} kind={kind} />
+                <section className="drama-shot-media-stage" aria-label="镜头媒体预览">
+                    <header>
+                        <strong>{previewTake ? `预览版本 ${previewTake.version}` : "当前采用"}</strong>
+                        <span>{STATE[current?.status || "idle"] || current?.status}</span>
+                    </header>
+                    <div className="drama-shot-media-canvas">
+                        <MediaPreview resourceId={previewTake?.resourceId || current?.resourceId} kind={kind} />
+                    </div>
+                    {active ? <p role="status">任务正在{current?.status === "queued" ? "排队" : "生成"}，完成后自动刷新。已有采用版本仍保留。</p> : null}
                     {current?.error ? <p role="alert">{current.error}</p> : null}
-                    <strong>历史版本</strong>
+                    <p className="drama-shot-media-shot-copy">
+                        {shot.action || shot.imagePrompt}
+                        {shot.dialogue ? `\n${shot.speaker || "对白"}：${shot.dialogue}` : ""}
+                    </p>
+                    {previewTake ? (
+                        <Button size="small" onClick={() => setPreviewTakeId("")}>
+                            回到当前采用
+                        </Button>
+                    ) : null}
+                    {shotStrip}
+                </section>
+                <aside className="drama-shot-media-output" aria-label="镜头媒体结果与版本">
+                    <header>
+                        <strong>版本记录</strong>
+                        <span>{current?.takes.length || 0} 个版本</span>
+                    </header>
                     {current?.takes.length ? (
                         current.takes.map((take) => (
-                            <div className="drama-shot-media-take" key={take.id}>
+                            <div className={`drama-shot-media-take ${take.current ? "is-current" : ""}`} key={take.id}>
                                 <span>
                                     版本 {take.version} · {take.current ? "当前采用" : STATE[take.status] || take.status}
                                 </span>
                                 {take.resourceId ? <MediaPreview resourceId={take.resourceId} kind={kind} /> : null}
                                 {take.error ? <p>{take.error}</p> : null}
+                                {take.resourceId ? (
+                                    <Button size="small" aria-pressed={previewTakeId === take.id} onClick={() => setPreviewTakeId(take.id)}>
+                                        查看此版本
+                                    </Button>
+                                ) : null}
                                 {!take.current && take.resourceId ? (
                                     <Button
                                         size="small"
@@ -371,6 +506,7 @@ function ShotMediaEditor({ projectId, shot, userId, kind, onChanged, onDirtyChan
                                                 const adopted = await adoptDramaShotMedia(projectId, shot.id, kind, { expectedRevision: current.revision, takeId: take.id });
                                                 if (operation.isCurrent(ticket)) {
                                                     accept(adopted);
+                                                    setPreviewTakeId("");
                                                     setQuote(undefined);
                                                     onChanged?.();
                                                 }

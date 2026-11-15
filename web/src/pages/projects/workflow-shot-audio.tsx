@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Select } from "antd";
 
@@ -28,7 +28,7 @@ import { downloadResource, useResourceMediaUrl } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { clearShotAudioPending, readShotAudioPending, writeShotAudioPending } from "./workflow-shot-audio-state";
 
-type Props = { projectId: string; shot: DramaShot; userId: string; onChanged?: () => void; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void };
+type Props = { projectId: string; shot: DramaShot; userId: string; onChanged?: () => void; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; tabs?: ReactNode; shotStrip?: ReactNode };
 type Quote = { preview: DramaShotMediaPreflight; action: DramaShotMediaAction };
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已采用", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消", awaiting_adoption: "待试听与采用", stale: "镜头已有变更" };
 
@@ -46,7 +46,7 @@ function ShotAudioPreview({ resourceId }: { resourceId: string }) {
     return url ? <audio ref={audio} controls preload="metadata" src={url} aria-label="试听镜头音频" /> : <p role="status">正在读取镜头音频…</p>;
 }
 
-export function WorkflowShotAudioEditor({ projectId, shot, userId, onChanged, onDirtyChange, onBusyChange }: Props) {
+export function WorkflowShotAudioEditor({ projectId, shot, userId, onChanged, onDirtyChange, onBusyChange, tabs, shotStrip }: Props) {
     const operation = useDramaOperationScope(projectId);
     const client = useQueryClient();
     const config = useEffectiveConfig();
@@ -164,14 +164,22 @@ export function WorkflowShotAudioEditor({ projectId, shot, userId, onChanged, on
         });
     if (query.isError && !current)
         return (
-            <p role="alert">
+            <div className="drama-shot-media-loading" role="alert">
+                {tabs}
                 镜头音频读取失败 <Button onClick={() => void query.refetch()}>重新载入</Button>
-            </p>
+            </div>
         );
-    if (!draft || !baseline) return <p role="status">正在读取镜头音频…</p>;
+    if (!draft || !baseline)
+        return (
+            <div className="drama-shot-media-loading">
+                {tabs}
+                <p role="status">正在读取镜头音频…</p>
+            </div>
+        );
     return (
         <div className="drama-shot-media-columns">
             <section className="drama-shot-media-config" aria-label="独立镜头音频配置">
+                {tabs}
                 <p>音频作为独立文件保存，可试听、采用和下载。不会自动混入成片或剪映时间线；资产包会包含已采用的音频。</p>
                 {!available ? <p role="status">当前没有可用的平台语音模型，请先在后台配置音频模型。</p> : null}
                 <fieldset className="drama-shot-media-model" disabled={disabled} inert={disabled}>
@@ -264,11 +272,16 @@ export function WorkflowShotAudioEditor({ projectId, shot, userId, onChanged, on
                     </div>
                 ) : null}
             </section>
-            <aside className="drama-shot-media-output" aria-label="镜头音频结果与版本">
-                <strong>当前采用 · {STATUS[current?.status || "idle"] || current?.status}</strong>
+            <section className="drama-shot-media-stage" aria-label="镜头音频试听">
+                <header>
+                    <strong>当前采用</strong>
+                    <span>{STATUS[current?.status || "idle"] || current?.status}</span>
+                </header>
                 {current?.resourceId ? (
                     <>
-                        <ShotAudioPreview key={current.resourceId} resourceId={current.resourceId} />
+                        <div className="drama-shot-media-canvas">
+                            <ShotAudioPreview key={current.resourceId} resourceId={current.resourceId} />
+                        </div>
                         <Button
                             onClick={() =>
                                 void run("download", async (ticket) => {
@@ -281,12 +294,20 @@ export function WorkflowShotAudioEditor({ projectId, shot, userId, onChanged, on
                         </Button>
                     </>
                 ) : (
-                    <p>尚未采用镜头音频</p>
+                    <div className="drama-shot-media-canvas">
+                        <p>尚未采用镜头音频</p>
+                    </div>
                 )}
                 {current?.error ? <p role="alert">{current.error}</p> : null}
-                <strong>试听与历史版本</strong>
+                {shotStrip}
+            </section>
+            <aside className="drama-shot-media-output" aria-label="镜头音频结果与版本">
+                <header>
+                    <strong>版本记录</strong>
+                    <span>{current?.takes.length || 0} 个版本</span>
+                </header>
                 {current?.takes.map((take) => (
-                    <div className="drama-shot-media-take" key={take.id}>
+                    <div className={`drama-shot-media-take ${take.current ? "is-current" : ""}`} key={take.id}>
                         <span>
                             版本 {take.version} · {take.current ? "当前采用" : STATUS[take.status] || take.status}
                         </span>

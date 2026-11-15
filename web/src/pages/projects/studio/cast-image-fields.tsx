@@ -78,10 +78,10 @@ export function CastImageFields({
                 maxLength={12000}
                 autoSize={{ minRows: 3, maxRows: 8 }}
                 disabled={disabled || building}
-                placeholder="留空按外观、风格和参考图方案自动编排；也可填写自己的生图要求"
+                placeholder="留空继承作品模板；也可填写自己的生图要求"
                 onChange={(event) => onChange({ imagePrompt: event.target.value })}
             />
-            <small className="drama-editor-note">切换风格后可重新编排提示词。编排不调用模型；保存设定后，点击生成才开始生图。</small>
+            <small className="drama-editor-note">留空继承作品模板；切换模板或风格后可重新编排，已有人工提示词不会自动修改。编排不调用模型，保存后点击生成才开始生图。</small>
         </div>
     );
 }

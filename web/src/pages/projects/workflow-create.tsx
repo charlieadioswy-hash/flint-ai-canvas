@@ -11,7 +11,7 @@ export default function DramaWorkflowCreatePage() {
     if (search.has("draft") || search.get("mode") === "advanced" || state?.prefill) return <DramaCreatePage />;
     return (
         <WorkspacePage className="drama-root drama-workflow-create">
-            <DramaWorkflowEntry showSteps initialFile={state?.file} focusInput={search.get("paste") === "1"} />
+            <DramaWorkflowEntry initialFile={state?.file} focusInput={search.get("paste") === "1"} />
         </WorkspacePage>
     );
 }

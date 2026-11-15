@@ -27,7 +27,7 @@ import { MediaThumb } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import "./workflow-storyboard.css";
 
-type Props = { open: boolean; projectId: string; shots: DramaShot[]; referenceResourceIds?: string[]; onClose: () => void };
+type Props = { open: boolean; projectId: string; shots: DramaShot[]; referenceResourceIds?: string[]; title?: string; onClose: () => void };
 type Quote = { boardId: string; preview: DramaStoryboardPreflight; request: DramaShotMediaAction; uncertain?: boolean };
 const STATUS: Record<string, string> = { draft: "待确认生成", queued: "排队中", running: "生成中", image_ready: "原图已就绪", split: "已裁切分图", failed: "生成失败", cancelled: "已取消", stale: "原稿已变化" };
 
@@ -36,7 +36,7 @@ export function WorkflowStoryboardDialog(props: Props) {
     return props.open && props.shots.length ? <StoryboardSession key={`${userId}:${props.projectId}:${props.shots.map((shot) => shot.id).join(":")}`} {...props} userId={userId} /> : null;
 }
 
-function StoryboardSession({ projectId, shots, referenceResourceIds = [], onClose, userId }: Props & { userId: string }) {
+function StoryboardSession({ projectId, shots, referenceResourceIds = [], title = "故事板", onClose, userId }: Props & { userId: string }) {
     const client = useQueryClient();
     const scope = useDramaOperationScope(projectId);
     const episodeId = shots[0].episodeId;
@@ -147,7 +147,7 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], onClos
             open
             centered
             width={1120}
-            title="宫格故事板"
+            title={title}
             footer={null}
             onCancel={() => {
                 if (!disabled) onClose();

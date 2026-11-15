@@ -4,7 +4,8 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CloudAgentMessagePresentation } from "@/services/cloud-agent-conversations";
 import type { CanvasNodeData } from "@/types/canvas";
-export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean };
+import type { CanvasAgentEntryHandoff } from "@/services/canvas-agent-entry";
+export type AgentPrefillRequest = CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean; requireIdle?: boolean; entryDraft?: CanvasAgentEntryHandoff };
 /** 画布为 Agent 输入框新建的节点，输入框据此显示附件卡片。 */
 export type AgentInsertedNode = { nodeId: string; title: string; kind: "image" | "text" | "video" | "audio"; previewUrl?: string };
 

@@ -1530,9 +1530,12 @@ func dramaTaskResource(task *model.Task) string {
 }
 
 func (r *dramaRun) applyCastImage(job *model.DramaJob, task *model.Task) error {
-	resourceID := dramaTaskResource(task)
-	if resourceID == "" {
-		return errors.New("参考图任务没有返回图片")
+	resourceID, err := dramaCastImageResource(task)
+	if err != nil {
+		if markErr := job.MarkResultUnusable(task.ID); markErr != nil {
+			return markErr
+		}
+		return &dramaResultIssue{message: err.Error()}
 	}
 	// 版本始终入库；只有槽位仍在等待本任务时才切换当前参考图，用户期间发起的重做不会被旧结果覆盖。
 	if err := r.s.repo.CreateDramaTake(&model.DramaTake{ID: newID(), ProjectID: r.project.ID, OwnerID: job.CastID, Kind: "cast", ResourceID: resourceID, TaskID: task.ID, Prompt: truncateRunes(task.Prompt, 2000), CreatedAt: time.Now()}); err != nil {
@@ -1548,7 +1551,7 @@ func (r *dramaRun) applyCastImage(job *model.DramaJob, task *model.Task) error {
 	}
 	var payload dramaRevisionPayload
 	_ = json.Unmarshal([]byte(job.PayloadJSON), &payload)
-	_, err := r.s.repo.UpdateDramaCastImageRevision(job.CastID, payload.Revision, []string{model.DramaMediaQueued, model.DramaMediaRunning}, map[string]any{"image_resource_id": resourceID, "image_status": model.DramaMediaReady, "image_version": gorm.Expr("image_version + 1")})
+	_, err = r.s.repo.UpdateDramaCastImageRevision(job.CastID, payload.Revision, []string{model.DramaMediaQueued, model.DramaMediaRunning}, map[string]any{"image_resource_id": resourceID, "image_status": model.DramaMediaReady, "image_version": gorm.Expr("image_version + 1")})
 	return err
 }
 
@@ -2126,15 +2129,11 @@ func (r *dramaRun) submitRender(job *model.DramaJob) (*model.Task, bool, error) 
 	}
 	// 先记下版本：时间线装配失败时 failJob 要按这个版本把原因写到本集上，否则本集没有错误、每轮重新排队合成。
 	job.PayloadJSON = encodeDramaRevision(episode.Revision)
-	segments, err := r.s.repo.DramaSegments(episode.ID)
+	videos, err := dramaEpisodeVideoTimeline(r.s.repo, r.project.UserID, r.project.ID, episode.ID, r.settings.AspectRatio)
 	if err != nil {
 		return nil, false, err
 	}
-	timeline, err := buildDramaTimeline(segments, r.settings.AspectRatio)
-	if err != nil {
-		return nil, false, err
-	}
-	return r.s.createDramaRenderTask(r.project, timeline, job)
+	return r.s.createDramaRenderTask(r.project, videos.Timeline, job)
 }
 
 func (s *Service) submitDramaTask(userID string, req CreateTaskRequest, job *model.DramaJob) (*model.Task, error) {

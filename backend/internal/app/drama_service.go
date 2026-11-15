@@ -70,6 +70,9 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	if err := req.Settings.Storyboard.ValidateDirector(); err != nil {
 		return nil, BadAuthRequest(err.Error())
 	}
+	if err := req.Settings.validateDramaType(); err != nil {
+		return nil, err
+	}
 	settings := req.Settings.normalized()
 	if err := settings.TextThinking.validate(); err != nil {
 		return nil, err

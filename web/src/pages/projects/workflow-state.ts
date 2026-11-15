@@ -4,13 +4,15 @@ import type { DramaGuideStep, DramaSummary } from "@/services/api/drama";
 export type WorkflowStep = "source" | "review" | "style" | "assets" | "story" | "preview";
 
 export const WORKFLOW_STEPS: ReadonlyArray<{ key: WorkflowStep; title: string }> = [
-    { key: "source", title: "导入正文" },
-    { key: "review", title: "确认正文与拆集" },
-    { key: "style", title: "风格和基础配置" },
-    { key: "assets", title: "主体资产" },
-    { key: "story", title: "分集分镜与视频" },
-    { key: "preview", title: "预览导出" },
+    { key: "source", title: "上传剧本" },
+    { key: "review", title: "剧本格式" },
+    { key: "style", title: "风格设置" },
+    { key: "assets", title: "角色场景" },
+    { key: "story", title: "漫剧分镜" },
+    { key: "preview", title: "视频预览" },
 ];
+
+export const EPISODE_WORKFLOW_STEPS = WORKFLOW_STEPS.filter((step) => step.key !== "source").map((step) => (step.key === "review" ? { ...step, title: "分集剧本" } : step));
 
 const STEP_INDEX = new Map(WORKFLOW_STEPS.map((step, index) => [step.key, index]));
 

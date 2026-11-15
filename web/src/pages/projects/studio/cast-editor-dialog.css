@@ -1,7 +1,19 @@
+.drama-cast-workspace-modal .ant-modal {
+    top: 0;
+    max-width: 100vw;
+    margin: 0;
+    padding-bottom: 0;
+}
+
+.drama-cast-workspace-modal .ant-modal-container {
+    border-radius: 0;
+}
+
 .drama-cast-dialog {
     display: flex;
     flex-direction: column;
-    max-height: calc(100dvh - 64px);
+    height: 100dvh;
+    max-height: 100dvh;
     min-height: 0;
 }
 .drama-cast-dialog-head {
@@ -14,13 +26,35 @@
     border-bottom: 1px solid var(--drama-line);
 }
 .drama-cast-dialog-head h2 {
+    margin-block: 0;
+    margin-right: auto;
     min-width: 0;
-    font-size: var(--fs-label);
+    font-size: var(--fs-ui);
     font-weight: 600;
     overflow-wrap: anywhere;
 }
+.drama-cast-dialog-save-state {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
 .drama-cast-dialog-body {
+    flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    padding: var(--space-4);
+    overflow: hidden;
+    padding: 0;
+}
+
+@media (max-width: 1000px) {
+    .drama-cast-dialog-body {
+        overflow-y: auto;
+    }
+}
+
+@media (max-width: 600px) {
+    .drama-cast-dialog-head {
+        flex-wrap: wrap;
+    }
+    .drama-cast-dialog-save-state {
+        display: none;
+    }
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber } from "antd";
 import { AlertCircle, Check, Pencil, Plus, Shirt, Trash2, X, Play, Upload, Library } from "lucide-react";
@@ -70,7 +70,21 @@ function LookForm({ projectId, initial, submitting, onCancel, onSubmit }: { proj
  * 角色造型（多妆造）：一个角色可有多套造型（如散修 / 外门弟子 / 内门弟子 / 长老），每套有自己的外观与参考图，
  * 以角色本体参考图为底图生成以保持同一张脸。写剧本时按本集章节选默认造型，AI 也会按剧情在镜头里换造型。
  */
-export function CastLooks({ projectId, character, looks, restyle, onChanged }: { projectId: string; character: DramaCast; looks: DramaCast[]; restyle: boolean; onChanged: () => void }) {
+export function CastLooks({
+    projectId,
+    character,
+    looks,
+    restyle,
+    onChanged,
+    onDirtyChange,
+}: {
+    projectId: string;
+    character: DramaCast;
+    looks: DramaCast[];
+    restyle: boolean;
+    onChanged: () => void;
+    onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+}) {
     const { message, modal } = App.useApp();
     const [adding, setAdding] = useState(false);
     const [editingId, setEditingId] = useState<string>();
@@ -116,6 +130,12 @@ export function CastLooks({ projectId, character, looks, restyle, onChanged }: {
         onError: (error) => message.error(error instanceof Error ? error.message : "上传失败"),
     });
     const busy = add.isPending || update.isPending || remove.isPending || generate.isPending || upload.isPending;
+    const stateChange = useRef(onDirtyChange);
+    stateChange.current = onDirtyChange;
+    useEffect(() => {
+        stateChange.current?.(adding || Boolean(editingId), busy);
+    }, [adding, editingId, busy]);
+    useEffect(() => () => stateChange.current?.(false, false), []);
     return (
         <div className="drama-field">
             <div className="drama-field-label">

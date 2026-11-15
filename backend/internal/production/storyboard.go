@@ -62,6 +62,7 @@ const (
 )
 
 type StoryboardSettings struct {
+	GenerationMode string `json:"generationMode,omitempty"`
 	// SegmentMode 决定剧情段（一次视频调用）怎么切：auto / fixed / range。
 	SegmentMode       string `json:"segmentMode"`
 	SegmentSeconds    int    `json:"segmentSeconds"`

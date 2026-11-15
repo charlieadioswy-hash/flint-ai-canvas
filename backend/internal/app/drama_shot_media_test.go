@@ -156,6 +156,71 @@ func mustShotMedia(t *testing.T, s *Service) DramaShotMediaView {
 	return view
 }
 
+func TestDramaShotVideoActivationInvalidatesFinalExactlyOnce(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "episode").Updates(map[string]any{"revision": 7, "final_resource_id": "existing-final", "stage": model.DramaEpisodeRender}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "invalidate-final"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	completeShotMedia(t, s, db, task.ID, "new-selected-video")
+	for replay := 0; replay < 2; replay++ {
+		current, err := s.repo.DramaEpisode("drama-project", "episode")
+		if err != nil || current.Revision != 8 || current.Stage != model.DramaEpisodeReview || !current.FinalStale || current.FinalResourceID != "existing-final" || !current.VideoRequestsOnly {
+			t.Fatalf("activation/replay %d invalidation = %+v %v", replay, current, err)
+		}
+		stored, _ := s.repo.Task(task.ID)
+		if _, err := s.RegisterDramaShotMediaTaskOutput(*stored); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view := mustShotMedia(t, s)
+	if _, err := s.AdoptDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaAdoptRequest{ExpectedRevision: &view.Revision, TakeID: view.CurrentTakeID}); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := s.repo.DramaEpisode("drama-project", "episode")
+	if current.Revision != 8 {
+		t.Fatalf("reselecting identical video invalidated episode again: %+v", current)
+	}
+	// A different selected take may carry a different fallback duration even
+	// when it references the same file; its timeline must get a new revision.
+	take := model.DramaTake{ID: newID(), ProjectID: "drama-project", OwnerID: "real-shot", Kind: "shot_video", ResourceID: view.ResourceID, DurationMs: 4321, Version: 2}
+	if err := db.Create(&take).Error; err != nil {
+		t.Fatal(err)
+	}
+	view = mustShotMedia(t, s)
+	if _, err := s.AdoptDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaAdoptRequest{ExpectedRevision: &view.Revision, TakeID: take.ID}); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = s.repo.DramaEpisode("drama-project", "episode")
+	if current.Revision != 9 {
+		t.Fatalf("different selected take retained an old render revision: %+v", current)
+	}
+}
+
+func TestDramaShotImageAndAudioAdoptionPreserveVideoRenderRevision(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	for _, kind := range []string{"image", "audio"} {
+		resource := model.Resource{ID: kind + "-selected", UserID: "user", Kind: kind, MimeType: kind + "/" + map[string]string{"image": "png", "audio": "mpeg"}[kind], Status: model.ResourceStatusReady}
+		take := model.DramaTake{ID: kind + "-take", ProjectID: "drama-project", OwnerID: "real-shot", Kind: "shot_" + kind, ResourceID: resource.ID}
+		row := model.DramaShotMedia{ID: kind + "-slot", ProjectID: "drama-project", EpisodeID: "episode", ShotID: "real-shot", Kind: kind, Revision: 1, ConfigJSON: "{}"}
+		for _, value := range []any{&resource, &take, &row} {
+			if err := db.Create(value).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.AdoptDramaShotMedia("user", "drama-project", "real-shot", kind, DramaShotMediaAdoptRequest{ExpectedRevision: &row.Revision, TakeID: take.ID}); err != nil {
+			t.Fatal(err)
+		}
+		current, _ := s.repo.DramaEpisode("drama-project", "episode")
+		if current.Revision != 0 || current.Stage != model.DramaEpisodeDone || current.FinalStale {
+			t.Fatalf("%s adoption changed the embedded video timeline: %+v", kind, current)
+		}
+	}
+}
+
 func TestDramaShotMediaScriptEditKeepsOutputOnlyInHistory(t *testing.T) {
 	s, db, _ := shotMediaFixture(t)
 	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "script-edit"))

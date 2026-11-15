@@ -1,21 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
-import { Download, Replace, Save } from "lucide-react";
+import { CheckCircle2, Download, FileText, PencilLine, Plus, Save, Upload } from "lucide-react";
 
+import { AppModal } from "@/components/ui/product/app-modal";
 import { analyzeNovel, EPISODE_SOURCE_CHARS, MAX_CHAPTER_WORDS, sourceChars } from "@/lib/drama/novel-parse";
 import { ApiError } from "@/services/api/request";
-import { getDramaChapter, listDramaChapters, saveDramaGuideSource, updateDramaChapter, type DramaChapterInput, type DramaSourceFormat, type DramaSummary } from "@/services/api/drama";
+import { getDramaChapter, getDramaEpisode, listDramaChapters, saveDramaGuideSource, updateDramaChapter, updateDramaSettings, type DramaChapterInput, type DramaSourceFormat, type DramaSummary } from "@/services/api/drama";
+import { updateProject } from "@/services/api/projects";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { SourceFormatPicker } from "./drama-shared";
+import { SOURCE_FORMAT_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys } from "./studio/use-studio";
-import { readDramaSourceFile } from "./drama-source-file";
+import { DRAMA_SOURCE_FILE_MAX_BYTES, formatDramaSourceFileSize, readDramaSourceFile } from "./drama-source-file";
+
+import "./workflow-source.css";
 
 type ChapterDraft = { id: string; title: string; text: string; baseline: string; baselineTitle: string; revision: number };
 type MetadataDraft = { format: DramaSourceFormat; selected: string[]; baseline: string; revision: number };
 type Replacement = { fileName: string; chapters: DramaChapterInput[]; selected: number[]; revision: number };
-type SourceProps = { summary: DramaSummary; onChanged: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
+type CreationDraft = { mode: "selected" | "single"; revision: number; selected: string[]; format: DramaSourceFormat; name: string; description: string; dramaType: "comic" | "live_action" | "narration"; aspectRatio: string };
+type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
+
+const DRAMA_TYPES = [
+    { value: "comic" as const, label: "漫剧", cover: "/short-drama-styles/isekai-anime.jpg" },
+    { value: "live_action" as const, label: "真人剧", cover: "/short-drama-styles/urban-live-action.jpg" },
+    { value: "narration" as const, label: "解说漫", cover: "/short-drama-styles/wuxia-swordsman.jpg" },
+];
+const VIDEO_RATIOS = ["16:9", "4:3", "1:1", "9:16", "3:4"];
 
 function staleMessage(error: unknown) {
     return error instanceof ApiError && (error.reason === "conflict" || error.status === 409);
@@ -29,12 +41,21 @@ function metadataKey(format: DramaSourceFormat, selected: string[]) {
     return JSON.stringify([format, [...selected].sort()]);
 }
 
-export function WorkflowSourceReview(props: SourceProps) {
-    const userId = useUserStore((state) => state.user?.id || "");
-    return <SourceReview key={`${userId}:${props.summary.project.id}`} {...props} userId={userId} />;
+function chapterIDsFromEpisode(value: string | undefined): string[] {
+    try {
+        const ids: unknown = JSON.parse(value || "[]");
+        return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+        return [];
+    }
 }
 
-function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId }: SourceProps & { userId: string }) {
+export function WorkflowSourceReview(props: SourceProps) {
+    const userId = useUserStore((state) => state.user?.id || "");
+    return <SourceReview key={`${userId}:${props.summary.project.id}:${props.episodeId || ""}`} {...props} userId={userId} />;
+}
+
+function SourceReview({ summary, step = "review", episodeId, onChanged, onContinue, busy = false, onDirtyChange, userId }: SourceProps & { userId: string }) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const projectId = summary.project.id;
@@ -42,15 +63,23 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
     const revision = summary.production.revision;
     const serverFormat: DramaSourceFormat = ["novel", "script", "storyboard"].includes(summary.project.sourceType) ? (summary.project.sourceType as DramaSourceFormat) : summary.episodes[0]?.sourceFormat || "novel";
     const [selectedId, setSelectedId] = useState("");
+    const [editing, setEditing] = useState(false);
+    const [scopeOpen, setScopeOpen] = useState(false);
     const [drafts, setDrafts] = useState<Record<string, ChapterDraft>>({});
     const [metadata, setMetadata] = useState<MetadataDraft | null>(null);
     const [replacement, setReplacement] = useState<Replacement | null>(null);
+    const [inputMode, setInputMode] = useState<"file" | "paste">("file");
+    const [pasteText, setPasteText] = useState("");
     const [reading, setReading] = useState(false);
     const [reloading, setReloading] = useState(false);
+    const [downloading, setDownloading] = useState(false);
+    const [creation, setCreation] = useState<CreationDraft | null>(null);
+    const [creationError, setCreationError] = useState("");
+    const creationLock = useRef(false);
     const fileRef = useRef<HTMLInputElement>(null);
     const mounted = useRef(false);
     const readGeneration = useRef(0);
-    const latest = useRef({ onChanged, onDirtyChange, chapterId: "" });
+    const latest = useRef({ onChanged, onDirtyChange, onContinue, chapterId: "" });
     const current = () => mounted.current && (useUserStore.getState().user?.id || "") === userId;
 
     useEffect(() => {
@@ -66,8 +95,11 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
         queryKey: [...dramaKeys.chapters(projectId), userId],
         queryFn: ({ signal }) => listDramaChapters(projectId, signal),
     });
-    const chapterId = chapters.data?.chapters.some((chapter) => chapter.id === selectedId) ? selectedId : chapters.data?.chapters[0]?.id || "";
-    latest.current = { onChanged, onDirtyChange, chapterId };
+    const episode = useQuery({ queryKey: [...dramaKeys.episode(projectId, episodeId || ""), userId], queryFn: ({ signal }) => getDramaEpisode(projectId, episodeId!, signal), enabled: Boolean(episodeId) });
+    const episodeChapterIDs = chapterIDsFromEpisode(episode.data?.episode.chapterIdsJson);
+    const visibleChapters = episodeId ? chapters.data?.chapters.filter((chapter) => episodeChapterIDs.includes(chapter.id)) : chapters.data?.chapters;
+    const chapterId = visibleChapters?.some((chapter) => chapter.id === selectedId) ? selectedId : visibleChapters?.[0]?.id || "";
+    latest.current = { onChanged, onDirtyChange, onContinue, chapterId };
     const source = useQuery({
         queryKey: ["drama", projectId, "chapter", chapterId, userId, revision],
         queryFn: ({ signal }) => getDramaChapter(projectId, chapterId, signal),
@@ -98,7 +130,8 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
     const draft = drafts[chapterId];
     const chapterDirty = Boolean(draft && isDirty(draft));
     const metadataDirty = Boolean(metadata && metadataKey(metadata.format, metadata.selected) !== metadata.baseline);
-    const dirty = Object.values(drafts).some(isDirty) || metadataDirty || Boolean(replacement);
+    const chapterDraftDirty = Object.values(drafts).some(isDirty);
+    const dirty = chapterDraftDirty || metadataDirty || Boolean(replacement) || Boolean(pasteText.trim()) || Boolean(creation);
     const stale = Boolean(draft && draft.revision !== revision);
     const tooLong = Boolean(draft && sourceChars(draft.text) > Math.max(EPISODE_SOURCE_CHARS, sourceChars(draft.baseline)));
 
@@ -125,7 +158,10 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
             setMetadata((old) => (old?.revision === input.revision ? { ...old, revision: input.revision + 1 } : old));
             void queryClient.invalidateQueries({ queryKey: ["drama", projectId, "chapter", chapter.id] });
             refresh();
-            if (latest.current.chapterId === input.id) message.success("已保存本章");
+            if (latest.current.chapterId === input.id) {
+                setEditing(false);
+                message.success("已保存本章");
+            }
         },
         onError: (error) => {
             if (!current()) return;
@@ -170,30 +206,99 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
             setMetadata(null);
             setSelectedId("");
             setReplacement(null);
+            setPasteText("");
             void queryClient.invalidateQueries({ queryKey: ["drama", projectId, "chapter"] });
             refresh();
-            message.success("已用新文件替换正文");
+            message.success("已更新来源正文");
         },
         onError: (error) => {
             if (current()) message.error(staleMessage(error) ? "正文已被更新，未替换。请重新上传后再试。" : error instanceof Error ? error.message : "替换失败");
         },
     });
 
-    const working = busy || reading || reloading || save.isPending || replace.isPending || saveMetadata.isPending;
+    const createEpisodes = useMutation({
+        mutationFn: async (input: CreationDraft) => {
+            if (!current()) throw new Error("登录状态已变更，请重新操作");
+            const cached = queryClient.getQueryData<DramaSummary>(dramaKeys.summary(projectId));
+            if (input.revision !== Math.max(revision, cached?.production.revision || 0)) throw new Error("正文或设置已有更新，请取消后重新打开创建窗口");
+            if (!configuring || chapterDraftDirty || replacement || pasteText.trim()) throw new Error("请先保存或放弃未完成的正文修改");
+            if (!input.name.trim()) throw new Error("请填写剧集名称");
+            const selectedChapters = chapters.data?.chapters.flatMap((chapter, index) => (input.selected.includes(chapter.id) ? [index] : [])) || [];
+            if (!selectedChapters.length) throw new Error("请至少选择一章参与本次制作");
+            if (selectedChapters.some((index) => chapters.data!.chapters[index].wordCount > EPISODE_SOURCE_CHARS)) throw new Error("本次制作的单章不能超过 1.2 万字，请先拆分或缩短正文");
+            const checkpoint = (next: DramaSummary) => {
+                if (!current()) throw new Error("登录状态已变更，请重新操作");
+                queryClient.setQueryData<DramaSummary>(dramaKeys.summary(projectId), (old) => (old && old.production.revision > next.production.revision ? old : next));
+                setMetadata({ format: input.format, selected: input.selected, baseline: metadataKey(input.format, input.selected), revision: next.production.revision });
+                setDrafts({});
+                setCreation((old) => (old ? { ...old, revision: next.production.revision } : old));
+                return next;
+            };
+            let next = checkpoint(await saveDramaGuideSource(projectId, { expectedRevision: input.revision, sourceFormat: input.format, selectedChapters }));
+            if (next.production.settings.aspectRatio !== input.aspectRatio || next.production.settings.dramaType !== input.dramaType) {
+                next = checkpoint(await updateDramaSettings(projectId, { expectedRevision: next.production.revision, settings: { ...next.production.settings, aspectRatio: input.aspectRatio, dramaType: input.dramaType } }));
+            }
+            if (next.project.name !== input.name.trim() || next.project.description !== input.description || next.project.aspectRatio !== input.aspectRatio) {
+                const result = await updateProject(projectId, { name: input.name.trim(), description: input.description, aspectRatio: input.aspectRatio });
+                next = checkpoint({ ...next, project: result.project });
+            }
+            return next;
+        },
+        onSuccess: () => {
+            if (!current()) return;
+            setCreation(null);
+            setCreationError("");
+            setMetadata(null);
+            void queryClient.invalidateQueries({ queryKey: ["drama", projectId, "chapter"] });
+            refresh();
+            latest.current.onDirtyChange?.(false, false);
+            message.success("已保存剧集信息，继续选择风格");
+            latest.current.onContinue?.();
+        },
+        onError: (error) => {
+            if (!current()) return;
+            setCreationError(staleMessage(error) ? "正文或设置已被更新。已保存的更改会保留，请取消后重新打开创建窗口。" : error instanceof Error ? error.message : "创建设置未完成，请重试");
+            latest.current.onChanged();
+        },
+        onSettled: () => {
+            creationLock.current = false;
+        },
+    });
+
+    const working = busy || reading || reloading || downloading || save.isPending || replace.isPending || saveMetadata.isPending || createEpisodes.isPending;
     useEffect(() => {
         latest.current.onDirtyChange?.(dirty, working);
     }, [dirty, working]);
 
+    const openCreation = (mode: CreationDraft["mode"]) => {
+        if (working || chapterDraftDirty || replacement || pasteText.trim() || !configuring || !metadata) return;
+        setCreationError("");
+        setCreation({
+            mode,
+            revision,
+            selected: mode === "single" ? [chapterId] : [...metadata.selected],
+            format: metadata.format,
+            name: summary.project.name,
+            description: summary.project.description || "",
+            dramaType: summary.production.settings.dramaType || "comic",
+            aspectRatio: summary.production.settings.aspectRatio,
+        });
+    };
+
+    const previewReplacement = (content: string, fileName: string) => {
+        const parsed = analyzeNovel(content, { perEpisode: true }).chapters.map(({ title, text }) => ({ title, text }));
+        if (!parsed.length) throw new Error("没有可导入的正文");
+        if (parsed.some((chapter) => sourceChars(chapter.text) > MAX_CHAPTER_WORDS)) throw new Error("新正文单章超过 6 万字，请拆分后再导入");
+        setReplacement({ fileName, chapters: parsed, selected: [0], revision });
+    };
     const loadReplacement = async (file: File) => {
+        if (working || chapterDraftDirty || replacement || pasteText.trim() || !configuring || episodeId) return;
         const generation = ++readGeneration.current;
         setReading(true);
         try {
             const content = await readDramaSourceFile(file);
             if (!current() || generation !== readGeneration.current) return;
-            const parsed = analyzeNovel(content, { perEpisode: true }).chapters.map(({ title, text }) => ({ title, text }));
-            if (!parsed.length) throw new Error("新文件里没有可导入的正文");
-            if (parsed.some((chapter) => sourceChars(chapter.text) > MAX_CHAPTER_WORDS)) throw new Error("新文件单章超过 6 万字，请拆分后再导入");
-            setReplacement({ fileName: file.name, chapters: parsed, selected: [0], revision });
+            previewReplacement(content, file.name);
         } catch (error) {
             if (current() && generation === readGeneration.current) message.error(error instanceof Error ? error.message : "文件读取失败");
         } finally {
@@ -215,41 +320,208 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
             if (current()) setReloading(false);
         }
     };
-    const download = () => {
-        if (!draft) return;
-        const url = URL.createObjectURL(new Blob([`# ${draft.title}\n\n${draft.text}`], { type: "text/markdown;charset=utf-8" }));
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${draft.title || "正文"}.md`;
-        link.click();
-        URL.revokeObjectURL(url);
+    const download = async () => {
+        if (working || !visibleChapters?.length) return;
+        setDownloading(true);
+        try {
+            const texts = await Promise.all(
+                visibleChapters.map(async (chapter) => {
+                    const local = drafts[chapter.id];
+                    if (local) return `# ${local.title}\n\n${local.text}`;
+                    const result = await queryClient.fetchQuery({ queryKey: ["drama", projectId, "chapter", chapter.id, userId, revision], queryFn: ({ signal }) => getDramaChapter(projectId, chapter.id, signal) });
+                    return `# ${result.chapter.title}\n\n${result.chapter.sourceText}`;
+                }),
+            );
+            if (!current()) return;
+            const url = URL.createObjectURL(new Blob([texts.join("\n\n---\n\n")], { type: "text/markdown;charset=utf-8" }));
+            try {
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${episodeId ? episode.data?.episode.title || "本集剧本" : summary.project.name || "分集剧本"}.md`;
+                link.click();
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        } catch (error) {
+            if (current()) message.error(error instanceof Error ? error.message : "下载剧本失败，请重试");
+        } finally {
+            if (current()) setDownloading(false);
+        }
     };
 
     return (
-        <section className="drama-workflow-source" aria-label="确认正文与拆集">
-            <header className="drama-workflow-source-head">
+        <section className={`drama-source-page ${step === "source" ? "is-source" : "is-review"} ${scopeOpen || metadataDirty ? "is-scope-adjustment" : ""}`} aria-label={step === "source" ? "上传剧本" : "剧本格式"}>
+            <header className={`drama-source-heading ${step === "source" ? "is-upload" : ""}`}>
                 <div>
-                    <h2>确认正文与拆集</h2>
-                    <p>共 {chapters.data?.chapters.length ?? summary.production.chapterCount} 章。勾选本次制作范围，其余章节保留；集数按拆集配置生成，制作章节不超过 1.2 万字。</p>
+                    <h2>{step === "source" ? (serverFormat === "novel" ? "从小说开始" : serverFormat === "storyboard" ? "从分镜开始" : "从剧本开始") : "分集剧本"}</h2>
+                    <p>{step === "source" ? "上传符合格式的正文，确认文件后继续核对剧本。" : episodeId ? "确认本集关联的剧本，保存仅修改当前章节。" : "确认您的剧本，并选择单集剧本进行视频创作。"}</p>
                 </div>
-                <div className="drama-workflow-source-actions">
-                    <Button icon={<Download className="size-3.5" />} disabled={!draft} onClick={download}>
-                        下载本章
-                    </Button>
-                    {configuring ? (
-                        <Button icon={<Replace className="size-3.5" />} disabled={working || dirty} loading={reading} onClick={() => fileRef.current?.click()}>
-                            用新文件替换
+                {step === "review" ? (
+                    <div className="drama-source-actions">
+                        {!editing ? (
+                            <Button type="text" icon={<PencilLine className="size-3.5" aria-hidden />} disabled={working || !draft || Boolean(replacement)} onClick={() => setEditing(true)} data-source-edit>
+                                手动编辑
+                            </Button>
+                        ) : null}
+                        <Button icon={<Download className="size-3.5" aria-hidden />} disabled={working || !visibleChapters?.length} loading={downloading} onClick={() => void download()}>
+                            {episodeId ? "下载本集剧本" : "下载剧本"}
                         </Button>
-                    ) : null}
-                </div>
+                        {configuring && !episodeId ? (
+                            <>
+                                <Button icon={<Plus className="size-3.5" aria-hidden />} disabled={working || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim()) || !chapterId} onClick={() => openCreation("single")}>
+                                    创建单集
+                                </Button>
+                                <Button
+                                    type="primary"
+                                    icon={<Plus className="size-3.5" aria-hidden />}
+                                    disabled={working || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim()) || !metadata?.selected.length}
+                                    onClick={() => openCreation("selected")}
+                                >
+                                    创建剧集
+                                </Button>
+                            </>
+                        ) : null}
+                    </div>
+                ) : null}
             </header>
-            {configuring ? (
-                <SourceFormatPicker value={metadata?.format || serverFormat} disabled={!metadata || working || Boolean(replacement)} row onChange={(format) => setMetadata((old) => (old ? { ...old, format } : old))} />
+            {step === "source" ? (
+                <div className="drama-source-import-layout">
+                    <div className="drama-source-import-panel">
+                        <div className="drama-source-input-modes" role="group" aria-label="导入方式">
+                            <Button icon={<Upload className="size-3.5" aria-hidden />} aria-pressed={inputMode === "file"} disabled={working || Boolean(replacement)} onClick={() => setInputMode("file")}>
+                                上传文件
+                            </Button>
+                            <Button icon={<PencilLine className="size-3.5" aria-hidden />} aria-pressed={inputMode === "paste"} disabled={working || Boolean(replacement)} onClick={() => setInputMode("paste")}>
+                                手动输入 / 粘贴
+                            </Button>
+                        </div>
+                        {inputMode === "file" ? (
+                            <button
+                                type="button"
+                                className="drama-source-upload-zone"
+                                disabled={working || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim()) || !configuring}
+                                onClick={() => fileRef.current?.click()}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    const file = event.dataTransfer.files[0];
+                                    if (file) void loadReplacement(file);
+                                }}
+                            >
+                                <span className="drama-source-file-icon">
+                                    <FileText aria-hidden />
+                                    {summary.production.chapterCount > 0 ? <CheckCircle2 className="drama-source-ready-badge" aria-hidden /> : null}
+                                </span>
+                                <strong>{reading ? "正在读取文件…" : summary.production.chapterCount > 0 ? "文件已就绪" : "点击或拖拽正文至此开始上传"}</strong>
+                                {summary.production.chapterCount > 0 ? (
+                                    <span className="drama-source-file-name">
+                                        <FileText className="size-4" aria-hidden />
+                                        {summary.project.name} · {chapters.data?.chapters.length ?? summary.production.chapterCount} 章
+                                    </span>
+                                ) : null}
+                                <span className="drama-source-upload-hint">{configuring ? "点击或拖拽可重新上传，确认前保留原正文" : "可在剧本格式页查看和编辑正文"}</span>
+                                <small>支持 TXT、MD、Markdown、DOCX，不超过 {formatDramaSourceFileSize(DRAMA_SOURCE_FILE_MAX_BYTES)}</small>
+                            </button>
+                        ) : (
+                            <div className="drama-source-paste-panel">
+                                <label htmlFor={`drama-source-paste-${projectId}`}>粘贴新的来源正文</label>
+                                <Input.TextArea
+                                    id={`drama-source-paste-${projectId}`}
+                                    aria-label="粘贴新的来源正文"
+                                    value={pasteText}
+                                    placeholder={SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].placeholder}
+                                    disabled={working || chapterDraftDirty || Boolean(replacement) || !configuring}
+                                    onChange={(event) => setPasteText(event.target.value)}
+                                />
+                                <div className="drama-source-bar">
+                                    <span>{sourceChars(pasteText).toLocaleString()} 字</span>
+                                    <div className="drama-source-actions">
+                                        <Button disabled={working || !pasteText || Boolean(replacement)} onClick={() => setPasteText("")}>
+                                            清空输入
+                                        </Button>
+                                        <Button
+                                            type="primary"
+                                            disabled={working || !pasteText.trim() || chapterDraftDirty || Boolean(replacement) || !configuring}
+                                            onClick={() => {
+                                                try {
+                                                    previewReplacement(pasteText, "手动输入的正文");
+                                                } catch (error) {
+                                                    message.error(error instanceof Error ? error.message : "正文解析失败");
+                                                }
+                                            }}
+                                        >
+                                            解析正文
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {chapterDraftDirty ? (
+                            <p role="alert" className="drama-source-note">
+                                剧本格式页还有未保存的章节修改，请先保存或放弃修改，再更换来源正文。
+                            </p>
+                        ) : null}
+                        {pasteText.trim() && inputMode === "file" ? <p className="drama-source-note">还有未解析的粘贴正文。请先切回手动输入并解析，或清空后上传文件。</p> : null}
+                        {configuring ? (
+                            <details className="drama-source-format-options">
+                                <summary>素材类型：{SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].title}</summary>
+                                <SourceFormatPicker value={metadata?.format || serverFormat} disabled={!metadata || working || Boolean(replacement)} row onChange={(format) => setMetadata((old) => (old ? { ...old, format } : old))} />
+                            </details>
+                        ) : null}
+                    </div>
+                    <aside className="drama-source-format-help" aria-label="剧本格式说明">
+                        <h3>剧本格式说明</h3>
+                        <p>若上传正文的格式与规定格式不符，可能影响剧本解析结果。</p>
+                        <h4>拆分单集格式示意</h4>
+                        <ol>
+                            <li>将“第1集”或“第一集”独立成行。</li>
+                            <li>小说可使用“第一章”等章节标题。</li>
+                            <li>数字可使用阿拉伯数字或汉字。</li>
+                        </ol>
+                        <div className="drama-source-format-example">
+                            <strong>第1集</strong>
+                            <p>1-1场 客厅 日 内</p>
+                            <p>出场角色：林晚、许舟</p>
+                            <p>
+                                △林晚推门而入。
+                                <br />
+                                林晚：你怎么还在这里？
+                            </p>
+                        </div>
+                        <h4>拆分场次格式示意</h4>
+                        <ol>
+                            <li>使用“1-1场”等场次编号。</li>
+                            <li>编号位于该行文字开头。</li>
+                            <li>同一行补充地点、日夜和内外景。</li>
+                        </ol>
+                        <div className="drama-source-format-example">
+                            <strong>1-2场 庭院 夜 外</strong>
+                            <p>出场角色：林晚</p>
+                            <p>△夜雨落下，林晚停在门前。</p>
+                        </div>
+                        <details className="drama-source-format-options">
+                            <summary>更多导入说明</summary>
+                            <ul>
+                                {(SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].guide || [SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].detail]).map((tip) => (
+                                    <li key={tip}>{tip}</li>
+                                ))}
+                            </ul>
+                            <p className="drama-source-note">旧版 Word（.doc）请先另存为 DOCX。本次制作的单章不超过 1.2 万字，其余章节可预留。</p>
+                        </details>
+                    </aside>
+                </div>
+            ) : configuring && !episodeId ? (
+                <details className="drama-source-format-options drama-source-review-options" open={scopeOpen || metadataDirty} onToggle={(event) => setScopeOpen(event.currentTarget.open)}>
+                    <summary>
+                        制作范围与素材类型<span>{metadataDirty ? "有未保存修改" : `已选 ${metadata?.selected.length || 0} 章`}</span>
+                    </summary>
+                    <SourceFormatPicker value={metadata?.format || serverFormat} disabled={!metadata || working || Boolean(replacement)} row onChange={(format) => setMetadata((old) => (old ? { ...old, format } : old))} />
+                </details>
             ) : (
-                <p className="drama-workflow-note">配置已确认。保存单章正文不会自动重新改编已有剧本。</p>
+                <p className="drama-source-note">{episodeId ? "保存只写入当前章节；已生成的剧本与镜头需单独重新生成。" : "配置已确认。保存单章正文不会自动重新改编已有剧本。"}</p>
             )}
-            {configuring && metadata ? (
-                <div className="drama-workflow-editor-bar">
+            {configuring && !episodeId && metadata && (scopeOpen || metadataDirty) ? (
+                <div className="drama-source-bar drama-source-scope">
                     <span>
                         本次制作 {metadata.selected.length} 章，其余预留。{metadataDirty ? "素材类型或制作范围有未保存的修改。" : ""}
                     </span>
@@ -264,13 +536,13 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
                             重新载入制作范围
                         </Button>
                     ) : (
-                        <div className="drama-workflow-source-actions">
+                        <div className="drama-source-actions">
                             {metadataDirty ? (
                                 <Button disabled={working} onClick={() => setMetadata(null)}>
                                     还原类型与范围
                                 </Button>
                             ) : null}
-                            <Button disabled={working || !metadataDirty || !metadata.selected.length || Object.values(drafts).some(isDirty) || Boolean(replacement)} loading={saveMetadata.isPending} onClick={() => saveMetadata.mutate(metadata)}>
+                            <Button disabled={working || !metadataDirty || !metadata.selected.length || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim())} loading={saveMetadata.isPending} onClick={() => saveMetadata.mutate(metadata)}>
                                 保存类型与制作范围
                             </Button>
                         </div>
@@ -278,11 +550,11 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
                 </div>
             ) : null}
             {replacement ? (
-                <div className="drama-workflow-note" aria-label="替换正文预览">
+                <div className="drama-source-replacement" aria-label="替换正文预览">
                     <h3>替换预览：{replacement.fileName}</h3>
                     <p>解析出 {replacement.chapters.length} 章，默认仅制作第一章。确认后会替换原正文与待制作分集。</p>
                     {replacement.chapters.map((chapter, index) => (
-                        <label key={index} className="drama-workflow-replacement-chapter">
+                        <label key={index} className="drama-source-replacement-item">
                             <input
                                 type="checkbox"
                                 aria-label={`替换范围 ${chapter.title}`}
@@ -293,7 +565,7 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
                             {chapter.title} · {sourceChars(chapter.text).toLocaleString()} 字{sourceChars(chapter.text) > EPISODE_SOURCE_CHARS ? "（仅可预留）" : ""}
                         </label>
                     ))}
-                    <div className="drama-workflow-source-actions">
+                    <div className="drama-source-actions">
                         <Button disabled={working} onClick={() => setReplacement(null)}>
                             取消替换
                         </Button>
@@ -303,100 +575,267 @@ function SourceReview({ summary, onChanged, busy = false, onDirtyChange, userId 
                     </div>
                 </div>
             ) : null}
-            <div className="drama-workflow-source-body">
-                <div className="drama-workflow-chapters thin-scrollbar" role="listbox" aria-label="章节列表">
-                    <p>{chapters.data ? `共 ${chapters.data.chapters.length} 章` : "正在读取章节"}</p>
-                    {chapters.data?.chapters.map((chapter) => (
-                        <div key={chapter.id}>
-                            {configuring && metadata ? (
-                                <label>
-                                    <input
-                                        type="checkbox"
-                                        aria-label={`本次制作 ${chapter.title}`}
-                                        checked={metadata.selected.includes(chapter.id)}
-                                        disabled={working || Boolean(replacement)}
-                                        onChange={(event) => setMetadata({ ...metadata, selected: event.target.checked ? [...metadata.selected, chapter.id] : metadata.selected.filter((id) => id !== chapter.id) })}
-                                    />
-                                    本次制作
-                                </label>
-                            ) : null}
-                            <button type="button" role="option" aria-selected={chapter.id === chapterId} onClick={() => setSelectedId(chapter.id)}>
-                                <strong>
-                                    {drafts[chapter.id]?.title || chapter.title || "未命名章节"}
-                                    {drafts[chapter.id] && isDirty(drafts[chapter.id]) ? " · 未保存" : ""}
-                                </strong>
-                                <span>
-                                    {chapter.wordCount.toLocaleString()} 字{chapter.reserved ? " · 预留" : chapter.episodeNumber ? ` · 第 ${chapter.episodeNumber} 集` : ""}
-                                </span>
-                            </button>
-                        </div>
-                    ))}
-                    {chapters.isError ? (
-                        <p role="alert">
-                            章节列表读取失败。
-                            <Button size="small" type="link" onClick={() => void chapters.refetch()}>
-                                重试
-                            </Button>
-                        </p>
-                    ) : null}
-                </div>
-                <div className="drama-workflow-editor">
-                    {source.isError && !draft ? (
-                        <p role="alert">
-                            本章正文读取失败。
-                            <Button size="small" type="link" onClick={() => void source.refetch()}>
-                                重试
-                            </Button>
-                        </p>
-                    ) : draft ? (
-                        <>
-                            <Input aria-label="章节标题" value={draft.title} disabled={working || Boolean(replacement)} onChange={(event) => setDrafts({ ...drafts, [chapterId]: { ...draft, title: event.target.value } })} />
-                            <Input.TextArea aria-label="章节正文" value={draft.text} disabled={working || Boolean(replacement)} onChange={(event) => setDrafts({ ...drafts, [chapterId]: { ...draft, text: event.target.value } })} />
-                            <div className="drama-workflow-editor-bar">
-                                {stale ? (
-                                    <span role="alert">正文已有更新，重新载入将放弃本章未保存的修改。</span>
-                                ) : tooLong ? (
-                                    <span role="alert">本章正文过长，请拆分或缩短后再保存。</span>
-                                ) : chapterDirty ? (
-                                    <span>本章有未保存的修改，其它章节草稿会保留。</span>
-                                ) : (
-                                    <span>保存只写入当前章节。</span>
-                                )}
-                                {stale ? (
-                                    <Button disabled={working} onClick={() => void reloadChapter()}>
-                                        重新载入
-                                    </Button>
-                                ) : (
-                                    <div className="drama-workflow-source-actions">
-                                        {chapterDirty ? (
-                                            <Button disabled={working || Boolean(replacement)} onClick={() => setDrafts({ ...drafts, [chapterId]: { ...draft, text: draft.baseline, title: draft.baselineTitle } })}>
-                                                放弃本章修改
-                                            </Button>
-                                        ) : null}
-                                        <Button type="primary" icon={<Save className="size-3.5" />} disabled={working || !chapterDirty || tooLong || Boolean(replacement)} loading={save.isPending} onClick={() => save.mutate(draft)}>
-                                            保存本章
-                                        </Button>
-                                    </div>
-                                )}
+            {step === "review" ? (
+                <div className="drama-source-review-layout">
+                    <div className="drama-source-chapter-list thin-scrollbar" role="listbox" aria-label="章节列表">
+                        <p>{episodeId && episode.isPending ? "正在读取本集章节" : visibleChapters ? `共 ${visibleChapters.length} 章` : "正在读取章节"}</p>
+                        {visibleChapters?.map((chapter) => (
+                            <div key={chapter.id} className={`drama-source-chapter-item ${chapter.id === chapterId ? "is-selected" : ""}`}>
+                                {configuring && !episodeId && metadata ? (
+                                    <label className="drama-source-chapter-scope">
+                                        <input
+                                            type="checkbox"
+                                            aria-label={`本次制作 ${chapter.title}`}
+                                            checked={metadata.selected.includes(chapter.id)}
+                                            disabled={working || Boolean(replacement)}
+                                            onChange={(event) => setMetadata({ ...metadata, selected: event.target.checked ? [...metadata.selected, chapter.id] : metadata.selected.filter((id) => id !== chapter.id) })}
+                                        />
+                                        本次制作
+                                    </label>
+                                ) : null}
+                                <button type="button" role="option" aria-selected={chapter.id === chapterId} onClick={() => setSelectedId(chapter.id)}>
+                                    <strong>
+                                        {drafts[chapter.id]?.title || chapter.title || "未命名章节"}
+                                        {drafts[chapter.id] && isDirty(drafts[chapter.id]) ? " · 未保存" : ""}
+                                    </strong>
+                                    <span>
+                                        {chapter.wordCount.toLocaleString()} 字{chapter.reserved ? " · 预留" : chapter.episodeNumber ? ` · 第 ${chapter.episodeNumber} 集` : ""}
+                                    </span>
+                                </button>
                             </div>
-                        </>
-                    ) : (
-                        <p role="status">{chapterId ? "正在读取正文…" : "还没有可确认的章节"}</p>
-                    )}
+                        ))}
+                        {chapters.isError ? (
+                            <p role="alert">
+                                章节列表读取失败。
+                                <Button size="small" type="link" onClick={() => void chapters.refetch()}>
+                                    重试
+                                </Button>
+                            </p>
+                        ) : null}
+                        {episodeId && episode.isError ? (
+                            <p role="alert">
+                                本集章节读取失败。
+                                <Button size="small" type="link" onClick={() => void episode.refetch()}>
+                                    重试
+                                </Button>
+                            </p>
+                        ) : null}
+                    </div>
+                    <div className="drama-source-editor">
+                        {source.isError && !draft ? (
+                            <p role="alert">
+                                本章正文读取失败。
+                                <Button size="small" type="link" onClick={() => void source.refetch()}>
+                                    重试
+                                </Button>
+                            </p>
+                        ) : draft ? (
+                            <>
+                                {!editing ? (
+                                    <article className="drama-source-reading" aria-label="章节预览">
+                                        <h3>{draft.title}</h3>
+                                        <div>{draft.text}</div>
+                                        {chapterDirty ? <p className="drama-source-note">本章有未保存修改，点击手动编辑继续。</p> : null}
+                                        {stale ? (
+                                            <p className="drama-source-note" role="alert">
+                                                正文已有更新，请进入手动编辑后重新载入。
+                                            </p>
+                                        ) : null}
+                                    </article>
+                                ) : null}
+                                <div className="drama-source-edit-fields" hidden={!editing}>
+                                    <div className="drama-source-editor-heading">
+                                        <label htmlFor={`drama-source-title-${projectId}`}>章节标题</label>
+                                        <span>{sourceChars(draft.text).toLocaleString()} 字</span>
+                                    </div>
+                                    <Input
+                                        id={`drama-source-title-${projectId}`}
+                                        aria-label="章节标题"
+                                        value={draft.title}
+                                        disabled={working || Boolean(replacement)}
+                                        onChange={(event) => setDrafts({ ...drafts, [chapterId]: { ...draft, title: event.target.value } })}
+                                    />
+                                    <label className="drama-source-body-label" htmlFor={`drama-source-body-${projectId}`}>
+                                        章节正文
+                                    </label>
+                                    <Input.TextArea
+                                        id={`drama-source-body-${projectId}`}
+                                        aria-label="章节正文"
+                                        value={draft.text}
+                                        disabled={working || Boolean(replacement)}
+                                        onChange={(event) => setDrafts({ ...drafts, [chapterId]: { ...draft, text: event.target.value } })}
+                                    />
+                                    <div className="drama-source-bar drama-source-editor-footer">
+                                        {stale ? (
+                                            <span role="alert">正文已有更新，重新载入将放弃本章未保存的修改。</span>
+                                        ) : tooLong ? (
+                                            <span role="alert">本章正文过长，请拆分或缩短后再保存。</span>
+                                        ) : chapterDirty ? (
+                                            <span>本章有未保存的修改，其它章节草稿会保留。</span>
+                                        ) : (
+                                            <span>保存只写入当前章节。</span>
+                                        )}
+                                        {stale ? (
+                                            <Button disabled={working} onClick={() => void reloadChapter()}>
+                                                重新载入
+                                            </Button>
+                                        ) : (
+                                            <div className="drama-source-actions">
+                                                {chapterDirty ? (
+                                                    <Button
+                                                        disabled={working || Boolean(replacement)}
+                                                        onClick={() => {
+                                                            setDrafts({ ...drafts, [chapterId]: { ...draft, text: draft.baseline, title: draft.baselineTitle } });
+                                                            setEditing(false);
+                                                        }}
+                                                    >
+                                                        放弃本章修改
+                                                    </Button>
+                                                ) : (
+                                                    <Button disabled={working} onClick={() => setEditing(false)}>
+                                                        取消编辑
+                                                    </Button>
+                                                )}
+                                                <Button type="primary" icon={<Save className="size-3.5" aria-hidden />} disabled={working || !chapterDirty || tooLong || Boolean(replacement)} loading={save.isPending} onClick={() => save.mutate(draft)}>
+                                                    保存本章
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <p role="status">{chapterId ? "正在读取正文…" : episodeId && episode.isPending ? "正在读取本集关联的章节…" : episodeId ? "本集尚无可编辑的原文章节" : "还没有可确认的章节"}</p>
+                        )}
+                    </div>
                 </div>
-            </div>
+            ) : null}
             <input
                 ref={fileRef}
                 type="file"
                 className="drama-workflow-file-input"
                 accept=".txt,.md,.markdown,.docx,text/plain,text/markdown"
                 aria-label="替换正文文件"
+                disabled={working || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim()) || !configuring || Boolean(episodeId)}
                 onChange={(event) => {
                     const file = event.target.files?.[0];
                     if (file) void loadReplacement(file);
                     event.target.value = "";
                 }}
             />
+            <AppModal
+                open={Boolean(creation)}
+                title={creation?.mode === "single" ? "新建单集" : "新建剧集"}
+                onCancel={() => {
+                    setCreation(null);
+                    setCreationError("");
+                }}
+                footer={null}
+                centered
+                width={620}
+                rootClassName="drama-root"
+                closable={!createEpisodes.isPending}
+                maskClosable={!createEpisodes.isPending}
+                keyboard={!createEpisodes.isPending}
+                aria-label="创建剧集设置"
+            >
+                {creation ? (
+                    <form
+                        className="drama-source-create-form"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            if (creationLock.current) return;
+                            creationLock.current = true;
+                            setCreationError("");
+                            createEpisodes.mutate(creation);
+                        }}
+                    >
+                        <div className="drama-source-form-field">
+                            <label htmlFor={`drama-create-name-${projectId}`}>
+                                <span className="drama-source-required">*</span>剧集名称
+                            </label>
+                            <Input
+                                id={`drama-create-name-${projectId}`}
+                                aria-label="剧集名称"
+                                value={creation.name}
+                                maxLength={120}
+                                required
+                                disabled={createEpisodes.isPending}
+                                onChange={(event) => setCreation({ ...creation, name: event.target.value })}
+                            />
+                        </div>
+                        <fieldset className="drama-source-type-field" disabled={createEpisodes.isPending}>
+                            <legend>
+                                <span className="drama-source-required">*</span>剧集类型
+                            </legend>
+                            <p className="drama-source-type-help">确认制作方案后不可修改剧集类型。</p>
+                            <div className="drama-source-type-cards">
+                                {DRAMA_TYPES.map(({ value, label, cover }) => (
+                                    <label key={value} className={`drama-source-type-card ${creation.dramaType === value ? "is-selected" : ""}`}>
+                                        <input type="radio" name={`drama-type-${projectId}`} value={value} checked={creation.dramaType === value} onChange={() => setCreation({ ...creation, dramaType: value })} />
+                                        <span className="drama-source-type-art">
+                                            <img src={cover} alt="" />
+                                        </span>
+                                        <strong>{label}</strong>
+                                    </label>
+                                ))}
+                            </div>
+                        </fieldset>
+                        <div className="drama-source-form-field">
+                            <label>导入现有剧本项目</label>
+                            <div className="drama-source-origin">
+                                <FileText className="size-4" aria-hidden />
+                                <span>{summary.project.name}</span>
+                                <strong>{creation.selected.length} 章</strong>
+                            </div>
+                            <p>{creation.mode === "single" ? `仅制作当前章：${draft?.title || "当前章节"}。` : "使用剧本格式页勾选的制作范围。"}其余章节保留，集数沿用当前拆集设置。</p>
+                        </div>
+                        <div className="drama-source-form-field">
+                            <label htmlFor={`drama-create-ratio-${projectId}`}>
+                                <span className="drama-source-required">*</span>视频比例
+                            </label>
+                            <select id={`drama-create-ratio-${projectId}`} aria-label="视频比例" value={creation.aspectRatio} disabled={createEpisodes.isPending} onChange={(event) => setCreation({ ...creation, aspectRatio: event.target.value })}>
+                                {VIDEO_RATIOS.map((ratio) => (
+                                    <option key={ratio} value={ratio}>
+                                        {ratio}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="drama-source-form-field">
+                            <label htmlFor={`drama-create-description-${projectId}`}>备注</label>
+                            <Input.TextArea
+                                id={`drama-create-description-${projectId}`}
+                                aria-label="剧集备注"
+                                value={creation.description}
+                                rows={3}
+                                maxLength={2000}
+                                disabled={createEpisodes.isPending}
+                                onChange={(event) => setCreation({ ...creation, description: event.target.value })}
+                            />
+                        </div>
+                        {creationError ? (
+                            <p className="drama-source-create-error" role="alert">
+                                {creationError}
+                            </p>
+                        ) : null}
+                        <div className="drama-source-actions drama-source-create-footer">
+                            <Button
+                                disabled={createEpisodes.isPending}
+                                onClick={() => {
+                                    setCreation(null);
+                                    setCreationError("");
+                                }}
+                            >
+                                取消
+                            </Button>
+                            <Button type="primary" htmlType="submit" disabled={createEpisodes.isPending || !creation.name.trim()} loading={createEpisodes.isPending}>
+                                新建
+                            </Button>
+                        </div>
+                    </form>
+                ) : null}
+            </AppModal>
         </section>
     );
 }

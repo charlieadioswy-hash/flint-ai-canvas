@@ -109,7 +109,6 @@ import {
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
 import { buildImageToPrevisAgentPrompt, buildImageToPrevisDisplayText } from "@/lib/canvas/image-to-previs-agent";
-import type { CloudAgentMessagePresentation } from "@/services/cloud-agent-conversations";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -159,6 +158,8 @@ import { useCanvasConnectionController } from "./use-canvas-connection-controlle
 import { useCanvasOperationHistory } from "./use-canvas-operation-history";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
 import { useGlobalAgentStore, type AgentInsertedNode } from "@/stores/use-global-agent-store";
+import type { AgentPrefillRequest } from "@/stores/use-global-agent-store";
+import { takeCanvasAgentEntry } from "@/services/canvas-agent-entry";
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
 import { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
 import { useCanvasPrevis } from "./use-canvas-previs";
@@ -289,7 +290,7 @@ function CanvasViewportPage() {
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     // 每次发送带递增 id：重复发送同一节点时文本相同，仍需触发一次追加。
-    const [agentPrefillRequest, setAgentPrefillRequest] = useState<(CloudAgentMessagePresentation & { id: number; text: string; autoSubmit?: boolean; requiresVision?: boolean }) | null>(null);
+    const [agentPrefillRequest, setAgentPrefillRequest] = useState<AgentPrefillRequest | null>(null);
     const isMiniMapOpen = useCanvasUiStore((state) => state.isMiniMapOpen);
     const toggleMiniMap = useCanvasUiStore((state) => state.toggleMiniMap);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
@@ -2835,6 +2836,13 @@ function CanvasViewportPage() {
     );
     // 平台唯一的 Agent 面板挂在布局上；画布只发布自己的上下文。画布加载完成前不发布，避免以未保存画布绑定运行。
     const publishAgentCanvas = useGlobalAgentStore((state) => state.setCanvas);
+    useEffect(() => {
+        if (!projectLoaded || !projectId) return;
+        const entryDraft = takeCanvasAgentEntry(projectId);
+        if (!entryDraft) return;
+        setAgentPrefillRequest((current) => ({ id: (current?.id ?? 0) + 1, text: entryDraft.text, entryDraft }));
+        openAgent();
+    }, [projectLoaded, projectId, openAgent]);
     useEffect(() => {
         if (!projectLoaded || !projectId) return;
         publishAgentCanvas({

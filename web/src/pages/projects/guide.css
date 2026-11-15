@@ -20,7 +20,8 @@
 .drama-guide-entry-heading p,
 .drama-guide-section-head p,
 .drama-guide-brief p,
-.drama-guide-card > p {
+.drama-guide-card > p,
+.drama-guide-cast-body > p {
     color: var(--drama-muted);
     font-size: var(--fs-label);
     line-height: 1.7;
@@ -573,6 +574,18 @@
     gap: var(--space-4);
 }
 
+.drama-guide-cast {
+    display: flex;
+    flex-direction: column;
+    height: 320px;
+    overflow: hidden;
+}
+
+.drama-guide-cast > header,
+.drama-guide-cast > footer {
+    flex: none;
+}
+
 .drama-guide-cast header {
     display: flex;
     align-items: center;
@@ -583,6 +596,24 @@
 .drama-guide-cast header > div:nth-child(2) {
     flex: 1;
     min-width: 0;
+}
+
+.drama-guide-cast header h3 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.drama-guide-cast-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+
+.drama-guide-cast-body:focus-visible {
+    outline: 2px solid var(--workspace-accent);
+    outline-offset: 2px;
 }
 
 .drama-guide-asset-thumb {

@@ -1,109 +1,362 @@
 .drama-shot-media {
+    --shot-config-width: 25%;
+    --shot-versions-width: 25%;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    container: drama-shot-editor / inline-size;
 }
 
+.drama-shot-media.is-page {
+    flex: 1;
+    overflow: hidden;
+}
+
+.drama-shot-media-header,
 .drama-shot-media-tabs,
 .drama-shot-media-reference-row,
 .drama-shot-media-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
 }
 
+.drama-shot-media-header {
+    gap: var(--space-4);
+    flex: none;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+.drama-shot-media-header h3 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+.drama-shot-media-header h3 span {
+    margin-left: var(--space-2);
+    font-weight: 400;
+    color: var(--drama-muted);
+}
+.drama-shot-media-header p {
+    margin-top: var(--space-1);
+    font-size: var(--fs-tiny);
+    color: var(--drama-muted);
+}
+.drama-shot-media-header > button:last-child {
+    margin-left: auto;
+}
+.drama-shot-media-tabs {
+    gap: var(--space-4);
+    flex-wrap: nowrap;
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+}
+.drama-shot-media-tabs button {
+    padding-inline: 0;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    color: var(--drama-muted);
+}
 .drama-shot-media-tabs button[aria-pressed="true"] {
-    background: var(--accent);
-    color: var(--accent-foreground);
+    color: var(--control-selected-fg);
+    border-bottom-color: var(--control-selected-fg);
 }
 
 .drama-shot-media-columns {
     display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
-    gap: 24px;
-    max-height: 70vh;
-    overflow-y: auto;
+    grid-template-columns: minmax(260px, 1fr) minmax(0, 1.65fr);
+    gap: 0;
+    min-height: 0;
+    height: min(760px, calc(100dvh - 180px));
+    overflow: hidden;
     overscroll-behavior: contain;
+}
+
+.drama-shot-media-columns:has(.drama-shot-media-stage) {
+    grid-template-columns: minmax(250px, var(--shot-config-width)) minmax(0, 1fr) minmax(220px, var(--shot-versions-width));
+}
+.drama-shot-media.is-page .drama-shot-media-columns {
+    height: calc(100dvh - 230px);
+    min-height: 480px;
 }
 
 .drama-shot-media-config,
 .drama-shot-media-output,
 .drama-shot-media-references,
-.drama-shot-media-take {
+.drama-shot-media-take,
+.drama-shot-media-stage {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
     min-width: 0;
 }
-
+.drama-shot-media-config {
+    padding: var(--space-4);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--surface);
+}
+.drama-shot-media-config > p,
+.drama-shot-media-output > p {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    line-height: 1.6;
+}
+.drama-shot-media-stage {
+    padding: var(--space-4);
+    overflow-y: auto;
+    background: var(--drama-sunken);
+    overscroll-behavior: contain;
+}
+.drama-shot-media-output {
+    padding: var(--space-4);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--surface);
+    overscroll-behavior: contain;
+}
+.drama-shot-media-loading {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    min-height: 320px;
+}
 .drama-shot-media label {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-2);
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--fs-tiny);
 }
-
 .drama-shot-media-parameters {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
 }
-
+.drama-shot-media-operation {
+    display: flex;
+    flex: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.drama-shot-media-operation button {
+    flex: 1;
+    min-width: 0;
+    min-height: 36px;
+    padding: var(--space-2) var(--space-1);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    background: var(--drama-sunken);
+    border: 1px solid transparent;
+}
+.drama-shot-media-operation button[aria-pressed="true"] {
+    color: var(--control-selected-fg);
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+}
+.drama-shot-media-actions {
+    margin-top: auto;
+}
+.drama-shot-media-generate {
+    flex-basis: 100%;
+}
+.drama-shot-media :is(button, a):focus-visible {
+    outline: 2px solid var(--control-focus-ring);
+    outline-offset: 2px;
+}
 .drama-shot-media-model {
     min-width: 0;
     padding: 0;
     margin: 0;
     border: 0;
 }
-
 .drama-shot-media-model:disabled {
     opacity: 0.5;
 }
-
+.drama-shot-media-config > .drama-shot-media-model {
+    display: grid;
+    gap: var(--space-4);
+}
 .drama-shot-media label.drama-shot-media-audio {
     flex-direction: row;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
+}
+.drama-shot-media-reference {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-tiny);
+}
+.drama-shot-media-reference img {
+    width: 80px;
+    height: 64px;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
 }
 
-.drama-shot-media-reference {
+.drama-shot-media-stage > header,
+.drama-shot-media-output > header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--fs-tiny);
+}
+.drama-shot-media-stage > header span,
+.drama-shot-media-output > header span {
+    color: var(--drama-muted);
+}
+.drama-shot-media-canvas {
+    display: grid;
+    place-items: center;
+    flex: 1 0 280px;
+    min-height: 280px;
+    padding: var(--space-3);
+    background: var(--drama-sunken);
+}
+.drama-shot-media-canvas img,
+.drama-shot-media-canvas video {
+    width: 100%;
+    max-height: 52vh;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+}
+
+.drama-shot-media-canvas audio,
+.drama-shot-media-output audio {
+    width: 100%;
     min-width: 0;
 }
-
-.drama-shot-media-reference img {
-    width: 48px;
-    height: 48px;
-    object-fit: cover;
-    border-radius: var(--radius);
+.drama-shot-media-stage > p,
+.drama-shot-media-shot-copy {
+    white-space: pre-wrap;
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    line-height: 1.6;
 }
-
 .drama-shot-media-output img,
 .drama-shot-media-output video {
     width: 100%;
-    max-height: 240px;
+    aspect-ratio: 16 / 9;
     object-fit: contain;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
 }
-
 .drama-shot-media-take,
 .drama-shot-media-quote {
-    padding: 12px;
+    padding: var(--space-3);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 12px;
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-tiny);
 }
-
+.drama-shot-media-take.is-current {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+}
 .drama-shot-media-quote p + button {
-    margin-top: 8px;
+    margin-top: var(--space-2);
 }
 
-@media (max-width: 720px) {
-    .drama-shot-media-columns {
+.drama-shot-media-strip {
+    display: grid;
+    flex: none;
+    gap: var(--space-2);
+    margin-top: auto;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+    font-size: var(--fs-tiny);
+}
+.drama-shot-media-strip nav {
+    display: flex;
+    gap: var(--space-3);
+    overflow-x: auto;
+    padding-bottom: var(--space-2);
+}
+.drama-shot-media-strip button {
+    flex: 0 0 132px;
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--drama-muted);
+    text-align: left;
+}
+.drama-shot-media-strip button[aria-pressed="true"] {
+    color: var(--control-selected-fg);
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+}
+.drama-shot-media-strip button > span {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 16 / 9;
+    background: var(--drama-sunken);
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+}
+.drama-shot-media-strip img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+@container drama-shot-editor (max-width: 960px) {
+    .drama-shot-media.is-page .drama-shot-media-columns {
+        height: auto;
+        min-height: 0;
+    }
+    .drama-shot-media-columns:has(.drama-shot-media-stage) {
+        grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1fr);
+        height: auto;
+        overflow: visible;
+    }
+    .drama-shot-media-config,
+    .drama-shot-media-stage {
+        overflow: visible;
+    }
+    .drama-shot-media-columns:has(.drama-shot-media-stage) > .drama-shot-media-output {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        align-items: start;
+        border-top: 1px solid var(--border);
+        border-left: 0;
+        overflow: visible;
+    }
+    .drama-shot-media-columns:has(.drama-shot-media-stage) > .drama-shot-media-output > header {
+        grid-column: 1 / -1;
+    }
+}
+
+@container drama-shot-editor (max-width: 640px) {
+    .drama-shot-media-columns,
+    .drama-shot-media-columns:has(.drama-shot-media-stage) {
         grid-template-columns: minmax(0, 1fr);
+        height: auto;
+        overflow: visible;
+    }
+    .drama-shot-media-config {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+    .drama-shot-media-canvas {
+        min-height: 200px;
+    }
+    .drama-shot-media-header > button:last-child {
+        margin-left: 0;
     }
 }

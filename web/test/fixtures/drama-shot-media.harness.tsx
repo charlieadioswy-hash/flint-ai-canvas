@@ -138,7 +138,7 @@ function media(kind: DramaShotMediaKind): DramaShotMedia {
         },
     };
 }
-async function mount() {
+async function mount(page = false) {
     saves.length = checks.length = executions.length = adoptions.length = 0;
     confirmations = [];
     readsFail = false;
@@ -153,7 +153,24 @@ async function mount() {
     const render = () =>
         root.render(
             <QueryClientProvider client={client}>
-                <WorkflowShotMediaDialog open projectId={projectId} shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1 } as DramaShot} onClose={() => closes++} onChanged={() => changed++} />
+                <WorkflowShotMediaDialog
+                    open
+                    projectId={projectId}
+                    shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1 } as DramaShot}
+                    presentation={page ? "page" : "dialog"}
+                    actLabel="第 1 幕"
+                    shots={
+                        page
+                            ? ([
+                                  { id: "real-shot", projectId, position: 1 },
+                                  { id: "next-shot", projectId, position: 2 },
+                              ] as DramaShot[])
+                            : undefined
+                    }
+                    onSelectShot={() => closes++}
+                    onClose={() => closes++}
+                    onChanged={() => changed++}
+                />
             </QueryClientProvider>,
         );
     await act(async () => {
@@ -374,5 +391,22 @@ test("镜头媒体音频标签打开独立音频编辑器", async () => {
         expect(executions).toHaveLength(0);
     } finally {
         await ui.close();
+    }
+});
+
+test("镜头页面直接展示三列与本幕镜头条，切镜头保护未保存内容", async () => {
+    const view = await mount(true);
+    try {
+        expect(view.host.querySelector("[role='dialog']")).toBeNull();
+        expect(view.host.querySelector("[aria-label='镜头媒体预览']")).toBeTruthy();
+        expect(view.host.querySelector("[aria-label='本幕镜头']")).toBeTruthy();
+        await prompt(view.host, "尚未保存");
+        await act(async () => view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 3']")!.click());
+        expect(closes).toBe(0);
+        expect(confirmations).toHaveLength(1);
+        await act(async () => confirmations[0].onOk());
+        expect(closes).toBe(1);
+    } finally {
+        await view.close();
     }
 });

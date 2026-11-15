@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import type { AgentEvent, AgentRun } from "@/services/api/agent";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 import type { AgentOutbox } from "@/lib/canvas/agent-outbox";
+import type { Skill } from "@/services/api/skills";
 
 const dom = new Window({ url: "http://localhost/" });
 for (const [key, value] of Object.entries({
@@ -66,6 +67,7 @@ let historyUI: Record<string, any>;
 let controls: Record<string, any>;
 let outboxUI: Record<string, any>;
 let questionUI: Record<string, any> | undefined;
+let addedSkills: Skill[] = [];
 const silent = () => {};
 mock.module("file-saver", () => ({ saveAs: silent }));
 const MotionBox = ({ children, className, style }: any) => (
@@ -158,7 +160,7 @@ mock.module("@/services/api/skills", () => ({
     ...skillsApi,
     listSkillPresets: async () => ({ presets: [] }),
     listSkills: async () => ({ skills: [] }),
-    listAddedSkills: async () => ({ skills: [] }),
+    listAddedSkills: async () => ({ skills: addedSkills }),
     listSkillLibraryCategories: async () => ({ categories: [] }),
     addSkill: async () => {
         throw new Error("不应安装技能");
@@ -286,8 +288,10 @@ type MountOptions = {
     strictMode?: boolean;
     initiallyOpen?: boolean;
     hidden?: boolean;
+    skills?: Skill[];
 };
 async function mount(initial: CloudAgentConversation, cloud: CloudAgentConversation[], initialPending: CloudAgentPendingSubmission | null = null, options: MountOptions = {}) {
+    addedSkills = options.skills || [];
     local = options.localConversations || [initial];
     activeId = initial.id;
     remote = cloud;
@@ -449,6 +453,78 @@ test("隐藏期间不消费新的画布预填、不响应快捷键，返回后�
         await mounted.setHidden(true);
         await mounted.setHidden(false);
         expect(composer.prompt).toBe("稍后才填入的要求");
+        expect(sent).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("创作入口带入独立画布对话、技能和图片草稿，上传完成前阻止发送且不自动计费", async () => {
+    const skill = { skillId: "director-skill", skillName: "导演技能", description: "分镜编排", isAdded: true } as Skill;
+    const previous = { ...chat("previous-chat", null), draft: "原会话未发送的内容" };
+    const mounted = await mount(previous, [], null, { hidden: true, strictMode: true, skills: [skill] });
+    const file = new File(["test-image"], "参考.png", { type: "image/png" });
+    const inserted: File[][] = [];
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setCanvas({
+                ...useGlobalAgentStore.getState().canvas!,
+                insertAgentFiles: (files) => {
+                    inserted.push(files);
+                    return ["entry-reference"];
+                },
+                prefillRequest: {
+                    id: 93,
+                    text: "请围绕参考图创作",
+                    entryDraft: { canvasId: "shared-canvas", scope: "sync-user", userId: "sync-user", text: "请围绕 @[attachment:source-image] 创作 @[skill:director-skill]", skillIds: ["director-skill"], files: [{ id: "source-image", file }] },
+                },
+            });
+            await settle();
+        });
+        expect(inserted).toHaveLength(0);
+        await mounted.setHidden(false);
+        expect(inserted).toEqual([[file]]);
+        expect(composer.prompt).toBe("请围绕 @[node:entry-reference] 创作 @[skill:director-skill]");
+        expect(controls.selectedSkillCount).toBe(1);
+        expect(composer.attachments).toHaveLength(1);
+        expect(composer.attachments[0].nodeId).toBe("entry-reference");
+        expect(composer.blockReason).toBe("图片还在上传，传完再发送");
+        expect(generated).toBe(0);
+        expect(sent).toHaveLength(0);
+        await persist();
+        expect(activeId).not.toBe(previous.id);
+        expect(local.find((item) => item.id === previous.id)?.draft).toBe(previous.draft);
+        expect(local.find((item) => item.id === activeId)?.skillIds).toEqual(["director-skill"]);
+        await mounted.setHidden(true);
+        await mounted.setHidden(false);
+        expect(inserted).toHaveLength(1);
+        expect(generated).toBe(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("等待恢复的入口草稿不能填入其他画布或账号", async () => {
+    const previous = { ...chat("safe-entry-chat", null), draft: "当前会话草稿" };
+    const mounted = await mount(previous, []);
+    let inserted = 0;
+    try {
+        for (const [index, mismatch] of [{ canvasId: "another-canvas" }, { scope: "another-scope" }, { userId: "another-user" }].entries()) {
+            await act(async () => {
+                useGlobalAgentStore.getState().setCanvas({
+                    ...useGlobalAgentStore.getState().canvas!,
+                    insertAgentFiles: () => {
+                        inserted++;
+                        return [];
+                    },
+                    prefillRequest: { id: 94 + index, text: "其他范围的草稿", entryDraft: { canvasId: "shared-canvas", scope: "sync-user", userId: "sync-user", text: "其他范围的草稿", skillIds: [], files: [], ...mismatch } },
+                });
+                await settle();
+            });
+            expect(composer.prompt).toBe(previous.draft);
+        }
+        expect(inserted).toBe(0);
+        expect(generated).toBe(0);
         expect(sent).toHaveLength(0);
     } finally {
         await mounted.close();

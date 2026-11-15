@@ -236,14 +236,18 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 			}
 			result.Status, result.Error = string(task.Status), task.Error
 			if task.Status == model.TaskStatusSucceeded && take.ResourceID == "" {
-				if _, err := s.RegisterDramaCastViewTaskOutput(*task); err != nil {
-					return DramaCastViewResult{}, err
+				if _, outputErr := dramaCastImageResource(task); outputErr != nil {
+					result.Status, result.Error = "failed", outputErr.Error()
+				} else {
+					if _, err := s.RegisterDramaCastViewTaskOutput(*task); err != nil {
+						return DramaCastViewResult{}, err
+					}
+					stored, err := s.repo.DramaCastViewTake(projectID, viewID, take.ID)
+					if err != nil {
+						return DramaCastViewResult{}, err
+					}
+					result.DramaTake = *stored
 				}
-				stored, err := s.repo.DramaCastViewTake(projectID, viewID, take.ID)
-				if err != nil {
-					return DramaCastViewResult{}, err
-				}
-				result.DramaTake = *stored
 			}
 			if result.ResourceID != "" && task.Status == model.TaskStatusSucceeded {
 				result.Status = "ready"

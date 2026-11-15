@@ -1,8 +1,9 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, StrictMode, useEffect, useState, type ReactNode } from "react";
+import { createElement, StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaChapterRef, DramaModelCatalog, DramaSettings, DramaSourceFormat, DramaSummary } from "@/services/api/drama";
+import type { CreateDramaInput, DramaChapterRef, DramaModelCatalog, DramaSettings, DramaSourceFormat, DramaSummary } from "@/services/api/drama";
+import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
 const browser = new Window({ url: "http://localhost/projects/project-a/guide" });
@@ -42,14 +43,23 @@ type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => 
 const chapterLists = new Map<string, DramaChapterRef[]>();
 const chapterBodies = new Map<string, ChapterBody>();
 const chapterReads: string[] = [];
+const episodeChapterIDs = new Map<string, string[]>();
 const chapterWrites: Array<{ projectId: string; chapterId: string; patch: { title?: string; text?: string; expectedRevision?: number } }> = [];
 const notices: Array<{ kind: string; text: string }> = [];
 const navigations: string[] = [];
-const createCalls: Array<{ name: string; sourceFormat: DramaSourceFormat; chapters: Array<{ title: string; text: string }> }> = [];
+const createCalls: CreateDramaInput[] = [];
 type SourceWrite = { expectedRevision: number; chapters?: Array<{ title: string; text: string }>; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] };
 const sourceWrites: Array<{ projectId: string; input: SourceWrite }> = [];
+const settingsWrites: Array<{ projectId: string; input: { settings?: DramaSettings; expectedRevision?: number } }> = [];
+const projectWrites: Array<{ projectId: string; input: { name?: string; description?: string; aspectRatio?: string } }> = [];
+const projectSettings = new Map<string, DramaSettings>();
+let settingsFailure: Error | null = null;
 let fileReads: Deferred<string>[] = [];
 const ideaAdoptions: Array<(text: string, format: DramaSourceFormat) => void> = [];
+const canvasGuards: Array<() => boolean | Promise<boolean>> = [];
+const canvasDecisions: boolean[] = [];
+let canvasCreation: Deferred<void> | undefined;
+let canvasCreationCalls = 0;
 
 function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
@@ -99,11 +109,77 @@ mock.module("antd", () => ({
             },
         }),
     },
-    Button: ({ children, icon, loading: _loading, size: _size, type: _type, danger: _danger, ...props }: { children?: ReactNode; icon?: ReactNode; loading?: boolean; size?: string; type?: string; danger?: boolean } & Record<string, unknown>) =>
-        createElement("button", props, icon, children),
-    Input: Object.assign(({ autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("input", props), {
+    Button: ({
+        children,
+        icon,
+        loading: _loading,
+        size: _size,
+        type: _type,
+        htmlType,
+        danger: _danger,
+        ...props
+    }: { children?: ReactNode; icon?: ReactNode; loading?: boolean; size?: string; type?: string; htmlType?: string; danger?: boolean } & Record<string, unknown>) => createElement("button", { type: htmlType || "button", ...props }, icon, children),
+    Input: Object.assign(({ autoSize: _autoSize, count: _count, status: _status, ...props }: Record<string, unknown>) => createElement("input", props), {
         TextArea: ({ autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("textarea", props),
     }),
+}));
+mock.module("@/components/ui/product/app-modal", () => ({
+    AppModal: ({
+        open,
+        title,
+        children,
+        "aria-label": label,
+        onCancel,
+        afterOpenChange,
+        closable = true,
+        maskClosable = true,
+        keyboard = true,
+        destroyOnHidden,
+        className,
+        footer,
+    }: {
+        open?: boolean;
+        title?: string;
+        children?: ReactNode;
+        "aria-label"?: string;
+        onCancel?: () => void;
+        afterOpenChange?: (open: boolean) => void;
+        closable?: boolean;
+        maskClosable?: boolean;
+        keyboard?: boolean;
+        destroyOnHidden?: boolean;
+        className?: string;
+        footer?: ReactNode;
+    }) => {
+        const opened = useRef(false);
+        if (open) opened.current = true;
+        useEffect(() => {
+            afterOpenChange?.(Boolean(open));
+        }, [open]);
+        return open || (opened.current && destroyOnHidden === false)
+            ? createElement(
+                  "section",
+                  {
+                      role: "dialog",
+                      "aria-label": label,
+                      "aria-hidden": !open,
+                      "data-app-modal": "true",
+                      "data-mask-closable": String(maskClosable),
+                      "data-keyboard": String(keyboard),
+                      className,
+                      hidden: !open,
+                      inert: !open,
+                      onKeyDown: (event: { key: string }) => {
+                          if (open && keyboard && event.key === "Escape") onCancel?.();
+                      },
+                  },
+                  createElement("h2", {}, title),
+                  closable ? createElement("button", { type: "button", "aria-label": `关闭${label || "弹窗"}`, onClick: onCancel }, "×") : null,
+                  children,
+                  footer,
+              )
+            : null;
+    },
 }));
 mock.module("react-router", () => ({
     useNavigate: () => (to: string) => {
@@ -128,7 +204,11 @@ mock.module("@/pages/projects/drama-shared", () => ({
         ),
 }));
 mock.module("@/pages/projects/studio/use-studio", () => ({
-    dramaKeys: { chapters: (projectId: string) => ["drama", projectId, "chapters"] as const },
+    dramaKeys: {
+        summary: (projectId: string) => ["drama", projectId] as const,
+        episode: (projectId: string, episodeId: string) => ["drama", projectId, "episode", episodeId] as const,
+        chapters: (projectId: string) => ["drama", projectId, "chapters"] as const,
+    },
 }));
 mock.module("@/pages/projects/drama-source-file", () => ({
     DRAMA_SOURCE_FILE_MAX_BYTES: 30 * 1024 * 1024,
@@ -149,12 +229,38 @@ mock.module("@/pages/projects/workflow-idea", () => ({
         useEffect(() => () => onDirtyChange(false, false), []);
         return createElement(
             "div",
-            { "aria-label": "独立创意任务", "data-disabled": String(Boolean(disabled)) },
+            { "aria-label": "独立创意任务", "data-disabled": String(Boolean(disabled)), "data-dirty": String(state.dirty), "data-busy": String(state.busy) },
             createElement("button", { disabled, onClick: () => onAdopt("第1集\nAI扩写的完整剧本", "script") }, "采用扩写样稿"),
             createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: true }) }, "模拟扩写开始"),
             createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: false }) }, "模拟扩写完成"),
             createElement("button", { disabled, onClick: () => setState({ dirty: true, busy: false }) }, "填写创意草稿"),
         );
+    },
+}));
+mock.module("@/pages/projects/workflow-canvas-entry", () => ({
+    WorkflowCanvasEntry: ({ disabled, hidden, onBeforeCreate, onBusyChange }: { disabled?: boolean; hidden?: boolean; onBeforeCreate: () => boolean | Promise<boolean>; onBusyChange: (busy: boolean) => void }) => {
+        const locked = useRef(false);
+        const [busy, setBusy] = useState(false);
+        canvasGuards.push(onBeforeCreate);
+        const create = async () => {
+            if (disabled || hidden || locked.current) return;
+            locked.current = true;
+            setBusy(true);
+            onBusyChange(true);
+            try {
+                const allowed = await onBeforeCreate();
+                canvasDecisions.push(allowed);
+                if (!allowed) return;
+                canvasCreationCalls += 1;
+                await canvasCreation?.promise;
+                navigations.push("/canvas/new-draft");
+            } finally {
+                locked.current = false;
+                setBusy(false);
+                onBusyChange(false);
+            }
+        };
+        return createElement("button", { type: "button", hidden, disabled: disabled || busy, onClick: () => void create() }, "新建画布");
     },
 }));
 mock.module("@/pages/projects/drama-model-picker", () => ({
@@ -170,15 +276,16 @@ mock.module("@/pages/projects/drama-model-picker", () => ({
 }));
 mock.module("@/pages/projects/asset-scheme", () => ({
     useAssetSchemes: () => ({
-        data: { schemes: [{ mode: "portrait", name: "肖像", description: "", ratio: "9:16", frameHint: "", characterPrompt: "角色提示" }], scenePrompt: "场景提示", characterVariables: [], sceneVariables: [] },
+        data: { schemes: [{ mode: "closeup_turnaround", name: "单特写+三视图", description: "", ratio: "16:9", frameHint: "", characterPrompt: "角色提示" }], scenePrompt: "场景提示", characterVariables: [], sceneVariables: [] },
         isLoading: false,
         isError: false,
         refetch: async () => ({ data: undefined }),
     }),
-    defaultAssetSettings: () => ({ mode: "portrait", characterPrompt: "角色提示", scenePrompt: "场景提示", characterRatio: "9:16" }),
+    defaultAssetSettings: () => ({ mode: "closeup_turnaround", characterPrompt: "角色提示", scenePrompt: "场景提示", characterRatio: "16:9" }),
 }));
 mock.module("@/services/api/drama", () => ({
     listDramaChapters: async (projectId: string) => ({ chapters: chapterLists.get(projectId) || [] }),
+    getDramaEpisode: async (projectId: string, episodeId: string) => ({ episode: { id: episodeId, number: 2, title: "第二集", chapterIdsJson: JSON.stringify(episodeChapterIDs.get(`${projectId}:${episodeId}`) || []) } }),
     getDramaChapter: async (projectId: string, chapterId: string) => {
         chapterReads.push(chapterKey(projectId, chapterId));
         const chapter = chapterBodies.get(chapterKey(projectId, chapterId));
@@ -191,8 +298,8 @@ mock.module("@/services/api/drama", () => ({
         pendingWrites.push(pending);
         return pending.promise;
     },
-    createDrama: async (input: { name: string; sourceFormat: DramaSourceFormat; chapters: Array<{ title: string; text: string }> }) => {
-        createCalls.push({ name: input.name, sourceFormat: input.sourceFormat, chapters: input.chapters.map((chapter) => ({ ...chapter })) });
+    createDrama: async (input: CreateDramaInput) => {
+        createCalls.push(structuredClone(input));
         const pending = deferred<DramaSummary>();
         pendingCreates.push(pending);
         return pending.promise;
@@ -210,6 +317,22 @@ mock.module("@/services/api/drama", () => ({
                 (chapterLists.get(projectId) || []).map((chapter, index) => ({ ...chapter, reserved: !input.selectedChapters?.includes(index) })),
             );
         return summaryOf(projectId, input.expectedRevision + 1, input.sourceFormat);
+    },
+    updateDramaSettings: async (projectId: string, input: { settings?: DramaSettings; expectedRevision?: number }) => {
+        settingsWrites.push({ projectId, input: structuredClone(input) });
+        if (settingsFailure) {
+            const error = settingsFailure;
+            settingsFailure = null;
+            throw error;
+        }
+        if (input.settings) projectSettings.set(projectId, structuredClone(input.settings));
+        return summaryOf(projectId, (input.expectedRevision || 0) + 1);
+    },
+}));
+mock.module("@/services/api/projects", () => ({
+    updateProject: async (projectId: string, input: { name?: string; description?: string; aspectRatio?: string }) => {
+        projectWrites.push({ projectId, input: structuredClone(input) });
+        return { project: { ...summaryOf(projectId, 1).project, ...input } };
     },
 }));
 
@@ -234,7 +357,7 @@ function settings(): DramaSettings {
         stylePrompt: "写实",
         styleName: "写实",
         language: "中文普通话",
-        assets: { mode: "portrait", characterPrompt: "角色", scenePrompt: "场景", characterRatio: "9:16" },
+        assets: { mode: "closeup_turnaround", characterPrompt: "角色", scenePrompt: "场景", characterRatio: "16:9" },
         storyboard: { segmentMode: "auto", segmentSeconds: 8, segmentMinSeconds: 4, segmentMaxSeconds: 12, pacing: "fast", dialogue: "standard", transition: "auto", transitionMs: 0, performance: 5, cameraMotion: 5 },
         reviewMode: "sample",
         mediaMode: "manual",
@@ -269,7 +392,7 @@ function summaryOf(projectId: string, revision: number, sourceFormat: DramaSourc
             status: "draft",
             stage: "bible",
             pauseReason: "",
-            settings: settings(),
+            settings: projectSettings.get(projectId) || settings(),
             budgetMicrocredits: 0,
             spentMicrocredits: 0,
             canvasSpentMicrocredits: 0,
@@ -314,12 +437,21 @@ function resetFixture() {
     chapterLists.clear();
     chapterBodies.clear();
     chapterReads.length = 0;
+    episodeChapterIDs.clear();
     chapterWrites.length = 0;
     notices.length = 0;
     navigations.length = 0;
     createCalls.length = 0;
     sourceWrites.length = 0;
+    settingsWrites.length = 0;
+    projectWrites.length = 0;
+    projectSettings.clear();
+    settingsFailure = null;
     ideaAdoptions.length = 0;
+    canvasGuards.length = 0;
+    canvasDecisions.length = 0;
+    canvasCreation = undefined;
+    canvasCreationCalls = 0;
     fileReads = [];
     pendingWrites.length = 0;
     pendingCreates.length = 0;
@@ -377,10 +509,29 @@ function field(container: HTMLElement, label: string) {
     return found!;
 }
 
-function button(container: HTMLElement, label: string) {
-    const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes(label));
+function isActive(node: Element) {
+    return !node.closest('[hidden], [inert], [aria-hidden="true"]');
+}
+
+function button(container: HTMLElement, label: string, includeHidden = false) {
+    const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes(label) && (includeHidden || isActive(item)));
     expect(found, `未找到按钮 ${label}`).toBeDefined();
     return found!;
+}
+
+function ideaDialog(container: HTMLElement) {
+    const found = Array.from(container.querySelectorAll<HTMLElement>('[role="dialog"][aria-label="一句想法生成正文"]')).find(isActive);
+    expect(found, "未找到打开的创意弹窗").toBeDefined();
+    return found!;
+}
+
+async function closeIdeaDialog(container: HTMLElement) {
+    await act(async () => {
+        const close = ideaDialog(container).querySelector<HTMLButtonElement>('[aria-label="关闭一句想法生成正文"]');
+        expect(close).not.toBeNull();
+        close!.click();
+        await settle();
+    });
 }
 
 function options(container: HTMLElement) {
@@ -388,6 +539,15 @@ function options(container: HTMLElement) {
 }
 
 async function edit(node: HTMLInputElement | HTMLTextAreaElement, value: string) {
+    if (node.closest(".drama-entry-paste")?.hasAttribute("hidden")) {
+        await tap(node.closest(".drama-workflow-entry") as HTMLElement, "手动输入 / 粘贴");
+    }
+    if (node.closest(".drama-source-edit-fields")?.hasAttribute("hidden")) {
+        await act(async () => {
+            node.closest(".drama-source-page")?.querySelector<HTMLButtonElement>("[data-source-edit]")?.click();
+            await settle();
+        });
+    }
     await act(async () => {
         const prototype = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
@@ -419,7 +579,7 @@ test("StrictMode 空白入口允许连续输入正文并保存，效果重放不
             pendingCreates[0].resolve(summaryOf("strict-created", 1));
             await settle();
         });
-        expect(navigations).toEqual(["/projects/strict-created/guide"]);
+        expect(navigations).toEqual(["/projects/strict-created/guide?step=review"]);
     } finally {
         await view.dispose();
     }
@@ -434,6 +594,250 @@ test("首屏渲染两章正文，不因章节选择提前引用而崩溃", async
         expect(field(view.container, "章节正文").value).toBe("A的服务器正文");
         expect(options(view.container).map((item) => item.textContent)).toEqual([expect.stringContaining("第一章 A"), expect.stringContaining("第二章 B")]);
         expect(chapterReads).toContain("project-a:chapter-a");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("上传剧本与剧本格式呈现不同页面，切换步骤保留章节编辑草稿", async () => {
+    resetFixture();
+    let step: "source" | "review" = "source";
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step }), summaryOf("project-a", 4));
+    try {
+        expect(view.container.querySelector('[aria-label="上传剧本"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="剧本格式说明"]')).not.toBeNull();
+        expect(view.container.querySelector(".drama-source-upload-zone")?.textContent).toContain("文件已就绪");
+        expect(view.container.querySelector(".drama-source-upload-zone")?.textContent).toContain("2 章");
+        expect(view.container.querySelector('[aria-label="剧本格式说明"]')?.textContent).toContain("拆分场次格式示意");
+        expect(view.container.querySelector('[aria-label="章节正文"]')).toBeNull();
+        step = "review";
+        await view.update(summaryOf("project-a", 4));
+        expect(view.container.querySelector('[aria-label="剧本格式"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="剧本格式说明"]')).toBeNull();
+        await edit(field(view.container, "章节正文"), "切步骤也要保留的草稿");
+        step = "source";
+        await view.update(summaryOf("project-a", 4));
+        expect(field(view.container, "替换正文文件").disabled).toBe(true);
+        expect(view.container.textContent).toContain("还有未保存的章节修改");
+        step = "review";
+        await view.update(summaryOf("project-a", 4));
+        expect(field(view.container, "章节正文").value).toBe("切步骤也要保留的草稿");
+        expect(chapterWrites).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("剧本格式默认阅读，显式编辑与取消只影响当前章，制作设置默认收起", async () => {
+    resetFixture();
+    const view = await mount((props) => createElement(WorkflowSourceReview, props), summaryOf("project-a", 4));
+    try {
+        expect(view.container.querySelector('[aria-label="章节预览"]')?.textContent).toContain("A的服务器正文");
+        expect(view.container.querySelector(".drama-source-edit-fields")?.hasAttribute("hidden")).toBe(true);
+        expect(view.container.querySelector<HTMLDetailsElement>(".drama-source-review-options")?.open).toBe(false);
+        expect(view.container.querySelector(".drama-source-scope")).toBeNull();
+        await tap(view.container, "手动编辑");
+        expect(view.container.querySelector('[aria-label="章节预览"]')).toBeNull();
+        await edit(field(view.container, "章节正文"), "A保留的编辑草稿");
+        await act(async () => {
+            options(view.container)[1].click();
+            await settle();
+        });
+        await edit(field(view.container, "章节正文"), "B待放弃的编辑稿");
+        await tap(view.container, "放弃本章修改");
+        expect(view.container.querySelector('[aria-label="章节预览"]')?.textContent).toContain("B的服务器正文");
+        expect(view.container.querySelector(".drama-source-edit-fields")?.hasAttribute("hidden")).toBe(true);
+        await act(async () => {
+            options(view.container)[0].click();
+            await settle();
+        });
+        expect(view.container.querySelector('[aria-label="章节预览"]')?.textContent).toContain("A保留的编辑草稿");
+        expect(chapterWrites).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("单集剧本按真实章节关联限制目录，缺少关联时不回退到全剧", async () => {
+    resetFixture();
+    episodeChapterIDs.set("project-a:episode-b", ["chapter-b"]);
+    let episodeId = "episode-b";
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, episodeId }), summaryOf("project-a", 4));
+    try {
+        expect(options(view.container)).toHaveLength(1);
+        expect(options(view.container)[0].textContent).toContain("第二章 B");
+        expect(field(view.container, "章节正文").value).toBe("B的服务器正文");
+        expect(chapterReads).toEqual(["project-a:chapter-b"]);
+        expect(view.container.querySelector('input[aria-label^="本次制作 "]')).toBeNull();
+        expect(Array.from(view.container.querySelectorAll("button")).some((item) => item.textContent?.includes("创建剧集"))).toBe(false);
+        await edit(field(view.container, "章节正文"), "仅修改本集的原文");
+        await tap(view.container, "保存本章");
+        expect(chapterWrites[0]?.chapterId).toBe("chapter-b");
+        expect(sourceWrites).toHaveLength(0);
+        episodeId = "without-chapters";
+        await view.update(summaryOf("project-a", 4));
+        expect(options(view.container)).toHaveLength(0);
+        expect(view.container.querySelector('[aria-label="章节正文"]')).toBeNull();
+        expect(view.container.textContent).toContain("本集尚无可编辑的原文章节");
+        expect(chapterReads).not.toContain("project-a:chapter-a");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("粘贴来源先解析与预览，确认才写入并沿用原有分集设置", async () => {
+    resetFixture();
+    const states: Array<[boolean, boolean]> = [];
+    const initial = summaryOf("project-a", 4);
+    initial.production.settings.episodeMode = "auto";
+    initial.production.settings.chaptersPerEpisode = 3;
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step: "source", onDirtyChange: (dirty: boolean, busy: boolean) => states.push([dirty, busy]) }), initial);
+    try {
+        await tap(view.container, "手动输入 / 粘贴");
+        await edit(field(view.container, "粘贴新的来源正文"), "第1集\n林晚推门。\n第2集\n顾言走进房间。");
+        expect(states.at(-1)).toEqual([true, false]);
+        expect(field(view.container, "替换正文文件").disabled).toBe(true);
+        await tap(view.container, "解析正文");
+        expect(view.container.textContent).toContain("替换预览：手动输入的正文");
+        expect(sourceWrites).toHaveLength(0);
+        expect(view.container.querySelectorAll('input[aria-label^="替换范围 "]')).toHaveLength(2);
+        await tap(view.container, "确认替换正文");
+        expect(sourceWrites).toHaveLength(1);
+        expect(sourceWrites[0]?.input).toEqual({
+            expectedRevision: 4,
+            chapters: [
+                { title: "第1集", text: "林晚推门。" },
+                { title: "第2集", text: "顾言走进房间。" },
+            ],
+            sourceFormat: "novel",
+            selectedChapters: [0],
+        });
+        expect(initial.production.settings.episodeMode).toBe("auto");
+        expect(initial.production.settings.chaptersPerEpisode).toBe(3);
+        expect(field(view.container, "粘贴新的来源正文").value).toBe("");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("下载剧本包含全部章节和当前草稿，不触发正文保存", async () => {
+    resetFixture();
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const originalClick = browser.HTMLAnchorElement.prototype.click;
+    const downloads: Blob[] = [];
+    const fileNames: string[] = [];
+    URL.createObjectURL = (blob) => {
+        downloads.push(blob as Blob);
+        return "blob:drama-script";
+    };
+    URL.revokeObjectURL = () => {};
+    browser.HTMLAnchorElement.prototype.click = function () {
+        fileNames.push(this.download);
+    };
+    const view = await mount((props) => createElement(WorkflowSourceReview, props), summaryOf("project-a", 4));
+    try {
+        await edit(field(view.container, "章节正文"), "第一章尚未保存的内容");
+        await tap(view.container, "下载剧本");
+        expect(downloads).toHaveLength(1);
+        const text = await downloads[0].text();
+        expect(text).toContain("# 第一章 A\n\n第一章尚未保存的内容");
+        expect(text).toContain("# 第二章 B\n\nB的服务器正文");
+        expect(fileNames).toEqual(["正文回归.md"]);
+        expect(chapterWrites).toHaveLength(0);
+    } finally {
+        await view.dispose();
+        URL.createObjectURL = originalCreate;
+        URL.revokeObjectURL = originalRevoke;
+        browser.HTMLAnchorElement.prototype.click = originalClick;
+    }
+});
+
+test("新建单集只保存当前章，类型比例备注真实写入且连续点击不重复", async () => {
+    resetFixture();
+    const initial = summaryOf("project-a", 4);
+    initial.production.settings.episodeMode = "auto";
+    initial.production.settings.chaptersPerEpisode = 3;
+    projectSettings.set("project-a", initial.production.settings);
+    let continued = 0;
+    const view = await mount(
+        (props) =>
+            createElement(WorkflowSourceReview, {
+                ...props,
+                onContinue: () => {
+                    continued += 1;
+                },
+            }),
+        initial,
+    );
+    try {
+        view.client.setQueryDefaults(["drama", "project-a"], { gcTime: Infinity });
+        await act(async () => {
+            options(view.container)[1].click();
+            await settle();
+        });
+        await tap(view.container, "创建单集");
+        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("仅制作当前章：第二章 B");
+        expect(view.container.querySelectorAll(".drama-source-type-card img")).toHaveLength(3);
+        await edit(field(view.container, "剧集名称"), "雨夜单集");
+        await edit(field(view.container, "剧集备注"), "以解说推进剧情");
+        await act(async () => {
+            view.container.querySelector<HTMLInputElement>('input[type="radio"][value="narration"]')!.click();
+            const ratio = view.container.querySelector<HTMLSelectElement>('[aria-label="视频比例"]')!;
+            ratio.value = "16:9";
+            ratio.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        await act(async () => {
+            const submit = button(view.container, "新建");
+            submit.click();
+            submit.click();
+            await settle();
+        });
+        expect(sourceWrites).toHaveLength(1);
+        expect(sourceWrites[0]?.input.selectedChapters).toEqual([1]);
+        expect(settingsWrites).toHaveLength(1);
+        expect(settingsWrites[0]?.input.expectedRevision).toBe(5);
+        expect(settingsWrites[0]?.input.settings).toMatchObject({ dramaType: "narration", aspectRatio: "16:9", episodeMode: "auto", chaptersPerEpisode: 3 });
+        expect(projectWrites).toEqual([{ projectId: "project-a", input: { name: "雨夜单集", description: "以解说推进剧情", aspectRatio: "16:9" } }]);
+        expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.production.revision).toBe(6);
+        expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.project.name).toBe("雨夜单集");
+        expect(continued).toBe(1);
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("新建剧集的后续设置失败保留表单与已保存版本，重试使用最新 CAS", async () => {
+    resetFixture();
+    settingsFailure = new Error("设置暂时无法保存");
+    let continued = 0;
+    const view = await mount(
+        (props) =>
+            createElement(WorkflowSourceReview, {
+                ...props,
+                onContinue: () => {
+                    continued += 1;
+                },
+            }),
+        summaryOf("project-a", 4),
+    );
+    try {
+        view.client.setQueryDefaults(["drama", "project-a"], { gcTime: Infinity });
+        await tap(view.container, "创建剧集");
+        await edit(field(view.container, "剧集名称"), "失败后保留的名称");
+        await tap(view.container, "新建");
+        expect(continued).toBe(0);
+        expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
+        expect(view.container.querySelector('[role="alert"]')?.textContent).toContain("设置暂时无法保存");
+        expect(field(view.container, "剧集名称").value).toBe("失败后保留的名称");
+        expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.production.revision).toBe(5);
+        await tap(view.container, "新建");
+        expect(sourceWrites.map(({ input }) => input.expectedRevision)).toEqual([4, 5]);
+        expect(settingsWrites.map(({ input }) => input.expectedRevision)).toEqual([5, 6]);
+        expect(continued).toBe(1);
+        expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.production.revision).toBe(7);
     } finally {
         await view.dispose();
     }
@@ -783,18 +1187,35 @@ async function tap(container: HTMLElement, label: string) {
     });
 }
 
-test("StrictMode 创意默认收起，空正文显式采用后仍需保存且重复点击只创建一次", async () => {
+test("StrictMode 创意由独立弹窗打开，采用不展开入口且仍需显式保存", async () => {
     resetFixture();
     const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1), true);
     try {
         expect(view.container.querySelector('[aria-label="独立创意任务"]')).toBeNull();
+        const entry = view.container.querySelector(".drama-workflow-idea-entry")!;
+        const entryChildren = entry.children.length;
+        expect(button(view.container, "一句想法生成正文").getAttribute("aria-haspopup")).toBe("dialog");
+        expect(button(view.container, "一句想法生成正文").hasAttribute("aria-expanded")).toBe(false);
         await tap(view.container, "一句想法生成正文");
+        const dialog = ideaDialog(view.container);
+        expect(dialog.getAttribute("data-app-modal")).toBe("true");
+        expect(dialog.classList.contains("drama-entry-idea-modal")).toBe(true);
+        expect(dialog.querySelector('[aria-label="独立创意任务"]')).not.toBeNull();
+        expect(entry.querySelector('[aria-label="独立创意任务"]')).toBeNull();
+        expect(entry.children.length).toBe(entryChildren);
+        await closeIdeaDialog(view.container);
+        expect(dialog.hidden).toBe(true);
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).toBeNull();
+        await tap(view.container, "一句想法生成正文");
+        expect(ideaDialog(view.container)).toBe(dialog);
         expect(createCalls).toHaveLength(0);
         expect(field(view.container, "短剧正文").value).toBe("");
-        await tap(view.container, "采用扩写样稿");
+        await tap(dialog, "采用扩写样稿");
+        expect(dialog.hidden).toBe(true);
+        expect(entry.children.length).toBe(entryChildren);
         expect(field(view.container, "短剧正文").value).toBe("第1集\nAI扩写的完整剧本");
         expect(createCalls).toHaveLength(0);
-        expect(view.container.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')?.textContent).toContain("剧本");
+        expect(field(view.container, "短剧正文").getAttribute("placeholder")).toBe("粘贴剧本");
         await act(async () => {
             const save = button(view.container, "保存并确认正文");
             save.click();
@@ -816,15 +1237,28 @@ test("已有人工正文必须确认替换，取消保留原文，采用不会�
         await edit(field(view.container, "短剧正文"), "第一章\n人工原文");
         await tap(view.container, "一句想法生成正文");
         await tap(view.container, "采用扩写样稿");
-        expect(view.container.querySelector('[aria-label="确认替换为AI正文"]')).not.toBeNull();
+        const dialog = ideaDialog(view.container);
+        expect(dialog.querySelector('[aria-label="确认替换为AI正文"]')).not.toBeNull();
+        expect(view.container.querySelector(".drama-workflow-idea-entry")?.querySelector('[aria-label="确认替换为AI正文"]')).toBeNull();
+        expect(dialog.getAttribute("data-mask-closable")).toBe("false");
+        expect(dialog.getAttribute("data-keyboard")).toBe("false");
+        await act(async () => {
+            dialog.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await settle();
+        });
+        expect(isActive(dialog)).toBe(true);
+        expect(dialog.querySelector('[aria-label="确认替换为AI正文"]')).not.toBeNull();
         expect(field(view.container, "短剧正文").value).toContain("人工原文");
         expect(field(view.container, "短剧正文").disabled).toBe(true);
         expect(button(view.container, "保存并确认正文").disabled).toBe(true);
         await tap(view.container, "保留现有正文");
         expect(field(view.container, "短剧正文").value).toContain("人工原文");
+        expect(isActive(dialog)).toBe(true);
+        expect(dialog.querySelector('[aria-label="确认替换为AI正文"]')).toBeNull();
         await tap(view.container, "采用扩写样稿");
         await tap(view.container, "确认采用AI正文");
         expect(field(view.container, "短剧正文").value).toContain("AI扩写的完整剧本");
+        expect(isActive(dialog)).toBe(false);
         expect(createCalls).toHaveLength(0);
     } finally {
         await view.dispose();
@@ -853,11 +1287,11 @@ test("上传文件读取与创意采用互斥，文件正文采用AI前确认并
             fileReads[0].resolve("第一章\n已上传的正文");
             await settle();
         });
-        expect(view.container.textContent).toContain("已读取 文件标题.txt");
+        expect(view.container.querySelector(".drama-entry-upload-filename")?.textContent).toBe("文件标题.txt");
         await tap(view.container, "采用扩写样稿");
         expect(field(view.container, "短剧正文").value).toContain("已上传的正文");
         await tap(view.container, "确认采用AI正文");
-        expect(view.container.textContent).not.toContain("已读取 文件标题.txt");
+        expect(view.container.querySelector(".drama-entry-upload-filename")).toBeNull();
         await tap(view.container, "保存并确认正文");
         expect(createCalls[0].name).not.toBe("文件标题");
         expect(createCalls[0].sourceFormat).toBe("script");
@@ -877,8 +1311,20 @@ test("创意任务运行时冻结导入与创建，作品创建时旧采用和�
         expect(button(view.container, "一句想法生成正文").disabled).toBe(true);
         expect(field(view.container, "上传正文文件").disabled).toBe(true);
         expect(field(view.container, "短剧正文").disabled).toBe(true);
+        const dialog = ideaDialog(view.container);
+        expect(dialog.getAttribute("data-mask-closable")).toBe("false");
+        expect(dialog.getAttribute("data-keyboard")).toBe("false");
+        expect(dialog.querySelector('[aria-label="关闭一句想法生成正文"]')).toBeNull();
+        await act(async () => {
+            dialog.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await settle();
+        });
+        expect(isActive(dialog)).toBe(true);
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).toBeNull();
         await tap(view.container, "模拟扩写完成");
         const adopt = ideaAdoptions.at(-1)!;
+        await closeIdeaDialog(view.container);
+        await tap(view.container, "保留草稿并关闭");
         await tap(view.container, "保存并确认正文");
         expect(createCalls).toHaveLength(1);
         expect(view.container.querySelector('[aria-label="独立创意任务"]')?.getAttribute("data-disabled")).toBe("true");
@@ -919,21 +1365,557 @@ test("创意旧采用回调不能跨账号或在卸载后修改导入页", async
     expect(navigations).toHaveLength(0);
 });
 
-test("未采用创意收起前确认，收起不影响已有导入正文", async () => {
+test("未采用创意关闭前确认，保留关闭再打开继续同一草稿且不改变导入正文", async () => {
     resetFixture();
     const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
     try {
         await edit(field(view.container, "短剧正文"), "导入正文");
         await tap(view.container, "一句想法生成正文");
         await tap(view.container, "填写创意草稿");
+        const dialog = ideaDialog(view.container);
+        const task = dialog.querySelector('[aria-label="独立创意任务"]');
+        const oldAdopt = ideaAdoptions.at(-1)!;
+        expect(task?.getAttribute("data-dirty")).toBe("true");
+        await closeIdeaDialog(view.container);
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).not.toBeNull();
+        await tap(dialog, "继续创意扩写");
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).toBeNull();
+        expect(isActive(dialog)).toBe(true);
+        await act(async () => {
+            dialog.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await settle();
+        });
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).not.toBeNull();
+        await tap(dialog, "保留草稿并关闭");
+        expect(isActive(dialog)).toBe(false);
+        expect(task?.isConnected).toBe(true);
+        await act(async () => {
+            oldAdopt("关闭后的旧采用不能覆盖正文", "script");
+            await settle();
+        });
+        expect(dialog.querySelector('[aria-label="确认替换为AI正文"]')).toBeNull();
+        expect(field(view.container, "短剧正文").value).toBe("导入正文");
         await tap(view.container, "一句想法生成正文");
-        expect(view.container.querySelector('[aria-label="确认收起创意草稿"]')).not.toBeNull();
-        expect(view.container.querySelector('[aria-label="独立创意任务"]')).not.toBeNull();
-        await tap(view.container, "收起创意草稿");
-        expect(view.container.querySelector('[aria-label="独立创意任务"]')).toBeNull();
+        expect(ideaDialog(view.container)).toBe(dialog);
+        expect(dialog.querySelector('[aria-label="独立创意任务"]')).toBe(task);
+        expect(task?.getAttribute("data-dirty")).toBe("true");
+        expect(dialog.querySelector('[aria-label="确认关闭创意窗口"]')).toBeNull();
         expect(field(view.container, "短剧正文").value).toBe("导入正文");
         expect(createCalls).toHaveLength(0);
     } finally {
         await view.dispose();
+    }
+});
+
+for (const [label, value] of [
+    ["精品漫", "comic"],
+    ["真人剧", "live_action"],
+    ["漫剧解说", "narration"],
+] as const) {
+    test(`剧集入口${label}将真实类型传给创建并保留原六步`, async () => {
+        resetFixture();
+        const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+        try {
+            await tap(view.container, "剧集");
+            expect(view.container.querySelector('[aria-label="选择创作方式"]')).toBeNull();
+            await tap(view.container, label);
+            expect(view.container.querySelector('[aria-label="选择创作方式"]')).not.toBeNull();
+            expect(view.container.querySelector(".drama-entry-source")?.getAttribute("aria-hidden")).toBe("true");
+            expect(createCalls).toHaveLength(0);
+            await tap(view.container, "从剧本开始");
+            expect(view.container.querySelector('[aria-label="选择创作方式"]')).toBeNull();
+            await edit(field(view.container, "短剧正文"), "第1集\n入口创建的剧本正文");
+            expect(view.container.textContent).not.toContain("转绘出海");
+            expect(view.container.querySelector(".drama-workflow-entry-steps")?.textContent).toBe("上传剧本剧本格式风格设置角色场景漫剧分镜视频预览");
+            await tap(view.container, "保存并确认正文");
+            expect(createCalls).toHaveLength(1);
+            expect(createCalls[0].settings.dramaType).toBe(value);
+            expect(createCalls[0].sourceFormat).toBe("script");
+            await act(async () => {
+                pendingCreates[0].resolve(summaryOf("created-entry", 1));
+                await settle();
+            });
+            expect(navigations).toEqual(["/projects/created-entry/guide?step=review"]);
+        } finally {
+            await view.dispose();
+        }
+    });
+}
+
+test("正文只有大上传区一个文件入口，切到粘贴后可返回并保留正文和来源格式", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        const input = field(view.container, "上传正文文件");
+        const openFilePicker = mock(() => {});
+        Object.defineProperty(input, "click", { configurable: true, value: openFilePicker });
+        const upload = view.container.querySelector<HTMLButtonElement>(".drama-entry-upload")!;
+        expect(upload.hidden).toBe(false);
+        expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
+        expect(view.container.querySelectorAll('[role="tab"]')).toHaveLength(3);
+        expect(view.container.querySelectorAll(".drama-entry-input-actions button")).toHaveLength(1);
+        expect(view.container.querySelector('.drama-entry-input-actions [role="tab"]')).toBeNull();
+        expect(button(view.container, "手动输入 / 粘贴")).toBeDefined();
+        await act(async () => {
+            upload.click();
+            await settle();
+        });
+        expect(openFilePicker).toHaveBeenCalledTimes(1);
+        expect(fileReads).toHaveLength(0);
+        await tap(view.container, "剧集");
+        await tap(view.container, "真人剧");
+        await tap(view.container, "从剧本开始");
+        await tap(view.container, "手动输入 / 粘贴");
+        expect(upload.hidden).toBe(true);
+        await edit(field(view.container, "短剧正文"), "第1集\n切换仍保留的正文");
+        await tap(view.container, "改为上传文件");
+        expect(upload.hidden).toBe(false);
+        expect(field(view.container, "短剧正文").value).toBe("第1集\n切换仍保留的正文");
+        await tap(view.container, "手动输入 / 粘贴");
+        expect(field(view.container, "短剧正文").getAttribute("placeholder")).toBe("粘贴剧本");
+        expect(field(view.container, "短剧正文").value).toBe("第1集\n切换仍保留的正文");
+        expect(openFilePicker).toHaveBeenCalledTimes(1);
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0].sourceFormat).toBe("script");
+        expect(createCalls[0].settings.dramaType).toBe("live_action");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("三个顶层入口复用同一内容容器，仅当前面板可交互且切换保留原节点", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        const content = view.container.querySelector<HTMLElement>('[role="tabpanel"]')!;
+        const panels = [".drama-entry-source", ".drama-entry-types", ".drama-entry-canvas"].map((selector) => content.querySelector<HTMLElement>(selector)!);
+        expect(panels.every(Boolean)).toBe(true);
+        for (const [index, label] of ["剧本", "剧集", "画布", "剧本"].entries()) {
+            await tap(view.container, label);
+            expect(view.container.querySelectorAll('[role="tabpanel"]')).toHaveLength(1);
+            expect(view.container.querySelector('[role="tabpanel"]')).toBe(content);
+            const selected = view.container.querySelector<HTMLElement>('.drama-entry-tabs [aria-selected="true"]')!;
+            expect(content.getAttribute("aria-labelledby")).toBe(selected.id);
+            const activeIndex = index === 3 ? 0 : index;
+            panels.forEach((panel, panelIndex) => {
+                expect(panel.isConnected).toBe(true);
+                expect(panel.parentElement).toBe(content);
+                expect(panel.getAttribute("data-active")).toBe(String(panelIndex === activeIndex));
+                expect(panel.getAttribute("aria-hidden")).toBe(String(panelIndex !== activeIndex));
+                expect(panel.hasAttribute("inert")).toBe(panelIndex !== activeIndex);
+            });
+        }
+        expect(createCalls).toHaveLength(0);
+        expect(navigations).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("来源上传区拦截拖放冒泡，读取一次并保留真人剧与剧本来源", async () => {
+    resetFixture();
+    const ancestorDragOver = mock(() => {});
+    const ancestorDrop = mock(() => navigations.push("/projects/new"));
+    const view = await mount(() => createElement("div", { onDragOver: ancestorDragOver, onDrop: ancestorDrop }, createElement(DramaWorkflowEntry)), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "剧集");
+        await tap(view.container, "真人剧");
+        await tap(view.container, "从剧本开始");
+        const upload = view.container.querySelector<HTMLButtonElement>(".drama-entry-upload");
+        expect(upload).not.toBeNull();
+        expect(upload!.hidden).toBe(false);
+        const transfer = { files: [new File(["第1集\n拖入的真人剧本"], "真人剧本.txt", { type: "text/plain" })], types: ["Files"] };
+        await act(async () => {
+            for (const type of ["dragover", "drop"]) {
+                const event = new Event(type, { bubbles: true, cancelable: true });
+                Object.defineProperty(event, "dataTransfer", { value: transfer });
+                upload!.dispatchEvent(event);
+                expect(event.defaultPrevented).toBe(true);
+            }
+            await settle();
+        });
+        expect(fileReads).toHaveLength(1);
+        expect(ancestorDragOver).not.toHaveBeenCalled();
+        expect(ancestorDrop).not.toHaveBeenCalled();
+        expect(navigations).toHaveLength(0);
+        expect(createCalls).toHaveLength(0);
+        await act(async () => {
+            fileReads[0].resolve("第1集\n拖入的真人剧本");
+            await settle();
+        });
+        expect(fileReads).toHaveLength(1);
+        expect(field(view.container, "短剧正文").value).toBe("第1集\n拖入的真人剧本");
+        expect(navigations).toHaveLength(0);
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0].settings.dramaType).toBe("live_action");
+        expect(createCalls[0].sourceFormat).toBe("script");
+        expect(ancestorDragOver).not.toHaveBeenCalled();
+        expect(ancestorDrop).not.toHaveBeenCalled();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("顶级入口与来源切换不清正文，上传失败保留草稿和类型，读取中冻结入口", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await edit(field(view.container, "短剧正文"), "第一章\n不能丢失的人工原文");
+        await tap(view.container, "剧集");
+        await tap(view.container, "漫剧解说");
+        await tap(view.container, "从分镜开始");
+        await tap(view.container, "返回");
+        await tap(view.container, "剧本");
+        expect(field(view.container, "短剧正文").value).toContain("不能丢失的人工原文");
+        await tap(view.container, "剧集");
+        expect(view.container.querySelector('[aria-label="剧集类型"] [aria-checked="true"]')?.textContent).toContain("漫剧解说");
+        await tap(view.container, "漫剧解说");
+        await tap(view.container, "从分镜开始");
+        const input = field(view.container, "上传正文文件");
+        await act(async () => {
+            Object.defineProperty(input, "files", { configurable: true, value: [new File(["损坏"], "broken.docx")] });
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(Array.from(view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).every((tab) => tab.disabled)).toBe(true);
+        await act(async () => {
+            button(view.container, "画布", true).click();
+            await settle();
+        });
+        expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("剧集");
+        await act(async () => {
+            fileReads[0].reject(new Error("无法读取文档"));
+            await settle();
+        });
+        expect(field(view.container, "短剧正文").value).toContain("不能丢失的人工原文");
+        expect(notices.at(-1)?.text).toBe("无法读取文档");
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls[0].sourceFormat).toBe("storyboard");
+        expect(createCalls[0].settings.dramaType).toBe("narration");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("空入口允许新建画布，同帧双点仅通过一次创建确认且不创建短剧", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "画布");
+        expect(button(view.container, "保存并确认正文", true).disabled).toBe(true);
+        await act(async () => {
+            const create = button(view.container, "新建画布");
+            create.click();
+            create.click();
+            await settle();
+        });
+        expect(canvasDecisions).toEqual([true]);
+        expect(canvasCreationCalls).toBe(1);
+        expect(navigations).toEqual(["/canvas/new-draft"]);
+        expect(createCalls).toHaveLength(0);
+        expect(view.container.querySelector('[aria-label="确认前往画布"]')).toBeNull();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("新建画布前保护正文，取消恢复来源和类型，明确放弃才允许创建", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "剧集");
+        await tap(view.container, "真人剧");
+        await tap(view.container, "从剧本开始");
+        await edit(field(view.container, "短剧正文"), "第一章\n未保存的正文");
+        await tap(view.container, "返回");
+        await tap(view.container, "画布");
+        await tap(view.container, "新建画布");
+        expect(navigations).toHaveLength(0);
+        expect(view.container.querySelector('[aria-label="确认前往画布"]')).not.toBeNull();
+        await tap(view.container, "继续编辑正文");
+        expect(canvasDecisions).toEqual([false]);
+        expect(canvasCreationCalls).toBe(0);
+        expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("剧集");
+        expect(view.container.querySelector('[aria-label="剧集类型"] [aria-checked="true"]')?.textContent).toContain("真人剧");
+        await tap(view.container, "真人剧");
+        await tap(view.container, "从剧本开始");
+        expect(field(view.container, "短剧正文").value).toContain("未保存的正文");
+        await tap(view.container, "返回");
+        await tap(view.container, "画布");
+        await tap(view.container, "新建画布");
+        await tap(view.container, "放弃未保存内容并前往画布");
+        expect(canvasDecisions).toEqual([false, true]);
+        expect(canvasCreationCalls).toBe(1);
+        expect(navigations).toEqual(["/canvas/new-draft"]);
+        expect(createCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("未采用创意也触发画布离开保护，创意任务运行时不可切换入口", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "一句想法生成正文");
+        await tap(view.container, "填写创意草稿");
+        await closeIdeaDialog(view.container);
+        await tap(view.container, "保留草稿并关闭");
+        await tap(view.container, "画布");
+        await tap(view.container, "新建画布");
+        expect(navigations).toHaveLength(0);
+        expect(view.container.querySelector('[aria-label="确认前往画布"]')).not.toBeNull();
+        await tap(view.container, "继续编辑正文");
+        expect(view.container.querySelector('[aria-label="独立创意任务"]')).not.toBeNull();
+        await tap(view.container, "一句想法生成正文");
+        expect(ideaDialog(view.container).querySelector('[aria-label="独立创意任务"]')?.getAttribute("data-dirty")).toBe("true");
+        await tap(view.container, "模拟扩写开始");
+        expect(Array.from(view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).every((tab) => tab.disabled)).toBe(true);
+        await tap(view.container, "画布");
+        expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("剧本");
+        expect(navigations).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("新建画布确认期间切账号或卸载会取消请求，过期确认回调不能导航", async () => {
+    for (const boundary of ["account", "unmount"]) {
+        resetFixture();
+        const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+        let disposed = false;
+        try {
+            await edit(field(view.container, "短剧正文"), "第一章\n待保留的旧账号正文");
+            await tap(view.container, "画布");
+            await tap(view.container, "新建画布");
+            const oldGuard = canvasGuards.at(-1)!;
+            const oldConfirm = button(view.container, "放弃未保存内容并前往画布");
+            expect(view.container.querySelector('[aria-label="确认前往画布"]')).not.toBeNull();
+            if (boundary === "account") {
+                await act(async () => {
+                    userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
+                    await settle();
+                });
+            } else {
+                await view.dispose();
+                disposed = true;
+            }
+            await act(async () => {
+                oldConfirm.click();
+                expect(await oldGuard()).toBe(false);
+                await settle();
+            });
+            expect(canvasDecisions).toEqual([false]);
+            expect(canvasCreationCalls).toBe(0);
+            expect(navigations).toHaveLength(0);
+            expect(createCalls).toHaveLength(0);
+            if (boundary === "account") {
+                expect(field(view.container, "短剧正文").value).toBe("");
+                expect(view.container.querySelector('[aria-label="确认前往画布"]')).toBeNull();
+            }
+        } finally {
+            if (!disposed) await view.dispose();
+        }
+    }
+});
+
+test("画布创建忙碌期间冻结入口切换，完成后恢复且不启动短剧任务", async () => {
+    resetFixture();
+    canvasCreation = deferred<void>();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "画布");
+        await tap(view.container, "新建画布");
+        expect(canvasCreationCalls).toBe(1);
+        expect(navigations).toHaveLength(0);
+        expect(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".drama-entry-tabs [role='tab']")).every((tab) => tab.disabled)).toBe(true);
+        expect(button(view.container, "新建画布").disabled).toBe(true);
+        await tap(view.container, "剧本");
+        expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("画布");
+        await act(async () => {
+            canvasCreation!.resolve();
+            await settle();
+        });
+        expect(navigations).toEqual(["/canvas/new-draft"]);
+        expect(Array.from(view.container.querySelectorAll<HTMLButtonElement>(".drama-entry-tabs [role='tab']")).every((tab) => !tab.disabled)).toBe(true);
+        expect(createCalls).toHaveLength(0);
+    } finally {
+        canvasCreation.resolve();
+        await view.dispose();
+    }
+});
+
+async function submitRenameForm(container: HTMLElement, times = 1) {
+    const form = container.querySelector<HTMLFormElement>('[aria-label="修改作品名称"] form');
+    expect(form).not.toBeNull();
+    await act(async () => {
+        for (let index = 0; index < times; index += 1) form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        await settle();
+    });
+}
+
+async function rejectCreation(error: Error) {
+    await act(async () => {
+        pendingCreates.at(-1)!.reject(error);
+        await settle();
+    });
+}
+
+test("重名改名继续保存仅替换trim名称，空白和忙碌重复提交不创建作品", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await tap(view.container, "剧集");
+        await tap(view.container, "真人剧");
+        await tap(view.container, "从剧本开始");
+        await edit(field(view.container, "短剧正文"), "第1集\n第一集人工剧本。\n第2集\n第二集人工剧本。");
+        await tap(view.container, "保存并确认正文");
+        await rejectCreation(new ApiError("已有同名作品，请换一个名称", { status: 409, reason: "project_name_conflict" }));
+        const dialog = view.container.querySelector<HTMLElement>('[aria-label="修改作品名称"]')!;
+        const name = field(view.container, "新的作品名称");
+        expect(name.value).toBe(createCalls[0].name);
+        expect(document.activeElement).toBe(name);
+        expect(field(view.container, "短剧正文").disabled).toBe(true);
+        expect(field(view.container, "上传正文文件").disabled).toBe(true);
+        await edit(name, "   ");
+        expect(button(dialog, "继续保存").disabled).toBe(true);
+        await submitRenameForm(view.container);
+        expect(createCalls).toHaveLength(1);
+        await edit(name, "  真人新篇  ");
+        await submitRenameForm(view.container, 2);
+        expect(createCalls).toHaveLength(2);
+        expect(createCalls[1]).toEqual({ ...createCalls[0], name: "真人新篇" });
+        expect(createCalls[1].settings.dramaType).toBe("live_action");
+        expect(createCalls[1].sourceFormat).toBe("script");
+        expect(name.disabled).toBe(true);
+        expect(button(dialog, "继续保存").disabled).toBe(true);
+        expect(button(dialog, "取消").disabled).toBe(true);
+        expect(dialog.querySelector('[aria-label="关闭修改作品名称"]')).toBeNull();
+        expect(dialog.dataset.maskClosable).toBe("false");
+        expect(dialog.dataset.keyboard).toBe("false");
+        await tap(dialog, "取消");
+        await act(async () => {
+            dialog.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await settle();
+        });
+        expect(view.container.contains(dialog)).toBe(true);
+        expect(navigations).toHaveLength(0);
+        await act(async () => {
+            pendingCreates[1].resolve(summaryOf("renamed-entry", 1));
+            await settle();
+        });
+        expect(view.container.querySelector('[aria-label="修改作品名称"]')).toBeNull();
+        expect(navigations).toEqual(["/projects/renamed-entry/guide?step=review"]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("重名恢复按80个码点校验，重复重名和普通重试错误保留名称及行内反馈", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        await edit(field(view.container, "短剧正文"), "第一章\n需要改名的小说原文");
+        await tap(view.container, "保存并确认正文");
+        await rejectCreation(new ApiError("已有同名作品，请换一个名称", { status: 409, reason: "project_name_conflict" }));
+        const name = field(view.container, "新的作品名称");
+        await edit(name, "新".repeat(81));
+        await submitRenameForm(view.container);
+        expect(createCalls).toHaveLength(1);
+        expect(view.container.querySelector('[aria-label="修改作品名称"] [role="alert"]')?.textContent).toBe("作品名称不能超过 80 字");
+        const accepted = "🎬".repeat(80);
+        await edit(name, accepted);
+        await submitRenameForm(view.container);
+        expect(createCalls.at(-1)?.name).toBe(accepted);
+        await rejectCreation(new ApiError("这个名称仍然已存在", { status: 409, reason: "project_name_conflict" }));
+        expect(name.value).toBe(accepted);
+        expect(view.container.querySelector('[aria-label="修改作品名称"] [role="alert"]')?.textContent).toBe("这个名称仍然已存在");
+        await edit(name, "下一次重试名称");
+        await submitRenameForm(view.container);
+        await rejectCreation(new Error("网络暂时中断"));
+        expect(field(view.container, "新的作品名称").value).toBe("下一次重试名称");
+        expect(view.container.querySelector('[aria-label="修改作品名称"] [role="alert"]')?.textContent).toBe("网络暂时中断");
+        expect(notices).toEqual([]);
+        expect(navigations).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("普通409或相同文案的普通错误不会误开改名弹窗", async () => {
+    for (const error of [new ApiError("已有同名作品，请换一个名称", { status: 409, reason: "conflict" }), new Error("已有同名作品，请换一个名称")]) {
+        resetFixture();
+        const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+        try {
+            await edit(field(view.container, "短剧正文"), "第一章\n保留普通错误后的正文");
+            await tap(view.container, "保存并确认正文");
+            await rejectCreation(error);
+            expect(view.container.querySelector('[aria-label="修改作品名称"]')).toBeNull();
+            expect(notices.at(-1)).toEqual({ kind: "error", text: error.message });
+            expect(field(view.container, "短剧正文").value).toContain("保留普通错误后的正文");
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("取消重名恢复保留上传正文文件及类型来源，重新保存不重复读文件", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry, { initialFile: new File(["原始文件"], "原作品（完结）.docx") }), summaryOf("project-a", 1));
+    try {
+        await act(async () => {
+            fileReads[0].resolve("第1集\n文件中的原始分镜");
+            await settle();
+        });
+        await tap(view.container, "剧集");
+        await tap(view.container, "漫剧解说");
+        await tap(view.container, "从分镜开始");
+        await tap(view.container, "保存并确认正文");
+        await rejectCreation(new ApiError("已有同名作品，请换一个名称", { status: 409, reason: "project_name_conflict" }));
+        expect(field(view.container, "新的作品名称").value).toBe("原作品");
+        await edit(field(view.container, "新的作品名称"), "未提交的新名称");
+        await tap(view.container, "取消");
+        expect(view.container.querySelector('[aria-label="修改作品名称"]')).toBeNull();
+        expect(field(view.container, "短剧正文").value).toBe("第1集\n文件中的原始分镜");
+        expect(view.container.querySelector(".drama-entry-upload-filename")?.textContent).toBe("原作品（完结）.docx");
+        expect(createCalls).toHaveLength(1);
+        expect(navigations).toHaveLength(0);
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls[1]).toEqual(createCalls[0]);
+        expect(createCalls[1].settings.dramaType).toBe("narration");
+        expect(createCalls[1].sourceFormat).toBe("storyboard");
+        expect(fileReads).toHaveLength(1);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("切账号或卸载后迟到的重名失败不打开恢复窗或产生通知导航", async () => {
+    for (const boundary of ["account", "unmount"]) {
+        resetFixture();
+        const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+        let disposed = false;
+        try {
+            await edit(field(view.container, "短剧正文"), "第一章\n旧会话的原文");
+            await tap(view.container, "保存并确认正文");
+            if (boundary === "account") {
+                await act(async () => {
+                    userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
+                    await settle();
+                });
+            } else {
+                await view.dispose();
+                disposed = true;
+            }
+            await rejectCreation(new ApiError("旧会话重名", { status: 409, reason: "project_name_conflict" }));
+            expect(view.container.querySelector('[aria-label="修改作品名称"]')).toBeNull();
+            expect(notices).toEqual([]);
+            expect(navigations).toHaveLength(0);
+            if (boundary === "account") expect(field(view.container, "短剧正文").value).toBe("");
+        } finally {
+            if (!disposed) await view.dispose();
+        }
     }
 });

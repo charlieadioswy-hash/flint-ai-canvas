@@ -16,7 +16,66 @@
 
 .drama-workflow-assets-head {
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border);
+}
+
+.drama-workflow-assets-heading,
+.drama-workflow-assets-episode-nav,
+.drama-workflow-assets-column-actions,
+.drama-workflow-assets-column-count {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.drama-workflow-assets-heading {
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.drama-workflow-assets-episode-nav {
+    gap: var(--space-1);
+}
+
+.drama-workflow-assets-episode-nav .ant-select {
+    width: 104px;
+}
+
+.drama-workflow-assets-column-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.drama-workflow-assets-column-count,
+.drama-workflow-assets-shared-note {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-assets input[type="checkbox"] {
+    accent-color: var(--control-check-bg);
+}
+
+.drama-workflow-assets-library-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    border-bottom: 1px solid var(--border);
+}
+
+.drama-workflow-assets-library-toolbar > .drama-workflow-assets-tabs {
+    border-bottom: 0;
+}
+
+.drama-workflow-assets-library-toolbar .drama-character-library-tools {
+    gap: var(--space-1);
+    padding-bottom: var(--space-2);
 }
 
 .drama-workflow-assets h2,
@@ -39,9 +98,7 @@
     border-bottom: 1px solid var(--border);
 }
 
-.drama-workflow-assets-tabs button,
-.drama-workflow-assets-range label,
-.drama-workflow-assets-episodes label {
+.drama-workflow-assets-tabs button {
     color: var(--text-primary);
 }
 
@@ -56,9 +113,9 @@
     background: transparent;
 }
 
-.drama-workflow-assets-tabs button[aria-selected="true"] {
-    border-bottom-color: var(--accent);
-    color: var(--text-primary);
+.drama-workflow-assets-tabs button[aria-pressed="true"] {
+    border-bottom-color: var(--control-selected-fg);
+    color: var(--control-selected-fg);
 }
 
 .drama-workflow-assets-tabs span {
@@ -66,13 +123,208 @@
     font-size: var(--fs-label);
 }
 
-.drama-workflow-assets-extract,
 .drama-workflow-assets-add,
 .drama-workflow-assets-scheme {
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface);
+}
+
+.drama-workflow-assets-columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0;
+    min-width: 0;
+    min-height: calc(100dvh - 360px);
+}
+
+.drama-workflow-assets.is-library .drama-workflow-assets-columns {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.drama-workflow-assets-column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-3);
+    border-right: 1px solid var(--border);
+    background: transparent;
+}
+
+.drama-workflow-assets-column:first-child {
+    padding-left: 0;
+}
+
+.drama-workflow-assets-column:last-child {
+    padding-right: 0;
+    border-right: 0;
+}
+
+.drama-workflow-assets.is-library .drama-workflow-assets-column-head {
+    display: none;
+}
+
+.drama-workflow-assets-column-head,
+.drama-workflow-assets-column-head h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.drama-workflow-assets-column-head {
+    justify-content: space-between;
+}
+
+.drama-workflow-assets-column-head h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+    font-weight: 600;
+}
+
+.drama-workflow-assets-column-head h3 span {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    background: var(--surface-hover);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+}
+
+.drama-workflow-assets-column > .drama-guide-stack > .drama-guide-section-head {
+    display: none;
+}
+
+.drama-workflow-assets.is-episode .drama-workflow-assets-column > .drama-guide-stack {
+    max-height: max(320px, calc(100dvh - 360px));
+    overflow-y: auto;
+    scrollbar-width: thin;
+    padding-right: var(--space-1);
+}
+
+.drama-workflow-assets-column .drama-guide-cast-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 145px), 1fr));
+    gap: var(--space-3);
+}
+
+.drama-workflow-assets.is-library .drama-guide-cast-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+    gap: var(--space-4);
+}
+
+.drama-workflow-assets-column .drama-guide-cast {
+    position: relative;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    gap: var(--space-2);
+    background: var(--surface-hover);
+}
+
+.drama-workflow-assets-column .drama-guide-cast[data-selected="true"] {
+    border-color: var(--control-selected-border);
+}
+
+.drama-workflow-asset-checkbox {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: 1;
+    width: 16px;
+    height: 16px;
+}
+
+.drama-workflow-assets-column .drama-guide-cast header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    margin: 0;
+}
+
+.drama-workflow-assets-column .drama-guide-asset-thumb {
+    grid-column: 1 / -1;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.drama-workflow-assets-column .drama-guide-asset-thumb img {
+    object-fit: contain;
+}
+
+.drama-workflow-assets-column .drama-guide-asset-thumb > svg {
+    width: 32px;
+    height: 32px;
+}
+
+.drama-workflow-assets-column .drama-guide-cast header > div:nth-child(2) {
+    padding-left: var(--space-2);
+}
+
+.drama-workflow-assets-column .drama-guide-cast-body {
+    flex: none;
+    height: 64px;
+    margin-inline: var(--space-2);
+}
+
+.drama-workflow-assets-column .drama-guide-cast footer {
+    gap: var(--space-1);
+    margin: 0;
+    padding: var(--space-2);
+}
+
+.drama-workflow-assets-column .drama-guide-cast footer > span {
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-assets-column .drama-guide-cast header,
+.drama-workflow-assets-column .drama-guide-cast footer {
+    flex-wrap: wrap;
+}
+
+.drama-workflow-assets-column-empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    min-height: 220px;
+    align-content: center;
+    padding: var(--space-4);
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.drama-workflow-assets.is-library .drama-workflow-assets-column-empty {
+    min-height: calc(100dvh - 440px);
+}
+
+.drama-workflow-assets.is-library .drama-workflow-assets-column > .ant-btn {
+    align-self: center;
+}
+
+.drama-workflow-assets-column-empty strong {
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-assets-shared {
+    min-width: 0;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
+.drama-workflow-assets-shared > summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-workflow-assets-shared > p {
+    margin-block: var(--space-2);
+    font-size: var(--fs-label);
 }
 
 .drama-workflow-assets fieldset {
@@ -83,25 +335,6 @@
     margin: 0;
     padding: 0;
     border: 0;
-}
-
-.drama-workflow-assets-range,
-.drama-workflow-assets-episodes {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: var(--space-2);
-}
-
-.drama-workflow-assets-range label,
-.drama-workflow-assets-episodes label {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    align-items: start;
-    gap: var(--space-1) var(--space-2);
-}
-
-.drama-workflow-assets-range small {
-    grid-column: 2;
 }
 
 .drama-workflow-assets-add label {
@@ -161,11 +394,12 @@
 
 .drama-workflow-asset-selection input {
     align-self: flex-start;
-    accent-color: var(--accent);
+    accent-color: var(--control-check-bg);
 }
 
 .drama-workflow-asset-selection label:has(input:checked) {
-    border-color: var(--accent);
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
 }
 
 .drama-workflow-asset-selection strong {
@@ -192,7 +426,7 @@
 .drama-workflow-assets button:focus-visible,
 .drama-workflow-assets summary:focus-visible,
 .drama-workflow-assets input:focus-visible {
-    outline: 2px solid var(--focus-ring, var(--accent));
+    outline: 2px solid var(--control-focus-ring);
     outline-offset: 2px;
 }
 
@@ -213,5 +447,26 @@
     .drama-workflow-assets-actions {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .drama-workflow-assets-columns {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .drama-workflow-assets-column {
+        padding-inline: 0;
+        padding-bottom: var(--space-4);
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .drama-workflow-assets-column-empty {
+        min-height: 150px;
+    }
+
+    .drama-workflow-assets.is-episode .drama-workflow-assets-column > .drama-guide-stack {
+        max-height: none;
+        overflow-y: visible;
+        padding-right: 0;
     }
 }

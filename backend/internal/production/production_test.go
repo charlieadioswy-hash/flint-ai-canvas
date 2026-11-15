@@ -385,7 +385,7 @@ func TestStripFrameDirectivesRemovesWorkFrameRules(t *testing.T) {
 
 // 设定和方案模板里的文字不经过画幅清理：角色设定里的“1:1 比例复刻”“竖向条纹”原样发给模型。
 func TestCastImagePromptKeepsCastDescription(t *testing.T) {
-	prompt := CastImagePrompt(AssetSettings{Mode: AssetModePortrait}, "prop", "城堡模型", "按 1:1 比例复刻的城堡模型，竖向条纹底座", StripFrameDirectives("写实，9:16 竖屏构图"), StripFrameDirectives("冷色调；竖屏"))
+	prompt := CastImagePrompt(AssetSettings{Mode: AssetModeCloseupTurnaround}, "prop", "城堡模型", "按 1:1 比例复刻的城堡模型，竖向条纹底座", StripFrameDirectives("写实，9:16 竖屏构图"), StripFrameDirectives("冷色调；竖屏"))
 	for _, wanted := range []string{"按 1:1 比例复刻的城堡模型", "竖向条纹底座", "横版构图", "写实", "冷色调"} {
 		if !strings.Contains(prompt, wanted) {
 			t.Fatalf("cast prompt lost %q: %s", wanted, prompt)

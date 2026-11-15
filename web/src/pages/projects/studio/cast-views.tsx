@@ -42,17 +42,49 @@ const DIRECTIONS: { value: CastViewDirection; label: string }[] = [
     { value: "custom", label: "自定义" },
 ];
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已就绪", stale: "设定已更新", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
-type Props = { projectId: string; cast: DramaCast; disabled: boolean; onChanged: () => void };
+type Props = { projectId: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
 type Quote = PendingCastView & { preview: CastViewPreflight };
 
 export function CastViews(props: Props) {
     const [open, setOpen] = useState(false);
     const userId = useUserStore((state) => state.user?.id || "");
+    const query = useQuery({
+        queryKey: ["drama-cast-views", userId, props.projectId, props.cast.id],
+        queryFn: ({ signal }) => listDramaCastViews(props.projectId, props.cast.id, signal),
+        enabled: Boolean(props.preview),
+        refetchInterval: (value) => (props.preview && value.state.data?.views.some((row) => ["queued", "running"].includes(row.status)) ? 3000 : false),
+    });
     return (
         <section className="drama-cast-views" aria-label="资产多视图">
             <Button type="text" icon={<Images className="size-4" />} disabled={props.disabled} onClick={() => setOpen(true)}>
-                多视图
+                {props.preview ? "管理多视图" : "多视图"}
             </Button>
+            {props.preview ? (
+                <div className="drama-cast-view-strip">
+                    {query.isPending ? (
+                        <p role="status">正在读取独立视图…</p>
+                    ) : query.isError ? (
+                        <p role="alert">
+                            独立视图读取失败。
+                            <Button size="small" onClick={() => void query.refetch()}>
+                                重试
+                            </Button>
+                        </p>
+                    ) : !query.data?.views.length ? (
+                        <p>暂无独立视图，可按需添加正面、侧面、背面或局部图。</p>
+                    ) : (
+                        query.data.views.map((row) => (
+                            <article key={row.id}>
+                                <div>{row.resourceId ? <MediaThumb resourceId={row.resourceId} alt={`${row.config.name}当前图片`} /> : <span>{STATUS[row.status] || "待生成"}</span>}</div>
+                                <strong>{row.config.name}</strong>
+                                <small>
+                                    {DIRECTIONS.find((item) => item.value === row.config.direction)?.label} · {STATUS[row.status] || row.status}
+                                </small>
+                            </article>
+                        ))
+                    )}
+                </div>
+            ) : null}
             {open ? <CastViewsSession key={`${userId}:${props.projectId}:${props.cast.id}`} {...props} userId={userId} onClose={() => setOpen(false)} /> : null}
         </section>
     );

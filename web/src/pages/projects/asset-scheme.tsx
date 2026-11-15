@@ -2,13 +2,15 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { BookMarked, Check, Eye, FileText, PenLine, RotateCcw, Search, TriangleAlert, Blocks } from "lucide-react";
+import { BookMarked, Check, Eye, FileText, RotateCcw, Search, TriangleAlert, Blocks } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { CHARACTER_VARIABLES, renderAssetPrompt, SCENE_VARIABLES, unknownAssetVariables } from "@/lib/drama/asset-prompt";
 import { cn } from "@/lib/utils";
 import { getDramaAssetSchemes, type DramaAssetMode, type DramaAssetSchemeCatalog, type DramaAssetSettings, type DramaModelOption } from "@/services/api/drama";
 import { getSkillFile, listAddedSkills, listSkillFiles } from "@/services/api/skills";
+
+import { AssetSchemePreview } from "./asset-scheme-preview";
 
 // 角色/场景参考图方案：开工前选定，设置页可改。保存的是全文提示词，预览就是实际发送的内容。
 
@@ -20,7 +22,7 @@ export function useAssetSchemes() {
 }
 
 export function defaultAssetSettings(catalog?: DramaAssetSchemeCatalog): DramaAssetSettings | undefined {
-    const scheme = catalog?.schemes[0];
+    const scheme = catalog?.schemes.find((item) => item.mode === "closeup_turnaround") || catalog?.schemes.find((item) => item.mode !== "none") || catalog?.schemes[0];
     if (!catalog || !scheme) return undefined;
     return { mode: scheme.mode, characterPrompt: scheme.characterPrompt, scenePrompt: catalog.scenePrompt, characterRatio: scheme.ratio };
 }
@@ -28,39 +30,6 @@ export function defaultAssetSettings(catalog?: DramaAssetSchemeCatalog): DramaAs
 export type AssetPreviewSample = { characterName: string; characterAppearance: string; sceneName: string; sceneAppearance: string; style: string; rules: string };
 
 const FALLBACK_SAMPLE: AssetPreviewSample = { characterName: "主角", characterAppearance: "（作品圣经建立后自动填入角色外貌）", sceneName: "主场景", sceneAppearance: "（作品圣经建立后自动填入环境描述）", style: "写实电影感", rules: "" };
-
-/** 方案示意：用色块画出版式，比文字更快看懂差别。 */
-function SchemeGlyph({ mode }: { mode: DramaAssetMode }) {
-    if (mode === "portrait")
-        return (
-            <span className="drama-glyph is-portrait">
-                <i />
-            </span>
-        );
-    if (mode === "turnaround")
-        return (
-            <span className="drama-glyph is-turnaround">
-                <i />
-                <i />
-                <i />
-            </span>
-        );
-    if (mode === "fourview")
-        return (
-            <span className="drama-glyph is-fourview">
-                <i className="is-face" />
-                <i />
-                <i />
-                <i />
-                <b />
-            </span>
-        );
-    return (
-        <span className="drama-glyph is-custom">
-            <PenLine className="size-4" />
-        </span>
-    );
-}
 
 /**
  * imageModel 是当前选中的图片模型：用来只列出它能给出的画幅与分辨率档位，并提前提示保存时会被拒绝的组合。
@@ -94,7 +63,7 @@ export function AssetSchemePicker({
     const scheme = catalog.schemes.find((item) => item.mode === value.mode);
     const prompt = tab === "character" ? value.characterPrompt : value.scenePrompt;
     const variables = tab === "character" ? CHARACTER_VARIABLES : SCENE_VARIABLES;
-    const defaultPrompt = tab === "character" ? scheme?.characterPrompt || catalog.schemes[0].characterPrompt : catalog.scenePrompt;
+    const defaultPrompt = tab === "character" ? (scheme?.characterPrompt ?? defaultAssetSettings(catalog)?.characterPrompt ?? "") : catalog.scenePrompt;
     const unknown = unknownAssetVariables(prompt, variables);
     const modified = prompt.trim() !== defaultPrompt.trim();
     const rendered =
@@ -134,22 +103,16 @@ export function AssetSchemePicker({
         });
     };
 
-    const schemes: Array<{ mode: DramaAssetMode; name: string; description: string; ratio: string }> = [
-        ...catalog.schemes,
-        { mode: "custom", name: "自定义", description: "自己写约束或从技能导入，例如团队的资产卡规范；可自选参考图画幅。", ratio: value.mode === "custom" ? value.characterRatio : "自选" },
-    ];
-
     return (
         <section className={cn("drama-assets", layout === "compact" && "is-compact")} aria-label="参考图方案">
+            <p className="drama-assets-template-hint">绘图模板决定一张角色参考图内的排布；多个视角合在同一张图中。</p>
             <div className="drama-assets-schemes" role="radiogroup" aria-label="角色参考图方案">
-                {schemes.map((item) => (
+                {catalog.schemes.map((item) => (
                     <button key={item.mode} type="button" role="radio" aria-checked={value.mode === item.mode} className="drama-assets-scheme" onClick={() => chooseMode(item.mode)}>
-                        <SchemeGlyph mode={item.mode} />
+                        <AssetSchemePreview mode={item.mode} />
                         <span className="drama-assets-scheme-copy">
-                            <strong>
-                                {item.name}
-                                <em>{item.ratio}</em>
-                            </strong>
+                            <strong>{item.name}</strong>
+                            <em>{item.ratio} · 单张参考图</em>
                             <span>{item.description}</span>
                         </span>
                         {value.mode === item.mode ? (
@@ -159,6 +122,12 @@ export function AssetSchemePicker({
                         ) : null}
                     </button>
                 ))}
+            </div>
+            <div className="drama-assets-custom-entry">
+                <Button type="text" size="small" aria-pressed={value.mode === "custom"} onClick={() => chooseMode("custom")}>
+                    自定义提示词
+                </Button>
+                <span>可自行编写约束或从技能导入。</span>
             </div>
             {value.mode === "custom" ? (
                 <div className="drama-assets-ratio">

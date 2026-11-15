@@ -29,6 +29,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 	}
 	fields := map[string]any{}
 	if req.Settings != nil {
+		if err := req.Settings.validateDramaType(); err != nil {
+			return DramaSummary{}, err
+		}
 		if err := req.Settings.Storyboard.ValidateDirector(); err != nil {
 			return DramaSummary{}, BadAuthRequest(err.Error())
 		}
@@ -37,6 +40,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 		}
 		current := parseDramaSettings(productionRow.SettingsJSON)
 		next := req.Settings.normalized()
+		if productionRow.GuideStep != model.DramaGuideConfiguring && next.DramaType != current.DramaType {
+			return DramaSummary{}, BadAuthRequest("剧集创建后不能修改类型")
+		}
 		if dramaGuideActive(productionRow) {
 			next.MediaMode = DramaMediaManual
 		}

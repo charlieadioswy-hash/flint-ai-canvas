@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { DramaGuideStep, DramaSummary } from "../src/services/api/drama";
-import { allowedWorkflowSteps, defaultWorkflowStep, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS } from "../src/pages/projects/workflow-state";
+import { allowedWorkflowSteps, defaultWorkflowStep, EPISODE_WORKFLOW_STEPS, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS } from "../src/pages/projects/workflow-state";
 
 function summary(guideStep: DramaGuideStep | "", chapterCount = 1): DramaSummary {
     return {
@@ -12,7 +12,8 @@ function summary(guideStep: DramaGuideStep | "", chapterCount = 1): DramaSummary
 
 describe("短剧简易工作台步骤", () => {
     test("六步名称与计划一致", () => {
-        expect(WORKFLOW_STEPS.map((step) => step.title)).toEqual(["导入正文", "确认正文与拆集", "风格和基础配置", "主体资产", "分集分镜与视频", "预览导出"]);
+        expect(WORKFLOW_STEPS.map((step) => step.title)).toEqual(["上传剧本", "剧本格式", "风格设置", "角色场景", "漫剧分镜", "视频预览"]);
+        expect(EPISODE_WORKFLOW_STEPS.map((step) => step.title)).toEqual(["分集剧本", "风格设置", "角色场景", "漫剧分镜", "视频预览"]);
     });
 
     test("配置中只能浏览正文与风格，不能跳到资产或分镜", () => {

@@ -276,8 +276,13 @@ test("reference dialog polling preserves draft fields and closing discards them 
         expect(dialog.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("保留我手工输入的晨光");
     }
     await click("关闭资产设定", dialog);
+    expect(document.querySelector(".ant-modal-confirm")?.textContent).toContain("未保存的修改");
+    await click("继续编辑");
+    expect(originalInput?.value).toBe("尚未保存的落地窗与破损地板");
+    await click("关闭资产设定", dialog);
+    await click("放弃修改并关闭");
     await render(<DialogHarness key="reopened" castId={room.id} items={[hero, room]} onChanged={changed} />);
-    const reopened = document.querySelector('[role="dialog"]')!;
+    const reopened = document.querySelector(".drama-cast-dialog")!;
     expect(reopened.querySelector<HTMLTextAreaElement>('[aria-label="环境描述"]')?.value).toBe(room.appearance);
     expect(reopened.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("");
     expect(save).not.toHaveBeenCalled();

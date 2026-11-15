@@ -171,6 +171,7 @@ func normalizedDramaSkillRef(value *DramaSkillRef) *DramaSkillRef {
 
 type DramaSettings struct {
 	production.Settings
+	DramaType string `json:"dramaType,omitempty"`
 	// PromptSkill 为空时按内置格式撰写段视频提示词。
 	PromptSkill *DramaSkillRef `json:"promptSkill,omitempty"`
 	// BibleSkill / ScriptSkill 是资产提取与分镜拆分的写作技能，为空按内置规则；输出结构始终由系统固定。
@@ -203,6 +204,15 @@ const (
 // parallelVideo 表示剧情段视频互不依赖：不等上一段、不带首帧，同集各段可同时生成。
 func (s DramaSettings) parallelVideo() bool {
 	return s.VideoContinuity == DramaContinuityParallel
+}
+
+func (s DramaSettings) validateDramaType() error {
+	switch s.DramaType {
+	case "", "comic", "live_action", "narration":
+		return nil
+	default:
+		return BadAuthRequest("剧集类型必须为漫剧、真人剧或解说漫")
+	}
 }
 
 // dramaMaxChaptersPerEpisode 是按章分集时每集最多合并的章数；dramaEpisodeSourceRunes 是合并后单集原文上限，

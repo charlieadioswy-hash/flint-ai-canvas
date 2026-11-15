@@ -628,6 +628,23 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidde
             lastPrefillIdRef.current = 0;
             return;
         }
+        if (
+            prefillRequest.entryDraft &&
+            (prefillRequest.entryDraft.canvasId !== canvasId ||
+                prefillRequest.entryDraft.scope !== accountScope ||
+                prefillRequest.entryDraft.userId !== userId ||
+                !accountIsCurrent() ||
+                hydratedAccount.current !== `${userId}:${accountScope}` ||
+                !historyHydrated ||
+                !pendingHydrated ||
+                busy ||
+                running ||
+                submissionRequestRef.current ||
+                pendingSubmission.current ||
+                cloudOpeningRef.current ||
+                !insertAgentFiles)
+        )
+            return;
         // 保存后的自动续问只能在对话空闲时发送，不能替用户回答问题或越过草稿和待确认请求。
         if (
             prefillRequest.autoSubmit &&
@@ -657,6 +674,21 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidde
             return;
         if (prefillRequest.id === lastPrefillIdRef.current) return;
         lastPrefillIdRef.current = prefillRequest.id;
+        if (prefillRequest.entryDraft) {
+            const draft = prefillRequest.entryDraft;
+            newConversation();
+            setSelectedSkillIds(draft.skillIds);
+            const inserted = addComposerFiles(draft.files.map((item) => item.file)) || [];
+            let text = draft.text;
+            draft.files.forEach((item) => {
+                const node = inserted.find((node) => node.file === item.file);
+                text = text.split(`@[attachment:${item.id}]`).join(node ? canvasNodeMentionToken(node.nodeId) : item.file.name);
+            });
+            setPrompt(text);
+            prefilledSubmissionRef.current = null;
+            setView("chat");
+            return;
+        }
         if (!prefillRequest.text.trim()) return;
         setView("chat");
         // 自动发送的预填直接进入队列：空闲时立即发出，运行中排在队尾，可见、可删，只发一次。
@@ -687,6 +719,8 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidde
         run,
         connectionStatus,
         otherAgentRunning,
+        insertAgentFiles,
+        canvasId,
     ]);
 
     useEffect(() => {
@@ -2140,6 +2174,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidde
             })),
         );
         if (check.hasGif) void appMessage.info("GIF 图片 Agent 只看第一帧");
+        return check.accepted.map((file, index) => ({ file, nodeId: nodeIds[index] }));
     };
     // 占位节点建出来之前就失败：原因写在卡片上，可以重试或移除。
     const markAttachmentFailure = (nodeId: string, details: string) => {
@@ -2777,7 +2812,9 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel({ hidde
                                         onEscape={handleComposerEscape}
                                         tray={outboxTray}
                                         attachments={composerAttachments}
-                                        onAddFiles={addComposerFiles}
+                                        onAddFiles={(files) => {
+                                            addComposerFiles(files);
+                                        }}
                                         onRemoveAttachment={removeDraftAttachment}
                                         onRetryAttachment={retryDraftAttachment}
                                         addMenu={{

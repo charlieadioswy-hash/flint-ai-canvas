@@ -4,7 +4,7 @@ import { App, Button } from "antd";
 import { Check, Clapperboard, Loader2, Play, RefreshCw } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { renderDramaEpisode, type DramaEpisodeDetail, type DramaEpisodeRow } from "@/services/api/drama";
+import { renderDramaEpisode, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaWorkflowEpisodeReadiness } from "@/services/api/drama";
 
 import { downloadResource, formatDuration, useResourceMediaUrl } from "./drama-shared";
 import { JianyingDraftModal } from "./studio/asset-transfer";
@@ -17,6 +17,7 @@ export function SimpleEpisodeFinalCard({
     detail,
     unavailable,
     blockingReason,
+    readiness,
     onChanged,
 }: {
     projectId: string;
@@ -25,6 +26,7 @@ export function SimpleEpisodeFinalCard({
     detail?: DramaEpisodeDetail;
     unavailable: boolean;
     blockingReason?: string;
+    readiness?: DramaWorkflowEpisodeReadiness;
     onChanged: () => void | Promise<unknown>;
 }) {
     const { message } = App.useApp();
@@ -36,7 +38,9 @@ export function SimpleEpisodeFinalCard({
     const current = detail?.episode;
     const resourceId = current?.finalResourceId;
     const url = useResourceMediaUrl(resourceId, "playback");
-    const ready = segments.filter((segment) => segment.videoStatus === "ready" && segment.videoResourceId && (segment.videoSeconds || 0) > 0).length;
+    const source = readiness?.renderSource === "shots" ? "镜" : "段";
+    const videoCount = readiness?.renderVideoCount ?? segments.length;
+    const ready = readiness?.renderReadyVideos ?? segments.filter((segment) => segment.videoStatus === "ready" && segment.videoResourceId && (segment.videoSeconds || 0) > 0).length;
     const renderJob = detail?.jobs.find((job) => job.kind === "render" && (job.status === "queued" || job.status === "running"));
     const awaitingSubmission = renderJob?.status === "queued" && !renderJob.taskId;
     const renderError = episode.stage === "render" ? episode.error || current?.error : "";
@@ -50,7 +54,9 @@ export function SimpleEpisodeFinalCard({
         onError: (error) => message.error(error instanceof Error ? error.message : "本集视频合成失败"),
     });
     const rendering = mutation.isPending || Boolean(renderJob && !awaitingSubmission) || (episode.stage === "render" && !renderError && !awaitingSubmission);
-    const blocked = unavailable ? "最新内容读取失败，请刷新后合成" : blockingReason || (!current ? "正在读取本集视频" : !segments.length ? "本集还没有剧情段" : ready !== segments.length ? `还有 ${segments.length - ready} 段视频未就绪或需要更新` : "");
+    const blocked = unavailable
+        ? "最新内容读取失败，请刷新后合成"
+        : blockingReason || readiness?.renderBlockingReason || (!current ? "正在读取本集视频" : !videoCount ? "本集还没有可合成的视频" : ready !== videoCount ? `还有 ${videoCount - ready} ${source}视频未就绪或需要更新` : "");
     const status = rendering ? (renderJob?.status === "running" ? "正在合成" : "合成排队中") : awaitingSubmission ? "等待提交合成" : renderError ? "合成失败" : stale ? "成片待更新" : resourceId ? "成片已就绪" : "待合成";
     const tone = rendering ? "busy" : awaitingSubmission ? "blocked" : renderError ? "failed" : stale ? "stale" : resourceId ? "ready" : "idle";
     const compose = () => {
@@ -97,7 +103,7 @@ export function SimpleEpisodeFinalCard({
                 className="drama-simple-card-copy drama-simple-final-compose"
                 type="button"
                 aria-label={`合成第 ${episode.number} 集视频`}
-                title={blocked || renderError || "仅拼接本集已有视频，不重新生成剧情段"}
+                title={blocked || renderError || "仅拼接本集已选用的视频"}
                 disabled={Boolean(blocked) || rendering}
                 onClick={compose}
             >
@@ -106,7 +112,7 @@ export function SimpleEpisodeFinalCard({
                     {rendering ? status : awaitingSubmission ? "继续合成本集" : renderError ? "重试合成本集" : resourceId ? "重新合成本集" : "合成本集视频"}
                 </strong>
                 <p>
-                    {formatDuration(current?.durationMs || episode.durationMs)} · {segments.length} 个剧情段 · 对白与音效来自视频模型
+                    {formatDuration(current?.durationMs || episode.durationMs)} · {videoCount} {source}视频 · 对白与音效来自视频模型
                 </p>
             </button>
             <div className="drama-simple-card-state" role="status">
@@ -114,7 +120,7 @@ export function SimpleEpisodeFinalCard({
                     {rendering ? <Loader2 className="size-3 motion-safe:animate-spin" /> : resourceId && !stale && !renderError ? <Check className="size-3" /> : <i />}
                     {status}
                 </span>
-                <span title={blocked || (stale ? "内容已修改，当前成片是修改前的版本" : "合成只使用当前已采用的段视频")}>{blocked || (stale ? "当前为旧版成片" : `${ready}/${segments.length} 段就绪`)}</span>
+                <span title={blocked || (stale ? "内容已修改，当前成片是修改前的版本" : "合成使用当前已选用的视频")}>{blocked || (stale ? "当前为旧版成片" : `${ready}/${videoCount} ${source}就绪`)}</span>
             </div>
             <footer>
                 <Button size="small" disabled={!resourceId} loading={downloading} aria-label={`下载第 ${episode.number} 集成片`} onClick={() => void download()}>

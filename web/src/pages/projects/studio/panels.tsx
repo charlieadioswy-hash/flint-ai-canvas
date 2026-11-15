@@ -73,6 +73,7 @@ import { CastLooks } from "./cast-looks";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { CastCreateDialog } from "./cast-create-dialog";
 import { CastProjectImport } from "./cast-project-import";
+import "./cast-editor-workspace.css";
 
 // 制作台的三个整页视图：设定（角色 / 道具 / 场景）、待处理、制作设置。都在主区域内展示，不使用抽屉遮挡。
 
@@ -99,21 +100,7 @@ export type CastRatios = { character: string };
 
 /** 媒体轮询不重置输入，切换设定或服务端表单内容变化时重新回填。 */
 export function castEditorFormKey(cast: DramaCast) {
-    return JSON.stringify([
-        cast.id,
-        cast.name,
-        cast.lookName,
-        cast.appearance,
-        cast.aliasesJson,
-        cast.voiceInstructions,
-        cast.imagePrompt,
-        cast.imageStyleId,
-        cast.imageStyleName,
-        cast.imageStylePrompt,
-        cast.lookFromChapter,
-        cast.lookToChapter,
-        cast.imageOptionsJson,
-    ]);
+    return JSON.stringify([cast.id, cast.name, cast.lookName, cast.appearance, cast.aliasesJson, cast.voiceInstructions, cast.imagePrompt, cast.imageStyleId, cast.imageStyleName, cast.imageStylePrompt, cast.lookFromChapter, cast.lookToChapter]);
 }
 
 const castImageLoading = <span className="drama-cast-media-state is-loading" role="status" aria-label="参考图加载中" />;
@@ -349,6 +336,9 @@ export function CastEditor({
     onChanged,
     onOpenCanvas,
     canvasOpening,
+    layout = "sidebar",
+    tools,
+    onDirtyChange,
 }: {
     projectId: string;
     cast: DramaCast;
@@ -358,6 +348,9 @@ export function CastEditor({
     onChanged: () => void;
     onOpenCanvas: () => void;
     canvasOpening: boolean;
+    layout?: "sidebar" | "workspace";
+    tools?: ReactNode;
+    onDirtyChange?: (dirty: boolean, busy: boolean) => void;
 }) {
     const { message, modal } = App.useApp();
     const [previewing, setPreviewing] = useState(false);
@@ -370,23 +363,21 @@ export function CastEditor({
     const [to, setTo] = useState<number | null>(cast.lookToChapter || null);
     const [restyle, setRestyle] = useState(true);
     const [imageOptionsDirty, setImageOptionsDirty] = useState(false);
+    const [lookState, setLookState] = useState({ dirty: false, busy: false });
     const isLook = Boolean(cast.parentId);
     const impactQuery = useQuery({ queryKey: dramaKeys.castImpact(projectId, cast.id), queryFn: ({ signal }) => getDramaCastImpact(projectId, cast.id, signal) });
-    const imageDirty = (["imagePrompt", "imageStyleId", "imageStyleName", "imageStylePrompt"] as const).some((key) => (imageFields[key] || "") !== (cast[key] || ""));
-    const dirty =
-        imageDirty ||
-        name !== (cast.lookName || cast.name) ||
-        appearance !== cast.appearance ||
-        voiceInstructions !== cast.voiceInstructions ||
-        aliases.join("|") !== parseList(cast.aliasesJson).join("|") ||
-        (isLook && ((from || 0) !== (cast.lookFromChapter || 0) || (to || 0) !== (cast.lookToChapter || 0)));
+    const snapshot = JSON.stringify({ name, aliases, appearance, voiceInstructions, ...imageFields, from: isLook ? from || 0 : 0, to: isLook ? to || 0 : 0 });
+    const [savedSnapshot, setSavedSnapshot] = useState(snapshot);
+    const dirty = snapshot !== savedSnapshot;
     const fields = { name, aliases, appearance, voiceInstructions, ...imageFields };
     const saveFields = () => (isLook ? updateDramaCastLook(projectId, cast.id, { lookName: name, appearance, ...imageFields, fromChapter: from || 0, toChapter: to || 0, restyleSegments: restyle }) : updateDramaCast(projectId, cast.id, fields));
     const save = useMutation({
         mutationFn: async () => {
             await saveFields();
+            return snapshot;
         },
-        onSuccess: () => {
+        onSuccess: (saved) => {
+            setSavedSnapshot(saved);
             message.success("设定已保存");
             onChanged();
         },
@@ -396,9 +387,11 @@ export function CastEditor({
     const regenerate = useMutation({
         mutationFn: async () => {
             if (dirty) await saveFields();
-            return regenerateDramaCast(projectId, cast.id, restyle);
+            const result = await regenerateDramaCast(projectId, cast.id, restyle);
+            return { result, saved: snapshot };
         },
-        onSuccess: (result) => {
+        onSuccess: ({ result, saved }) => {
+            setSavedSnapshot(saved);
             message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "正在重新生成参考图");
             onChanged();
         },
@@ -425,100 +418,126 @@ export function CastEditor({
     const impact = impactQuery.data;
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
-    const busy = save.isPending || regenerate.isPending || upload.isPending || mediaBusy(cast.imageStatus);
+    const saving = save.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy;
+    const busy = saving || mediaBusy(cast.imageStatus);
     const parentReady = !isLook || (parent?.imageStatus === "ready" && Boolean(parent.imageResourceId));
+    const editorState = useRef(onDirtyChange);
+    editorState.current = onDirtyChange;
+    useEffect(() => {
+        editorState.current?.(dirty || imageOptionsDirty || lookState.dirty, saving);
+    }, [dirty, imageOptionsDirty, lookState.dirty, saving]);
+    useEffect(() => () => editorState.current?.(false, false), []);
     return (
-        <div className="drama-editor">
-            <div className="drama-cast-hero" style={castRatio(cast.kind, ratios).style}>
-                {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt={cast.name} loading={castImageLoading} failed={castImageFailed} /> : null}
-                {cast.imageResourceId ? (
-                    <button type="button" className="drama-cast-hero-zoom" aria-label={`放大查看${cast.lookName || cast.name}的参考图`} title="点击放大查看" onClick={() => setPreviewing(true)}>
-                        <span className="drama-cast-hero-zoom-hint" aria-hidden="true">
-                            <Maximize2 className="size-3.5" />
-                        </span>
-                    </button>
+        <div className={`drama-editor${layout === "workspace" ? ` is-workspace is-${cast.kind}` : ""}`}>
+            <section className="drama-editor-preview" aria-label="当前参考图">
+                {layout === "workspace" ? (
+                    <div className="drama-editor-workspace-heading">
+                        <h3>当前参考图</h3>
+                        <span>{cast.imageStatus === "failed" ? "生成失败" : mediaBusy(cast.imageStatus) ? "生成中" : cast.imageStatus === "stale" ? "待更新" : cast.imageResourceId ? "已就绪" : "待生成"}</span>
+                    </div>
                 ) : null}
-                {!cast.imageResourceId || mediaBusy(cast.imageStatus) || cast.imageStatus === "failed" ? (
-                    <div className={`drama-shot-placeholder ${mediaBusy(cast.imageStatus) ? "is-busy" : ""}`}>
-                        {cast.imageStatus === "failed" ? (
-                            <span className="drama-cast-card-failed">
-                                <AlertCircle className="size-4" />
-                                参考图生成失败
+                <div className="drama-cast-hero" style={castRatio(cast.kind, ratios).style}>
+                    {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt={cast.name} loading={castImageLoading} failed={castImageFailed} /> : null}
+                    {cast.imageResourceId ? (
+                        <button type="button" className="drama-cast-hero-zoom" aria-label={`放大查看${cast.lookName || cast.name}的参考图`} title="点击放大查看" onClick={() => setPreviewing(true)}>
+                            <span className="drama-cast-hero-zoom-hint" aria-hidden="true">
+                                <Maximize2 className="size-3.5" />
                             </span>
-                        ) : mediaBusy(cast.imageStatus) ? (
-                            "参考图生成中…"
-                        ) : (
-                            "尚未生成参考图：确认描述后点下方生成，或上传已有的形象图"
-                        )}
+                        </button>
+                    ) : null}
+                    {!cast.imageResourceId || mediaBusy(cast.imageStatus) || cast.imageStatus === "failed" ? (
+                        <div className={`drama-shot-placeholder ${mediaBusy(cast.imageStatus) ? "is-busy" : ""}`}>
+                            {cast.imageStatus === "failed" ? (
+                                <span className="drama-cast-card-failed">
+                                    <AlertCircle className="size-4" />
+                                    参考图生成失败
+                                </span>
+                            ) : mediaBusy(cast.imageStatus) ? (
+                                "参考图生成中…"
+                            ) : (
+                                "尚未生成参考图：确认描述后点下方生成，或上传已有的形象图"
+                            )}
+                        </div>
+                    ) : null}
+                </div>
+            </section>
+            <section className="drama-editor-settings" aria-label={`${kindLabel}文字与生成设置`}>
+                <div className="drama-editor-row">
+                    <span className="drama-eyebrow">{kindLabel}设定</span>
+                    <label className="drama-switch-label">
+                        <Lock className="size-3.5" />
+                        锁定形象
+                        <Switch size="small" checked={cast.locked} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
+                    </label>
+                </div>
+                <div className="drama-editor-assistance">{tools}</div>
+                <div className="drama-editor-text-settings">
+                    {isLook ? <p className="drama-editor-note">所属角色：{parent?.name || cast.name}。造型使用角色的多视图参考图方案，服装、年龄和风格可独立设置。</p> : null}
+                    {cast.sourceProjectId ? (
+                        <p className="drama-editor-note">
+                            <Link2 className="inline size-3.5" /> 已关联其他作品素材，当前设定可独立编辑。
+                        </p>
+                    ) : null}
+                    <Field label={isLook ? "造型名称" : "名称"}>
+                        <Input value={name} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} aria-label={isLook ? "造型名称" : "名称"} />
+                    </Field>
+                    {isCharacter ? (
+                        <Field label="别名与称呼" hint="剧本里这些称呼都会归到此角色">
+                            <Select mode="tags" className="w-full" value={aliases} disabled={busy} onChange={setAliases} tokenSeparators={[",", "，", "、"]} placeholder="输入后回车" open={false} suffixIcon={null} aria-label="别名与称呼" />
+                        </Field>
+                    ) : null}
+                    <Field label={APPEARANCE_LABEL[cast.kind]} hint="用于参考图与剧情段视频提示词">
+                        <Input.TextArea value={appearance} maxLength={1000} disabled={busy} autoSize={{ minRows: 4, maxRows: 10 }} onChange={(event) => setAppearance(event.target.value)} aria-label={APPEARANCE_LABEL[cast.kind]} />
+                    </Field>
+                    {isLook ? (
+                        <Field label="默认适用章节" hint="留空表示不限，按本季原著章节设置">
+                            <div className="drama-look-form-range">
+                                <InputNumber aria-label="造型起始章" min={0} precision={0} value={from} placeholder="起始章" disabled={busy} onChange={setFrom} />
+                                <span>至</span>
+                                <InputNumber aria-label="造型结束章" min={0} precision={0} value={to} placeholder="结束章" disabled={busy} onChange={setTo} />
+                            </div>
+                        </Field>
+                    ) : null}
+                    {isCharacter ? (
+                        <Field label="声线" hint="写进视频提示词，由视频模型生成对白">
+                            <Input value={voiceInstructions} disabled={busy} placeholder="少年音，坚毅，语速偏快" onChange={(event) => setVoiceInstructions(event.target.value)} aria-label="声线" />
+                        </Field>
+                    ) : null}
+                    {isCharacter ? (
+                        <Field label="声音样本" hint="支持参考音频的视频模型会在该角色开口的剧情段带上这段声音">
+                            <CastVoiceField projectId={projectId} cast={cast} restyle={restyle} onChanged={onChanged} />
+                        </Field>
+                    ) : null}
+                    <div className="drama-editor-impact">
+                        <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
+                            将引用视频标记为待更新
+                        </Checkbox>
+                        {impact ? (
+                            <span>
+                                {impact.episodes} 集 · {impact.segments} 段
+                            </span>
+                        ) : null}
                     </div>
-                ) : null}
-            </div>
-            <div className="drama-editor-row">
-                <span className="drama-eyebrow">{kindLabel}设定</span>
-                <label className="drama-switch-label">
-                    <Lock className="size-3.5" />
-                    锁定形象
-                    <Switch size="small" checked={cast.locked} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
-                </label>
-            </div>
-            {isLook ? <p className="drama-editor-note">所属角色：{parent?.name || cast.name}。造型使用角色的多视图参考图方案，服装、年龄和风格可独立设置。</p> : null}
-            {cast.sourceProjectId ? (
-                <p className="drama-editor-note">
-                    <Link2 className="inline size-3.5" /> 已关联其他作品素材，当前设定可独立编辑。
-                </p>
-            ) : null}
-            <Field label={isLook ? "造型名称" : "名称"}>
-                <Input value={name} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} aria-label={isLook ? "造型名称" : "名称"} />
-            </Field>
-            {isCharacter ? (
-                <Field label="别名与称呼" hint="剧本里这些称呼都会归到此角色">
-                    <Select mode="tags" className="w-full" value={aliases} onChange={setAliases} tokenSeparators={[",", "，", "、"]} placeholder="输入后回车" open={false} suffixIcon={null} aria-label="别名与称呼" />
-                </Field>
-            ) : null}
-            <Field label={APPEARANCE_LABEL[cast.kind]} hint="用于参考图与剧情段视频提示词">
-                <Input.TextArea value={appearance} maxLength={1000} disabled={busy} autoSize={{ minRows: 4, maxRows: 10 }} onChange={(event) => setAppearance(event.target.value)} aria-label={APPEARANCE_LABEL[cast.kind]} />
-            </Field>
-            <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
-            <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} onDirtyChange={setImageOptionsDirty} />
-            <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />
-            {isLook ? (
-                <Field label="默认适用章节" hint="留空表示不限，按本季原著章节设置">
-                    <div className="drama-look-form-range">
-                        <InputNumber aria-label="造型起始章" min={0} precision={0} value={from} placeholder="起始章" disabled={busy} onChange={setFrom} />
-                        <span>至</span>
-                        <InputNumber aria-label="造型结束章" min={0} precision={0} value={to} placeholder="结束章" disabled={busy} onChange={setTo} />
-                    </div>
-                </Field>
-            ) : null}
-            {isCharacter ? (
-                <Field label="声线" hint="写进视频提示词，由视频模型生成对白">
-                    <Input value={voiceInstructions} placeholder="少年音，坚毅，语速偏快" onChange={(event) => setVoiceInstructions(event.target.value)} aria-label="声线" />
-                </Field>
-            ) : null}
-            {isCharacter ? (
-                <Field label="声音样本" hint="支持参考音频的视频模型会在该角色开口的剧情段带上这段声音">
-                    <CastVoiceField projectId={projectId} cast={cast} restyle={restyle} onChanged={onChanged} />
-                </Field>
-            ) : null}
-            {isCharacter ? <CastLooks projectId={projectId} character={cast} looks={looks} restyle={restyle} onChanged={onChanged} /> : null}
-            <div className="drama-editor-impact">
-                <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
-                    将引用视频标记为待更新
-                </Checkbox>
-                {impact ? (
-                    <span>
-                        {impact.episodes} 集 · {impact.segments} 段
-                    </span>
-                ) : null}
-            </div>
+                    <Button disabled={!dirty || busy || !name.trim() || !appearance.trim()} loading={save.isPending} onClick={() => save.mutate()}>
+                        保存设定
+                    </Button>
+                    {dirty || imageOptionsDirty || lookState.dirty ? (
+                        <p className="drama-editor-note" role="status">
+                            有未保存的修改{imageOptionsDirty ? "，图片生成配置需单独保存" : ""}。
+                        </p>
+                    ) : null}
+                </div>
+                <div className="drama-editor-image-settings">
+                    {layout === "workspace" ? <h3>生图设置</h3> : null}
+                    <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} onDirtyChange={setImageOptionsDirty} />
+                    <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+                </div>
+            </section>
             <div className="drama-editor-actions">
-                <Button disabled={!dirty || busy || !name.trim() || !appearance.trim()} loading={save.isPending} onClick={() => save.mutate()}>
-                    保存设定
-                </Button>
-                <Button icon={<Upload className="size-4" />} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
+                <Button icon={<Upload className="size-4" />} disabled={busy} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
                     上传形象图
                 </Button>
-                <Button className="drama-editor-wide" icon={<FolderOpen className="size-4" />} onClick={() => setLibraryOpen(true)}>
+                <Button className="drama-editor-wide" icon={<FolderOpen className="size-4" />} disabled={busy} onClick={() => setLibraryOpen(true)}>
                     从素材库选择
                 </Button>
                 {libraryOpen ? <CastLibraryPicker open={libraryOpen} cast={cast} onClose={() => setLibraryOpen(false)} onPick={adoptLibraryImage} /> : null}
@@ -554,7 +573,14 @@ export function CastEditor({
                 >
                     {cast.imageResourceId ? (dirty ? "保存并重新生成" : "重新生成") : dirty ? "保存并生成参考图" : "生成参考图"}
                 </Button>
-                <Button className="drama-editor-wide" icon={<Brush className="size-4" />} loading={canvasOpening} onClick={onOpenCanvas}>
+                <Button
+                    className="drama-editor-wide"
+                    icon={<Brush className="size-4" />}
+                    disabled={dirty || imageOptionsDirty || busy}
+                    title={dirty || imageOptionsDirty ? "请先保存设定与图片生成配置" : undefined}
+                    loading={canvasOpening}
+                    onClick={onOpenCanvas}
+                >
                     在画布中精修
                 </Button>
                 {isLook ? (
@@ -580,8 +606,35 @@ export function CastEditor({
                     </Button>
                 ) : null}
             </div>
-            <p className="drama-editor-note">旧版本保留在版本记录中；锁定后参考图不会被重新生成。上传或从画布采用的形象图会自动锁定，生成剧情段视频时随请求发送，并要求外貌、发型与服装以它为准。</p>
-            <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" />
+            <section className="drama-editor-extras" aria-label="造型与独立视图">
+                {layout === "workspace" ? (
+                    <div className="drama-editor-workspace-heading">
+                        <h3>{isCharacter ? "造型与多视图" : "资产多视图"}</h3>
+                        <span>按需补充，独立保存与生成</span>
+                    </div>
+                ) : null}
+                <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} preview={layout === "workspace"} />
+                {isCharacter ? (
+                    <CastLooks
+                        projectId={projectId}
+                        character={cast}
+                        looks={looks}
+                        restyle={restyle}
+                        onChanged={onChanged}
+                        onDirtyChange={(dirty, busy) => setLookState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                    />
+                ) : null}
+                <p className="drama-editor-note">上传或从画布采用的形象图会自动锁定。旧图片保留在版本记录中，锁定后需先解锁再重新生成。</p>
+            </section>
+            <aside className="drama-editor-history" aria-label="参考图历史">
+                {layout === "workspace" ? (
+                    <div className="drama-editor-workspace-heading">
+                        <h3>版本记录</h3>
+                    </div>
+                ) : null}
+                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" />
+                {layout === "workspace" ? <p className="drama-editor-note">生成、上传与画布精修产生的图片会保留在这里。</p> : null}
+            </aside>
             {previewing && cast.imageResourceId ? <CanvasImagePreview storageKey={`resource:${cast.imageResourceId}`} alt={`${cast.lookName || cast.name} · ${kindLabel}参考图`} onClose={() => setPreviewing(false)} /> : null}
         </div>
     );

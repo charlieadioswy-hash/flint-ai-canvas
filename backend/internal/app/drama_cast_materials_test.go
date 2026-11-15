@@ -15,7 +15,7 @@ import (
 func newDramaMaterialProject(t *testing.T, svc *Service, name string) string {
 	t.Helper()
 	settings := DramaSettings{Models: fakeDramaModels, MediaMode: DramaMediaManual}
-	settings.Assets.Mode = production.AssetModeFourView
+	settings.Assets.Mode = production.AssetModeCloseupTurnaround
 	settings.StylePrompt = "玄幻仙侠风格"
 	summary, err := svc.CreateDrama("usr-drama", CreateDramaRequest{Name: name, Settings: settings, Chapters: []DramaChapterInput{{Title: "第一章", Text: "正文"}}})
 	if err != nil {
@@ -184,7 +184,7 @@ func TestDramaCastImagePromptPreviewAndStyles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"四格", "正面全身", "侧面全身", "背面全身", "允许幼年", "现代都市写实", "六岁儿童", "16:9"} {
+	for _, want := range []string{"单特写+三视图", "正面全身", "侧面全身", "背面全身", "允许幼年", "现代都市写实", "六岁儿童", "16:9"} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("preview missing %q: %s", want, preview)
 		}
@@ -211,7 +211,7 @@ func TestDramaCastImagePromptPreviewAndStyles(t *testing.T) {
 	}
 	newAppearance := "十二岁，运动装"
 	second, err := svc.PreviewDramaCastImagePrompt("usr-drama", project, look.ID, DramaCastImagePromptRequest{Appearance: &newAppearance})
-	if err != nil || !strings.Contains(second, newAppearance) || strings.Contains(second, "六岁儿童") || strings.Count(second, "角色四格资产参考图") != 1 {
+	if err != nil || !strings.Contains(second, newAppearance) || strings.Contains(second, "六岁儿童") || strings.Count(second, "角色单特写+三视图复合设定图") != 1 {
 		t.Fatalf("preview must recompose without old custom prompt: %s %v", second, err)
 	}
 	persisted, _ := svc.repo.DramaCast(project, look.ID)

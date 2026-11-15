@@ -141,7 +141,7 @@ paths:
     post:
       tags: [dramas]
       summary: 确认当前引导阶段并放行下一段文字流程
-      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings；assets 等待作品圣经落库；story 等待全部选定范围文字就绪。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
+      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings；assets 等待作品圣经落库，可同时保存默认分镜模式、导演模板、镜数、图片/视频模型、比例、分辨率和连续性，其余设置保持当前值；story 等待全部选定范围文字就绪。模式保存不创建收费媒体任务。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
       parameters:
         - {in: path, name: id, required: true, schema: {type: string}}
       requestBody:
@@ -157,7 +157,15 @@ paths:
                 expectedRevision: {type: integer, minimum: 1}
                 settings:
                   type: object
-                  description: 复用现有 DramaSettings；引导固定 mediaMode=manual，仍校验所选模型能力与制作范围。
+                  description: 复用现有 DramaSettings；引导固定 mediaMode=manual，校验模式、导演模板、模型能力与制作范围。dramaType 仅可在 configuring 设置，assets 只读取模式页拥有的生成参数。
+                  properties:
+                    dramaType: {type: string, enum: ["", comic, live_action, narration]}
+                    storyboard:
+                      type: object
+                      properties:
+                        generationMode: {type: string, enum: ["", reference_video, grid_image, smart_director, storyboard]}
+                        directorTemplate: {type: string}
+                        targetShotCount: {type: integer, minimum: 0, maximum: 240}
       responses:
         "200": {$ref: "#/components/responses/Envelope"}
         "400": {$ref: "#/components/responses/Error"}

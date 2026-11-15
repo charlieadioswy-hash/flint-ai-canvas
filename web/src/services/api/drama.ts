@@ -81,6 +81,10 @@ export const preflightDramaStudioBatch = (projectId: string, request: DramaStudi
 export const executeDramaStudioBatch = (projectId: string, request: DramaStudioBatchRequest) => http.post<DramaStudioBatchView>(`/dramas/${projectId}/actions/batch/execute`, request);
 
 export type DramaWorkflowEpisodeReadiness = {
+    renderSource?: "shots" | "segments";
+    renderVideoCount?: number;
+    renderReadyVideos?: number;
+    renderBlockingReason?: string;
     episodeId: string;
     number: number;
     title: string;
@@ -157,7 +161,18 @@ export type DramaReviewMode = "sample" | "every" | "auto";
 /** manual：先只跑剧本、分镜、设定与视频提示词，确认后手动开始生成参考图与视频；auto：一路跑到成片。 */
 export type DramaMediaMode = "manual" | "auto";
 
-export type DramaAssetMode = "portrait" | "turnaround" | "fourview" | "custom";
+export type DramaAssetMode =
+    | "none"
+    | "closeup_turnaround"
+    | "closeup_front_no_face"
+    | "closeup_turnaround_no_head"
+    | "closeup_fullbody"
+    | "dual_closeup_front_back_no_head"
+    | "triple_closeup_front_no_face"
+    | "turnaround_triple_closeup"
+    | "turnaround_five_angle_halfbody"
+    | "headshot_fullbody"
+    | "custom";
 
 /** 角色/场景参考图方案：保存的是全文提示词，用户看到的就是实际发送的内容。道具参考图使用固定模板。 */
 export type DramaAssetSettings = {
@@ -193,6 +208,7 @@ export type DramaSegmentMode = "auto" | "fixed" | "range";
  * 剧本提示词、镜头时长、剧情段切分与成片渲染共用；三种切段模式的数值都保留，切换模式不丢值。
  */
 export type DramaStoryboardSettings = {
+    generationMode?: "reference_video" | "grid_image" | "smart_director" | "storyboard";
     segmentMode: DramaSegmentMode;
     segmentSeconds: number;
     segmentMinSeconds: number;
@@ -227,6 +243,7 @@ export type DramaTextThinking = Partial<Record<"bible" | "plan" | "script" | "pr
 export type DramaTransition = "cut" | "fadeblack" | "fadewhite";
 
 export type DramaSettings = {
+    dramaType?: "comic" | "live_action" | "narration";
     aspectRatio: string;
     episodeSeconds: number;
     stylePrompt: string;

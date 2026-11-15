@@ -308,9 +308,9 @@ func CastImagePrompt(assets AssetSettings, kind, name, appearance, stylePrompt, 
 		return renderAssetTemplate(propPrompt, map[string]string{"道具名称": name, "道具设定": appearance, "项目画风": style, "画面规则": visualRules})
 	}
 	if kind == "scene" {
-		return renderAssetTemplate(assets.ScenePrompt, map[string]string{"场景名称": name, "场景设定": appearance, "项目画风": style, "画面规则": visualRules})
+		return WithAssetImageOutputContract(renderAssetTemplate(assets.ScenePrompt, map[string]string{"场景名称": name, "场景设定": appearance, "项目画风": style, "画面规则": visualRules}))
 	}
-	return renderAssetTemplate(assets.CharacterPrompt, map[string]string{"角色名称": name, "角色设定": appearance, "项目画风": style, "画面规则": visualRules})
+	return WithAssetImageOutputContract(renderAssetTemplate(assets.CharacterPrompt, map[string]string{"角色名称": name, "角色设定": appearance, "项目画风": style, "画面规则": visualRules}))
 }
 
 func truncateRunes(value string, limit int) string {

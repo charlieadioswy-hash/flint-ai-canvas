@@ -241,6 +241,7 @@ export function AgentChatComposer({
     slashSkills,
     includeAssetLibrary,
     focusRequest,
+    submitActionLabel,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -291,6 +292,8 @@ export function AgentChatComposer({
     includeAssetLibrary?: boolean;
     /** 外部对象引用只聚焦输入，不代替用户发送。 */
     focusRequest?: number;
+    /** 入口页只创建并带入草稿时，明确说明点击后发生的动作。 */
+    submitActionLabel?: string;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const promptInputRef = useRef<CanvasResourceMentionTextareaActions | null>(null);
@@ -686,9 +689,9 @@ export function AgentChatComposer({
                             <button
                                 type="button"
                                 disabled={!canPrimary}
-                                aria-label={submitMode === "save" ? "保存修改" : submitLabel}
+                                aria-label={submitActionLabel || (submitMode === "save" ? "保存修改" : submitLabel)}
                                 aria-busy={submitState === "sending"}
-                                title={submitTitle}
+                                title={submitActionLabel || submitTitle}
                                 onClick={() => onSubmit({ alternate: false })}
                                 className="agent-composer-send inline-grid h-7 shrink-0 place-items-center rounded-full p-0 text-[var(--fs-label)] font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-current/35 disabled:cursor-not-allowed"
                                 style={{

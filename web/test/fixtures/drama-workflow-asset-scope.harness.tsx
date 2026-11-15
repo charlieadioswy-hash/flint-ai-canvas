@@ -87,18 +87,27 @@ let client: QueryClient;
 async function settle() {
     await new Promise((done) => setTimeout(done, 20));
 }
-async function render(kind: DramaCastKind = "character", busy = false) {
+async function render(kind: DramaCastKind | null = "character", busy = false, options: { episodeId?: string; showToolbar?: boolean; sharedBeforeStoryboard?: boolean; revision?: number } = {}) {
     if (!root) {
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);
         client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     }
+    const { revision, ...scopeOptions } = options;
+    const currentSummary = revision === undefined ? summary : { ...summary, production: { ...summary.production, revision } };
     await act(async () => {
         root!.render(
             <QueryClientProvider client={client}>
-                <WorkflowAssetScope summary={summary} cast={cast} kind={kind} busy={busy} onChanged={() => undefined}>
-                    {(items) => <output aria-label="可见资产">{items.map((item) => item.id).join(",")}</output>}
+                <WorkflowAssetScope summary={currentSummary} cast={cast} kind={kind ?? undefined} busy={busy} {...scopeOptions} onChanged={() => undefined}>
+                    {(items, refreshing, sharedCast) => (
+                        <>
+                            <output aria-label="可见资产" data-refreshing={String(refreshing)}>
+                                {items.map((item) => item.id).join(",")}
+                            </output>
+                            <output aria-label="共享待引用资产">{sharedCast.map((item) => item.id).join(",")}</output>
+                        </>
+                    )}
                 </WorkflowAssetScope>
             </QueryClientProvider>,
         );
@@ -199,4 +208,123 @@ test("忙碌时不允许改范围或批选", async () => {
     await render("character", true);
     expect(container.querySelector("select")!.disabled).toBe(true);
     expect([...container.querySelectorAll("button")].find((item) => item.textContent === "批量选择")!.disabled).toBe(true);
+});
+
+test("受控单集隐藏全局工具栏，空分镜展示共享主体并明确说明", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    expect(container.textContent).toContain("正在读取本集引用资产");
+    expect(container.querySelector("select")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector('[aria-label="可见资产"]')).toBeNull();
+    await act(async () => {
+        requests.get("e1")!.resolve({ episode: { id: "e1" }, shots: [], segments: [] } as unknown as DramaEpisodeDetail);
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("base,look,second,room,key");
+    expect(container.textContent).toContain("本集尚未编排分镜，展示作品共享主体。");
+    expect(batchCalls).toHaveLength(0);
+});
+
+test("已有分镜或人工段时仅展示真实引用，空引用不能扩大为共享主体", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    await act(async () => {
+        requests.get("e1")!.resolve(episode("e1", ["look", "room"]));
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("base,look,room");
+    expect(container.querySelector('[aria-label="共享待引用资产"]')?.textContent).toBe("second,key");
+    expect(container.textContent).not.toContain("展示作品共享主体");
+    await render(null, false, { ...options, episodeId: "e2" });
+    await act(async () => {
+        requests.get("e2")!.resolve(episode("e2"));
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("");
+    expect(container.querySelector('[aria-label="共享待引用资产"]')?.textContent).toBe("base,look,second,room,key");
+    expect(container.textContent).not.toContain("展示作品共享主体");
+});
+
+test("共享回退只适用于已成功读取的空集，读取失败和无效集都保持阻断", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    await act(async () => {
+        requests.get("e1")!.reject(new Error("offline"));
+        await settle();
+    });
+    expect(container.textContent).toContain("本集引用资产读取失败");
+    expect(container.querySelector('[aria-label="可见资产"]')).toBeNull();
+    expect(container.textContent).not.toContain("展示作品共享主体");
+    await render(null, false, { ...options, episodeId: "removed" });
+    expect(container.textContent).toContain("本集已移除");
+    expect(container.querySelector('[aria-label="可见资产"]')).toBeNull();
+    expect(requests.has("removed")).toBe(false);
+});
+
+test("受控切集时旧集的空分镜迟到响应不能把当前引用范围扩大为共享池", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    const old = requests.get("e1")!;
+    await render(null, false, { ...options, episodeId: "e2" });
+    await act(async () => {
+        requests.get("e2")!.resolve(episode("e2", ["key"]));
+        old.resolve({ episode: { id: "e1" }, shots: [], segments: [] } as unknown as DramaEpisodeDetail);
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("key");
+    expect(container.textContent).not.toContain("展示作品共享主体");
+});
+
+test("同集版本刷新与失败保留已挂载列表并回报只读状态，重试成功后恢复", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    await act(async () => {
+        requests.get("e1")!.resolve(episode("e1", ["look"]));
+        await settle();
+    });
+    const retained = container.querySelector('[aria-label="可见资产"]')!;
+    expect(retained.textContent).toBe("base,look");
+    expect(retained.getAttribute("data-refreshing")).toBe("false");
+    await render(null, false, { ...options, revision: 2 });
+    expect(container.querySelector('[aria-label="可见资产"]')).toBe(retained);
+    expect(retained.textContent).toBe("base,look");
+    expect(retained.getAttribute("data-refreshing")).toBe("true");
+    await act(async () => {
+        requests.get("e1")!.reject(new Error("offline"));
+        await settle();
+    });
+    expect(container.textContent).toContain("本集引用资产刷新失败，已保留列表");
+    expect(container.querySelector('[aria-label="可见资产"]')).toBe(retained);
+    expect(retained.getAttribute("data-refreshing")).toBe("true");
+    await click("重试");
+    expect(container.querySelector('[aria-label="可见资产"]')).toBe(retained);
+    await act(async () => {
+        requests.get("e1")!.resolve(episode("e1", ["second"]));
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')).toBe(retained);
+    expect(retained.textContent).toBe("second");
+    expect(retained.getAttribute("data-refreshing")).toBe("false");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+test("跨集读取失败不继承上一集已读取的引用列表", async () => {
+    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    await render(null, false, options);
+    await act(async () => {
+        requests.get("e1")!.resolve(episode("e1", ["look", "room"]));
+        await settle();
+    });
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("base,look,room");
+    await render(null, false, { ...options, episodeId: "e2", revision: 2 });
+    expect(container.querySelector('[aria-label="可见资产"]')).toBeNull();
+    await act(async () => {
+        requests.get("e2")!.reject(new Error("offline"));
+        await settle();
+    });
+    expect(container.textContent).toContain("本集引用资产读取失败");
+    expect(container.querySelector('[aria-label="可见资产"]')).toBeNull();
+    expect(container.textContent).not.toContain("base,look,room");
+    expect(container.textContent).not.toContain("展示作品共享主体");
 });

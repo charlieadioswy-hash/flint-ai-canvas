@@ -10,10 +10,17 @@ import (
 // 比例和约束提示词。模板在作品设置里保存为全文，用户看到的就是实际发送的内容。
 
 const (
-	AssetModePortrait   = "portrait"
-	AssetModeTurnaround = "turnaround"
-	AssetModeFourView   = "fourview"
-	AssetModeCustom     = "custom"
+	AssetModeNone                        = "none"
+	AssetModeCloseupTurnaround           = "closeup_turnaround"
+	AssetModeCloseupFrontNoFace          = "closeup_front_no_face"
+	AssetModeCloseupTurnaroundNoHead     = "closeup_turnaround_no_head"
+	AssetModeCloseupFullbody             = "closeup_fullbody"
+	AssetModeDualCloseupFrontBackNoHead  = "dual_closeup_front_back_no_head"
+	AssetModeTripleCloseupFrontNoFace    = "triple_closeup_front_no_face"
+	AssetModeTurnaroundTripleCloseup     = "turnaround_triple_closeup"
+	AssetModeTurnaroundFiveAngleHalfbody = "turnaround_five_angle_halfbody"
+	AssetModeHeadshotFullbody            = "headshot_fullbody"
+	AssetModeCustom                      = "custom"
 )
 
 // 可用变量。保存时校验，未知变量直接拒绝，避免把 {{xxx}} 原样发给模型。
@@ -22,8 +29,26 @@ var (
 	SceneAssetVariables     = []string{"{{场景名称}}", "{{场景设定}}", "{{项目画风}}", "{{画面规则}}"}
 )
 
-// AssetImageRatio 是资产参考图（场景、道具与内置角色方案）的统一画幅。
+// AssetImageRatio 是场景、道具与横版角色方案的默认画幅。
 const AssetImageRatio = "16:9"
+
+const AssetImageOutputContract = "本次仅生成一张完整图片；模板中的所有分区、视角和特写必须合成在这同一张图片内，不拆成多个生成任务或多张独立图片。"
+
+const characterAssetBoardRules = `所有分区均为同一角色、同一年龄、同一服装、同一发型、同一体型与配饰，保持项目画风。若本方案包含无头身体区，该区从颈根或衣领以下开始，完整展示服装直到鞋底，不画头部、空白脸、模糊脸或打码。
+背景为统一干净中性浅色，光照一致；禁止文字、水印、标签、装饰边框、声纹波形、额外身份或新增道具。{{画面规则}}`
+
+func characterAssetBoardPrompt(name, layout string) string {
+	return "{{项目画风}}。角色" + name + "复合设定图：{{角色名称}}。{{角色设定}}。\n" + layout + "\n" + characterAssetBoardRules + "\n" + AssetImageOutputContract
+}
+
+// WithAssetImageOutputContract 同时约束模板和素材自定义提示词；预览保存后不重复追加。
+func WithAssetImageOutputContract(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if strings.Contains(prompt, AssetImageOutputContract) {
+		return prompt
+	}
+	return strings.TrimSpace(prompt + "\n" + AssetImageOutputContract)
+}
 
 type AssetScheme struct {
 	Mode        string `json:"mode"`
@@ -38,7 +63,8 @@ type AssetScheme struct {
 
 const defaultScenePrompt = `{{项目画风}}。场景概念设定图：{{场景名称}}。{{场景设定}}。
 横版宽景构图，无人物，空镜，构图完整，主体空间与出入口清晰，前中后景层次分明；光源方向明确，色调与时代服化道统一。
-禁止文字、水印、边框。{{画面规则}}`
+禁止文字、水印、边框。{{画面规则}}
+` + AssetImageOutputContract
 
 // propPrompt 是关键道具参考图模板：单件道具居中、无人物，供视频生成时保持道具外观一致。
 const propPrompt = `{{项目画风}}。道具设定图：{{道具名称}}。{{道具设定}}。
@@ -47,33 +73,75 @@ const propPrompt = `{{项目画风}}。道具设定图：{{道具名称}}。{{�
 
 var assetSchemes = []AssetScheme{
 	{
-		Mode: AssetModePortrait, Name: "定妆照", Ratio: AssetImageRatio,
-		Description: "单人正面半身，五官最清晰。出图快、成本低，适合角色多、以对话为主的短剧。",
-		FrameHint:   "参考图为角色定妆照，只沿用其五官、发型与服装",
-		CharacterPrompt: `{{项目画风}}。角色定妆照：{{角色名称}}。{{角色设定}}。
-横版构图，单人居中，正面半身，中性表情，目视镜头；干净浅色纯背景，柔和均匀的正面光，五官、发型与服装细节清晰。
-禁止文字、水印、道具遮挡面部、额外人物。{{画面规则}}`,
+		Mode: AssetModeNone, Name: "不使用", Ratio: AssetImageRatio,
+		Description: "不套用复合设定板布局，按角色设定生成一张单幅图片。",
+		FrameHint:   "参考图为单幅角色形象，只沿用角色身份、外貌与服装，不复制背景",
+		CharacterPrompt: `{{项目画风}}。角色形象图：{{角色名称}}。{{角色设定}}。
+单幅单人构图，不安排重复视角、分区、拼图或设定板；角色外貌与服装清晰，背景简洁，无文字、水印或额外人物。{{画面规则}}
+` + AssetImageOutputContract,
 	},
 	{
-		Mode: AssetModeTurnaround, Name: "三视图设定板", Ratio: AssetImageRatio,
-		Description: "正面、侧面、背面全身同一张图，服装与体型一致性最好，适合打戏和全身镜头多的作品。",
-		FrameHint:   "参考图为角色三视图设定板，只沿用其外貌、服装与体型，不要复制排版",
-		CharacterPrompt: `{{项目画风}}。专业人物三视图设定板：{{角色名称}}。{{角色设定}}。
-画面严格分成三个等宽竖向区域，从左到右依次为正面全身、右侧面全身、背面全身；三个视角是同一角色、同一服装、同一发型、同一体型与比例。
-站立中性姿势，完整显示头顶到脚底，不裁切头部和脚。纯净中性浅色背景，均匀设定稿光线，不改变项目画风的绘画或渲染媒介。
-禁止文字、边框、道具说明、表情变化和额外人物。{{画面规则}}`,
+		Mode: AssetModeCloseupTurnaround, Name: "单特写+三视图", Ratio: AssetImageRatio,
+		Description: "左侧一张头肩特写，右侧正面、侧面、背面三张带头全身，同一张复合图。",
+		FrameHint:   "参考图为左侧头肩特写加右侧带头三视图，脸部参考特写，服装体型参考全身，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("单特写+三视图", `横版左右布局：左侧约占 40%，一张正面头肩特写；右侧约占 60%，横向等宽排列正面全身、右侧面全身、背面全身。
+右侧三视图均保留头部，站立中性姿势，从头顶到脚底完整入画，不裁头脚；全图恰好一个特写加三个全身视角。`),
 	},
 	{
-		Mode: AssetModeFourView, Name: "四格资产板 · 声纹", Ratio: AssetImageRatio,
-		Description: "面部特写 + 正 / 侧 / 背无脸全身四格，底部附声纹条。脸只在特写里出现一次，跨集换脸最少，适合长剧。",
-		FrameHint:   "参考图为角色四格资产板：面部以特写格为准，服装与体型以全身格为准，不要复制排版与声纹条",
-		CharacterPrompt: `{{项目画风}}。角色四格资产参考图：{{角色名称}}。{{角色设定}}。
-横版白色纯背景，全图共 4 格，等高排列：
-① 面部特写：唯一一张清晰的脸，五官、脸型、发际线、眉眼、鼻唇、肤色、痣与疤痕等特征完整锁定；
-② 正面全身（面部弱化）；③ 90° 侧面全身（面部弱化）；④ 背面全身。
-全身格从头顶到鞋底完整入画，不裁切头部；四格中的服装、发型、体型与配饰完全一致。
-画面底部一条细横带：声纹波形 / 频谱可视化图形，旁边一行不超过 8 个英文单词的音色标签。
-除音色标签外不出现任何文字。负面：全身格出现清晰五官、第二张可辨认的脸、马赛克或像素化遮挡、额外人物。{{画面规则}}`,
+		Mode: AssetModeCloseupFrontNoFace, Name: "单特写+正面无面部", Ratio: AssetImageRatio,
+		Description: "左侧头肩特写，右侧从衣领至鞋底的正面服装身体图，不绘制第二个头部。",
+		FrameHint:   "参考图左侧为身份头肩特写，右侧为颈根以下正面服装身体，只沿用身份和服装，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("单特写+正面无面部", `横版双区：左侧约占 2/3，一张清晰正面头肩特写；右侧约占 1/3，一张正面无面部身体图，从颈根或衣领以下至鞋底。
+“无面部”按服装身体裁切处理，整个头部不在右区内；全图只有左侧一张可见面孔。`),
+	},
+	{
+		Mode: AssetModeCloseupTurnaroundNoHead, Name: "单特写+三视图无头部", Ratio: AssetImageRatio,
+		Description: "左侧头肩特写，右侧正、侧、背三张颈根以下服装身体图。",
+		FrameHint:   "参考图左侧锁定面部，右侧三张无头身体锁定服装体型，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("单特写+三视图无头部", `横版左右布局：左侧约占 40%，一张正面头肩特写；右侧约占 60%，等宽排列正面、右侧面、背面三张无头身体图。
+右侧三张身体均从颈根或衣领以下开始至鞋底，完全不包含头部；全图只有左侧一张可见面孔。`),
+	},
+	{
+		Mode: AssetModeCloseupFullbody, Name: "单特写+全身", Ratio: AssetImageRatio,
+		Description: "左侧头肩特写，右侧一张保留头部与脚部的正面全身图。",
+		FrameHint:   "参考图为左侧头肩特写加右侧完整全身，只沿用身份、服装与体型，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("单特写+全身", `横版双区：左侧约占 2/3，一张正面头肩特写；右侧约占 1/3，一张中性站姿正面全身。
+右侧必须保留完整头部和双脚，从头顶到鞋底，不使用无头服装身体图；两区为同一角色。`),
+	},
+	{
+		Mode: AssetModeDualCloseupFrontBackNoHead, Name: "双特写+正背面无头部", Ratio: "9:16",
+		Description: "竖向四区，上排正面和侧面头肩特写，下排正面和背面无头服装身体图。",
+		FrameHint:   "参考图上排两个特写锁定面部，下排正背无头身体锁定服装，不复制四区排版",
+		CharacterPrompt: characterAssetBoardPrompt("双特写+正背面无头部", `竖版上下两行、每行两区：上行约占总高度 30%，从左到右为正面头肩特写、右侧面头肩特写；下行约占总高度 70%，从左到右为正面无头身体、背面无头身体。
+下行两张身体从颈根或衣领以下至鞋底，不包含头部；全图恰好两张头肩特写和两张服装身体图。`),
+	},
+	{
+		Mode: AssetModeTripleCloseupFrontNoFace, Name: "面部三特写+正面无面部", Ratio: AssetImageRatio,
+		Description: "左主头肩特写、中间正面无头服装身体、右侧三张小面部特写，共四张面孔。",
+		FrameHint:   "参考图为主特写、正面服装身体及右侧三张面部细节，只沿用身份与服装，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("面部三特写+正面无面部", `横版三列：左列一张大幅正面头肩主特写；中列一张从颈根或衣领以下到鞋底的正面无面部身体；右列上方一张正脸小特写，下方并排左侧脸、右侧脸两张小特写。
+右列恰好三张小面部特写，连同左列主特写全图共四张面孔；中列不包含头部，不使用空白脸、模糊脸或打码。`),
+	},
+	{
+		Mode: AssetModeTurnaroundTripleCloseup, Name: "三视图+脸部三特写", Ratio: AssetImageRatio,
+		Description: "左侧正、侧、背三张带头全身，右侧正面及左右侧脸三张头肩特写。",
+		FrameHint:   "参考图左侧带头三视图锁定服装体型，右侧三张头肩特写锁定面部，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("三视图+脸部三特写", `横版左右布局：左侧横向排列正面全身、右侧面全身、背面全身，三张均保留头部和双脚；右侧上方一张正面头肩特写，下方并排左侧、右侧头肩特写。
+恰好三个完整全身视角加三个头肩特写；不要增加左侧主脸大特写或无头身体区。`),
+	},
+	{
+		Mode: AssetModeTurnaroundFiveAngleHalfbody, Name: "三视图+五角度半身照", Ratio: AssetImageRatio,
+		Description: "左侧三张带头全身，右侧五张不同角度的肩胸半身像，上二下三。",
+		FrameHint:   "参考图左侧三视图锁定服装体型，右侧五角度肩胸像锁定头脸，不复制排版",
+		CharacterPrompt: characterAssetBoardPrompt("三视图+五角度半身照", `横版左右布局：左侧横向排列正面全身、右侧面全身、背面全身，均从头顶到鞋底完整入画；右侧为五张肩胸半身像，按上行两张、下行三张排列。
+右侧五角度依次为正面、右侧面、左侧三分之四、右侧三分之四和背面，均保留完整头部及肩胸；恰好三个全身视角加五个半身视角。`),
+	},
+	{
+		Mode: AssetModeHeadshotFullbody, Name: "大头照+全身照", Ratio: AssetImageRatio,
+		Description: "左侧仅头顶至下巴的独立大头照，无衣领肩膀；右侧正面无头服装身体。",
+		FrameHint:   "参考图左侧独立头照锁定面部，右侧无头服装身体锁定穿着，不复制头身分离排版",
+		CharacterPrompt: characterAssetBoardPrompt("大头照+全身照", `横版双区：左侧约占 2/3，独立正面大头照，仅从头顶到下巴，不含肩膀、衣领或上半身；右侧约占 1/3，一张正面无头服装身体，从颈根或衣领以下至鞋底。
+全图仅左侧一张面孔；不要把左侧画成头肩特写，不要给右侧身体补画头部。`),
 	},
 }
 
@@ -100,7 +168,8 @@ func SceneAssetSchemes() []SceneAssetScheme {
 		{ID: "fourview", Name: "场景四宫格", Description: "同一空间四个视角，保持结构、陈设与光照一致。", Prompt: `{{项目画风}}。场景四宫格设定图：{{场景名称}}。{{场景设定}}。
 横版画面按 2×2 等分为四格，依次展示同一场景的入口全景、反向全景、左侧空间和右侧空间。
 四格必须是同一时间、同一地点；建筑结构、门窗、家具、物件位置与光源方向保持一致，不添加原设定以外的新空间。
-各格均为空镜，无人物，无文字、水印、装饰边框。{{画面规则}}`},
+各格均为空镜，无人物，无文字、水印、装饰边框。{{画面规则}}
+` + AssetImageOutputContract},
 	}
 }
 
@@ -134,15 +203,19 @@ const assetPromptLimit = 4000
 func (a AssetSettings) Normalized() AssetSettings {
 	scheme, known := assetScheme(a.Mode)
 	if !known && a.Mode != AssetModeCustom {
-		a.Mode = AssetModePortrait
-		scheme, _ = assetScheme(AssetModePortrait)
+		if strings.TrimSpace(a.CharacterPrompt) != "" {
+			a.Mode = AssetModeCustom
+		} else {
+			a.Mode = AssetModeCloseupTurnaround
+			scheme, _ = assetScheme(AssetModeCloseupTurnaround)
+		}
 	}
 	a.CharacterPrompt = truncateRunes(strings.TrimSpace(a.CharacterPrompt), assetPromptLimit)
 	a.ScenePrompt = truncateRunes(strings.TrimSpace(a.ScenePrompt), assetPromptLimit)
 	if a.CharacterPrompt == "" {
 		if a.Mode == AssetModeCustom {
-			a.Mode = AssetModePortrait
-			scheme, _ = assetScheme(AssetModePortrait)
+			a.Mode = AssetModeCloseupTurnaround
+			scheme, _ = assetScheme(AssetModeCloseupTurnaround)
 		}
 		a.CharacterPrompt = scheme.CharacterPrompt
 	}

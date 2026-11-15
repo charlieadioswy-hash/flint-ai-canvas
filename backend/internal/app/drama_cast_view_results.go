@@ -37,9 +37,9 @@ func (s *Service) RegisterDramaCastViewTaskOutput(task model.Task) (bool, error)
 	if take.OwnerID != input.Metadata.ViewID {
 		return true, BadAuthRequest("视图任务归属不一致")
 	}
-	take.ResourceID = dramaTaskResource(&task)
-	if take.ResourceID == "" {
-		return true, BadAuthRequest("视图任务尚无已保存图片")
+	take.ResourceID, err = dramaCastImageResource(&task)
+	if err != nil {
+		return true, BadAuthRequest(err.Error())
 	}
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
 		if _, err := repo.DramaProductionForUpdate(task.ProjectID); err != nil {

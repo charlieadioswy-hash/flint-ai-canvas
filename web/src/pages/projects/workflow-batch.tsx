@@ -27,6 +27,10 @@ export type WorkflowBatchProps = {
     disabled?: boolean;
     onChanged: () => void | Promise<unknown>;
     onClearSelection?: () => void;
+    triggerLabel?: string;
+    scopeDescription?: string;
+    compact?: boolean;
+    onBusyChange?: (busy: boolean) => void;
 };
 
 type BatchState = {
@@ -50,7 +54,7 @@ export function WorkflowBatch(props: WorkflowBatchProps) {
 }
 
 /** 批次以服务端预检的范围与报价确认；执行只有一个批量请求，不逐项触发生成。 */
-function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetLabels = {}, disabled, onChanged, onClearSelection }: WorkflowBatchProps) {
+function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetLabels = {}, disabled, onChanged, onClearSelection, triggerLabel, scopeDescription, compact, onBusyChange }: WorkflowBatchProps) {
     const operation = useDramaOperationScope(projectId);
     const ids = [...new Set(targetIds)].sort();
     const signature = JSON.stringify(ids);
@@ -63,6 +67,12 @@ function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetL
     const request = useRef(0);
     const locked = useRef(false);
     const busy = state.phase === "checking" || state.phase === "submitting";
+    const activity = useRef(onBusyChange);
+    activity.current = onBusyChange;
+    useEffect(() => {
+        activity.current?.(busy);
+    }, [busy]);
+    useEffect(() => () => activity.current?.(false), []);
     const validScope = Boolean(projectId && projectId.trim() === projectId) && ids.length > 0 && ids.length <= 200 && ids.every((id) => id.trim() === id && Boolean(id));
     const expired = Boolean(state.preview && (state.preview.baseRevision !== revision || state.signature !== signature));
 
@@ -152,11 +162,11 @@ function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetL
         setState(INITIAL);
     };
     return (
-        <div className="drama-workflow-batch">
-            <span>已选 {ids.length} 项</span>
+        <div className={`drama-workflow-batch ${compact ? "is-compact" : ""}`}>
+            {!compact ? <span>已选 {ids.length} 项</span> : null}
             {actions.map((action) => (
                 <Button key={action} size="small" disabled={disabled || !validScope || busy} onClick={() => void check(action)}>
-                    {ACTION_LABEL[action]}
+                    {triggerLabel || ACTION_LABEL[action]}
                 </Button>
             ))}
             {onClearSelection ? (
@@ -189,7 +199,7 @@ function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetL
                 ]}
             >
                 <div className="drama-root drama-workflow-batch-preview" aria-live="polite">
-                    <p>范围：已选 {ids.length} 项。已有结果和已在队列中的项目将跳过。</p>
+                    <p>{scopeDescription || `范围：已选 ${ids.length} 项。`}已有结果和已在队列中的项目将跳过。</p>
                     {state.phase === "checking" ? <p role="status">正在预检本批次的依赖、状态与费用…</p> : null}
                     {expired && state.phase !== "submitted" ? <p role="alert">配置或选择范围已改变，预检已过期，请重新预检后再确认。</p> : null}
                     {state.error ? <p role="alert">{state.error}</p> : null}

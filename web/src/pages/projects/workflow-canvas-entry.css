@@ -1,0 +1,226 @@
+.drama-canvas-entry {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.drama-canvas-entry[hidden] {
+    display: none;
+}
+
+.drama-canvas-entry-grid {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(0, 4.1fr);
+    align-items: stretch;
+    gap: var(--space-4);
+}
+
+.drama-canvas-entry-new,
+.drama-canvas-entry-composer {
+    min-height: 152px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+}
+
+.drama-canvas-entry-new {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: var(--space-3);
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+    cursor: pointer;
+    background-image: radial-gradient(var(--border) 1px, transparent 1px);
+    background-size: 24px 24px;
+}
+
+.drama-canvas-entry-new > span {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border-radius: var(--radius-lg);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-canvas-entry-composer {
+    display: flex;
+    min-width: 0;
+    padding: var(--space-3);
+}
+
+.drama-canvas-entry-composer .agent-composer-wrap,
+.drama-canvas-entry-composer .agent-composer-shell,
+.drama-canvas-entry-composer .agent-composer-surface {
+    display: flex;
+    min-width: 0;
+    width: 100%;
+    flex-direction: column;
+}
+
+.drama-canvas-entry-composer .agent-composer-surface {
+    gap: var(--space-2);
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.drama-canvas-entry-composer .agent-composer-surface > .relative {
+    flex: 1;
+}
+
+.drama-canvas-entry-composer .agent-composer-resize-handle {
+    display: none;
+}
+
+.drama-canvas-entry-composer textarea::placeholder {
+    color: var(--text-secondary);
+    opacity: 1;
+}
+
+.drama-canvas-entry-composer .agent-composer-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: auto;
+}
+
+.drama-canvas-entry-composer .agent-composer-add {
+    order: 1;
+    min-width: 32px;
+    min-height: 32px;
+}
+
+.drama-canvas-entry-skills {
+    display: inline-flex;
+    min-height: 32px;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+    cursor: pointer;
+}
+
+.drama-canvas-entry-composer .agent-composer-send {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+}
+
+.drama-canvas-entry-composer .agent-composer-send-content > span {
+    display: none;
+}
+
+.drama-canvas-entry-capabilities {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-2);
+}
+
+.drama-canvas-entry-capabilities button {
+    display: inline-flex;
+    min-height: 32px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: var(--fs-label);
+    cursor: pointer;
+}
+
+.drama-canvas-entry-capabilities img {
+    width: 40px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+}
+
+.drama-canvas-entry :is(button, input):focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 3px;
+}
+
+.drama-canvas-entry button:not(:disabled):hover {
+    background-color: var(--surface-hover);
+}
+
+.drama-canvas-entry button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.drama-canvas-entry-error {
+    margin: 0;
+    color: var(--status-error);
+    font-size: var(--fs-ui);
+}
+
+.drama-canvas-entry-skill-picker {
+    display: flex;
+    max-height: 420px;
+    flex-direction: column;
+    gap: var(--space-3);
+    overflow-y: auto;
+}
+
+.drama-canvas-entry-skill-picker > input {
+    min-height: 40px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+}
+
+.drama-canvas-entry-skill-picker > label {
+    display: flex;
+    min-height: 44px;
+    align-items: flex-start;
+    gap: var(--space-3);
+    cursor: pointer;
+}
+
+.drama-canvas-entry-skill-picker label > span {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow-wrap: anywhere;
+}
+
+.drama-canvas-entry-skill-picker small {
+    color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+    .drama-canvas-entry-grid {
+        grid-template-columns: 1fr;
+        gap: var(--space-3);
+    }
+
+    .drama-canvas-entry-new {
+        min-height: 64px;
+        flex-direction: row;
+    }
+
+    .drama-canvas-entry-capabilities {
+        justify-content: flex-start;
+    }
+
+    .drama-canvas-entry-composer :is(.agent-composer-add, .agent-composer-send, .drama-canvas-entry-skills) {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}

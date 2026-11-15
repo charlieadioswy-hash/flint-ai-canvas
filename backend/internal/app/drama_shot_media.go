@@ -134,7 +134,12 @@ func defaultDramaShotMediaConfig(shot model.DramaShot, p model.DramaProduction, 
 func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, kind string) (model.DramaShotMedia, DramaShotMediaConfig, error) {
 	row, err := repo.DramaShotMedia(shot.ProjectID, shot.ID, kind)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return model.DramaShotMedia{ProjectID: shot.ProjectID, EpisodeID: shot.EpisodeID, ShotID: shot.ID, Kind: kind, Status: "idle"}, defaultDramaShotMediaConfig(shot, p, kind), nil
+		config := defaultDramaShotMediaConfig(shot, p, kind)
+		var configErr error
+		if kind == "video" {
+			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, config)
+		}
+		return model.DramaShotMedia{ProjectID: shot.ProjectID, EpisodeID: shot.EpisodeID, ShotID: shot.ID, Kind: kind, Status: "idle"}, config, configErr
 	}
 	if err != nil {
 		return model.DramaShotMedia{}, DramaShotMediaConfig{}, err
@@ -144,6 +149,81 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 		return *row, config, errors.New("镜头媒体配置损坏，请重新保存")
 	}
 	return *row, config, nil
+}
+
+func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+	settings := parseDramaSettings(p.SettingsJSON)
+	validImage := func(id string) (bool, error) {
+		resource, err := repo.ResourceForUser(p.UserID, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return resource.Status == model.ResourceStatusReady && resource.Kind == "image" && strings.HasPrefix(resource.MimeType, "image/"), nil
+	}
+	switch settings.Storyboard.GenerationMode {
+	case "reference_video", "smart_director":
+		config.Operation = "reference_to_video"
+		casts, err := repo.DramaCasts(shot.ProjectID)
+		if err != nil {
+			return config, err
+		}
+		castByID := make(map[string]model.DramaCast, len(casts))
+		for _, cast := range casts {
+			castByID[cast.ID] = cast
+		}
+		// Reuse the script pipeline's selected-look substitution and stable
+		// character, prop, scene order for independent shot generation.
+		drafts := buildDramaSegmentDrafts(settings, dramaBibleMeta{}, []model.DramaShot{shot}, castByID, nil)
+		limit := dramaMaxReferenceLimit
+		if settings.ReferenceLimit > 0 {
+			limit = min(limit, settings.ReferenceLimit)
+		}
+		if profile, err := s.dramaVideoProfile(config.Model); err == nil {
+			limit = min(limit, max(profile.MaxImages, 0))
+		}
+		seen := map[string]bool{}
+		for _, reference := range drafts[0].view.Request.References {
+			if len(config.ReferenceResourceIDs) >= limit {
+				break
+			}
+			cast := castByID[reference.CastID]
+			id := cast.ImageResourceID
+			if cast.ImageStatus != model.DramaMediaReady || id == "" || seen[id] {
+				continue
+			}
+			valid, err := validImage(id)
+			if err != nil {
+				return config, err
+			}
+			if valid {
+				seen[id] = true
+				config.ReferenceResourceIDs = append(config.ReferenceResourceIDs, id)
+			}
+		}
+	case "grid_image", "storyboard":
+		config.Operation = "image_to_video"
+		image, err := repo.DramaShotMedia(shot.ProjectID, shot.ID, "image")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return config, nil
+		}
+		if err != nil {
+			return config, err
+		}
+		if image.ResourceID == "" || image.Status == "stale" || image.ScriptHash != "" && image.ScriptHash != dramaShotScriptHash(shot) {
+			return config, nil
+		}
+		valid, err := validImage(image.ResourceID)
+		if err != nil {
+			return config, err
+		}
+		if valid {
+			config.FirstFrameResourceID = image.ResourceID
+		}
+	}
+	return config, nil
 }
 
 // Config saves are separate from generation. They never reserve credits or

@@ -1451,9 +1451,21 @@ func (r *Repository) retryDramaResultJobs(projectID string, jobIDs []string) err
 			Updates(map[string]any{"status": model.DramaJobQueued, "task_id": "", "error": "", "finished_at": nil, "started_at": nil, "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
-		// A successful provider task is re-applied, never submitted a second time.
-		if err := jobs().Where("task_id IN (?)", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
+		// 不合格产物保留为失败历史，由业务槽位重新排队生成；可用产物的登记失败才重放原任务。
+		var candidates []model.DramaJob
+		if err := jobs().Where("task_id IN (?)", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Find(&candidates).Error; err != nil {
 			return err
+		}
+		replayIDs := make([]string, 0, len(candidates))
+		for _, job := range candidates {
+			if !job.ResultUnusable() {
+				replayIDs = append(replayIDs, job.ID)
+			}
+		}
+		if len(replayIDs) > 0 {
+			if err := jobs().Where("id IN ?", replayIDs).Updates(map[string]any{"status": "running", "error": "", "finished_at": nil}).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

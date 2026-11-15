@@ -8,6 +8,10 @@
     font-size: var(--fs-tiny);
 }
 
+.drama-workflow-batch.is-compact {
+    margin-bottom: 0;
+}
+
 .drama-workflow-batch-preview {
     display: grid;
     gap: var(--space-3);

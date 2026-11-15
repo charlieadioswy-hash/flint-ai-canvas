@@ -38,7 +38,7 @@ func TestDramaCastMaterialRoutes(t *testing.T) {
 		&model.Project{ID: "foreign", UserID: "another", Name: "其他作品", Type: "short-drama"},
 		&model.Project{ID: "non-drama", UserID: "owner", Name: "普通项目"},
 		&model.DramaCast{ID: "foreign-cast", ProjectID: "foreign", Kind: "character", Name: "别人的角色", ImageStatus: model.DramaMediaDraft},
-		&model.DramaProduction{ProjectID: "source", UserID: "owner", Status: model.DramaStatusDraft, SettingsJSON: `{"assets":{"mode":"turnaround"},"stylePrompt":"玄幻"}`},
+		&model.DramaProduction{ProjectID: "source", UserID: "owner", Status: model.DramaStatusDraft, SettingsJSON: `{"assets":{"mode":"closeup_turnaround"},"stylePrompt":"玄幻"}`},
 		&model.DramaProduction{ProjectID: "target", UserID: "owner", Status: model.DramaStatusDraft},
 		&model.DramaProduction{ProjectID: "foreign", UserID: "another", Status: model.DramaStatusDraft},
 	} {

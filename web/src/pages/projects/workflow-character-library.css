@@ -98,12 +98,14 @@
 }
 
 .drama-character-library-grid > button[aria-pressed="true"] {
-    border-color: var(--accent);
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
 }
 .drama-character-dialog button:focus-visible,
 .drama-character-library-tools select:focus-visible,
 .drama-character-dialog select:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--control-focus-ring);
     outline-offset: 2px;
 }
 

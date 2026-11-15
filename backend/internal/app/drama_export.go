@@ -385,19 +385,23 @@ type dramaAssetSegment struct {
 }
 
 type dramaAssetShot struct {
-	Position     int    `json:"position"`
-	SegmentIndex int    `json:"segmentIndex"`
-	Scene        string `json:"scene,omitempty"`
-	Speaker      string `json:"speaker,omitempty"`
-	Dialogue     string `json:"dialogue,omitempty"`
-	Action       string `json:"action,omitempty"`
-	ShotSize     string `json:"shotSize,omitempty"`
-	Camera       string `json:"camera,omitempty"`
-	DurationMs   int64  `json:"durationMs,omitempty"`
-	ImagePrompt  string `json:"imagePrompt,omitempty"`
-	VideoPrompt  string `json:"videoPrompt,omitempty"`
-	Audio        string `json:"audio,omitempty"`
-	AudioText    string `json:"audioText,omitempty"`
+	Position        int    `json:"position"`
+	SegmentIndex    int    `json:"segmentIndex"`
+	Scene           string `json:"scene,omitempty"`
+	Speaker         string `json:"speaker,omitempty"`
+	Dialogue        string `json:"dialogue,omitempty"`
+	Action          string `json:"action,omitempty"`
+	ShotSize        string `json:"shotSize,omitempty"`
+	Camera          string `json:"camera,omitempty"`
+	DurationMs      int64  `json:"durationMs,omitempty"`
+	Image           string `json:"image,omitempty"`
+	Video           string `json:"video,omitempty"`
+	ImagePrompt     string `json:"imagePrompt,omitempty"`
+	VideoPrompt     string `json:"videoPrompt,omitempty"`
+	ImageTakePrompt string `json:"imageTakePrompt,omitempty"`
+	VideoTakePrompt string `json:"videoTakePrompt,omitempty"`
+	Audio           string `json:"audio,omitempty"`
+	AudioText       string `json:"audioText,omitempty"`
 }
 
 var dramaCastKindFolder = map[string]string{"character": "角色", "scene": "场景", "prop": "道具"}
@@ -602,6 +606,14 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 				Position: shot.Position, SegmentIndex: shot.SegmentIndex, Scene: shot.Scene, Speaker: shot.Speaker, Dialogue: shot.Dialogue,
 				Action: shot.Action, ShotSize: shot.ShotSize, Camera: shot.Camera, DurationMs: shot.DurationMs,
 			}
+			shotItem.Image, shotItem.ImageTakePrompt, err = s.packDramaShotVisual(userID, folder, shot, "image", req, archive)
+			if err != nil {
+				return err
+			}
+			shotItem.Video, shotItem.VideoTakePrompt, err = s.packDramaShotVisual(userID, folder, shot, "video", req, archive)
+			if err != nil {
+				return err
+			}
 			shotItem.Audio, shotItem.AudioText, err = s.packDramaShotAudio(userID, folder, shot, req, archive)
 			if err != nil {
 				return err
@@ -611,7 +623,7 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 			if req.Prompts {
 				shotItem.ImagePrompt, shotItem.VideoPrompt = shot.ImagePrompt, shot.VideoPrompt
 				fmt.Fprintf(&prompts, "\n%d. %s\n", shotNumber, strings.Join(nonEmptyStrings(shot.ShotSize, shot.Camera, shot.Scene), " · "))
-				for _, line := range [][2]string{{"画面", shot.ImagePrompt}, {"运动", shot.VideoPrompt}, {"动作", shot.Action}, {"台词", strings.TrimSpace(strings.Join(nonEmptyStrings(shot.Speaker, shot.Dialogue), "："))}} {
+				for _, line := range [][2]string{{"画面", shot.ImagePrompt}, {"运动", shot.VideoPrompt}, {"已采用图片提示词", shotItem.ImageTakePrompt}, {"已采用视频提示词", shotItem.VideoTakePrompt}, {"动作", shot.Action}, {"台词", strings.TrimSpace(strings.Join(nonEmptyStrings(shot.Speaker, shot.Dialogue), "："))}} {
 					if text := strings.TrimSpace(line[1]); text != "" {
 						fmt.Fprintf(&prompts, "   - %s：%s\n", line[0], strings.ReplaceAll(text, "\n", " "))
 					}

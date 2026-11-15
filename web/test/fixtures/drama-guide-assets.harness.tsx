@@ -79,14 +79,30 @@ function look(id: string, character: DramaCast, lookName: string, patch: Partial
     return asset(id, character.name, { parentId: character.id, lookName, role: "", description: "", appearance: `${lookName}的服装`, voiceInstructions: "", ...patch });
 }
 
-async function fixture(cast: DramaCast[], options: { busy?: boolean; loading?: boolean } = {}) {
+type FixtureOptions = { busy?: boolean; loading?: boolean; selectedIds?: Set<string>; selectable?: boolean; sharedLookIds?: Set<string> };
+
+async function fixture(cast: DramaCast[], options: FixtureOptions = {}) {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     const generated: DramaCast[] = [];
     const edited: DramaCast[] = [];
+    const selections: Array<[string, boolean]> = [];
     const render = async (next = cast, nextOptions = options) => {
-        await act(async () => root.render(<GuideAssets cast={next} busy={Boolean(nextOptions.busy)} loading={Boolean(nextOptions.loading)} onEdit={(item) => edited.push(item)} onGenerate={(item) => generated.push(item)} />));
+        await act(async () =>
+            root.render(
+                <GuideAssets
+                    cast={next}
+                    busy={Boolean(nextOptions.busy)}
+                    loading={Boolean(nextOptions.loading)}
+                    onEdit={(item) => edited.push(item)}
+                    onGenerate={(item) => generated.push(item)}
+                    selectedIds={nextOptions.selectedIds}
+                    sharedLookIds={nextOptions.sharedLookIds}
+                    onSelect={nextOptions.selectable ? (item, checked) => selections.push([item.id, checked]) : undefined}
+                />,
+            ),
+        );
     };
     const dispose = async () => {
         await act(async () => root.unmount());
@@ -94,7 +110,7 @@ async function fixture(cast: DramaCast[], options: { busy?: boolean; loading?: b
     };
     try {
         await render();
-        return { host, generated, edited, render, dispose };
+        return { host, generated, edited, selections, render, dispose };
     } catch (cause) {
         await dispose();
         throw cause;
@@ -159,7 +175,7 @@ test("展开造型只查看，生成回调仍携带真实造型ID且不提供普
     const hero = asset("hero", "秦子文");
     const suit = look("suit", hero, "商务西装");
     const home = look("home", hero, "居家服", { imageResourceId: "home-image" });
-    const ui = await fixture([hero, suit, home]);
+    const ui = await fixture([hero, suit, home], { sharedLookIds: new Set([home.id]) });
     try {
         const details = ui.host.querySelector<HTMLDetailsElement>("details.drama-guide-cast-looks")!;
         expect(details.open).toBe(false);
@@ -170,6 +186,8 @@ test("展开造型只查看，生成回调仍携带真实造型ID且不提供普
         expect(ui.generated).toEqual([]);
         const rows = [...details.querySelectorAll<HTMLElement>("article.drama-guide-look")];
         expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["秦子文 · 商务西装", "秦子文 · 居家服"]);
+        expect(rows[0].textContent).not.toContain("作品共享 · 本集未引用");
+        expect(rows[1].textContent).toContain("作品共享 · 本集未引用");
         expect(rows.every((row) => ![...row.querySelectorAll("button")].some((button) => button.getAttribute("aria-label")?.includes("编辑")))).toBe(true);
         expect(rows[1].querySelector("img")!.getAttribute("data-resource")).toBe("resource:home-image");
         await act(async () => namedButton(ui.host, "秦子文 · 商务西装：生成参考图").click());
@@ -227,6 +245,52 @@ test("无资产保持加载与空态，单个基础角色不显示空造型区�
         expect(ui.host.querySelector(".drama-chip")!.textContent).toBe("1 项资产");
         expect(ui.generated).toEqual([]);
         expect(ui.edited).toEqual([]);
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("角色与造型复选分别回传真实ID，受控选择不触发编辑或生图且不隐式联选", async () => {
+    const hero = asset("hero", "秦子文");
+    const suit = look("suit", hero, "商务西装");
+    const selected = new Set(["suit"]);
+    const ui = await fixture([hero, suit], { selectable: true, selectedIds: selected });
+    const checkbox = (label: string) => ui.host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    try {
+        expect(checkbox("选择秦子文").checked).toBe(false);
+        expect(checkbox("选择秦子文 · 商务西装").checked).toBe(true);
+        expect(ui.host.querySelector("article.drama-guide-cast")?.getAttribute("data-selected")).toBeNull();
+        await act(async () => checkbox("选择秦子文").click());
+        expect(ui.selections).toEqual([["hero", true]]);
+        expect([...selected]).toEqual(["suit"]);
+        await ui.render([hero, suit], { selectable: true, selectedIds: new Set(["hero", "suit"]) });
+        expect(checkbox("选择秦子文").checked).toBe(true);
+        expect(ui.host.querySelector("article.drama-guide-cast")?.getAttribute("data-selected")).toBe("true");
+        await act(async () => checkbox("选择秦子文 · 商务西装").click());
+        expect(ui.selections).toEqual([
+            ["hero", true],
+            ["suit", false],
+        ]);
+        expect(ui.generated).toEqual([]);
+        expect(ui.edited).toEqual([]);
+    } finally {
+        await ui.dispose();
+    }
+});
+
+test("忙碌时角色及造型复选都禁用，普通审阅模式不显示选择控件", async () => {
+    const hero = asset("hero", "秦子文");
+    const cast = [hero, look("suit", hero, "商务西装")];
+    const ui = await fixture(cast, { selectable: true, busy: true, selectedIds: new Set(["hero"]) });
+    try {
+        const checkboxes = [...ui.host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+        expect(checkboxes).toHaveLength(2);
+        expect(checkboxes.every((item) => item.disabled)).toBe(true);
+        await act(async () => checkboxes.forEach((item) => item.click()));
+        expect(ui.selections).toEqual([]);
+        await ui.render(cast, {});
+        expect(ui.host.querySelector('input[type="checkbox"]')).toBeNull();
+        expect(ui.host.querySelector("article.drama-guide-cast")?.getAttribute("data-selected")).toBeNull();
     } finally {
         await ui.dispose();
     }

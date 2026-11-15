@@ -90,6 +90,9 @@ func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast
 	if references := dramaCastReferenceInstructions(cast); references != "" {
 		prompt += "\n" + references
 	}
+	if cast.Kind == "character" || cast.Kind == "scene" {
+		prompt = production.WithAssetImageOutputContract(prompt)
+	}
 	ratio := production.AssetImageRatio
 	if cast.Kind == "character" {
 		ratio = assets.CharacterRatio

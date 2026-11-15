@@ -13,16 +13,20 @@ import (
 )
 
 type DramaWorkflowEpisodeReadiness struct {
-	EpisodeID        string `json:"episodeId"`
-	Number           int    `json:"number"`
-	Title            string `json:"title"`
-	Revision         int64  `json:"revision"`
-	TextReady        bool   `json:"textReady"`
-	CanGenerateVideo bool   `json:"canGenerateVideo"`
-	CanRender        bool   `json:"canRender"`
-	BlockingReason   string `json:"blockingReason,omitempty"`
-	SegmentCount     int    `json:"segmentCount"`
-	ReadyVideos      int    `json:"readyVideos"`
+	EpisodeID            string `json:"episodeId"`
+	Number               int    `json:"number"`
+	Title                string `json:"title"`
+	Revision             int64  `json:"revision"`
+	TextReady            bool   `json:"textReady"`
+	CanGenerateVideo     bool   `json:"canGenerateVideo"`
+	CanRender            bool   `json:"canRender"`
+	BlockingReason       string `json:"blockingReason,omitempty"`
+	SegmentCount         int    `json:"segmentCount"`
+	ReadyVideos          int    `json:"readyVideos"`
+	RenderSource         string `json:"renderSource"`
+	RenderVideoCount     int    `json:"renderVideoCount"`
+	RenderReadyVideos    int    `json:"renderReadyVideos"`
+	RenderBlockingReason string `json:"renderBlockingReason,omitempty"`
 }
 
 type DramaWorkflowReadiness struct {
@@ -104,7 +108,12 @@ func dramaWorkflowEpisodeReadiness(repo *repository.Repository, p *model.DramaPr
 	}
 	view.TextReady = view.BlockingReason == ""
 	view.CanGenerateVideo = view.TextReady
-	view.CanRender = view.TextReady && len(segments) > 0 && view.ReadyVideos == len(segments) && !mediaActive
+	videos, videoErr := dramaEpisodeVideoTimeline(repo, p.UserID, p.ProjectID, episode.ID, parseDramaSettings(p.SettingsJSON).AspectRatio)
+	view.RenderSource, view.RenderVideoCount, view.RenderReadyVideos = videos.Source, videos.Total, videos.Ready
+	if videoErr != nil {
+		view.RenderBlockingReason = videoErr.Error()
+	}
+	view.CanRender = view.TextReady && videos.Total > 0 && videoErr == nil && !mediaActive
 	return view, nil
 }
 
@@ -163,7 +172,9 @@ func dramaGuideAllowsScopedJob(repo *repository.Repository, p *model.DramaProduc
 		return false, err
 	}
 	if job.Kind == model.DramaJobRender {
-		return episode.Stage == model.DramaEpisodeRender && view.ReadyVideos == view.SegmentCount, nil
+		// The queued render itself makes CanRender false; validate its selected video source independently.
+		return episode.Stage == model.DramaEpisodeRender && view.RenderVideoCount > 0 &&
+			view.RenderReadyVideos == view.RenderVideoCount && view.RenderBlockingReason == "", nil
 	}
 	segment, err := repo.DramaSegment(p.ProjectID, job.ShotID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

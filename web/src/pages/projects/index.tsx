@@ -1,7 +1,7 @@
-import { useDeferredValue, useEffect, useRef, useState, type DragEvent } from "react";
+import { useDeferredValue, useEffect, useState, type DragEvent } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Dropdown, Input } from "antd";
-import { ClipboardPaste, Clapperboard, ExternalLink, FileUp, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { App, Dropdown, Input } from "antd";
+import { Clapperboard, ExternalLink, FileUp, MoreHorizontal, Search, Trash2 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
 import { CollectionToolbar } from "@/components/layout/collection-toolbar";
@@ -24,7 +24,6 @@ const STATUS_FILTERS: Array<{ value: DramaStatus | "all"; label: string }> = [
     { value: "completed", label: "已完成" },
     { value: "draft", label: "未开始" },
 ];
-const ACCEPT = ".txt,.md,.markdown,.docx,text/plain,text/markdown";
 
 function dramaListStage(item: DramaListItem) {
     if (item.hasDraftForm) return "草稿待完善";
@@ -53,7 +52,6 @@ export default function DramaListPage() {
     const [keyword, setKeyword] = useState("");
     const [status, setStatus] = useState<DramaStatus | "all">("all");
     const [dragging, setDragging] = useState(false);
-    const fileRef = useRef<HTMLInputElement>(null);
     const search = useDeferredValue(keyword.trim());
     useEffect(() => setPage(1), [search, status, pageSize]);
 
@@ -119,23 +117,12 @@ export default function DramaListPage() {
             </WorkspacePage>
         );
 
-    const actions = (
-        <div className="collection-header-actions">
-            <Button icon={<ClipboardPaste />} onClick={() => navigate("/projects/new?paste=1")}>
-                粘贴正文
-            </Button>
-            <Button type="primary" icon={<Plus />} onClick={() => fileRef.current?.click()}>
-                上传小说
-            </Button>
-        </div>
-    );
-
     return (
         <WorkspacePage className="studio-collection-page drama-library">
             <div className="drama-root" {...dragProps}>
                 <div className="studio-band">
-                    <PageHeader title="短剧" description="导入正文，逐步确认分集、风格与资产，再制作分镜和视频。" meta={<span className="app-projects-header-meta">{total} 部</span>} actions={total ? actions : undefined} />
-                    <DramaWorkflowEntry showSteps={!total} />
+                    <DramaWorkflowEntry />
+                    <PageHeader title="最近作品" meta={<span className="app-projects-header-meta">{total} 部</span>} />
                     {total ? (
                         <CollectionToolbar
                             label="短剧浏览工具"
@@ -194,7 +181,9 @@ export default function DramaListPage() {
                             }}
                         />
                     )
-                ) : null}
+                ) : (
+                    <p className="drama-library-empty">还没有作品，从上方选择一种方式开始创作。</p>
+                )}
 
                 {dragging ? (
                     <div className="drama-library-drop" aria-hidden>
@@ -205,17 +194,6 @@ export default function DramaListPage() {
                         </div>
                     </div>
                 ) : null}
-                <input
-                    ref={fileRef}
-                    type="file"
-                    accept={ACCEPT}
-                    className="hidden"
-                    onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) openFile(file);
-                        event.target.value = "";
-                    }}
-                />
             </div>
         </WorkspacePage>
     );
@@ -251,12 +229,12 @@ function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => vo
         <article className={`drama-library-card is-${item.status}`}>
             <Link to={path} className="drama-library-open" aria-label={`打开《${item.project.name}》`}>
                 <DramaCover item={item} />
-                <span className={`drama-chip drama-library-badge is-${needsAction ? "paused" : item.status}`}>
-                    <span className="drama-dot" />
-                    {needsAction ? "需要处理" : item.status === "completed" && (!item.episodeCount || item.doneCount < item.episodeCount) ? "待制作视频" : STATUS_LABEL[item.status]}
-                </span>
                 <div className="drama-library-body">
                     <h3 title={item.project.name}>{item.project.name}</h3>
+                    <span className={`drama-chip drama-library-badge is-${needsAction ? "paused" : item.status}`}>
+                        <span className="drama-dot" />
+                        {needsAction ? "需要处理" : item.status === "completed" && (!item.episodeCount || item.doneCount < item.episodeCount) ? "待制作视频" : STATUS_LABEL[item.status]}
+                    </span>
                     <div className="drama-library-meta">
                         {item.styleName ? <span>{item.styleName}</span> : null}
                         <span>{item.aspectRatio}</span>

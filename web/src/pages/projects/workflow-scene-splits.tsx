@@ -14,14 +14,28 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { clearSceneSplitPending, readSceneSplitPending, writeSceneSplitPending } from "./workflow-scene-splits-state";
 import "./workflow-scene-splits.css";
 
-export function WorkflowSceneSplits({ summary, detail, onChanged, onOpenSegment }: { summary: DramaSummary; detail: DramaEpisodeDetail; onChanged: () => void; onOpenSegment: (index: number) => void }) {
+export function WorkflowSceneSplits({
+    summary,
+    detail,
+    onChanged,
+    onOpenSegment,
+    initialShotId,
+    buttonLabel = "场景分镜",
+}: {
+    summary: DramaSummary;
+    detail: DramaEpisodeDetail;
+    onChanged: () => void;
+    onOpenSegment: (index: number) => void;
+    initialShotId?: string;
+    buttonLabel?: string;
+}) {
     const userId = useUserStore((state) => state.user?.id || "");
     const owner = `${userId}:${getActiveUserScope()}:${summary.project.id}:${detail.episode.id}`;
     const [opened, setOpened] = useState<{ owner: string; revision: number; episodeRevision: number }>();
     return (
         <>
             <Button size="small" disabled={!detail.shots.length} onClick={() => setOpened({ owner, revision: summary.production.revision, episodeRevision: detail.episode.revision })}>
-                场景分镜
+                {buttonLabel}
             </Button>
             <AppModal open={opened?.owner === owner} closable={false} maskClosable={false} keyboard={false} footer={null} width={1120} flush destroyOnHidden>
                 {opened?.owner === owner ? (
@@ -31,6 +45,7 @@ export function WorkflowSceneSplits({ summary, detail, onChanged, onOpenSegment 
                         detail={detail}
                         baseline={opened}
                         userId={userId}
+                        initialShotId={initialShotId}
                         onClose={() => setOpened(undefined)}
                         onChanged={onChanged}
                         onOpenSegment={(index) => {
@@ -52,6 +67,7 @@ function SceneSplitDialog({
     onClose,
     onChanged,
     onOpenSegment,
+    initialShotId,
 }: {
     summary: DramaSummary;
     detail: DramaEpisodeDetail;
@@ -60,6 +76,7 @@ function SceneSplitDialog({
     onClose: () => void;
     onChanged: () => void;
     onOpenSegment: (index: number) => void;
+    initialShotId?: string;
 }) {
     const { modal, message } = App.useApp();
     const projectId = summary.project.id;
@@ -67,7 +84,7 @@ function SceneSplitDialog({
     const settings = summary.production.settings;
     const operation = useDramaOperationScope(projectId);
     const groups = dramaSceneGroups(detail.shots);
-    const [groupId, setGroupId] = useState(groups[0]?.[0]?.id || "");
+    const [groupId, setGroupId] = useState(groups.find((rows) => rows.some((shot) => shot.id === initialShotId))?.[0]?.id || groups[0]?.[0]?.id || "");
     const group = groups.find((rows) => rows[0].id === groupId);
     const [count, setCount] = useState(group?.length || 1);
     const [template, setTemplate] = useState<string>(settings.storyboard.directorTemplate || "");

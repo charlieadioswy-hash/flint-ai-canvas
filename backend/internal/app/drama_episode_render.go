@@ -97,34 +97,11 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 				return dramaGuideConflict("本集还有文字或段视频任务进行中，请完成后再合成")
 			}
 		}
-		segments, err := tx.DramaSegments(episodeID)
-		if err != nil {
-			return err
-		}
-		timeline, err = buildDramaTimeline(segments, parseDramaSettings(p.SettingsJSON).AspectRatio)
+		videos, err := dramaEpisodeVideoTimeline(tx, userID, projectID, episodeID, parseDramaSettings(p.SettingsJSON).AspectRatio)
 		if err != nil {
 			return BadAuthRequest(err.Error())
 		}
-		shots, err := tx.DramaShots(episodeID)
-		if err != nil {
-			return err
-		}
-		byIndex := make(map[int]bool, len(segments))
-		for _, segment := range segments {
-			byIndex[segment.SegmentIndex] = true
-			resource, err := tx.ResourceForUser(userID, segment.VideoResourceID)
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			if err != nil || resource.Status != model.ResourceStatusReady || !strings.HasPrefix(resource.MimeType, "video/") {
-				return BadAuthRequest(fmt.Sprintf("第 %d 段视频资源不可用，请先生成或采用有效视频", segment.SegmentIndex+1))
-			}
-		}
-		for _, shot := range shots {
-			if !byIndex[shot.SegmentIndex] {
-				return BadAuthRequest(fmt.Sprintf("第 %d 段尚未就绪，请完成全部段视频后再合成", shot.SegmentIndex+1))
-			}
-		}
+		timeline = videos.Timeline
 		if queuedRender != nil {
 			renderJob = queuedRender
 			return nil

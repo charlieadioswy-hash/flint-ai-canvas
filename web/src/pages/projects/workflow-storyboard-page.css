@@ -1,0 +1,309 @@
+.drama-storyboard-page {
+    --storyboard-rail-width: 160px;
+    --storyboard-card-min: 208px;
+    display: grid;
+    grid-template-columns: var(--storyboard-rail-width) minmax(0, 1fr);
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.drama-storyboard-acts {
+    display: flex;
+    flex-direction: column;
+    align-self: start;
+    gap: var(--space-2);
+    min-width: 0;
+    max-height: 68vh;
+    min-height: 480px;
+    overflow: auto;
+    position: sticky;
+    top: 0;
+    padding-right: var(--space-3);
+    border-right: 1px solid var(--drama-line);
+}
+
+.drama-storyboard-acts > header,
+.drama-storyboard-act-toolbar,
+.drama-storyboard-act-actions,
+.drama-storyboard-shot-content > header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.drama-storyboard-acts > header {
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-2);
+    font-size: var(--fs-tiny);
+    color: var(--drama-muted);
+}
+
+.drama-storyboard-acts > button {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-2);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+    transition:
+        color 160ms ease,
+        background 160ms ease;
+}
+
+.drama-storyboard-acts > button[aria-pressed="true"] {
+    background: transparent;
+    color: var(--control-selected-fg);
+}
+
+.drama-storyboard-acts > button:hover {
+    background: var(--surface-hover);
+}
+
+.drama-storyboard-acts > button > span:last-child {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    font-size: var(--fs-tiny);
+    line-height: 1.6;
+}
+.drama-storyboard-acts strong {
+    font-weight: 500;
+}
+
+.drama-storyboard-acts small,
+.drama-storyboard-acts > button > span > span {
+    color: var(--drama-muted);
+    overflow-wrap: anywhere;
+}
+
+.drama-storyboard-act {
+    min-width: 0;
+}
+
+.drama-storyboard-act-toolbar {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+    padding-block: var(--space-3);
+    border-bottom: 1px solid var(--drama-line);
+}
+
+.drama-storyboard-act-toolbar h4 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+
+.drama-storyboard-act-toolbar h4 span {
+    margin-left: var(--space-2);
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    font-weight: 400;
+}
+
+.drama-storyboard-act-toolbar p,
+.drama-storyboard-filter-note {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    margin-top: var(--space-1);
+}
+
+.drama-storyboard-act-actions {
+    flex-wrap: wrap;
+}
+
+.drama-storyboard-shots-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--storyboard-card-min)), 1fr));
+    gap: var(--space-3);
+}
+
+.drama-storyboard-shot {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--drama-line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+}
+
+.drama-storyboard-shot:focus-within,
+.drama-storyboard-shot:hover {
+    border-color: var(--drama-line-strong);
+}
+
+.drama-storyboard-shot-cover {
+    position: relative;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 16 / 10;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--drama-sunken);
+    color: var(--drama-faint);
+}
+
+.drama-storyboard-shot-cover > span:first-child {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-tiny);
+}
+
+.drama-storyboard-shot-cover img,
+.drama-storyboard-shot-cover video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: absolute;
+    inset: 0;
+}
+
+.drama-storyboard-shot-time,
+.drama-storyboard-shot-open {
+    position: absolute;
+    bottom: var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--foreground);
+    background: var(--surface);
+    font-size: var(--fs-micro);
+}
+
+.drama-storyboard-shot-time {
+    left: var(--space-2);
+}
+.drama-storyboard-shot-open {
+    right: var(--space-2);
+}
+
+.drama-storyboard-shot-content {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+}
+
+.drama-storyboard-shot-content > header {
+    justify-content: space-between;
+}
+
+.drama-storyboard-shot-content h5 {
+    font-size: var(--fs-label);
+    font-weight: 600;
+}
+
+.drama-storyboard-shot-description {
+    display: -webkit-box;
+    -webkit-line-clamp: 7;
+    line-clamp: 7;
+    -webkit-box-orient: vertical;
+    min-height: 11.2em;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: var(--fs-tiny);
+    line-height: 1.6;
+    color: var(--drama-muted);
+}
+.drama-storyboard-shot-description > span {
+    color: var(--foreground);
+}
+.drama-storyboard-shot-state {
+    color: var(--drama-muted);
+    font-size: var(--fs-micro);
+}
+.drama-storyboard-shot[data-tone="failed"] .drama-storyboard-shot-state {
+    color: var(--drama-err);
+}
+.drama-storyboard-shot-subjects > div,
+.drama-storyboard-shot footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+.drama-storyboard-shot-subjects {
+    display: grid;
+    gap: var(--space-2);
+}
+.drama-storyboard-shot-subjects > strong {
+    font-size: var(--fs-tiny);
+    font-weight: 500;
+}
+
+.drama-storyboard-shot-subjects button {
+    padding: var(--space-1) var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    max-width: 100%;
+    color: var(--drama-muted);
+    background: var(--drama-sunken);
+    border-radius: var(--r-full);
+    font-size: var(--fs-micro);
+}
+.drama-storyboard-shot-subjects button > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.drama-storyboard-shot-subjects img {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--r-full);
+    object-fit: cover;
+}
+
+.drama-storyboard-shot footer {
+    margin-top: auto;
+    align-items: center;
+    padding: var(--space-2);
+}
+.drama-storyboard-shot-edit {
+    margin-left: auto;
+    color: var(--drama-muted);
+}
+.drama-storyboard-page :is(button, a):focus-visible {
+    outline: 2px solid var(--control-focus-ring);
+    outline-offset: 2px;
+}
+
+.drama-storyboard-shot-error {
+    color: var(--drama-err);
+    font-size: var(--fs-tiny);
+}
+.drama-storyboard-filter-note {
+    margin-top: var(--space-3);
+}
+
+@container drama-workflow-production (max-width: 800px) {
+    .drama-storyboard-page {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-3);
+    }
+    .drama-storyboard-acts {
+        position: static;
+        flex-direction: row;
+        max-height: none;
+        min-height: 0;
+        padding-bottom: var(--space-2);
+        padding-right: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--drama-line);
+    }
+    .drama-storyboard-acts > header {
+        flex: none;
+    }
+    .drama-storyboard-acts > button {
+        flex: 0 0 180px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .drama-storyboard-acts > button {
+        transition: none;
+    }
+}

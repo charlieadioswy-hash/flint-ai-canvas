@@ -2793,6 +2793,14 @@
     position: relative;
     min-height: 100%;
 }
+.drama-library-empty {
+    margin: 0;
+    padding: var(--space-5);
+    border: 1px dashed var(--user-border);
+    border-radius: var(--user-radius-card);
+    color: var(--user-ink-muted);
+    font-size: var(--fs-ui);
+}
 .drama-library-status {
     display: inline-flex;
     flex-wrap: wrap;
@@ -2851,8 +2859,8 @@
 
 .drama-library-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
-    gap: 24px 16px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: var(--space-3);
     transition: opacity 160ms ease-out;
 }
 .drama-library-grid.is-stale {
@@ -2861,7 +2869,8 @@
 .drama-library-card {
     position: relative;
     min-width: 0;
-    padding: 8px;
+    padding: var(--space-2);
+    border: 1px solid var(--user-border);
     border-radius: var(--user-radius-card);
     background: var(--user-surface);
     transition: background-color var(--user-motion);
@@ -2871,7 +2880,11 @@
     background: color-mix(in srgb, var(--user-surface) 60%, var(--user-surface-muted));
 }
 .drama-library-open {
-    display: block;
+    display: grid;
+    grid-template-columns: 80px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 88px;
     color: inherit;
     border-radius: inherit;
 }
@@ -2882,7 +2895,7 @@
 .drama-library-cover {
     position: relative;
     display: grid;
-    aspect-ratio: 4 / 5;
+    aspect-ratio: 1;
     overflow: hidden;
     gap: 2px;
     border-radius: var(--user-radius-control);
@@ -2906,15 +2919,15 @@
     grid-template-columns: 1fr 1fr;
 }
 .drama-library-cover.is-3 {
-    grid-template-columns: 3fr 2fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: 1fr;
 }
 .drama-library-cover.is-3 > span:first-child {
-    grid-row: span 2;
+    grid-row: auto;
 }
 .drama-library-cover.is-4 {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: 1fr;
 }
 .drama-library-cover::after {
     content: "";
@@ -2945,19 +2958,19 @@
     color: color-mix(in srgb, var(--user-ink) 30%, transparent);
 }
 .drama-library-badge {
-    position: absolute;
-    top: 18px;
-    left: 18px;
-    z-index: 1;
-    height: 24px;
-    backdrop-filter: blur(10px);
-    background: color-mix(in srgb, var(--user-surface) 82%, transparent);
+    position: static;
+    width: fit-content;
+    max-width: 100%;
+    height: 20px;
+    font-size: var(--fs-micro);
+    background: var(--user-surface-muted);
     border-color: transparent;
 }
 .drama-library-body {
     display: grid;
-    gap: 8px;
-    padding: 12px 8px 4px;
+    min-width: 0;
+    gap: var(--space-1);
+    padding: 0 var(--space-5) 0 0;
 }
 .drama-library-body h3 {
     overflow: hidden;
@@ -2982,7 +2995,7 @@
 }
 .drama-library-progress {
     display: grid;
-    gap: 8px;
+    gap: var(--space-1);
 }
 .drama-library-progress-bar {
     height: 4px;
@@ -3008,7 +3021,7 @@
     justify-content: space-between;
     gap: 8px;
     color: var(--user-ink-muted);
-    font-size: 12px;
+    font-size: var(--fs-micro);
     font-variant-numeric: tabular-nums;
 }
 .drama-library-progress-text b {
@@ -3027,13 +3040,15 @@
 }
 .drama-library-menu {
     position: absolute;
-    top: 16px;
-    right: 16px;
+    top: var(--space-2);
+    right: var(--space-2);
     z-index: 2;
     opacity: 0;
     transition: opacity 150ms ease-out;
 }
 .drama-library-menu .product-icon-button {
+    width: 28px;
+    height: 28px;
     background: color-mix(in srgb, var(--user-surface) 86%, transparent);
     backdrop-filter: blur(10px);
     box-shadow: inset 0 0 0 1px var(--user-border);
@@ -3079,7 +3094,7 @@
 }
 @media (max-width: 720px) {
     .drama-library-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
         gap: 12px;
     }
 }
@@ -3099,8 +3114,8 @@
 }
 .drama-assets-schemes {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
 }
 .drama-assets.is-compact .drama-assets-schemes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3113,14 +3128,15 @@
 .drama-assets-scheme {
     position: relative;
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
     align-items: start;
     padding: 12px;
     border-radius: var(--radius-lg);
     border: 1px solid var(--drama-line);
     background: var(--surface);
     text-align: left;
+    cursor: pointer;
     transition:
         border-color 0.15s,
         background-color 0.15s,
@@ -3140,18 +3156,16 @@
     min-width: 0;
 }
 .drama-assets-scheme-copy strong {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     font-size: var(--fs-label);
     font-weight: 600;
 }
 .drama-assets-scheme-copy em {
+    justify-self: start;
     padding: 1px 8px;
     border-radius: 4px;
     background: var(--drama-sunken);
     color: var(--drama-muted);
-    font-size: 11px;
+    font-size: var(--fs-tiny);
     font-style: normal;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
@@ -3162,7 +3176,7 @@
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
     line-height: 1.55;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
 }
 .drama-assets-check {
@@ -3177,51 +3191,83 @@
     background: var(--workspace-accent);
     color: var(--background);
 }
-/* 方案版式示意：用色块表达定妆照 / 三视图 / 四格 + 声纹 */
-.drama-glyph {
+/* 构图预览与实际单张输出一致，竖板在统一的缩略容器中保留比例。 */
+.drama-assets-template-preview {
     display: grid;
-    width: 56px;
-    height: 56px;
-    gap: 2px;
-    padding: 8px;
-    border-radius: 12px;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    place-items: center;
+    border-radius: var(--radius-md);
     background: var(--drama-sunken);
 }
-.drama-glyph i {
+.drama-assets-template-preview > svg {
     display: block;
-    border-radius: 4px;
-    background: color-mix(in oklab, var(--workspace-accent) 30%, var(--drama-line-strong));
+    width: 100%;
+    height: 100%;
 }
-.drama-glyph.is-portrait {
-    padding: 8px 12px;
-}
-.drama-glyph.is-portrait i {
-    border-radius: 8px 8px 4px 4px;
-}
-.drama-glyph.is-turnaround {
-    grid-template-columns: repeat(3, 1fr);
-    padding: 12px 8px;
-}
-.drama-glyph.is-turnaround i {
-    border-radius: 8px 8px 4px 4px;
-}
-.drama-glyph.is-fourview {
-    grid-template-columns: 1.2fr 1fr 1fr 1fr;
-    grid-template-rows: 1fr 6px;
-    padding: 12px 8px 8px;
-}
-.drama-glyph.is-fourview i.is-face {
-    background: var(--workspace-accent);
-    border-radius: 50% 50% 4px 4px;
-}
-.drama-glyph.is-fourview b {
-    grid-column: 1 / -1;
-    border-radius: 4px;
-    background: repeating-linear-gradient(90deg, color-mix(in oklab, var(--workspace-accent) 60%, transparent) 0 2px, transparent 2px 4px);
-}
-.drama-glyph.is-custom {
-    place-items: center;
+.drama-assets-template-preview.is-symbol > svg {
+    width: 32px;
+    height: 32px;
     color: var(--drama-muted);
+}
+.drama-template-sheet {
+    fill: var(--drama-panel);
+}
+.drama-template-figure {
+    overflow: hidden;
+}
+.drama-template-figure .is-skin {
+    fill: color-mix(in oklab, var(--workspace-accent) 24%, var(--surface));
+}
+.drama-template-figure .is-hair {
+    fill: var(--foreground);
+}
+.drama-template-figure .is-outfit {
+    fill: color-mix(in oklab, var(--foreground) 72%, var(--surface));
+}
+.drama-template-figure .is-features {
+    fill: none;
+    stroke: var(--foreground);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+}
+.drama-template-figure .is-detail {
+    fill: none;
+    stroke: var(--surface);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    opacity: 0.65;
+}
+.drama-assets-template-hint,
+.drama-assets-custom-entry {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+    line-height: 1.6;
+}
+.drama-assets-template-hint {
+    margin: 0;
+}
+.drama-assets-custom-entry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+.drama-assets-custom-entry [aria-pressed="true"] {
+    background: var(--workspace-accent-soft);
+    color: var(--workspace-accent);
+}
+@media (max-width: 480px) {
+    .drama-assets-schemes,
+    .drama-assets.is-compact .drama-assets-schemes {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .drama-assets-scheme {
+        transition: none;
+    }
 }
 .drama-assets-ratio {
     display: flex;
@@ -4409,67 +4455,6 @@
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
     line-height: 1.55;
-}
-
-/* 作品卡片压矮：横版拼图封面 + 紧凑信息区 */
-.drama-library-grid {
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 20px 16px;
-}
-.drama-library-cover {
-    aspect-ratio: 16 / 10;
-}
-.drama-library-cover img {
-    object-position: center 22%;
-}
-.drama-library-cover.is-3 {
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: 1fr;
-}
-.drama-library-cover.is-3 > span:first-child {
-    grid-row: auto;
-}
-.drama-library-cover.is-4 {
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: 1fr;
-}
-.drama-library-glyph {
-    font-size: 32px;
-}
-.drama-library-badge {
-    top: 16px;
-    left: 16px;
-    height: 22px;
-    padding: 0 8px;
-    font-size: 11px;
-}
-.drama-library-menu {
-    top: 14px;
-    right: 14px;
-}
-.drama-library-menu .product-icon-button {
-    width: 28px;
-    height: 28px;
-}
-.drama-library-body {
-    gap: 8px;
-    padding: 8px 8px 2px;
-}
-.drama-library-body h3 {
-    font-size: 14px;
-    line-height: 1.4;
-}
-.drama-library-progress {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-}
-.drama-library-progress-text {
-    gap: 8px;
-    font-size: 11px;
-}
-.drama-library-progress-text > span {
-    color: var(--user-ink-soft);
 }
 
 /* ===== 分镜规则 ===== */
