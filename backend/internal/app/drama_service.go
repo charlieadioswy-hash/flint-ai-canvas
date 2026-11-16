@@ -73,6 +73,9 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	if err := req.Settings.validateDramaType(); err != nil {
 		return nil, err
 	}
+	if err := req.Settings.ValidateStylePrompt(); err != nil {
+		return nil, BadAuthRequest(err.Error())
+	}
 	settings := req.Settings.normalized()
 	if err := settings.TextThinking.validate(); err != nil {
 		return nil, err
@@ -845,7 +848,7 @@ func encodeStringList(values []string) string {
 
 // fillDramaSegmentViews 按当前设置预演每个镜头会发给模型的首帧与视频提示词、视频秒数和转场。
 func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProduction, detail *DramaEpisodeDetail) error {
-	settings := parseDramaSettings(p.SettingsJSON)
+	settings, meta := dramaEpisodeStyleSettings(parseDramaSettings(p.SettingsJSON), parseDramaBibleMeta(p.BibleJSON), detail.Episode)
 	casts, err := s.repo.DramaCasts(projectID)
 	if err != nil {
 		return err
@@ -858,7 +861,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 	if err != nil {
 		return err
 	}
-	detail.Segments = buildDramaSegmentViews(settings, parseDramaBibleMeta(p.BibleJSON), detail.Shots, castByID, rows)
+	detail.Segments = buildDramaSegmentViews(settings, meta, detail.Shots, castByID, rows)
 	jobs, err := s.repo.RecentDramaSegmentJobs(projectID, detail.Episode.ID)
 	if err != nil {
 		return err
@@ -895,7 +898,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 			}
 		}
 	}
-	drafts := buildDramaSegmentDrafts(settings, parseDramaBibleMeta(p.BibleJSON), detail.Shots, castByID, rows)
+	drafts := buildDramaSegmentDrafts(settings, meta, detail.Shots, castByID, rows)
 	for i, draft := range drafts {
 		if i >= len(rows) || rows[i].SegmentIndex != draft.view.Index {
 			return errors.New("剧情段记录与镜头分组不一致")

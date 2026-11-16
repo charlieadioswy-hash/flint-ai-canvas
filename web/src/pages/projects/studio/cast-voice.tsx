@@ -88,7 +88,7 @@ export function CastVoicePreview({ resourceId, name }: { resourceId?: string; na
  * 角色声音：从声音库选一条带样本的声音，或上传 / 录制一段角色的声音。视频模型支持参考音频时，
  * 该角色开口的剧情段会带上这段样本；不支持时按声线描述生成。造型沿用所属角色的声音。
  */
-export function CastVoiceField({ projectId, cast, restyle, onChanged }: { projectId: string; cast: DramaCast; restyle: boolean; onChanged: () => void }) {
+export function CastVoiceField({ projectId, cast, restyle, onChanged }: { projectId: string; cast: DramaCast; restyle: boolean; onChanged: (updated: DramaCast) => void }) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const fileRef = useRef<HTMLInputElement>(null);
@@ -98,10 +98,10 @@ export function CastVoiceField({ projectId, cast, restyle, onChanged }: { projec
     const current = profiles.find((profile) => profile.id === cast.voiceProfileId);
     const sampleId = cast.voiceSampleResourceId || "";
     const player = useSamplePlayer(sampleId);
-    const done = (result: { affectedSegments: number }, text: string) => {
+    const done = (result: { cast: DramaCast; affectedSegments: number }, text: string) => {
         message.success(result.affectedSegments ? `${text}；${result.affectedSegments} 个剧情段的视频已标记为待更新` : text);
         void queryClient.invalidateQueries({ queryKey: VOICE_PROFILES_KEY });
-        onChanged();
+        onChanged(result.cast);
     };
     const bind = useMutation({
         mutationFn: (input: { voiceProfileId?: string; sampleResourceId?: string; voiceName?: string }) => setDramaCastVoice(projectId, cast.id, { ...input, restyleSegments: restyle }),

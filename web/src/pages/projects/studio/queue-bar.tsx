@@ -3,11 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "antd";
 import { AlertCircle, ChevronDown, ChevronRight, ChevronUp, Loader2, RotateCcw } from "lucide-react";
 
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { listDramaJobs, type DramaJob, type DramaSummary } from "@/services/api/drama";
 
 import { formatCredits } from "../drama-shared";
 import { formatJobTime, JOB_KIND_LABEL, JobDetailModal, JobStatusIcon } from "./job-detail";
-import { dramaKeys } from "./use-studio";
 
 type JobFilter = "all" | "active" | "failed";
 
@@ -81,6 +81,11 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
                         ))}
                         <span className="ml-auto drama-queue-hint">点击任一行查看请求详情</span>
                     </div>
+                    {jobsQuery.isError ? (
+                        <p className="drama-sg-note is-warn" role="status">
+                            队列暂时读取失败，将自动更新。{jobsQuery.data ? "下方保留上次读取的记录，可能不是最新状态。" : "当前无法确认队列记录。"}
+                        </p>
+                    ) : null}
                     <div className="drama-queue-list thin-scrollbar" role="list">
                         {jobs.map((job) => (
                             <button key={job.id} type="button" role="listitem" className={`drama-job is-${job.status}`} onClick={() => setDetailJob(job)}>
@@ -106,7 +111,7 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
                         ))}
                         {jobsQuery.isLoading ? (
                             <div className="drama-queue-empty">正在读取队列…</div>
-                        ) : !jobs.length ? (
+                        ) : !jobsQuery.isError && !jobs.length ? (
                             <div className="drama-queue-empty">{filter === "failed" ? "没有失败的工作" : filter === "active" ? "没有进行中的工作" : "还没有调度记录"}</div>
                         ) : null}
                     </div>

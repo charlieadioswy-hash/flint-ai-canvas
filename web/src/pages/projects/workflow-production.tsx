@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Select } from "antd";
-import { ChevronDown, Clapperboard, Film, Package, RefreshCw } from "lucide-react";
+import { Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { dramaSceneGroups } from "@/lib/drama/director";
 import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -15,26 +14,23 @@ import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { AssetPackageModal } from "./studio/asset-transfer";
 import { DramaMediaActionDialog } from "./studio/drama-media-action-dialog";
 import { QueueBar } from "./studio/queue-bar";
-import { segmentState } from "./studio/segment-parts";
 import { dramaKeys, useDramaCast, useDramaInvalidate } from "./studio/use-studio";
 import { useDramaMediaAction } from "./studio/use-drama-media-action";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
-import { WorkflowSegmentCard } from "./workflow-segment-card";
 import { WorkflowBatch } from "./workflow-batch";
-import { WorkflowImpact } from "./workflow-impact";
 import { WorkflowStoryboardPage } from "./workflow-storyboard-page";
 import { WorkflowShotMediaDialog } from "./workflow-shot-media-dialog";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
 
-const PREVIEW_LIMIT = 6;
-
 export type WorkflowProductionProps = {
     summary: DramaSummary;
     step: "story" | "preview";
     onChanged: () => void | Promise<unknown>;
     embedded?: boolean;
+    busy?: boolean;
+    onPickChapters?: () => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
     onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
 };
@@ -77,7 +73,7 @@ function readyVideos(detail?: DramaEpisodeDetail) {
     return (detail?.segments || []).filter((segment) => segment.videoStatus === "ready" && segment.videoResourceId && (segment.videoSeconds || 0) > 0).length;
 }
 
-export function WorkflowProduction({ summary, step, onChanged, embedded = false, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
+export function WorkflowProduction({ summary, step, onChanged, embedded = false, busy = false, onPickChapters, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
     const projectId = summary.project.id;
     const userId = useUserStore((state) => state.user?.id || "");
     const selectionOwner = `${userId}:${projectId}`;
@@ -88,7 +84,6 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
     const queryClient = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const invalidate = useDramaInvalidate(projectId);
-    const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
     const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
     const [exportProjectId, setExportProjectId] = useState<string>();
     const [mediaEditingState, setMediaEditingState] = useState({ dirty: false, busy: false });
@@ -267,6 +262,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                     next.delete("shot");
                 } else {
                     next.set("segment", String(index));
+                    next.set("editor", "segment");
                     if (shotId) next.set("shot", shotId);
                     else next.delete("shot");
                 }
@@ -279,10 +275,12 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
         replaceQuery(
             episodeId,
             (next) => {
-                next.delete("segment");
                 if (!routeEpisodeId) next.set("episode", episodeId);
                 else next.delete("episode");
+                const shot = queries.find((query) => query.data?.episode.id === episodeId)?.data?.shots.find((shot) => shot.id === (shotId || search.get("shot")));
+                if (shot) next.set("segment", String(shot.segmentIndex));
                 if (shotId) {
+                    if (!shot) next.delete("segment");
                     next.set("editor", "media");
                     next.set("shot", shotId);
                     if (kind) next.set("media", kind);
@@ -296,9 +294,14 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
             authorizedMediaNavigation,
         );
     };
+    const closeSegmentEditor = () =>
+        replaceQuery(activeEpisodeId, (next) => {
+            next.delete("editor");
+            next.delete("shot");
+            next.delete("media");
+        });
     const mediaShot = step === "story" && search.get("editor") === "media" ? openDetail?.shots.find((shot) => shot.id === search.get("shot")) : undefined;
-    const mediaAct = mediaShot && openDetail ? dramaSceneGroups(openDetail.shots).find((shots) => shots.some((shot) => shot.id === mediaShot.id)) : undefined;
-    const mediaActIndex = mediaShot && openDetail ? dramaSceneGroups(openDetail.shots).findIndex((shots) => shots.some((shot) => shot.id === mediaShot.id)) : -1;
+    const mediaSegmentShots = mediaShot ? openDetail?.shots.filter((shot) => shot.segmentIndex === mediaShot.segmentIndex) : undefined;
     const requestVideo = (episode: DramaEpisodeRow, segment: DramaSegment) => {
         if (!videoAllowed(episode.id)) {
             message.info(mediaBlocker(episode.id));
@@ -343,7 +346,6 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
             }
         }
         if (!current()) return;
-        setExpanded((value) => new Set(value).add(episodeId));
         navigate(workflowPath(projectId, routeEpisodeId ? episodeId : undefined, next, "story"));
     };
 
@@ -355,8 +357,8 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                     presentation="page"
                     projectId={projectId}
                     shot={mediaShot}
-                    shots={mediaAct}
-                    actLabel={`第 ${mediaActIndex + 1} 幕`}
+                    shots={mediaSegmentShots}
+                    segmentLabel={`第 ${mediaShot.segmentIndex + 1} 段`}
                     initialKind={search.get("media") === "video" ? "video" : search.get("media") === "audio" ? "audio" : "image"}
                     onSelectShot={(shot, kind) => openShot(shot.episodeId, shot.id, kind, true)}
                     onEditText={() => openSegment(mediaShot.episodeId, mediaShot.segmentIndex, mediaShot.id, true)}
@@ -372,6 +374,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                             <Select
                                 className="drama-workflow-production-episode-filter"
                                 aria-label="选择集数"
+                                disabled={busy}
                                 value={all ? "all" : activeEpisodeId}
                                 options={[{ value: "all", label: "全部集" }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title || "未命名"}` }))]}
                                 onChange={(id: string) =>
@@ -391,16 +394,28 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                     })
                                 }
                             />
+                            {summary.production.reservedChapterCount > 0 ? (
+                                <>
+                                    <span className="drama-workflow-production-note" role="status" aria-atomic="true">
+                                        原文 {summary.production.chapterCount + summary.production.reservedChapterCount} 章 · 制作 {episodes.length} 集 · 待制作 {summary.production.reservedChapterCount} 章
+                                    </span>
+                                    {onPickChapters ? (
+                                        <Button size="small" disabled={busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy || retry.isPending} onClick={onPickChapters}>
+                                            继续选章
+                                        </Button>
+                                    ) : null}
+                                </>
+                            ) : null}
                             {step === "story" ? (
                                 <Select
                                     className="drama-workflow-production-status-filter"
-                                    aria-label="筛选镜头视频状态"
+                                    aria-label="筛选段状态"
                                     value={status}
                                     options={[
                                         { value: "all", label: "全部状态" },
-                                        { value: "idle", label: "视频待生成" },
+                                        { value: "idle", label: "待处理" },
                                         { value: "busy", label: "处理中" },
-                                        { value: "ready", label: "视频已就绪" },
+                                        { value: "ready", label: "已就绪" },
                                         { value: "failed", label: "失败" },
                                         { value: "blocked", label: "等待条件" },
                                         { value: "stale", label: "待更新" },
@@ -428,6 +443,22 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                             ) : null}
                         </div>
                     </div>
+                    {step === "story" ? (
+                        <section className="drama-workflow-production-batch" aria-label="已选剧情段批量操作">
+                            <strong>已选 {selected.size} 段</strong>
+                            <WorkflowBatch
+                                projectId={projectId}
+                                revision={summary.production.revision}
+                                targetIds={[...selected]}
+                                targetLabels={selectedLabels}
+                                actions={textConfirmed || readinessCurrent ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
+                                compact
+                                scopeDescription={`范围：实际已选 ${selected.size} 个剧情段，包含跨筛选与切集保留的选择。`}
+                                onChanged={() => refresh()}
+                                onClearSelection={() => selectSegments([...selected], false)}
+                            />
+                        </section>
+                    ) : null}
                     {!episodes.length ? (
                         <div className="drama-workflow-production-empty">
                             <Clapperboard className="size-7" />
@@ -441,10 +472,6 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                               const detail = query?.data;
                               const episodeCanGenerate = videoAllowed(episode.id);
                               const blocker = mediaBlocker(episode.id);
-                              const segments = (detail?.segments || []).filter((segment) => status === "all" || segmentState(segment, episodeCanGenerate ? "video" : "prompt").tone === status);
-                              const located = episode.id === activeEpisodeId && segmentIndex !== undefined && segments.some((segment, index) => segment.index === segmentIndex && index >= PREVIEW_LIMIT);
-                              const showAll = expanded.has(episode.id) || located;
-                              const shown = showAll ? segments : segments.slice(0, PREVIEW_LIMIT);
                               const scriptError = textFailure(episode, detail);
                               const current = detail?.episode || episode;
                               const failedWithoutSegments = Boolean(current.error) && current.stage !== "render" && (detail ? !detail.segments.length : episode.stats.segments === 0);
@@ -455,7 +482,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                           <div>
                                               <h3>{episode.title || `第 ${episode.number} 集`}</h3>
                                               <p>
-                                                  {detail ? dramaSceneGroups(detail.shots).length : "—"} 幕 · {episode.shotCount} 镜
+                                                  {detail?.segments.length ?? episode.stats.segments} 段 · {detail?.shots.length ?? episode.shotCount} 镜
                                               </p>
                                               {blocker ? <p role="status">{blocker}</p> : guideStep === "story" ? <p role="status">本集文字已就绪，可独立生成视频；其他集可继续处理。</p> : null}
                                           </div>
@@ -485,7 +512,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                       {detail && !detail.segments.length && !current.error && !scriptError ? (
                                           <p className="drama-workflow-production-empty">{detail.jobs.some((job) => job.status === "queued" || job.status === "running") ? "正在准备本集剧本与分镜，完成后自动显示" : "本集还没有分镜"}</p>
                                       ) : null}
-                                      {detail?.shots.length ? (
+                                      {detail?.segments.length ? (
                                           <WorkflowStoryboardPage
                                               summary={summary}
                                               detail={detail}
@@ -496,70 +523,25 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                               onOpenShot={(shot, kind) => openShot(episode.id, shot.id, kind)}
                                               onEditShot={(shot) => openSegment(episode.id, shot.segmentIndex, shot.id)}
                                               onOpenCast={(id) => setCastSelection({ projectId, id })}
+                                              segmentIndex={episode.id === activeEpisodeId ? segmentIndex : undefined}
+                                              onSegmentChange={(index) =>
+                                                  replaceQuery(episode.id, (next) => {
+                                                      next.set("segment", String(index));
+                                                      next.delete("editor");
+                                                      next.delete("shot");
+                                                      next.delete("media");
+                                                      if (all) next.set("scope", "all");
+                                                      else next.delete("scope");
+                                                      if (!routeEpisodeId) next.set("episode", episode.id);
+                                                      else next.delete("episode");
+                                                  })
+                                              }
+                                              onOpenSegment={(index) => openSegment(episode.id, index)}
+                                              onGenerateSegment={(segment) => requestVideo(episode, segment)}
+                                              onWriteSegmentPrompt={(segment) => requestPrompt(episode, segment)}
+                                              selectedSegmentIds={selected}
+                                              onSelectSegments={selectSegments}
                                           />
-                                      ) : null}
-                                      {detail?.segments.length ? (
-                                          <details className="drama-workflow-production-advanced">
-                                              <summary>本集连续视频 · {detail.segments.length} 段</summary>
-                                              {!segments.length ? <p className="drama-workflow-production-empty">本集没有符合此状态的剧情段</p> : null}
-                                              {segments.length ? (
-                                                  <label className="drama-workflow-batch-episode">
-                                                      <input
-                                                          type="checkbox"
-                                                          aria-label={`选择第 ${episode.number} 集筛选出的 ${segments.length} 段`}
-                                                          checked={segments.every((segment) => selected.has(segment.id))}
-                                                          onChange={(event) =>
-                                                              selectSegments(
-                                                                  segments.map((segment) => segment.id),
-                                                                  event.target.checked,
-                                                              )
-                                                          }
-                                                      />
-                                                      选择本集 {segments.length} 段
-                                                  </label>
-                                              ) : null}
-                                              <div className="drama-workflow-production-grid">
-                                                  {shown.map((segment) => (
-                                                      <div key={segment.id} className="drama-workflow-batch-segment" data-selected={selected.has(segment.id)}>
-                                                          <label className="drama-workflow-batch-check">
-                                                              <input
-                                                                  type="checkbox"
-                                                                  aria-label={`选择第 ${episode.number} 集第 ${segment.index + 1} 段`}
-                                                                  checked={selected.has(segment.id)}
-                                                                  onChange={(event) => selectSegments([segment.id], event.target.checked)}
-                                                              />
-                                                          </label>
-                                                          <WorkflowSegmentCard
-                                                              episodeNumber={episode.number}
-                                                              segment={segment}
-                                                              shots={detail?.shots.filter((shot) => shot.segmentIndex === segment.index) || []}
-                                                              textConfirmed={episodeCanGenerate}
-                                                              onOpen={() => openSegment(episode.id, segment.index)}
-                                                              onGenerate={() => requestVideo(episode, segment)}
-                                                              onWritePrompt={() => requestPrompt(episode, segment)}
-                                                          />
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                              {segments.length > PREVIEW_LIMIT ? (
-                                                  <Button
-                                                      className="drama-workflow-production-expand"
-                                                      type="text"
-                                                      icon={<ChevronDown className="size-3.5" />}
-                                                      aria-expanded={showAll}
-                                                      onClick={() =>
-                                                          setExpanded((value) => {
-                                                              const next = new Set(value);
-                                                              if (next.has(episode.id)) next.delete(episode.id);
-                                                              else next.add(episode.id);
-                                                              return next;
-                                                          })
-                                                      }
-                                                  >
-                                                      {showAll ? "收起本集" : `展开其余 ${segments.length - PREVIEW_LIMIT} 段`}
-                                                  </Button>
-                                              ) : null}
-                                          </details>
                                       ) : null}
                                   </section>
                               );
@@ -641,17 +623,8 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                         : null}
                     {step === "story" ? (
                         <details className="drama-workflow-production-advanced">
-                            <summary>连续视频与批量制作{selected.size ? ` · 已选 ${selected.size} 项` : ""}</summary>
+                            <summary>文字制作进度</summary>
                             <p className="drama-workflow-production-note">按连续剧情范围生成的视频与逐镜媒体分别保留。此处可继续管理已有视频和批次。</p>
-                            <WorkflowBatch
-                                projectId={projectId}
-                                revision={summary.production.revision}
-                                targetIds={[...selected]}
-                                targetLabels={selectedLabels}
-                                actions={textConfirmed || readinessCurrent ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
-                                onChanged={() => refresh()}
-                                onClearSelection={() => selectSegments([...selected], false)}
-                            />
                             {visibleEpisodes.length ? (
                                 <section className="drama-workflow-production-progress" aria-label="文字制作进度">
                                     <div className="drama-workflow-production-progress-meta">
@@ -694,10 +667,10 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                     summary={summary}
                     detail={openDetail}
                     episodeId={activeEpisodeId}
-                    segmentIndex={segmentIndex}
+                    segmentIndex={search.get("editor") === "segment" ? segmentIndex : undefined}
                     shotId={search.get("shot") || undefined}
                     castById={castQuery.byId}
-                    onClose={() => openSegment(activeEpisodeId, null)}
+                    onClose={closeSegmentEditor}
                     onNavigate={(index, shotId) => openSegment(activeEpisodeId, index, shotId)}
                     onGenerate={(segment, model) => {
                         if (!currentEpisode) return;
@@ -705,16 +678,14 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                             message.info(mediaBlocker(currentEpisode.id));
                             return;
                         }
-                        openSegment(activeEpisodeId, null);
+                        closeSegmentEditor();
                         media.requestVideo(currentEpisode, segment, model);
                     }}
                     onOpenCast={(id) => setCastSelection({ projectId, id })}
                 />
             ) : null}
             {castSelection?.projectId === projectId ? (
-                <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => void refresh()}>
-                    <WorkflowImpact projectId={projectId} revision={summary.production.revision} castId={castSelection.id} />
-                </CastEditorDialog>
+                <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => void refresh()} />
             ) : null}
             {exportProjectId === projectId ? <AssetPackageModal key={projectId} open projectId={projectId} episodes={episodes} onClose={() => setExportProjectId(undefined)} /> : null}
             <DramaMediaActionDialog controller={media} />

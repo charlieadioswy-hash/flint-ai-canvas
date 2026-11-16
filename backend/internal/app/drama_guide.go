@@ -80,6 +80,12 @@ func (s *Service) withDramaTextEdit(projectID string, expected *int64, rewindAss
 }
 
 func (s *Service) withDramaRevisionEdit(projectID string, expected *int64, rewindAssets, productionEdit bool, edit func(*repository.Repository) error) error {
+	return s.withDramaRevisionEditDecision(projectID, expected, productionEdit, func(tx *repository.Repository) (bool, error) {
+		return rewindAssets, edit(tx)
+	})
+}
+
+func (s *Service) withDramaRevisionEditDecision(projectID string, expected *int64, productionEdit bool, edit func(*repository.Repository) (bool, error)) error {
 	return dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
 		p, err := tx.DramaProductionForUpdate(projectID)
 		if err != nil {
@@ -89,7 +95,7 @@ func (s *Service) withDramaRevisionEdit(projectID string, expected *int64, rewin
 			if expected != nil && (!productionEdit || *expected != p.Revision) {
 				return repository.ErrDramaGuideChanged
 			}
-			if err := edit(tx); err != nil {
+			if _, err := edit(tx); err != nil {
 				return err
 			}
 			if productionEdit {
@@ -107,7 +113,8 @@ func (s *Service) withDramaRevisionEdit(projectID string, expected *int64, rewin
 		if active {
 			return dramaGuideConflict("文字任务正在进行，请完成后再应用修改")
 		}
-		if err := edit(tx); err != nil {
+		rewindAssets, err := edit(tx)
+		if err != nil {
 			return err
 		}
 		fields := map[string]any{}

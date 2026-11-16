@@ -148,10 +148,14 @@ type DramaEpisode struct {
 	ChapterIDsJSON string `json:"chapterIdsJson" gorm:"type:text"`
 	// SourceFormat 是本集原文的素材类型（novel / script / storyboard），空串按小说处理。
 	SourceFormat string `json:"sourceFormat" gorm:"size:16"`
-	Stage        string `json:"stage" gorm:"index;size:16"`
-	Error        string `json:"error" gorm:"type:text"`
-	ShotCount    int    `json:"shotCount"`
-	DurationMs   int64  `json:"durationMs"`
+	// 空或 inherit 始终读取当前全剧默认；independent 保留本集独立画风。
+	StyleMode   string `json:"styleMode,omitempty" gorm:"size:16;not null;default:''"`
+	StyleName   string `json:"styleName,omitempty" gorm:"size:60;not null;default:''"`
+	StylePrompt string `json:"stylePrompt,omitempty" gorm:"type:text;not null;default:''"`
+	Stage       string `json:"stage" gorm:"index;size:16"`
+	Error       string `json:"error" gorm:"type:text"`
+	ShotCount   int    `json:"shotCount"`
+	DurationMs  int64  `json:"durationMs"`
 	// Approved 表示用户已确认本集视频提示词（逐集确认模式下的审阅关口）。
 	Approved bool `json:"approved"`
 	// MediaReleased 为 true 后才为本集生成视频；手动模式下由用户确认剧本与提示词后打开。

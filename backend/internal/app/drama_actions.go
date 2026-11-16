@@ -29,6 +29,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 	}
 	fields := map[string]any{}
 	if req.Settings != nil {
+		if err := req.Settings.ValidateStylePrompt(); err != nil {
+			return DramaSummary{}, BadAuthRequest(err.Error())
+		}
 		if err := req.Settings.validateDramaType(); err != nil {
 			return DramaSummary{}, err
 		}
@@ -408,6 +411,10 @@ func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDr
 }
 
 func (s *Service) UpdateDramaCast(userID string, projectID string, castID string, req UpdateDramaCastRequest) (model.DramaCast, error) {
+	if req.ImageOptions != nil || req.ExpectedCastRevision != nil {
+		cast, _, err := s.saveDramaCastWorkspace(userID, projectID, castID, req, nil)
+		return cast, err
+	}
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return model.DramaCast{}, err
@@ -525,6 +532,13 @@ func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCa
 
 // UpdateDramaCastLook 只保存造型设定；外观变化可按请求标记下游视频过期，图片始终由用户单独请求生成。
 func (s *Service) UpdateDramaCastLook(userID, projectID, lookID string, req DramaCastLookRequest) (map[string]any, error) {
+	if req.ImageOptions != nil || req.ExpectedCastRevision != nil {
+		cast, affected, err := s.saveDramaCastWorkspace(userID, projectID, lookID, UpdateDramaCastRequest{ExpectedRevision: req.ExpectedRevision, ExpectedCastRevision: req.ExpectedCastRevision, ImageOptions: req.ImageOptions, ImagePrompt: req.ImagePrompt, ImageStyleID: req.ImageStyleID, ImageStyleName: req.ImageStyleName, ImageStylePrompt: req.ImageStylePrompt}, &req)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"look": cast, "affectedSegments": affected}, nil
+	}
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return nil, err

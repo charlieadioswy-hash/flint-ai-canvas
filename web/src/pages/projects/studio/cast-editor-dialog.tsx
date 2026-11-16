@@ -6,7 +6,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import type { DramaCast, DramaSummary } from "@/services/api/drama";
 import { CAST_KIND_LABEL } from "../drama-shared";
 import { WorkflowCastAssistance } from "../workflow-cast-assistance";
-import { CastEditor, castEditorFormKey } from "./panels";
+import { CastEditor } from "./panels";
 import { useOpenDramaCanvas } from "./use-studio";
 import "./cast-editor-dialog.css";
 
@@ -86,7 +86,6 @@ function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged, ch
                 <div className="drama-cast-dialog-body thin-scrollbar">
                     {current ? (
                         <CastEditor
-                            key={castEditorFormKey(current)}
                             projectId={projectId}
                             cast={current}
                             parent={current.parentId ? cast.find((item) => item.id === current.parentId && item.projectId === projectId) : undefined}

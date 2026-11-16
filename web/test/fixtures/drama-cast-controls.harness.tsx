@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { DramaCast, DramaSegment, DramaSegmentReferencePatch, DramaSummary } from "../../src/services/api/drama";
+import type { DramaCast, DramaSegment, DramaSegmentReferencePatch, DramaSummary, DramaWorkflowImpact } from "../../src/services/api/drama";
 
 const dom = new Window({ url: "http://localhost/projects/drama" });
 const globals = new Map<string, PropertyDescriptor | undefined>();
@@ -49,6 +49,7 @@ beforeEach(() => {
     document.body.append(host);
     root = createRoot(host);
     client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    spyOn(api, "getDramaCastImpact").mockImplementation(async (_projectId, castId) => ({ kind: "cast", castId, revision: 1, segments: 0, episodes: 0, affectedSegments: 0, assetIds: [castId], directSegments: [], continuitySegments: [], message: "" }));
 });
 afterEach(async () => {
     await act(async () => root.unmount());
@@ -176,6 +177,42 @@ test("saved draft generates only through its separate generation button", async 
     expect(host.textContent).toContain("已保存，待生成或上传");
     expect(generate).not.toHaveBeenCalled();
     await click("生成造型图");
+    expect(generate).toHaveBeenCalledWith("project", "look", false);
+});
+
+test("重新生成造型在已有依赖视频时提示，取消不生成，确认后才提交", async () => {
+    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+    spyOn(api, "getDramaCastImpact").mockResolvedValue({
+        kind: "cast",
+        castId: "look",
+        revision: 1,
+        directSegments: [{ id: "s1", episodeId: "e2", episodeNumber: 2, episodeTitle: "晚宴", segmentIndex: 3, revision: 1, hasVideo: true, videoStatus: "ready" }],
+        continuitySegments: [],
+    } as unknown as DramaWorkflowImpact);
+    await renderLooks([{ ...look, imageResourceId: "old-look" }]);
+    await click("重新生成");
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("第 2 集 · 第 4 段");
+    expect(generate).not.toHaveBeenCalled();
+    await click("取消", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
+    expect(generate).not.toHaveBeenCalled();
+    await click("重新生成");
+    await click("继续生成", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
+    expect(generate).toHaveBeenCalledWith("project", "look", false);
+});
+
+test("锁定造型的取消不解锁，确认后才解锁生成且不出现空影响提示", async () => {
+    const unlock = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: look });
+    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+    await renderLooks([{ ...look, locked: true, imageResourceId: "custom-look" }]);
+    await click("重新生成");
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("解锁当前自定义图");
+    expect(document.querySelector('[aria-label="已有视频影响范围"]')).toBeNull();
+    await click("取消", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
+    expect(unlock).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    await click("重新生成");
+    await click("解锁并生成", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
+    expect(unlock).toHaveBeenCalledWith("project", "look", { locked: false });
     expect(generate).toHaveBeenCalledWith("project", "look", false);
 });
 

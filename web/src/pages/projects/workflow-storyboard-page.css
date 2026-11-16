@@ -7,7 +7,7 @@
     min-width: 0;
 }
 
-.drama-storyboard-acts {
+.drama-storyboard-segments {
     display: flex;
     flex-direction: column;
     align-self: start;
@@ -22,24 +22,42 @@
     border-right: 1px solid var(--drama-line);
 }
 
-.drama-storyboard-acts > header,
-.drama-storyboard-act-toolbar,
-.drama-storyboard-act-actions,
+.drama-storyboard-segments > header,
+.drama-storyboard-segment-toolbar,
+.drama-storyboard-segment-actions,
 .drama-storyboard-shot-content > header {
     display: flex;
     align-items: center;
     gap: var(--space-2);
 }
 
-.drama-storyboard-acts > header {
+.drama-storyboard-segments > header {
     justify-content: space-between;
     padding: var(--space-3) var(--space-2);
     font-size: var(--fs-tiny);
     color: var(--drama-muted);
 }
 
-.drama-storyboard-acts > button {
+.drama-storyboard-segment-toolbar[hidden] {
+    display: none;
+}
+
+.drama-storyboard-segment-row {
     display: flex;
+    align-items: start;
+    gap: var(--space-2);
+    border-radius: var(--radius-md);
+}
+
+.drama-storyboard-segment-row > input {
+    margin-top: var(--space-4);
+    flex-shrink: 0;
+}
+
+.drama-storyboard-segment-row > button {
+    display: flex;
+    flex: 1;
+    min-width: 0;
     gap: var(--space-2);
     padding: var(--space-4) var(--space-2);
     border: 0;
@@ -51,37 +69,59 @@
         background 160ms ease;
 }
 
-.drama-storyboard-acts > button[aria-pressed="true"] {
-    background: transparent;
+.drama-storyboard-segment-row[data-selected="true"] {
+    background: var(--control-selected-bg);
+}
+
+.drama-storyboard-segment-row > button[aria-pressed="true"] {
     color: var(--control-selected-fg);
 }
 
-.drama-storyboard-acts > button:hover {
+.drama-storyboard-segment-row:hover {
     background: var(--surface-hover);
 }
 
-.drama-storyboard-acts > button > span:last-child {
+.drama-storyboard-segment-row > button > span:last-child {
     display: grid;
     gap: var(--space-2);
     min-width: 0;
     font-size: var(--fs-tiny);
     line-height: 1.6;
 }
-.drama-storyboard-acts strong {
+.drama-storyboard-segments strong {
     font-weight: 500;
+    overflow-wrap: anywhere;
 }
 
-.drama-storyboard-acts small,
-.drama-storyboard-acts > button > span > span {
+.drama-storyboard-segments small {
     color: var(--drama-muted);
     overflow-wrap: anywhere;
 }
 
-.drama-storyboard-act {
+.drama-storyboard-segment-select-all {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-storyboard-segments input[type="checkbox"] {
+    accent-color: var(--control-check-bg);
+}
+
+.drama-storyboard-segments button:focus-visible,
+.drama-storyboard-segments input:focus-visible {
+    outline: 2px solid var(--workspace-accent);
+    outline-offset: 2px;
+}
+
+.drama-storyboard-segment {
     min-width: 0;
 }
 
-.drama-storyboard-act-toolbar {
+.drama-storyboard-segment-toolbar {
     flex-wrap: wrap;
     justify-content: space-between;
     margin-bottom: var(--space-3);
@@ -89,27 +129,63 @@
     border-bottom: 1px solid var(--drama-line);
 }
 
-.drama-storyboard-act-toolbar h4 {
+.drama-storyboard-segment-toolbar h4 {
     font-size: var(--fs-label);
     font-weight: 600;
 }
 
-.drama-storyboard-act-toolbar h4 span {
+.drama-storyboard-segment-toolbar h4 span {
     margin-left: var(--space-2);
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
     font-weight: 400;
 }
 
-.drama-storyboard-act-toolbar p,
+.drama-storyboard-segment-toolbar p,
 .drama-storyboard-filter-note {
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
     margin-top: var(--space-1);
 }
 
-.drama-storyboard-act-actions {
+.drama-storyboard-segment-actions {
     flex-wrap: wrap;
+    align-items: stretch;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.drama-storyboard-action-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding-block: var(--space-1);
+}
+
+.drama-storyboard-action-group > span {
+    color: var(--drama-muted);
+    font-size: var(--fs-tiny);
+}
+
+.drama-storyboard-action-group .ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 32px;
+}
+
+.drama-storyboard-action-group .ant-btn .lucide {
+    flex: none;
+    width: 16px;
+    height: 16px;
+}
+
+.drama-storyboard-segment-preview {
+    width: min(100%, 520px);
+    margin-bottom: var(--space-4);
 }
 
 .drama-storyboard-shots-grid {
@@ -284,7 +360,7 @@
         grid-template-columns: minmax(0, 1fr);
         gap: var(--space-3);
     }
-    .drama-storyboard-acts {
+    .drama-storyboard-segments {
         position: static;
         flex-direction: row;
         max-height: none;
@@ -294,16 +370,17 @@
         border-right: 0;
         border-bottom: 1px solid var(--drama-line);
     }
-    .drama-storyboard-acts > header {
+    .drama-storyboard-segments > header,
+    .drama-storyboard-segment-select-all {
         flex: none;
     }
-    .drama-storyboard-acts > button {
+    .drama-storyboard-segment-row {
         flex: 0 0 180px;
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .drama-storyboard-acts > button {
+    .drama-storyboard-segment-row > button {
         transition: none;
     }
 }

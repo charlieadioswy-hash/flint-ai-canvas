@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "./style-limits";
 
 import {
     composeDramaStyleId,
@@ -34,11 +35,11 @@ describe("independent drama style composition", () => {
                 assert.deepEqual(parseDramaStyleId(id), { formId: form.id, themeId: theme.id });
                 assert.equal(style.name, `${form.name} · ${theme.name}`);
                 assert.deepEqual(style.detail, { medium: form.medium, world: theme.world, look: theme.look, wardrobe: theme.wardrobe, forbid: form.forbid });
-                // 后端按 Unicode 码点数限制字段；作品风格提示词的 1200 字约束更严格。
+                // 后端按 Unicode 码点数限制字段；素材独立风格与作品／单集风格分别遵守各自合同。
                 assert.ok([...style.id].length <= 64, `${id}: style id`);
                 assert.ok([...style.name].length <= 120, `${id}: style name`);
                 assert.ok([...style.prompt].length <= 4000, `${id}: cast style prompt`);
-                assert.ok([...style.prompt].length <= 1200, `${id}: project style prompt`);
+                assert.ok([...style.prompt].length <= DRAMA_STYLE_PROMPT_MAX_LENGTH, `${id}: project and episode style prompt`);
                 assert.doesNotMatch(style.prompt, /竖屏|横屏|画幅|\d+\s*[:：]\s*\d+/);
                 assert.equal(
                     DRAMA_STYLES.some((preset) => preset.id === id),

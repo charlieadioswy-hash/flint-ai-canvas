@@ -39,7 +39,7 @@ type Props = {
     onChanged?: () => void;
     presentation?: "dialog" | "page";
     shots?: DramaShot[];
-    actLabel?: string;
+    segmentLabel?: string;
     initialKind?: DramaShotMediaKind;
     onSelectShot?: (shot: DramaShot, kind: DramaShotMediaKind) => void;
     onEditText?: () => void;
@@ -107,14 +107,16 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
             ))}
         </nav>
     );
+    const segmentShots = props.shots?.filter((shot) => shot.episodeId === props.shot.episodeId && shot.segmentIndex === props.shot.segmentIndex) || [];
+    const segmentLabel = props.segmentLabel || `第 ${props.shot.segmentIndex + 1} 段`;
     const shotStrip =
-        props.shots?.length && props.onSelectShot ? (
+        segmentShots.length && props.onSelectShot ? (
             <footer className="drama-shot-media-strip">
                 <strong>
-                    {props.actLabel || "本幕"} · 共 {props.shots.length} 镜
+                    {segmentLabel} · 共 {segmentShots.length} 镜
                 </strong>
-                <nav aria-label="本幕镜头" className="thin-scrollbar">
-                    {props.shots.map((shot) => (
+                <nav aria-label="本段镜头" className="thin-scrollbar">
+                    {segmentShots.map((shot) => (
                         <ShotStripItem
                             key={shot.id}
                             shot={shot}
@@ -138,7 +140,7 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                     </Button>
                     <div>
                         <h3>
-                            {props.actLabel} <span>分镜 {props.shot.position + 1}</span>
+                            {segmentLabel} <span>分镜 {props.shot.position + 1}</span>
                         </h3>
                         <p>
                             {props.shot.scene || "未命名场景"} · {(props.shot.durationMs / 1000).toFixed(1)} 秒

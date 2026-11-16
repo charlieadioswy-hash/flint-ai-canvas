@@ -211,83 +211,135 @@ func TestDramaSceneSplitCameraPresetReachesVideoRequest(t *testing.T) {
 	}
 }
 
-func TestDramaSceneSplitKeepsEveryOriginalSegmentBoundary(t *testing.T) {
+func TestDramaSceneSplitLegacySceneScopeIsStaleAndCannotBeAdopted(t *testing.T) {
+	s, db, req := sceneSplitFixture(t)
+	result := sceneSplitComplete(t, s, db, req, sceneSplitShots(3))
+	task, _ := s.repo.Task(result.TaskID)
+	var input map[string]any
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	input["metadata"].(map[string]any)["shotIds"] = []string{"scene-shot-1", "scene-shot-2", "scene-outside"}
+	encoded, _ := json.Marshal(input)
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Update("input_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+	history, err := s.DramaSceneSplits("user", "scene-project", "scene-episode")
+	if err != nil || len(history) != 1 || !history[0].Stale || history[0].Text == "" {
+		t.Fatalf("legacy scene scope lost its historical draft or remained adoptable: %+v %v", history, err)
+	}
+	before, _ := s.repo.DramaShots("scene-episode")
+	if _, err := s.AdoptDramaSceneSplit("user", "scene-project", "scene-episode", DramaSceneSplitAdoptRequest{ExpectedRevision: req.ExpectedRevision, EpisodeRevision: req.EpisodeRevision, TakeID: result.TakeID}); err == nil {
+		t.Fatal("legacy cross-segment scope was adopted")
+	}
+	after, _ := s.repo.DramaShots("scene-episode")
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("legacy scope changed saved shots")
+	}
+}
+
+func TestDramaSceneSplitRequiresCompleteSingleSegment(t *testing.T) {
 	s, db, req := sceneSplitFixture(t)
 	if err := db.Model(&model.DramaShot{}).Where("id = ?", "scene-outside").Update("scene", "卧室").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.DramaShot{ID: "scene-after", ProjectID: "scene-project", EpisodeID: "scene-episode", Position: 3, SegmentIndex: 2, Scene: "院子", DurationMs: 2000}).Error; err != nil {
+	for name, ids := range map[string][]string{
+		"partial_start": {"scene-shot-1"},
+		"partial_end":   {"scene-shot-2"},
+		"cross_segment": {"scene-shot-1", "scene-shot-2", "scene-outside"},
+		"reversed":      {"scene-shot-2", "scene-shot-1"},
+		"duplicate":     {"scene-shot-1", "scene-shot-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := req
+			bad.ShotIDs = ids
+			if _, err := s.PreflightDramaSceneSplit("user", "scene-project", "scene-episode", bad); err == nil {
+				t.Fatal("invalid segment scope accepted")
+			}
+		})
+	}
+	for _, ids := range [][]string{req.ShotIDs, {"scene-outside"}} {
+		valid := req
+		valid.ShotIDs = ids
+		preflight, err := s.PreflightDramaSceneSplit("user", "scene-project", "scene-episode", valid)
+		if err != nil || !preflight.Ready {
+			t.Fatalf("same scene in a neighboring segment enlarged the required scope: %+v %v", preflight, err)
+		}
+	}
+	if err := db.Delete(&model.DramaSegment{}, "id = ?", "scene-segment-0").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.DramaSegment{ID: "scene-segment-2", ProjectID: "scene-project", EpisodeID: "scene-episode", SegmentIndex: 2, Revision: 1, PromptStatus: model.DramaMediaReady}).Error; err != nil {
-		t.Fatal(err)
-	}
-	req.ShotIDs = append(req.ShotIDs, "scene-outside")
-	req.TargetShotCount = 1
 	if _, err := s.PreflightDramaSceneSplit("user", "scene-project", "scene-episode", req); err == nil {
-		t.Fatal("a segment would be left empty")
-	}
-	req.TargetShotCount = 2
-	result := sceneSplitComplete(t, s, db, req, sceneSplitShots(2))
-	if _, err := s.AdoptDramaSceneSplit("user", "scene-project", "scene-episode", DramaSceneSplitAdoptRequest{ExpectedRevision: req.ExpectedRevision, EpisodeRevision: req.EpisodeRevision, TakeID: result.TakeID}); err != nil {
-		t.Fatal(err)
-	}
-	shots, _ := s.repo.DramaShots("scene-episode")
-	if len(shots) != 3 || shots[0].SegmentIndex != 0 || shots[1].SegmentIndex != 1 || shots[2].ID != "scene-after" || shots[2].SegmentIndex != 2 {
-		t.Fatalf("original boundaries changed: %+v", shots)
-	}
-	segments, _ := s.repo.DramaSegments("scene-episode")
-	if len(segments) != 3 || segments[0].ID != "scene-segment-0" || segments[1].ID != "scene-segment-1" || segments[2].Revision != 1 {
-		t.Fatalf("segment identities or outside changed: %+v", segments)
+		t.Fatal("shots without a real segment accepted")
 	}
 }
 
-func TestDramaSceneSplitKeepsDialogueWithinEachOriginalSegment(t *testing.T) {
-	for _, moveDialogue := range []bool{false, true} {
-		t.Run(map[bool]string{false: "preserved", true: "moved"}[moveDialogue], func(t *testing.T) {
+func TestDramaSceneSplitAllowsSourceScenesWithinOneSegment(t *testing.T) {
+	for _, mutation := range []string{"valid", "outside_scene", "new_scene", "outside_dialogue", "ambiguous_scene"} {
+		t.Run(mutation, func(t *testing.T) {
 			s, db, req := sceneSplitFixture(t)
-			for id, dialogue := range map[string]string{"scene-shot-1": "第一句。", "scene-shot-2": "第二句。", "scene-outside": "第三句。"} {
-				if err := db.Model(&model.DramaShot{}).Where("id = ?", id).Updates(map[string]any{"scene": "卧室", "speaker": "秦子文", "dialogue": dialogue}).Error; err != nil {
+			for id, updates := range map[string]map[string]any{
+				"scene-shot-1":  {"scene_cast_id": "bedroom", "segment_title": "起身出门"},
+				"scene-shot-2":  {"scene": "走廊", "scene_cast_id": "corridor", "segment_title": "起身出门"},
+				"scene-outside": {"speaker": "秦子文", "dialogue": "段外独白。"},
+			} {
+				if err := db.Model(&model.DramaShot{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 					t.Fatal(err)
 				}
 			}
-			req.ShotIDs, req.TargetShotCount = append(req.ShotIDs, "scene-outside"), 4
 			before, _ := s.repo.DramaShots("scene-episode")
-			dialogues := []string{"第一句。", "第二句。", "第三句。", ""}
-			if moveDialogue {
-				dialogues = []string{"第一句。", "", "第二句。", "第三句。"}
-			}
-			shots := sceneSplitShots(4)
-			for index, dialogue := range dialogues {
-				shots[index].Speaker, shots[index].Dialogue = "秦子文", dialogue
-				if dialogue == "" {
-					shots[index].Speaker = ""
+			shots := sceneSplitShots(3)
+			shots[1].Scene = "走廊"
+			switch mutation {
+			case "outside_scene":
+				shots[1].Scene = "院子"
+			case "new_scene":
+				shots[1].Scene = "猜测场景"
+			case "outside_dialogue":
+				shots[1].Speaker, shots[1].Dialogue = "秦子文", "段外独白。"
+			case "ambiguous_scene":
+				if err := db.Model(&model.DramaShot{}).Where("id = ?", "scene-shot-2").Update("scene", "卧室").Error; err != nil {
+					t.Fatal(err)
 				}
+				if _, err := s.PreflightDramaSceneSplit("user", "scene-project", "scene-episode", req); err == nil {
+					t.Fatal("ambiguous scene references passed preflight")
+				}
+				var tasks int64
+				db.Model(&model.Task{}).Where("project_id = ?", "scene-project").Count(&tasks)
+				if tasks != 0 {
+					t.Fatal("ambiguous scene references created a task")
+				}
+				return
 			}
 			result := sceneSplitComplete(t, s, db, req, shots)
 			task, _ := s.repo.Task(result.TaskID)
-			if !strings.Contains(task.Prompt, "输出第1到2镜属于原第1段") || !strings.Contains(task.Prompt, "输出第3到4镜属于原第2段") {
-				t.Fatal("confirmed segment allocation missing from actual model request")
+			if !strings.Contains(task.Prompt, "仅重拆上述原第1段的全部镜头") || !strings.Contains(task.Prompt, "起身出门") || strings.Contains(task.Prompt, "scene-outside") || strings.Contains(task.Prompt, "段外独白。") {
+				t.Fatal("actual model request was not bounded to the complete source segment")
 			}
 			_, err := s.AdoptDramaSceneSplit("user", "scene-project", "scene-episode", DramaSceneSplitAdoptRequest{ExpectedRevision: req.ExpectedRevision, EpisodeRevision: req.EpisodeRevision, TakeID: result.TakeID})
-			if moveDialogue && err == nil {
-				t.Fatal("adoption accepted dialogue moved across the original segment boundary")
-			}
-			if !moveDialogue && err != nil {
-				t.Fatal(err)
-			}
 			after, _ := s.repo.DramaShots("scene-episode")
-			for _, index := range []int{0, 1} {
-				if dramaSceneSegmentDialogue(before, index) != dramaSceneSegmentDialogue(after, index) {
-					t.Fatal("an original segment lost or received dialogue")
+			if mutation != "valid" {
+				if err == nil {
+					t.Fatal("adoption accepted an invalid source-segment result")
 				}
-			}
-			if moveDialogue {
 				var snapshots int64
 				db.Model(&model.DramaSceneRevision{}).Count(&snapshots)
-				if snapshots != 0 || len(after) != len(before) {
+				if snapshots != 0 || !reflect.DeepEqual(before, after) {
 					t.Fatal("rejected adoption changed saved shots or history")
 				}
+				return
+			}
+			if err != nil || len(after) != 4 {
+				t.Fatalf("cross-scene segment adoption failed: %+v %v", after, err)
+			}
+			for i, scene := range []string{"卧室", "走廊", "卧室"} {
+				if after[i].SegmentIndex != 0 || after[i].SegmentTitle != "起身出门" || after[i].Scene != scene || after[i].SceneCastID != map[string]string{"卧室": "bedroom", "走廊": "corridor"}[scene] {
+					t.Fatalf("source scene identity or segment identity changed: %+v", after[i])
+				}
+			}
+			before[2].Position = after[3].Position
+			if !reflect.DeepEqual(before[2], after[3]) {
+				t.Fatal("a shot outside the source segment changed")
 			}
 		})
 	}

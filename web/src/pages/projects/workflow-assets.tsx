@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Select } from "antd";
 import { ArrowRight, ChevronLeft, ChevronRight, Gem, MapPinned, Plus, UsersRound } from "lucide-react";
 
-import { createDramaCast, updateDramaSettings, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { createDramaCast, updateDramaWorkflowStyle, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { dramaDrawingConfiguration } from "@/lib/drama/drawing-configuration";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { AssetSchemePicker } from "./asset-scheme";
@@ -12,7 +13,6 @@ import { GuideAssets } from "./guide-panels";
 import { WorkflowAssetScope } from "./workflow-asset-scope";
 import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowCharacterLibrary } from "./workflow-character-library";
-import { WorkflowImpact } from "./workflow-impact";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { dramaKeys } from "./studio/use-studio";
@@ -24,6 +24,7 @@ export type WorkflowAssetsProps = {
     variant?: "library" | "episode";
     episodeId?: string;
     onEpisodeChange?: (episodeId: string) => void;
+    onPickChapters?: () => void;
     summary: DramaSummary;
     cast: DramaCast[];
     loading?: boolean;
@@ -60,6 +61,7 @@ function WorkflowAssetsSession({
     variant = "episode",
     episodeId,
     onEpisodeChange,
+    onPickChapters,
     loading = false,
     busy = false,
     error,
@@ -155,9 +157,11 @@ function WorkflowAssetsSession({
         mutationFn: async (input: { draft: SchemeDraft; settings: DramaSettings; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
             if (input.draft.revision !== latest.current.revision) throw new Error("参考图方案已有更新，未保存。请重新载入或放弃修改。");
-            return updateDramaSettings(input.ticket.projectId, {
+            return updateDramaWorkflowStyle(input.ticket.projectId, {
                 expectedRevision: input.draft.revision,
-                settings: { ...input.settings, assets: input.draft.value },
+                styleName: input.settings.styleName,
+                stylePrompt: input.settings.stylePrompt,
+                drawing: dramaDrawingConfiguration({ ...input.settings, assets: input.draft.value }),
             });
         },
         onSuccess: (_result, input) => {
@@ -248,6 +252,18 @@ function WorkflowAssetsSession({
                                 onClick={() => selectEpisode(episodes[episodeIndex + 1]?.id || "")}
                             />
                         </nav>
+                    ) : null}
+                    {summary.production.reservedChapterCount > 0 ? (
+                        <>
+                            <span className="drama-workflow-assets-column-count" role="status" aria-atomic="true">
+                                原文 {summary.production.chapterCount + summary.production.reservedChapterCount} 章 · 制作 {episodes.length} 集 · 待制作 {summary.production.reservedChapterCount} 章
+                            </span>
+                            {onPickChapters ? (
+                                <Button size="small" disabled={frozen || dirty || Boolean(editingId)} onClick={onPickChapters}>
+                                    继续选章
+                                </Button>
+                            ) : null}
+                        </>
                     ) : null}
                 </div>
                 <div className="drama-workflow-assets-actions">
@@ -455,9 +471,7 @@ function WorkflowAssetsSession({
                     const ticket = operation.capture();
                     if (operation.isCurrent(ticket)) refreshProject(ticket);
                 }}
-            >
-                {editingId ? <WorkflowImpact projectId={projectId} revision={summary.production.revision} castId={editingId} /> : null}
-            </CastEditorDialog>
+            />
         </section>
     );
 }

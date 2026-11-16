@@ -8,7 +8,8 @@
 .drama-workflow-episodes-toolbar,
 .drama-workflow-episodes-actions,
 .drama-workflow-episodes-filters,
-.drama-workflow-episodes-selection {
+.drama-workflow-episodes-selection,
+.drama-workflow-episodes-tools {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -51,6 +52,9 @@
 
 .drama-workflow-episodes-filters {
     margin-right: auto;
+    gap: var(--space-1);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
 }
 
 .drama-workflow-episodes-filters button {
@@ -73,17 +77,16 @@
     color: var(--text-primary);
 }
 
-.drama-workflow-episodes-filters button span {
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-}
-
-.drama-workflow-episodes-toolbar > .ant-input-affix-wrapper {
+.drama-workflow-episodes-tools > .ant-input-affix-wrapper {
     width: min(260px, 100%);
 }
 
-.drama-workflow-episodes-toolbar > .ant-select {
-    min-width: 150px;
+.drama-workflow-episodes-tools > .ant-select {
+    min-width: 90px;
+}
+
+.drama-workflow-episodes-tools > .ant-select:first-child {
+    min-width: 160px;
 }
 
 .drama-workflow-episodes-selection label {
@@ -204,6 +207,16 @@
     font-size: var(--fs-label);
 }
 
+.drama-workflow-episode-title time {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+}
+
+.drama-workflow-episode-title > .drama-workflow-episode-type {
+    color: var(--status-loading);
+}
+
 .drama-workflow-episode-title h3 {
     margin: 0;
     color: var(--text-primary);
@@ -215,7 +228,7 @@
     display: -webkit-box;
     margin: 0;
     overflow: hidden;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
     -webkit-box-orient: vertical;
     color: var(--text-secondary);
     font-size: var(--fs-label);
@@ -227,7 +240,7 @@
     flex-wrap: wrap;
     gap: var(--space-2);
     margin: 0;
-    padding: 0 var(--space-3);
+    padding: 0;
     font-size: var(--fs-label);
 }
 
@@ -255,6 +268,48 @@
 .drama-workflow-episode-card dl > div {
     justify-content: start;
     gap: var(--space-1);
+}
+
+.drama-workflow-episode-card dt {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.drama-workflow-episode-dot {
+    display: inline-block;
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+}
+
+.drama-workflow-episodes [data-status="active"] .drama-workflow-episode-dot {
+    background: var(--status-loading);
+}
+
+.drama-workflow-episodes [data-status="failed"] .drama-workflow-episode-dot {
+    background: var(--status-error);
+}
+
+.drama-workflow-episodes [data-status="done"] .drama-workflow-episode-dot {
+    background: var(--status-success);
+}
+
+.drama-workflow-episodes [data-status="unknown"] .drama-workflow-episode-dot {
+    border: 1px dashed var(--text-secondary);
+    background: transparent;
+}
+
+.drama-workflow-episode-card .drama-workflow-episode-progress {
+    gap: var(--space-1);
+    flex-wrap: nowrap;
+}
+
+.drama-workflow-episode-more {
+    flex: none;
+    margin-left: auto;
 }
 
 .drama-workflow-episode-card dd {
@@ -333,7 +388,8 @@
         flex-direction: column;
     }
 
-    .drama-workflow-episodes-toolbar > .ant-input-affix-wrapper {
+    .drama-workflow-episodes-tools,
+    .drama-workflow-episodes-tools > .ant-input-affix-wrapper {
         width: 100%;
     }
 

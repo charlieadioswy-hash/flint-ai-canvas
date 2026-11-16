@@ -127,7 +127,79 @@
 }
 
 .drama-workflow-page {
-    min-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.drama-workflow-page > div {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.drama-workflow-page > div > .drama-project-topbar {
+    flex: none;
+}
+
+.drama-workflow-page .ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+}
+
+.drama-workflow-page .ant-btn .lucide {
+    flex: none;
+    width: 16px;
+    height: 16px;
+}
+
+.drama-workflow-advanced-menu {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding-block: var(--space-1);
+}
+
+.drama-workflow-advanced-menu small {
+    color: var(--text-secondary);
+    font-size: var(--fs-tiny);
+}
+
+.drama-workflow-style-scope,
+.drama-workflow-production-batch {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-3) 0;
+}
+
+.drama-workflow-style-scope p {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-style-scope .ant-btn[aria-pressed="true"] {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+}
+
+.drama-workflow-production-batch {
+    border-block: 1px solid var(--drama-line);
+    margin-bottom: var(--space-4);
+}
+
+.drama-workflow-production-batch > strong {
+    font-size: var(--fs-ui);
+}
+
+.drama-workflow-production-batch .ant-btn {
+    min-height: 32px;
 }
 
 .drama-project-topbar:has(.drama-workflow-steps) {
@@ -147,7 +219,7 @@
 
 .drama-workflow-steps {
     display: flex;
-    justify-content: center;
+    justify-content: safe center;
     max-width: 100%;
     overflow-x: auto;
     gap: var(--space-2);
@@ -231,15 +303,21 @@
 
 .drama-workflow-body {
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: var(--space-4);
     min-height: 0;
     padding: var(--space-4);
+    overflow-y: auto;
 }
 
 .drama-workflow-body:has(.drama-shot-media.is-page) {
     gap: 0;
     padding: 0;
+}
+
+.drama-workflow-page:has(.drama-shot-media.is-page) .drama-workflow-footer {
+    display: none;
 }
 
 .drama-workflow-assets {
@@ -316,11 +394,33 @@
     border-top: 1px solid var(--border);
 }
 
-.drama-workflow-pending,
-.drama-workflow-footer {
+.drama-workflow-pending {
     padding: var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
+}
+
+.drama-workflow-footer {
+    flex: none;
+    gap: var(--space-2);
+    min-height: 49px;
+    padding: var(--space-2) var(--space-4);
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: var(--fs-ui);
+    line-height: var(--lh-body);
+}
+
+.drama-workflow-footer > span:first-child {
+    flex: 1 1 120px;
+    min-width: 0;
+    color: var(--text-secondary);
+}
+
+.drama-workflow-footer > .ant-btn {
+    flex: none;
+    height: 32px;
+    padding-block: 0;
 }
 
 .drama-workflow-cast-form {

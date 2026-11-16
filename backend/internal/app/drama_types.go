@@ -338,8 +338,9 @@ type DramaDraftView struct {
 }
 
 // ProduceDramaChaptersRequest 把预留的原著章节加入制作：按章节顺序每 ChaptersPerEpisode 章建成一集（不连续的章节不合并），
-// 追加在现有分集之后。ChaptersPerEpisode 为 0 时沿用作品的按章分集设置，没有设置按每章一集。
+// 追加在现有分集之后，ExpectedRevision 必传。小说在 ChaptersPerEpisode 为 0 时沿用作品设置；剧本与分镜固定每章一集。
 type ProduceDramaChaptersRequest struct {
+	ExpectedRevision   *int64   `json:"expectedRevision"`
 	ChapterIDs         []string `json:"chapterIds"`
 	ChaptersPerEpisode int      `json:"chaptersPerEpisode"`
 }
@@ -347,16 +348,18 @@ type ProduceDramaChaptersRequest struct {
 // ProduceDramaChaptersResult 是加入制作后新建的集，按集号排列。
 type ProduceDramaChaptersResult struct {
 	EpisodeIDs []string `json:"episodeIds"`
+	Revision   int64    `json:"revision"`
 }
 
 // AddDramaEpisodeRequest 新增一集：原文直接成为这一集，不经过分集规划。AnchorEpisodeID 为空时追加到末尾；
-// 否则按 Position（before / after）插到这一集之前或之后，后续集号顺延。
+// 否则按 Position（before / after）插到这一集之前或之后，后续集号顺延。ExpectedRevision 必传。
 type AddDramaEpisodeRequest struct {
-	Title           string `json:"title"`
-	Text            string `json:"text"`
-	SourceFormat    string `json:"sourceFormat"`
-	AnchorEpisodeID string `json:"anchorEpisodeId"`
-	Position        string `json:"position"`
+	ExpectedRevision *int64 `json:"expectedRevision"`
+	Title            string `json:"title"`
+	Text             string `json:"text"`
+	SourceFormat     string `json:"sourceFormat"`
+	AnchorEpisodeID  string `json:"anchorEpisodeId"`
+	Position         string `json:"position"`
 }
 
 // UpdateDramaChapterRequest 修改原文；已写好的剧本不会自动重写，需要用户点重新改编。
@@ -750,15 +753,18 @@ type SetDramaCastVoiceRequest struct {
 // DramaCastLookRequest 新增或修改一套角色造型：LookName 造型名，Appearance 这套造型的外观，
 // FromChapter / ToChapter 默认适用的原著章节号（从 1 起，0 或 nil 表示该端不限）。
 type DramaCastLookRequest struct {
-	LookName         string  `json:"lookName"`
-	Appearance       string  `json:"appearance"`
-	ImagePrompt      *string `json:"imagePrompt"`
-	ImageStyleID     *string `json:"imageStyleId"`
-	ImageStyleName   *string `json:"imageStyleName"`
-	ImageStylePrompt *string `json:"imageStylePrompt"`
-	FromChapter      *int    `json:"fromChapter"`
-	ToChapter        *int    `json:"toChapter"`
-	RestyleSegments  bool    `json:"restyleSegments"`
+	ExpectedRevision     *int64                 `json:"expectedRevision,omitempty"`
+	ExpectedCastRevision *int64                 `json:"expectedCastRevision,omitempty"`
+	ImageOptions         *DramaCastImageOptions `json:"imageOptions,omitempty"`
+	LookName             string                 `json:"lookName"`
+	Appearance           string                 `json:"appearance"`
+	ImagePrompt          *string                `json:"imagePrompt"`
+	ImageStyleID         *string                `json:"imageStyleId"`
+	ImageStyleName       *string                `json:"imageStyleName"`
+	ImageStylePrompt     *string                `json:"imageStylePrompt"`
+	FromChapter          *int                   `json:"fromChapter"`
+	ToChapter            *int                   `json:"toChapter"`
+	RestyleSegments      bool                   `json:"restyleSegments"`
 }
 
 type CreateDramaCastRequest struct {
@@ -780,17 +786,19 @@ type DeleteDramaCastRequest struct {
 }
 
 type UpdateDramaCastRequest struct {
-	ExpectedRevision  *int64    `json:"expectedRevision,omitempty"`
-	Name              *string   `json:"name"`
-	Aliases           *[]string `json:"aliases"`
-	Appearance        *string   `json:"appearance"`
-	ImagePrompt       *string   `json:"imagePrompt"`
-	ImageStyleID      *string   `json:"imageStyleId"`
-	ImageStyleName    *string   `json:"imageStyleName"`
-	ImageStylePrompt  *string   `json:"imageStylePrompt"`
-	Description       *string   `json:"description"`
-	VoiceInstructions *string   `json:"voiceInstructions"`
-	Locked            *bool     `json:"locked"`
+	ExpectedCastRevision *int64                 `json:"expectedCastRevision,omitempty"`
+	ImageOptions         *DramaCastImageOptions `json:"imageOptions,omitempty"`
+	ExpectedRevision     *int64                 `json:"expectedRevision,omitempty"`
+	Name                 *string                `json:"name"`
+	Aliases              *[]string              `json:"aliases"`
+	Appearance           *string                `json:"appearance"`
+	ImagePrompt          *string                `json:"imagePrompt"`
+	ImageStyleID         *string                `json:"imageStyleId"`
+	ImageStyleName       *string                `json:"imageStyleName"`
+	ImageStylePrompt     *string                `json:"imageStylePrompt"`
+	Description          *string                `json:"description"`
+	VoiceInstructions    *string                `json:"voiceInstructions"`
+	Locked               *bool                  `json:"locked"`
 }
 
 // 只编排当前表单的提示词，不调用模型、不保存，也不嵌入已有自定义提示词。

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { DramaGuideStep, DramaSummary } from "../src/services/api/drama";
-import { allowedWorkflowSteps, defaultWorkflowStep, EPISODE_WORKFLOW_STEPS, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS } from "../src/pages/projects/workflow-state";
+import { allowedWorkflowSteps, defaultWorkflowStep, episodeWorkflowEntryStep, EPISODE_WORKFLOW_STEPS, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS } from "../src/pages/projects/workflow-state";
 
 function summary(guideStep: DramaGuideStep | "", chapterCount = 1): DramaSummary {
     return {
@@ -54,5 +54,19 @@ describe("短剧简易工作台步骤", () => {
 
     test("未知地址步骤回到当前阶段默认步骤", () => {
         expect(resolveWorkflowStep(summary("assets"), "not-a-step")).toBe("assets");
+    });
+
+    test("分集已有段或镜头进入分镜，尚无分镜回到分集剧本并保留阶段门禁", () => {
+        const stats = { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 };
+        expect(episodeWorkflowEntryStep({ shotCount: 0, stats })).toBe("review");
+        for (const content of [
+            { shotCount: 0, segments: 1 },
+            { shotCount: 1, segments: 0 },
+        ]) {
+            const step = episodeWorkflowEntryStep({ shotCount: content.shotCount, stats: { ...stats, segments: content.segments } });
+            expect(step).toBe("story");
+            expect(resolveWorkflowStep(summary("configuring"), step)).toBe("review");
+            expect(resolveWorkflowStep(summary("completed"), step)).toBe("story");
+        }
     });
 });

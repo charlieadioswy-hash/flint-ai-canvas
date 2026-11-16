@@ -47,13 +47,9 @@ type dramaSceneSplitPlan struct {
 	metadata dramaSceneSplitMetadata
 }
 
-func dramaSceneKey(shot model.DramaShot) string {
-	return shot.SceneCastID + "\x00" + strings.TrimSpace(shot.Scene)
-}
-
 func dramaSceneRange(shots []model.DramaShot, ids []string) ([]model.DramaShot, error) {
 	if len(ids) == 0 || len(ids) > production.MaxScriptShots {
-		return nil, BadAuthRequest("请选择一个完整的连续场景组")
+		return nil, BadAuthRequest("请选择一个完整段的全部镜头")
 	}
 	start := -1
 	for i, shot := range shots {
@@ -63,16 +59,18 @@ func dramaSceneRange(shots []model.DramaShot, ids []string) ([]model.DramaShot, 
 		}
 	}
 	if start < 0 || start+len(ids) > len(shots) {
-		return nil, BadAuthRequest("场景组已变化，请刷新后重试")
+		return nil, BadAuthRequest("本段镜头已变化，请刷新后重试")
 	}
-	key := dramaSceneKey(shots[start])
+	segmentIndex := shots[start].SegmentIndex
 	for i, id := range ids {
-		if shots[start+i].ID != id || dramaSceneKey(shots[start+i]) != key {
-			return nil, BadAuthRequest("请选择一个完整的连续场景组")
+		if shots[start+i].ID != id || shots[start+i].SegmentIndex != segmentIndex {
+			return nil, BadAuthRequest("请按原顺序选择同一完整段的全部镜头")
 		}
 	}
-	if start > 0 && dramaSceneKey(shots[start-1]) == key || start+len(ids) < len(shots) && dramaSceneKey(shots[start+len(ids)]) == key {
-		return nil, BadAuthRequest("重拆需要包含整个连续场景组")
+	for i, shot := range shots {
+		if shot.SegmentIndex == segmentIndex && (i < start || i >= start+len(ids)) {
+			return nil, BadAuthRequest("重拆需要包含本段全部镜头")
+		}
 	}
 	return shots[start : start+len(ids)], nil
 }
@@ -128,19 +126,25 @@ func (s *Service) prepareDramaSceneSplit(repo *repository.Repository, userID, pr
 	if err != nil {
 		return plan, err
 	}
+	if _, err := dramaSceneSourceScenes(group); err != nil {
+		return plan, err
+	}
 	if len(shots)-len(group)+req.TargetShotCount > production.MaxScriptShots {
 		return plan, BadAuthRequest("重拆后单集镜头总数不能超过240")
-	}
-	indexes := map[int]bool{}
-	for _, shot := range group {
-		indexes[shot.SegmentIndex] = true
-	}
-	if req.TargetShotCount < len(indexes) {
-		return plan, BadAuthRequest(fmt.Sprintf("本场景跨%d个剧情段，每段至少保留1镜", len(indexes)))
 	}
 	segments, err := repo.DramaSegments(episodeID)
 	if err != nil {
 		return plan, err
+	}
+	var sourceSegment *model.DramaSegment
+	for i := range segments {
+		if segments[i].SegmentIndex == group[0].SegmentIndex {
+			sourceSegment = &segments[i]
+			break
+		}
+	}
+	if sourceSegment == nil {
+		return plan, BadAuthRequest("原段缺失，请先修复本集分镜")
 	}
 	blocked := func(reason string) (dramaSceneSplitPlan, error) { plan.view.Reason = reason; return plan, nil }
 	if dramaGuideActive(p) && p.GuideStep != model.DramaGuideStory {
@@ -153,7 +157,7 @@ func (s *Service) prepareDramaSceneSplit(repo *repository.Repository, userID, pr
 	if active {
 		return blocked("有文字或媒体任务正在排队、生成，请完成后重拆")
 	}
-	settings := parseDramaSettings(p.SettingsJSON)
+	settings, _ := dramaEpisodeStyleSettings(parseDramaSettings(p.SettingsJSON), dramaBibleMeta{}, *episode)
 	if req.Model.Empty() {
 		req.Model = settings.Models.textFor(DramaStepScript)
 	}
@@ -175,17 +179,15 @@ func (s *Service) prepareDramaSceneSplit(repo *repository.Repository, userID, pr
 	// The selected saved shots are the bounded source. No unrelated chapter is
 	// supplied, and the model cannot expand the operation into a whole episode.
 	source, _ := json.Marshal(group)
-	prompt := production.ScriptPrompt(production.ScriptContext{Title: "场景范围重拆", EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Settings: settings.Settings, SourceFormat: production.SourceScript, Skill: skill, CastSummary: string(castJSON), SourceChapters: []production.Chapter{{Title: group[0].Scene, Text: string(source)}}})
-	prompt += fmt.Sprintf("\n【范围重拆的优先约束】\n仅重拆上述连续场景，scene必须保持为%s；恰好%d镜，角色、造型、场景、道具仅能引用已存在名称。不得新增或猜测资产，不得改写、遗漏或新增台词。原有剧情段边界与组外镜头保持不变。用户要求：%s\n", group[0].Scene, req.TargetShotCount, strings.TrimSpace(req.Instruction))
-	segmentIndexes, allocation, err := dramaSceneSegmentAllocation(group, req.TargetShotCount)
-	if err != nil {
-		return plan, err
+	prompt := production.ScriptPrompt(production.ScriptContext{Title: "本段分镜重拆", EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Settings: settings.Settings, SourceFormat: production.SourceScript, Skill: skill, CastSummary: string(castJSON), SourceChapters: []production.Chapter{{Title: group[0].SegmentTitle, Text: string(source)}}})
+	scenes := []string{}
+	for _, shot := range group {
+		if !containsString(scenes, shot.Scene) {
+			scenes = append(scenes, shot.Scene)
+		}
 	}
-	offset := 0
-	for i, count := range allocation {
-		prompt += fmt.Sprintf("输出第%d到%d镜属于原第%d段，只能使用该原段内的剧情与台词，不得将其他段的台词移入或将本段台词移出。\n", offset+1, offset+count, segmentIndexes[i]+1)
-		offset += count
-	}
+	sceneJSON, _ := json.Marshal(scenes)
+	prompt += fmt.Sprintf("\n【本段重拆的优先约束】\n仅重拆上述原第%d段的全部镜头；恰好%d镜，所有输出仍属于该原段。scene只能使用源段已有场景%s，保留本段场景转换，不能引入其他段场景。角色、造型、道具仅能引用已存在名称，不得新增或猜测资产。不得改写、遗漏或新增台词及说话人，不得将其他段剧情或台词移入。段边界与其他段镜头保持不变。用户要求：%s\n", sourceSegment.SegmentIndex+1, req.TargetShotCount, sceneJSON, strings.TrimSpace(req.Instruction))
 	config := map[string]any{"thinking": settings.TextThinking.levelFor(DramaStepScript)}
 	if req.Model.ChannelID != "" {
 		config["channelId"], config["model"], config["channelModelKey"] = req.Model.ChannelID, req.Model.ModelKey, req.Model.ModelKey

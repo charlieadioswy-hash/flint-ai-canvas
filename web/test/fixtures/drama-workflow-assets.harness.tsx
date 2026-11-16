@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
+import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaDrawingConfiguration, DramaEpisodeDetail, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
@@ -39,7 +39,7 @@ environmentManager.setIsServer(() => false);
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => void };
 type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number } };
-type SettingsCall = { projectId: string; input: { expectedRevision?: number; settings?: DramaSettings } };
+type SettingsCall = { projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration } };
 type BatchCall = { projectId: string; input: DramaStudioBatchRequest };
 
 const notices: Array<{ kind: string; text: string }> = [];
@@ -274,7 +274,7 @@ mock.module("@/services/api/drama", () => ({
         pendingCreates.push(pending);
         return pending.promise;
     },
-    updateDramaSettings: async (projectId: string, input: SettingsCall["input"]) => {
+    updateDramaWorkflowStyle: async (projectId: string, input: SettingsCall["input"]) => {
         settingsCalls.push({ projectId, input: structuredClone(input) });
         const pending = deferred<DramaSummary>();
         pendingSettings.push(pending);
@@ -487,7 +487,7 @@ async function settle() {
     for (let index = 0; index < 8; index += 1) await Bun.sleep(10);
 }
 
-async function mount(initial: DramaSummary, cast = projectCast(), options: { loading?: boolean; busy?: boolean; variant?: "library" | "episode"; episodeId?: string; controlled?: boolean; advanceRevisionOnChange?: boolean } = {}) {
+async function mount(initial: DramaSummary, cast = projectCast(), options: { loading?: boolean; busy?: boolean; variant?: "library" | "episode"; episodeId?: string; controlled?: boolean; advanceRevisionOnChange?: boolean; pickable?: boolean } = {}) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
     const container = document.createElement("div");
     document.body.append(container);
@@ -496,6 +496,7 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
     const generated: string[] = [];
     const dirtyStates: Array<[boolean, boolean]> = [];
     const episodeChanges: string[] = [];
+    const pickedChapters: string[] = [];
     let current = { summary: initial, cast, loading: options.loading ?? false, busy: options.busy ?? false, variant: options.variant ?? "episode", episodeId: options.episodeId };
     const render = () =>
         createElement(
@@ -513,6 +514,7 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
                 onGenerate: (item) => generated.push(`${current.summary.project.id}:${item.id}`),
                 onDirtyChange: (dirty, busy) => dirtyStates.push([dirty, busy]),
                 onEpisodeChange: options.controlled ? (id) => episodeChanges.push(id) : undefined,
+                onPickChapters: options.pickable ? () => pickedChapters.push(current.summary.project.id) : undefined,
             }),
         );
     const update = async (patch: Partial<typeof current>) => {
@@ -532,6 +534,7 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
         generated,
         dirtyStates,
         episodeChanges,
+        pickedChapters,
         client,
         update,
         dispose: async () => {
@@ -713,6 +716,34 @@ test("主体管理默认第一集，左右和下拉切换同一集范围且不�
         expect(chapterReads).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
         expect(settingsCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("主体管理区分原文章节与制作集，继续选章只通知父层且草稿或忙碌时禁用", async () => {
+    resetFixture();
+    const data = summaryOf("project-a", 4);
+    data.production.chapterCount = 1;
+    data.production.reservedChapterCount = 8;
+    data.episodes = data.episodes.slice(0, 1);
+    const view = await mount(data, projectCast(), { pickable: true });
+    try {
+        expect(view.container.textContent).toContain("原文 9 章 · 制作 1 集 · 待制作 8 章");
+        expect(view.container.querySelectorAll('[aria-label="主体管理剧集"] option')).toHaveLength(1);
+        await click(button(view.container, "继续选章"));
+        expect(view.pickedChapters).toEqual(["project-a"]);
+        expect(chapterReads).toHaveLength(0);
+        expect(createCalls).toHaveLength(0);
+        expect(extractCalls).toHaveLength(0);
+        await view.update({ busy: true });
+        expect(button(view.container, "继续选章").disabled).toBe(true);
+        await view.update({ busy: false });
+        await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
+        await edit(field(view.container, "资产名称"), "尚未保存的角色");
+        expect(button(view.container, "继续选章").disabled).toBe(true);
+        await view.update({ summary: { ...data, production: { ...data.production, reservedChapterCount: 0 } } });
+        expect(view.container.textContent).not.toContain("继续选章");
     } finally {
         await view.dispose();
     }
@@ -1147,7 +1178,21 @@ test("方案明确保存并保留其它配置，失败保留草稿且不会触�
         expect(settingsCalls).toHaveLength(0);
         expect(view.dirtyStates.at(-1)).toEqual([true, false]);
         await click(button(view.container, "保存后续参考图方案"));
-        expect(settingsCalls).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, settings: { ...initial.production.settings, assets: { ...assets(), mode: "closeup_front_no_face", characterPrompt: "改后的角色提示词" } } } }]);
+        expect(settingsCalls).toEqual([
+            {
+                projectId: "project-a",
+                input: {
+                    expectedRevision: 4,
+                    styleName: initial.production.settings.styleName,
+                    stylePrompt: initial.production.settings.stylePrompt,
+                    drawing: {
+                        assets: { ...assets(), mode: "closeup_front_no_face", characterPrompt: "改后的角色提示词" },
+                        models: { image: { modelKey: "image" }, characterImage: {}, sceneImage: {} },
+                    },
+                },
+            },
+        ]);
+        expect(settingsCalls[0].input).not.toHaveProperty("settings");
         expect(view.generated).toEqual([]);
         expect(extractCalls).toHaveLength(0);
         await act(async () => {
@@ -1158,7 +1203,7 @@ test("方案明确保存并保留其它配置，失败保留草稿且不会触�
         expect(view.dirtyStates.at(-1)).toEqual([true, false]);
         expect(view.changed).toEqual([]);
         await click(button(view.container, "保存后续参考图方案"));
-        const saved = summaryOf("project-a", 5, settingsCalls[1].input.settings!.assets);
+        const saved = summaryOf("project-a", 5, settingsCalls[1].input.drawing!.assets);
         await act(async () => {
             pendingSettings[1].resolve(saved);
             await settle();

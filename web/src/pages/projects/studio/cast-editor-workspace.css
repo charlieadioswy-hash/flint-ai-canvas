@@ -206,6 +206,52 @@
     aspect-ratio: 1;
 }
 
+.drama-editor.is-workspace .drama-cast-view-strip > button[role="tab"] {
+    display: grid;
+    flex: 0 0 104px;
+    min-width: 0;
+    align-content: start;
+    justify-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    color: var(--text-secondary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.drama-editor.is-workspace .drama-cast-view-strip > button[aria-selected="true"] {
+    color: var(--text-primary);
+    border-color: var(--primary);
+    background: var(--surface-hover);
+}
+
+.drama-editor.is-workspace .drama-cast-view-strip > button[role="tab"] img {
+    width: 80px;
+    height: 64px;
+    object-fit: contain;
+}
+
+.drama-editor.is-workspace .drama-cast-view-strip > button[role="tab"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.drama-editor.is-workspace.is-view {
+    grid-template-columns: minmax(280px, 28%) minmax(0, 1fr) minmax(180px, 18%);
+}
+
+.drama-cast-view-preview {
+    display: grid;
+    place-items: center;
+    color: var(--text-secondary);
+    cursor: zoom-in;
+}
+
+.drama-cast-view-preview:disabled {
+    cursor: default;
+}
+
 .drama-editor.is-workspace .drama-looks {
     display: flex;
     flex-wrap: nowrap;

@@ -131,8 +131,38 @@ export function getDramaWorkflowReadiness(projectId: string, signal?: AbortSigna
     return http.get<DramaWorkflowReadiness>(`${base(projectId)}/workflow/readiness`, { signal });
 }
 
-export function updateDramaWorkflowStyle(projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string }) {
+export function updateDramaWorkflowStyle(projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }) {
     return http.patch<DramaSummary>(`${base(projectId)}/workflow/style`, input);
+}
+
+export type DramaEpisodeStyle = {
+    projectId: string;
+    episodeId: string;
+    revision: number;
+    episodeRevision: number;
+    mode: "inherit" | "independent";
+    styleName: string;
+    stylePrompt: string;
+    defaultStyleName: string;
+    defaultStylePrompt: string;
+    drawing: DramaDrawingConfiguration;
+};
+
+export type UpdateDramaEpisodeStyleRequest = {
+    expectedRevision: number;
+    expectedEpisodeRevision: number;
+    mode: DramaEpisodeStyle["mode"];
+    styleName?: string;
+    stylePrompt?: string;
+    drawing?: DramaDrawingConfiguration;
+};
+
+export function getDramaEpisodeStyle(projectId: string, episodeId: string, signal?: AbortSignal) {
+    return http.get<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, { signal });
+}
+
+export function updateDramaEpisodeStyle(projectId: string, episodeId: string, input: UpdateDramaEpisodeStyleRequest) {
+    return http.patch<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, input);
 }
 
 export function getDramaSettingsImpact(projectId: string, signal?: AbortSignal) {
@@ -187,6 +217,16 @@ export type DramaAssetSettings = {
     sourceSkillId?: string;
     sourceSkillName?: string;
     sourcePath?: string;
+};
+
+/** 作品共用的角色／场景绘图配置，不随单集独立画风覆盖。 */
+export type DramaDrawingConfiguration = {
+    assets: DramaAssetSettings;
+    models: {
+        image: DramaModelChoice;
+        characterImage: DramaModelChoice;
+        sceneImage: DramaModelChoice;
+    };
 };
 
 export type DramaAssetScheme = {
@@ -343,6 +383,7 @@ export type DramaEpisodeRow = {
     awaitingMedia: boolean;
     finalResourceId?: string;
     finalStale: boolean;
+    updatedAt?: string;
     stats: DramaEpisodeStats;
 };
 
@@ -819,7 +860,7 @@ export function renameDramaEpisode(projectId: string, episodeId: string, title: 
 }
 
 /** 新增一集：原文直接成为新的一集，单集最多 1.2 万字。不传 anchorEpisodeId 时追加到末尾，传了插到那一集之前或之后，后续集号顺延。 */
-export function addDramaEpisode(projectId: string, input: { title: string; text: string; sourceFormat: DramaSourceFormat; anchorEpisodeId?: string; position?: "before" | "after" }) {
+export function addDramaEpisode(projectId: string, input: { title: string; text: string; sourceFormat: DramaSourceFormat; expectedRevision: number; anchorEpisodeId?: string; position?: "before" | "after" }) {
     return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes`, input, { timeout: 60_000 });
 }
 
@@ -838,8 +879,8 @@ export function listDramaChapters(projectId: string, signal?: AbortSignal) {
 }
 
 /** 把预留章节加入制作：按章节顺序建成新的集追加在末尾；chaptersPerEpisode 不传沿用作品设置。 */
-export function produceDramaChapters(projectId: string, input: { chapterIds: string[]; chaptersPerEpisode?: number }) {
-    return http.post<{ episodeIds: string[] }>(`${base(projectId)}/chapters/produce`, input);
+export function produceDramaChapters(projectId: string, input: { chapterIds: string[]; chaptersPerEpisode?: number; expectedRevision: number }) {
+    return http.post<{ episodeIds: string[]; revision: number }>(`${base(projectId)}/chapters/produce`, input);
 }
 
 export function updateDramaChapter(projectId: string, chapterId: string, patch: { title?: string; text?: string; expectedRevision?: number }) {
@@ -889,7 +930,8 @@ export function listDramaCast(projectId: string, signal?: AbortSignal) {
 }
 
 export type DramaCastImageStyle = Pick<DramaCast, "imageStyleId" | "imageStyleName" | "imageStylePrompt">;
-export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked" | "imagePrompt">> & DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number };
+export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked" | "imagePrompt">> &
+    DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number; expectedCastRevision?: number; imageOptions?: DramaCastImageOptions };
 
 export type DramaCastCreateInput = Pick<DramaCast, "kind" | "name"> & Partial<Pick<DramaCast, "appearance" | "description" | "voiceInstructions" | "imagePrompt">> & DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number };
 export type CreateDramaCastInput = DramaCastCreateInput;
@@ -942,7 +984,21 @@ export function addDramaCastLook(projectId: string, castId: string, input: Drama
     return http.post<{ look: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/looks`, input);
 }
 
-export function updateDramaCastLook(projectId: string, lookId: string, input: DramaCastImageStyle & { lookName?: string; appearance?: string; imagePrompt?: string; fromChapter?: number; toChapter?: number; restyleSegments?: boolean }) {
+export function updateDramaCastLook(
+    projectId: string,
+    lookId: string,
+    input: DramaCastImageStyle & {
+        lookName?: string;
+        appearance?: string;
+        imagePrompt?: string;
+        fromChapter?: number;
+        toChapter?: number;
+        restyleSegments?: boolean;
+        expectedRevision?: number;
+        expectedCastRevision?: number;
+        imageOptions?: DramaCastImageOptions;
+    },
+) {
     return http.patch<{ look: DramaCast; affectedSegments: number }>(`${base(projectId)}/looks/${encodeURIComponent(lookId)}`, input);
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { InputNumber } from "antd";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ImageOff, Loader2 } from "lucide-react";
 
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { getResourceAccess, resolveResourceAccessURL, resourceFileUrl, type ResourceAccessVariant } from "@/services/api/resources";
@@ -188,18 +188,28 @@ export function resourceUrl(id?: string) {
 const THUMB_RETRY_DELAYS_MS = [1500, 5000];
 
 /**
- * 资源缩略图。加载失败会自动重试两次，之后显示 failed（缺省为 fallback）；
- * loading 是加载中的占位（缺省为 fallback）。
+ * 资源缩略图。加载失败自动重试两次，未指定占位时用简短文字区分读取与失败。
  */
 export function MediaThumb({ resourceId, alt, className, fallback, loading, failed }: { resourceId?: string; alt: string; className?: string; fallback?: ReactNode; loading?: ReactNode; failed?: ReactNode }) {
     const [retry, setRetry] = useState({ resourceId, attempt: 0 });
     const attempt = retry.resourceId === resourceId ? retry.attempt : 0;
     if (!resourceId) return <>{fallback ?? null}</>;
-    const pending = loading ?? fallback ?? null;
+    const pending = loading ?? fallback ?? (
+        <span className="drama-thumb-state" role="status" title="正在读取图片…">
+            <Loader2 className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden />
+            <span>正在读取图片…</span>
+        </span>
+    );
     const delay = THUMB_RETRY_DELAYS_MS[attempt];
     const failure =
         delay === undefined ? (
-            (failed ?? fallback ?? null)
+            (failed ??
+            fallback ?? (
+                <span className="drama-thumb-state is-error" role="img" aria-label="图片加载失败，重新进入预览可再试" title="图片加载失败，重新进入预览可再试">
+                    <ImageOff className="size-4 shrink-0" aria-hidden />
+                    <span>图片加载失败</span>
+                </span>
+            ))
         ) : (
             <ThumbRetry delayMs={delay} onRetry={() => setRetry({ resourceId, attempt: attempt + 1 })}>
                 {pending}

@@ -1,18 +1,17 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button } from "antd";
-import { Clapperboard, Image, Pencil, Play, Plus } from "lucide-react";
+import { Clapperboard, Image, Pencil, Play, Plus, RefreshCw } from "lucide-react";
 
-import { dramaSceneGroups } from "@/lib/drama/director";
-import { insertDramaShot, type DramaCast, type DramaEpisodeDetail, type DramaShot, type DramaSummary } from "@/services/api/drama";
+import { insertDramaShot, type DramaCast, type DramaEpisodeDetail, type DramaSegment, type DramaShot, type DramaSummary } from "@/services/api/drama";
 import { getDramaShotMedia, type DramaShotMedia } from "@/services/api/drama-shot-media";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { MediaThumb, useResourceMediaUrl } from "./drama-shared";
+import { MediaThumb, mediaBusy, useResourceMediaUrl } from "./drama-shared";
+import { SegmentStatus, SegmentVideo, secondsLabel, segmentState } from "./studio/segment-parts";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowSceneSplits } from "./workflow-scene-splits";
 import { WorkflowStoryboardDialog } from "./workflow-storyboard-dialog";
-import { WorkflowBatch } from "./workflow-batch";
 import "./workflow-storyboard-page.css";
 
 type Props = {
@@ -21,6 +20,13 @@ type Props = {
     castById: Map<string, DramaCast>;
     status: string;
     videoAllowed: boolean;
+    segmentIndex?: number;
+    onSegmentChange?: (index: number) => void;
+    onOpenSegment: (index: number) => void;
+    onGenerateSegment: (segment: DramaSegment) => void;
+    onWriteSegmentPrompt: (segment: DramaSegment) => void;
+    selectedSegmentIds: ReadonlySet<string>;
+    onSelectSegments: (ids: string[], checked: boolean) => void;
     onChanged: () => void;
     onOpenShot: (shot: DramaShot, kind?: "image" | "video" | "audio") => void;
     onEditShot: (shot: DramaShot) => void;
@@ -29,36 +35,52 @@ type Props = {
 
 const MEDIA_STATE: Record<string, string> = { idle: "待生成", ready: "已就绪", succeeded: "已就绪", queued: "排队中", running: "生成中", failed: "生成失败", cancelled: "已取消", stale: "待更新" };
 
-export function WorkflowStoryboardPage({ summary, detail, castById, status, videoAllowed, onChanged, onOpenShot, onEditShot, onOpenCast }: Props) {
+export function WorkflowStoryboardPage({
+    summary,
+    detail,
+    castById,
+    status,
+    videoAllowed,
+    segmentIndex,
+    onSegmentChange,
+    onOpenSegment,
+    onGenerateSegment,
+    onWriteSegmentPrompt,
+    selectedSegmentIds,
+    onSelectSegments,
+    onChanged,
+    onOpenShot,
+    onEditShot,
+    onOpenCast,
+}: Props) {
     const { message } = App.useApp();
     const operation = useDramaOperationScope(summary.project.id);
-    const groups = dramaSceneGroups(detail.shots);
-    const [selectedAct, setSelectedAct] = useState("");
+    const segments = detail.segments.toSorted((left, right) => left.index - right.index);
+    const phase = videoAllowed ? "video" : "prompt";
+    const visibleSegments = segments.filter((item) => status === "all" || segmentState(item, phase).tone === status);
+    const [selectedSegmentId, setSelectedSegmentId] = useState("");
     const [collapsed, setCollapsed] = useState(false);
-    const [boardOpen, setBoardOpen] = useState(false);
+    const [board, setBoard] = useState<{ projectId: string; episodeId: string; shots: DramaShot[]; title: string }>();
+    const boardOpen = Boolean(board && board.projectId === summary.project.id && board.episodeId === detail.episode.id);
+    const [previewSegmentId, setPreviewSegmentId] = useState<string>();
     const mode = summary.production.settings.storyboard.generationMode || "reference_video";
     const boardLabel = mode === "grid_image" ? "生成宫格图" : "生成故事板";
     const defaultKind = mode === "grid_image" || mode === "storyboard" ? "image" : "video";
-    const actIndex = Math.max(
-        0,
-        groups.findIndex((rows) => rows[0].id === selectedAct),
-    );
-    const shots = groups[actIndex] || [];
+    const segment = visibleSegments.find((item) => (segmentIndex === undefined ? item.id === selectedSegmentId : item.index === segmentIndex)) || visibleSegments[0];
+    const shots = segment ? detail.shots.filter((shot) => shot.segmentIndex === segment.index) : [];
     const first = shots[0];
-    const activeAct = useRef(first?.id);
-    activeAct.current = first?.id;
+    const activeSegment = useRef(segment?.id);
+    activeSegment.current = segment?.id;
     const insertLock = useRef(false);
-    const actSegments = detail.segments.filter((segment) => shots.some((shot) => shot.segmentIndex === segment.index));
-    const batchScope = `当前幕 ${shots.length} 镜，生成其关联的 ${actSegments.length} 段连续视频，共 ${actSegments.reduce((count, segment) => count + segment.shotIds.length, 0)} 镜（跨幕片段将整体生成）。`;
     const insert = useMutation({
-        mutationFn: ({ anchor, ticket }: { anchor: DramaShot; ticket: ReturnType<typeof operation.capture>; actId: string }) => {
+        mutationFn: ({ anchor, ticket }: { anchor: DramaShot; ticket: ReturnType<typeof operation.capture>; segmentId: string }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
             return insertDramaShot(summary.project.id, anchor.id, "after");
         },
-        onSuccess: ({ shot }, { ticket, actId }) => {
+        onSuccess: ({ shot }, { ticket, segmentId }) => {
             if (!operation.isCurrent(ticket)) return;
             onChanged();
-            if (activeAct.current === actId) onEditShot(shot);
+            if (activeSegment.current === segmentId) onEditShot(shot);
         },
         onError: (error, { ticket }) => {
             if (operation.isCurrent(ticket)) message.error(error instanceof Error ? error.message : "新增镜头失败");
@@ -68,111 +90,159 @@ export function WorkflowStoryboardPage({ summary, detail, castById, status, vide
         },
     });
 
-    if (!first) return null;
+    if (!segments.length) return <p role="status">本集暂无剧情段，请先完成剧本与分镜。</p>;
+    const generating = Boolean(segment && mediaBusy(segment.videoStatus));
+    const writing = segment?.promptStatus === "queued" || segment?.promptStatus === "running";
+    const currentBusy = insert.isPending || writing || generating;
+    const videoLabel = generating ? "生成中" : segment?.videoReprocessable ? "重试本段后处理" : segment?.videoStatus === "failed" ? "重试本段视频" : segment?.videoResourceId ? "重新生成本段视频" : "生成本段视频";
     return (
         <div className="drama-storyboard-page">
-            <nav className="drama-storyboard-acts thin-scrollbar" aria-label={`第 ${detail.episode.number} 集幕列表`}>
+            <nav className="drama-storyboard-segments thin-scrollbar" aria-label={`第 ${detail.episode.number} 集段列表`}>
                 <header>
-                    <strong>共 {groups.length} 幕</strong>
+                    <strong>共 {segments.length} 段</strong>
                     <span>{detail.shots.length} 镜</span>
                 </header>
-                {groups.map((rows, index) => (
-                    <button
-                        key={rows[0].id}
-                        type="button"
-                        aria-pressed={index === actIndex}
-                        onClick={() => {
-                            setSelectedAct(rows[0].id);
-                            setCollapsed(false);
-                        }}
-                    >
-                        <span>
-                            <strong>
-                                第 {index + 1} 幕 {rows[0].scene || "未命名场景"}
-                            </strong>
-                            <small>{rows.length} 镜</small>
-                        </span>
-                    </button>
-                ))}
-            </nav>
-            <section className="drama-storyboard-act" aria-label={`第 ${actIndex + 1} 幕分镜`}>
-                <header className="drama-storyboard-act-toolbar">
-                    <div>
-                        <h4>
-                            第 {actIndex + 1} 幕 {first.scene || "未命名场景"} <span>{shots.length} 镜</span>
-                        </h4>
-                    </div>
-                    <div className="drama-storyboard-act-actions">
-                        <Button size="small" type="text" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
-                            {collapsed ? "展开" : "收起"}
-                        </Button>
-                        <WorkflowSceneSplits
-                            summary={summary}
-                            detail={detail}
-                            initialShotId={first.id}
-                            buttonLabel="重拆本幕"
-                            onChanged={onChanged}
-                            onOpenSegment={(index) => {
-                                const shot = shots.find((item) => item.segmentIndex === index);
-                                if (shot) onEditShot(shot);
-                            }}
-                        />
-                        <Button size="small" onClick={() => setBoardOpen(true)}>
-                            {boardLabel}
-                        </Button>
-                        <Button
-                            size="small"
-                            icon={<Plus className="size-3.5" />}
-                            loading={insert.isPending}
+                <label className="drama-storyboard-segment-select-all">
+                    <input
+                        type="checkbox"
+                        aria-label={`选择第 ${detail.episode.number} 集筛选出的 ${visibleSegments.length} 段`}
+                        checked={Boolean(visibleSegments.length && visibleSegments.every((item) => selectedSegmentIds.has(item.id)))}
+                        disabled={!visibleSegments.length}
+                        onChange={(event) =>
+                            onSelectSegments(
+                                visibleSegments.map((item) => item.id),
+                                event.target.checked,
+                            )
+                        }
+                    />
+                    选择当前列表
+                </label>
+                {visibleSegments.map((item) => (
+                    <div key={item.id} className="drama-storyboard-segment-row" data-selected={item.id === segment?.id}>
+                        <input type="checkbox" aria-label={`选择第 ${detail.episode.number} 集第 ${item.index + 1} 段`} checked={selectedSegmentIds.has(item.id)} onChange={(event) => onSelectSegments([item.id], event.target.checked)} />
+                        <button
+                            type="button"
+                            aria-pressed={item.id === segment?.id}
+                            aria-label={`查看第 ${item.index + 1} 段${item.title ? `：${item.title}` : ""}`}
+                            disabled={insert.isPending || boardOpen}
                             onClick={() => {
-                                const anchor = shots.at(-1);
-                                if (!anchor || insertLock.current) return;
-                                insertLock.current = true;
-                                insert.mutate({ anchor, ticket: operation.capture(), actId: first.id });
+                                setSelectedSegmentId(item.id);
+                                onSegmentChange?.(item.index);
+                                setCollapsed(false);
+                                setPreviewSegmentId(undefined);
                             }}
                         >
-                            新增镜头
-                        </Button>
-                        <WorkflowBatch
-                            compact
-                            projectId={summary.project.id}
-                            revision={summary.production.revision}
-                            targetIds={actSegments.map((segment) => segment.id)}
-                            targetLabels={Object.fromEntries(actSegments.map((segment) => [segment.id, `第 ${segment.index + 1} 段 · ${segment.title || "连续视频"}`]))}
-                            actions={["segment_video"]}
-                            triggerLabel="一键生成视频"
-                            scopeDescription={batchScope}
-                            disabled={!videoAllowed}
-                            onChanged={onChanged}
-                        />
+                            <span>
+                                <strong>
+                                    第 {item.index + 1} 段{item.title ? ` · ${item.title}` : ""}
+                                </strong>
+                                <small>
+                                    {detail.shots.filter((shot) => shot.segmentIndex === item.index).length} 镜 · {secondsLabel(item.durationMs)}
+                                </small>
+                                <SegmentStatus segment={item} phase={phase} />
+                            </span>
+                        </button>
+                    </div>
+                ))}
+                {!visibleSegments.length ? (
+                    <p className="drama-storyboard-filter-note" role="status">
+                        没有符合筛选条件的段
+                    </p>
+                ) : null}
+            </nav>
+            <section className="drama-storyboard-segment" aria-label={segment ? `第 ${segment.index + 1} 段分镜` : undefined}>
+                <header className="drama-storyboard-segment-toolbar" hidden={!segment}>
+                    {segment ? (
+                        <div>
+                            <h4>
+                                第 {segment.index + 1} 段{segment.title ? ` · ${segment.title}` : ""}{" "}
+                                <span>
+                                    {shots.length} 镜 · {secondsLabel(segment.durationMs)}
+                                </span>
+                            </h4>
+                            <SegmentStatus segment={segment} phase={phase} />
+                        </div>
+                    ) : null}
+                    <div className="drama-storyboard-segment-actions">
+                        {segment ? (
+                            <>
+                                <div className="drama-storyboard-action-group" role="group" aria-label="本段制作">
+                                    <span>制作</span>
+                                    <Button size="small" icon={<RefreshCw className="size-4" />} disabled={currentBusy} onClick={() => onWriteSegmentPrompt(segment)}>
+                                        {writing ? "撰写中" : segment.promptStatus === "failed" ? "重试本段提示词" : "撰写本段提示词"}
+                                    </Button>
+                                    <Button size="small" icon={<Play className="size-4" />} disabled={currentBusy || !videoAllowed} title={!videoAllowed ? "请先确认文字与提示词" : undefined} onClick={() => onGenerateSegment(segment)}>
+                                        {videoLabel}
+                                    </Button>
+                                    <Button size="small" icon={<Play className="size-4" />} aria-expanded={previewSegmentId === segment.id} onClick={() => setPreviewSegmentId(previewSegmentId === segment.id ? undefined : segment.id)}>
+                                        预览本段
+                                    </Button>
+                                </div>
+                                <div className="drama-storyboard-action-group" role="group" aria-label="本段调整">
+                                    <span>调整</span>
+                                    <Button size="small" icon={<Pencil className="size-4" />} onClick={() => onOpenSegment(segment.index)}>
+                                        编辑本段
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        icon={<Plus className="size-4" />}
+                                        loading={insert.isPending}
+                                        disabled={!first}
+                                        onClick={() => {
+                                            const anchor = shots.at(-1);
+                                            if (!anchor || insertLock.current) return;
+                                            insertLock.current = true;
+                                            insert.mutate({ anchor, ticket: operation.capture(), segmentId: segment.id });
+                                        }}
+                                    >
+                                        新增镜头
+                                    </Button>
+                                    <Button
+                                        size="small"
+                                        disabled={!shots.length}
+                                        onClick={() => setBoard({ projectId: summary.project.id, episodeId: detail.episode.id, shots: shots.map((shot) => ({ ...shot })), title: mode === "grid_image" ? "宫格图" : "故事板" })}
+                                    >
+                                        {boardLabel}
+                                    </Button>
+                                    <WorkflowSceneSplits summary={summary} detail={detail} initialSegmentIndex={segment.index} buttonLabel="重拆本段" onChanged={onChanged} onOpenSegment={onOpenSegment} />
+                                </div>
+                                <div className="drama-storyboard-action-group" role="group" aria-label="本段视图">
+                                    <span>视图</span>
+                                    <Button size="small" type="text" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
+                                        {collapsed ? "展开" : "收起"}
+                                    </Button>
+                                </div>
+                            </>
+                        ) : null}
                     </div>
                 </header>
-                {!collapsed ? (
+                {segment && previewSegmentId === segment.id ? (
+                    <section className="drama-storyboard-segment-preview" aria-label={`第 ${segment.index + 1} 段视频预览`}>
+                        <SegmentVideo segment={segment} aspectRatio={summary.production.settings.aspectRatio} />
+                    </section>
+                ) : null}
+                {segment && (segment.videoError || segment.promptError) ? (
+                    <p className="drama-storyboard-shot-error" role="status">
+                        {segment.promptError || segment.videoError}
+                    </p>
+                ) : null}
+                {segment && !collapsed ? (
                     <div className="drama-storyboard-shots-grid">
                         {shots.map((shot) => (
-                            <StoryboardShotCard
-                                key={shot.id}
-                                shot={shot}
-                                castById={castById}
-                                status={status}
-                                videoAllowed={videoAllowed}
-                                defaultKind={defaultKind}
-                                onOpen={(kind) => onOpenShot(shot, kind)}
-                                onEdit={() => onEditShot(shot)}
-                                onOpenCast={onOpenCast}
-                            />
+                            <StoryboardShotCard key={shot.id} shot={shot} castById={castById} videoAllowed={videoAllowed} defaultKind={defaultKind} onOpen={(kind) => onOpenShot(shot, kind)} onEdit={() => onEditShot(shot)} onOpenCast={onOpenCast} />
                         ))}
                     </div>
                 ) : null}
-                {!collapsed && status !== "all" ? <p className="drama-storyboard-filter-note">当前仅显示符合筛选条件的镜头；切换“全部状态”查看本幕所有镜头。</p> : null}
+                {segment && !collapsed && !shots.length ? <p role="status">本段暂无镜头，请编辑本段或重新拆分。</p> : null}
+                {!segment ? <p role="status">切换“全部状态”查看本集剧情段。</p> : null}
             </section>
             <WorkflowStoryboardDialog
                 open={boardOpen}
                 projectId={summary.project.id}
-                shots={shots}
-                title={mode === "grid_image" ? "宫格图" : "故事板"}
+                shots={board?.shots || []}
+                title={board?.title || boardLabel}
                 onClose={() => {
-                    setBoardOpen(false);
+                    setBoard(undefined);
                     onChanged();
                 }}
             />
@@ -205,7 +275,6 @@ function shotTone(video?: DramaShotMedia, allowed = true) {
 function StoryboardShotCard({
     shot,
     castById,
-    status,
     videoAllowed,
     defaultKind,
     onOpen,
@@ -214,7 +283,6 @@ function StoryboardShotCard({
 }: {
     shot: DramaShot;
     castById: Map<string, DramaCast>;
-    status: string;
     videoAllowed: boolean;
     defaultKind: "image" | "video";
     onOpen: (kind?: "image" | "video" | "audio") => void;
@@ -240,7 +308,6 @@ function StoryboardShotCard({
         const cast = castById.get(id);
         return cast ? [cast] : [];
     });
-    if (status !== "all" && tone !== status) return null;
     return (
         <article className="drama-storyboard-shot" data-tone={tone}>
             <button className="drama-storyboard-shot-cover" type="button" aria-label={`编辑分镜 ${shot.position + 1} 的媒体`} onClick={() => onOpen(video.data?.resourceId ? "video" : defaultKind)}>

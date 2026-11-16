@@ -101,7 +101,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                             {mode === "grid_image" ? (
                                 <div className="drama-workflow-mode-empty">
                                     <strong>当前无额外配置项</strong>
-                                    <p>进入漫剧分镜后，在当前幕选择真实镜头与宫格规格，预检后生成原图并裁切。</p>
+                                    <p>进入漫剧分镜后，在当前段选择真实镜头与宫格规格，预检后生成原图并裁切。</p>
                                 </div>
                             ) : (
                                 <>

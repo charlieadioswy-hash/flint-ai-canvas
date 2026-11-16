@@ -42,16 +42,35 @@ const userStore = create(() => ({ user: { id: "user" } }));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
 mock.module("@/pages/projects/workflow-scene-splits", () => ({ WorkflowSceneSplits: () => null }));
-mock.module("@/pages/projects/workflow-storyboard-page", () => ({ WorkflowStoryboardPage: () => createElement("section", { "data-shot-board": true }, "幕与镜头") }));
+mock.module("@/pages/projects/workflow-storyboard-dialog", () => ({ WorkflowStoryboardDialog: () => null }));
+mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => children }));
 mock.module("@/pages/projects/workflow-shot-media-dialog", () => ({
-    WorkflowShotMediaDialog: ({ shot, onClose, onDirtyChange }: { shot?: DramaShot; onClose: () => void; onDirtyChange?: (dirty: boolean, busy?: boolean) => void }) =>
+    WorkflowShotMediaDialog: ({
+        shot,
+        shots,
+        segmentLabel,
+        onClose,
+        onDirtyChange,
+        onSelectShot,
+        onEditText,
+    }: {
+        shot?: DramaShot;
+        shots?: DramaShot[];
+        segmentLabel?: string;
+        onClose: () => void;
+        onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
+        onSelectShot?: (shot: DramaShot, kind: "video") => void;
+        onEditText?: () => void;
+    }) =>
         shot
             ? createElement(
                   "section",
-                  { "data-media-shot": shot.id },
+                  { "data-media-shot": shot.id, "data-media-shots": shots?.map((item) => item.id).join(","), "data-segment-label": segmentLabel },
                   createElement("button", { onClick: () => onDirtyChange?.(true, false) }, "修改镜头媒体"),
                   createElement("button", { onClick: () => onDirtyChange?.(false, true) }, "镜头媒体提交中"),
                   createElement("button", { onClick: onClose }, "媒体确认返回"),
+                  createElement("button", { onClick: onEditText }, "媒体编辑文字"),
+                  ...(shots || []).map((item) => createElement("button", { key: item.id, onClick: () => onSelectShot?.(item, "video") }, `切换媒体 ${item.id}`)),
               )
             : null,
 }));
@@ -69,8 +88,6 @@ beforeEach(() => {
     details.clear();
     for (const [id, value] of initialDetails) details.set(id, value);
 });
-
-mock.module("lucide-react", () => Object.fromEntries(["ChevronDown", "Clapperboard", "Film", "Package", "RefreshCw", "Pencil", "Play"].map((name) => [name, () => createElement("svg", { "data-icon": name })])));
 
 mock.module("antd", () => ({
     App: {
@@ -108,7 +125,11 @@ mock.module("@/services/api/drama", () => ({
         calls.renders.push([episodeId, input.expectedRevision]);
         return { jobs: 1 };
     },
+    insertDramaShot: async () => {
+        throw new Error("本专项不执行插镜");
+    },
 }));
+mock.module("@/services/api/drama-shot-media", () => ({ getDramaShotMedia: async () => ({ status: "idle", takes: [], config: {} }) }));
 mock.module("@/pages/projects/studio/use-studio", () => ({
     dramaKeys: {
         summary: (projectId: string) => ["drama", projectId],
@@ -153,7 +174,19 @@ mock.module("@/pages/projects/studio/queue-bar", () => ({
         ),
 }));
 mock.module("@/pages/projects/simple-studio-segment-editor", () => ({
-    SimpleStudioSegmentEditor: ({ episodeId, segmentIndex, onGenerate, onOpenCast }: { episodeId: string; segmentIndex?: number; onGenerate: (segment: DramaSegment, model?: { modelKey: string }) => void; onOpenCast: (id: string) => void }) =>
+    SimpleStudioSegmentEditor: ({
+        episodeId,
+        segmentIndex,
+        onGenerate,
+        onOpenCast,
+        onClose,
+    }: {
+        episodeId: string;
+        segmentIndex?: number;
+        onGenerate: (segment: DramaSegment, model?: { modelKey: string }) => void;
+        onOpenCast: (id: string) => void;
+        onClose: () => void;
+    }) =>
         segmentIndex === undefined
             ? null
             : createElement(
@@ -161,6 +194,7 @@ mock.module("@/pages/projects/simple-studio-segment-editor", () => ({
                   { "data-editor": `${episodeId}:${segmentIndex}` },
                   createElement("button", { type: "button", onClick: () => onGenerate(segment("segment-editor", segmentIndex), { modelKey: "video-a" }) }, "编辑器生成"),
                   createElement("button", { type: "button", onClick: () => onOpenCast("cast-1") }, "打开资产"),
+                  createElement("button", { type: "button", onClick: onClose }, "关闭段编辑"),
               ),
 }));
 mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
@@ -178,14 +212,8 @@ mock.module("@/pages/projects/drama-shared", () => ({
     MediaThumb: () => createElement("span", null, "缩略图"),
     mediaBusy: (status: string) => status === "queued" || status === "running",
     useResourceMediaUrl: () => "",
-}));
-mock.module("@/pages/projects/studio/segment-parts", () => ({
-    secondsLabel: (ms: number) => `${ms / 1000}s`,
-    segmentState: (segment: DramaSegment, phase: "video" | "prompt" = "video") => ({
-        tone: segment.promptStatus === "failed" || segment.videoStatus === "failed" ? "failed" : (phase === "prompt" && (segment.custom || segment.promptStatus === "ready")) || segment.videoStatus === "ready" ? "ready" : "idle",
-        label: segment.videoStatus || "待生成",
-    }),
-    SegmentStatus: ({ segment }: { segment: DramaSegment }) => createElement("span", null, segment.videoStatus || "待生成"),
+    aspectRatioValue: () => "16 / 9",
+    CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具", look: "造型" },
 }));
 
 const { WorkflowProduction } = await import("@/pages/projects/workflow-production");
@@ -366,7 +394,7 @@ function LocationProbe() {
     return createElement("output", { "data-location": `${location.pathname}${location.search}` });
 }
 
-async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide", waitForQueries = true) {
+async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide", waitForQueries = true, options: { onPickChapters?: () => void; busy?: boolean } = {}) {
     const host = document.createElement("div");
     document.body.append(host);
     const root: Root = createRoot(host);
@@ -381,6 +409,7 @@ async function renderProduction(step: "story" | "preview", data: DramaSummary, p
                 calls.changed += 1;
             },
             onAllowMediaNavigation: (next) => calls.allowedMediaNavigation.push(next),
+            ...options,
         });
     }
     await act(async () => {
@@ -446,6 +475,10 @@ async function click(host: ParentNode, label: string) {
     });
 }
 
+function actionButton(host: ParentNode, label: string) {
+    return [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label);
+}
+
 async function select(host: ParentNode, label: string, value: string) {
     const input = host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
     expect(input).toBeTruthy();
@@ -471,19 +504,49 @@ test("失败且没有分镜的集保留错误和重试本集文字", async () =>
     }
 });
 
-test("卡片编辑打开真实段，生成把该段交给媒体确认", async () => {
+test("选集保留所有制作集并说明待制作章节，状态筛选不隐藏继续选章入口", async () => {
+    const data = summary("story", [failed, ready]);
+    data.production.chapterCount = 2;
+    data.production.reservedChapterCount = 7;
+    let picks = 0;
+    const view = await renderProduction("story", data, "/projects/project/guide?step=story&status=ready", true, { onPickChapters: () => picks++ });
+    try {
+        expect(view.host.textContent).toContain("原文 9 章 · 制作 2 集 · 待制作 7 章");
+        const options = [...view.host.querySelectorAll('[aria-label="选择集数"] option')].map((option) => option.getAttribute("value"));
+        expect(options).toEqual(["all", failed.id, ready.id]);
+        await click(view.host, "继续选章");
+        expect(picks).toBe(1);
+        expect(calls.actions).toHaveLength(0);
+        expect(calls.retried).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+    const locked = await renderProduction("story", data, "/projects/project/guide?step=story", true, { onPickChapters: () => picks++, busy: true });
+    try {
+        expect(actionButton(locked.host, "继续选章")?.disabled).toBe(true);
+    } finally {
+        await locked.dispose();
+    }
+});
+
+test("主工作区编辑真实段，段生成传真实目标且不重复展示连续视频卡片", async () => {
     const view = await renderProduction("story", summary("completed", [ready]));
     try {
-        expect(view.host.textContent).toContain("segment-1的真实提示词");
-        expect(view.host.textContent).toContain("林夏：别回头。");
-        await click(view.host, "编辑第 1 集第 1 段");
+        expect(view.host.querySelector("[aria-label='第 1 段分镜']")).toBeTruthy();
+        expect(view.host.textContent).toContain("【林夏】别回头。");
+        expect(view.host.textContent).not.toContain("本集连续视频");
+        expect(view.host.textContent).not.toContain("幕");
+        expect(view.host.textContent).toContain("2 段 · 2 镜");
+        await click(view.host, "编辑本段");
         expect(view.host.querySelector("[data-editor]")?.getAttribute("data-editor")).toBe("ep-ready:0");
         await click(view.host, "打开资产");
         expect(view.host.querySelector("[role='dialog']")?.textContent).toContain("cast-1");
         await click(view.host, "编辑器生成");
         expect(calls.videos).toEqual([["ep-ready", "segment-editor", "video-a"]]);
         expect(view.host.querySelector("[data-editor]")).toBeNull();
-        await click(view.host, "重新生成第 1 集第 2 段");
+        await click(view.host, "查看第 2 段");
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
+        await click(view.host, "重新生成本段视频");
         expect(calls.videos.at(-1)?.[1]).toBe("segment-2");
     } finally {
         await view.dispose();
@@ -493,11 +556,11 @@ test("卡片编辑打开真实段，生成把该段交给媒体确认", async ()
 test("文字尚未确认时视频按钮不绕过后台", async () => {
     const view = await renderProduction("story", summary("story", [ready]));
     try {
-        const button = [...view.host.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === "生成视频第 1 集第 1 段");
+        const button = actionButton(view.host, "生成本段视频");
         expect(button?.hasAttribute("disabled")).toBe(true);
-        expect(button?.getAttribute("title")).toBe("需要先确认文字");
+        expect(button?.getAttribute("title")).toBe("请先确认文字与提示词");
         expect(view.host.textContent).toContain("本集文字与提示词尚未就绪");
-        await click(view.host, "编辑第 1 集第 1 段");
+        await click(view.host, "编辑本段");
         await click(view.host, "编辑器生成");
         expect(calls.videos).toEqual([]);
     } finally {
@@ -509,12 +572,12 @@ test("story 中就绪集可直接请求视频和编辑器生成，不等待另�
     readinessOverride = async () => workflowReadiness([ready.id]);
     const view = await renderProduction("story", summary("story", [ready, failed]));
     try {
-        expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(false);
+        expect(actionButton(view.host, "生成本段视频")?.disabled).toBe(false);
         expect(view.host.textContent).toContain("本集文字已就绪，可独立生成视频");
         expect(view.host.textContent).toContain("分镜模型超时");
         expect(view.host.querySelector("[data-batch-actions]")?.getAttribute("data-batch-actions")).toContain("segment_video");
-        await click(view.host, "生成视频第 1 集第 1 段");
-        await click(view.host, "编辑第 1 集第 1 段");
+        await click(view.host, "生成本段视频");
+        await click(view.host, "编辑本段");
         await click(view.host, "编辑器生成");
         expect(calls.videos.map((call) => call[0])).toEqual([ready.id, ready.id]);
     } finally {
@@ -533,8 +596,8 @@ test("本集 readiness 读取失败或 production/episode 版本过期均不放�
         };
         const view = await renderProduction("story", summary("story", [ready]));
         try {
-            expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(true);
-            await click(view.host, "编辑第 1 集第 1 段");
+            expect(actionButton(view.host, "生成本段视频")?.disabled).toBe(true);
+            await click(view.host, "编辑本段");
             await click(view.host, "编辑器生成");
             expect(calls.videos).toEqual([]);
             expect(view.host.querySelector("[data-editor]")).not.toBeNull();
@@ -549,12 +612,12 @@ test("readiness 加载时保持禁用，返回当前本集版本后才启用", a
     readinessOverride = () => pending.promise;
     const view = await renderProduction("story", summary("story", [ready]), undefined, false);
     try {
-        expect(view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled).toBe(true);
+        expect(actionButton(view.host, "生成本段视频")?.disabled).toBe(true);
         await act(async () => {
             pending.resolve(workflowReadiness([ready.id]));
             await new Promise((resolve) => setTimeout(resolve, 10));
         });
-        await waitFor(() => view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']")?.disabled === false);
+        await waitFor(() => actionButton(view.host, "生成本段视频")?.disabled === false);
     } finally {
         pending.resolve(workflowReadiness([ready.id]));
         await view.dispose();
@@ -590,10 +653,17 @@ test("跨集批量选择使用真实段 ID，切筛选与集数保留选择，�
         });
     };
     try {
+        const batch = view.host.querySelector('[aria-label="已选剧情段批量操作"]');
+        expect(batch).not.toBeNull();
+        expect(view.host.querySelectorAll("[data-batch-targets]")).toHaveLength(1);
+        expect(batchTargets()).toBe("");
+        const list = view.host.querySelector('[aria-label="第 1 集段列表"]');
+        expect(list).not.toBeNull();
+        expect(Boolean(batch!.compareDocumentPosition(list!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
         await check("选择第 1 集第 2 段");
         await check("选择第 3 集第 2 段");
         expect(batchTargets()).toBe("preview-2,segment-2");
-        await select(view.host, "筛选镜头视频状态", "ready");
+        await select(view.host, "筛选段状态", "ready");
         expect(batchTargets()).toBe("preview-2,segment-2");
         await select(view.host, "选择集数", "ep-ready");
         expect(batchTargets()).toBe("preview-2,segment-2");
@@ -623,11 +693,12 @@ test("预览缺视频时说明数量且不显示全剧已完成", async () => {
     }
 });
 
-test("队列定位保留简易流程并打开对应段", async () => {
+test("队列定位保留简易流程并选中对应段，不自动打开编辑器", async () => {
     const view = await renderProduction("preview", summary("completed", [ready]));
     try {
         await click(view.host, "定位队列任务");
-        await waitFor(() => Boolean(view.host.querySelector("[data-editor]")));
+        await waitFor(() => Boolean(view.host.querySelector("[aria-label='第 2 段分镜']")));
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
         const location = view.host.querySelector("[data-location]")?.getAttribute("data-location") || "";
         expect(location).toContain("/projects/project?");
         expect(location).toContain("episode=ep-ready");
@@ -650,12 +721,12 @@ test("提示词进度保留失败红段，文字阶段筛选并可单段重新�
         expect(progress?.getAttribute("aria-valuenow")).toBe("100");
         expect((progress?.querySelector(".is-success") as HTMLElement)?.style.width).toBe("50%");
         expect((progress?.querySelector(".is-failed") as HTMLElement)?.style.width).toBe("50%");
-        await select(view.host, "筛选镜头视频状态", "ready");
-        expect(view.host.querySelector("[data-segment-id='segment-1']")).toBeTruthy();
-        expect(view.host.querySelector("[data-segment-id='segment-2']")).toBeNull();
-        await select(view.host, "筛选镜头视频状态", "failed");
-        expect(view.host.querySelector("[data-segment-id='segment-1']")).toBeNull();
-        await click(view.host, "重新撰写第 1 集第 2 段提示词");
+        await select(view.host, "筛选段状态", "ready");
+        expect(view.host.querySelector("[aria-label='查看第 1 段：场景1']")).toBeTruthy();
+        expect(view.host.querySelector("[aria-label='查看第 2 段：场景2']")).toBeNull();
+        await select(view.host, "筛选段状态", "failed");
+        expect(view.host.querySelector("[aria-label='查看第 1 段：场景1']")).toBeNull();
+        await click(view.host, "重试本段提示词");
         expect(calls.actions).toEqual([{ action: "segment_prompt", targetId: "segment-2", episodeId: "ep-ready", episodeNumber: 1, segmentTitle: "场景2", targetRevision: 3 }]);
         expect(calls.videos).toEqual([]);
     } finally {
@@ -666,9 +737,9 @@ test("提示词进度保留失败红段，文字阶段筛选并可单段重新�
 test("传统作品未设置guideStep也能生成，预览复用全剧资产包导出", async () => {
     const view = await renderProduction("story", summary(undefined, [ready, failed]));
     try {
-        const generate = view.host.querySelector<HTMLButtonElement>("button[aria-label='生成视频第 1 集第 1 段']");
+        const generate = actionButton(view.host, "生成本段视频");
         expect(generate?.disabled).toBe(false);
-        await click(view.host, "生成视频第 1 集第 1 段");
+        await click(view.host, "生成本段视频");
         expect(calls.videos).toEqual([["ep-ready", "segment-1", undefined]]);
         await click(view.host, "视频预览");
         expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("step=preview");
@@ -771,6 +842,69 @@ test("队列定位的迟到详情不能覆盖用户新选中的集", async () =>
         expect(view.host.querySelector("[data-editor]")).toBeNull();
     } finally {
         pending.resolve(details.get(ready.id)!);
+        await view.dispose();
+    }
+});
+
+test("URL段仅定位，侧栏选段保留全部集范围，编辑关闭后仍停在原段", async () => {
+    const view = await renderProduction("story", summary("completed", [ready, preview]), "/projects/project/guide?step=story&scope=all&episode=ep-ready&segment=1");
+    try {
+        const selected = () => view.host.querySelector("[aria-label='第 1 集段列表'] [aria-pressed='true']")?.getAttribute("aria-label");
+        expect(selected()).toBe("查看第 2 段：场景2");
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
+        await click(view.host.querySelector("[aria-label='第 1 集段列表']")!, "查看第 1 段");
+        expect(selected()).toBe("查看第 1 段：场景1");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("segment=0");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("scope=all");
+        expect(view.host.querySelector("[aria-label='第 3 集段列表']")).toBeTruthy();
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
+        await click(view.host, "编辑本段");
+        expect(view.host.querySelector("[data-editor]")?.getAttribute("data-editor")).toBe("ep-ready:0");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("editor=segment");
+        await click(view.host, "关闭段编辑");
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
+        expect(selected()).toBe("查看第 1 段：场景1");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("媒体条按真实segmentIndex隔离同场景异段镜头，切镜和返回校正URL段", async () => {
+    const value = detail(ready, [segment("source-3", 3), segment("source-8", 8)]);
+    value.shots = [shot("source-8a", 8), shot("source-3a", 3), shot("source-8b", 8)];
+    details.set(ready.id, value);
+    const view = await renderProduction("story", summary("completed", [ready]), "/projects/project/guide?step=story&episode=ep-ready&segment=3&editor=media&shot=source-8a&media=image");
+    try {
+        const panel = () => view.host.querySelector("[data-media-shot]");
+        expect(panel()?.getAttribute("data-segment-label")).toBe("第 9 段");
+        expect(panel()?.getAttribute("data-media-shots")).toBe("source-8a,source-8b");
+        expect(view.host.textContent).not.toContain("切换媒体 source-3a");
+        await click(view.host, "切换媒体 source-8b");
+        expect(panel()?.getAttribute("data-media-shot")).toBe("source-8b");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("segment=8");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("media=video");
+        await click(view.host, "媒体编辑文字");
+        expect(view.host.querySelector("[data-editor]")?.getAttribute("data-editor")).toBe("ep-ready:8");
+        await click(view.host, "关闭段编辑");
+        expect(view.host.querySelector("[aria-label='第 9 段分镜']")).toBeTruthy();
+        expect(view.host.querySelector("[data-editor]")).toBeNull();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("段失败重试仅传当前真实段，后处理重试不调用整集或重新生成", async () => {
+    details.set(ready.id, detail(ready, [segment("recoverable", 4, { videoStatus: "failed", videoReprocessable: true }), segment("failed-video", 9, { videoStatus: "failed" })]));
+    const view = await renderProduction("story", summary("completed", [ready]));
+    try {
+        await click(view.host, "重试本段后处理");
+        expect(calls.actions).toEqual([{ action: "segment_reprocess", targetId: "recoverable", episodeId: ready.id, episodeNumber: ready.number, segmentTitle: "场景5", targetRevision: 3 }]);
+        expect(calls.videos).toHaveLength(0);
+        await click(view.host, "查看第 10 段");
+        await click(view.host, "重试本段视频");
+        expect(calls.videos).toEqual([[ready.id, "failed-video", undefined]]);
+        expect(calls.retried).toHaveLength(0);
+    } finally {
         await view.dispose();
     }
 });

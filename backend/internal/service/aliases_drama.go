@@ -5,6 +5,8 @@ import "yingce/backend/internal/app"
 type (
 	UpdateDramaCastImageOptionsRequest = app.UpdateDramaCastImageOptionsRequest
 	UpdateDramaWorkflowStyleRequest    = app.UpdateDramaWorkflowStyleRequest
+	DramaDrawingConfiguration          = app.DramaDrawingConfiguration
+	DramaDrawingModels                 = app.DramaDrawingModels
 	CreateDramaRequest                 = app.CreateDramaRequest
 	UpdateDramaGuideSourceRequest      = app.UpdateDramaGuideSourceRequest
 	ConfirmDramaGuideRequest           = app.ConfirmDramaGuideRequest

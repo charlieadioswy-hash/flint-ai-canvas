@@ -8,10 +8,13 @@ description: 从产品功能快速定位主要代码入口
 ## 短剧简易步骤工作流
 
 - 列表与创建入口：`web/src/pages/projects/index.tsx`、`workflow-entry.tsx`、`workflow-create.tsx`；正文导入、起草和审阅：`workflow-source.tsx`、`workflow-idea.tsx`。原详细创建保留在 `create.tsx`。
+- 章节与制作集：`workflow-source.tsx/css` 常显字数、章节制作关系与配置期勾选，分别计数原文、选择/预留章和实际集；`workflow.tsx` 在来源、资产、分镜和分集管理统一接入“继续选章”，与详细台共用 `studio/chapter-picker.tsx`、`chapter-pick-list.tsx`，通过既有 `produceDramaChapters` 接口按真实预留章 ID、修订号追加分集。查看、勾选和提交分开，正文与设置脏稿及忙碌状态先处理；成功关闭选择器并刷新数据，保留当前步骤与筛选。
 - 页面协调：`pages/projects/workflow.tsx` 与 `workflow-state.ts` 管理短剧创作六步（上传剧本、剧本格式、风格设置、角色场景、漫剧分镜、视频预览）、单集创作五步（从分集剧本开始）及作品管理四页（剧本设定、风格设置、主体资产、分集管理）。`detail.tsx` 与 `studio/studio-route.ts` 保留简易／详细切换、深链接和定位，页面浏览步骤与服务端制作阶段独立。
 - 配置与模式：`workflow-configuration.tsx` 管理风格与基础配置，`workflow-mode-dialog.tsx` 管理参考生视频、宫格图、智能导演、故事板四模式及对应参数；`app/drama_guide.go` 在确认事务内通过阶段与修订号 CAS 同时保存配置和推进，冲突不落配置、不推进。`internal/production/director.go`、`storyboard.go` 将导演模板与模式落实到分镜提示词。
 - 资产与分集：`workflow-assets.tsx` 同屏展示角色、场景、道具并复用原写接口与引用保护；`studio/cast-editor-dialog.tsx`、`panels.tsx` 管理设置、主图、历史版本、造型和多视图。`workflow-episodes.tsx` 负责真实分集筛选、选择、按集检查及合成／下载回执；生成批次继续使用实际剧情段范围。
-- 分镜与媒体：`workflow-production.tsx` 协调单集详情与预览，`workflow-storyboard-page.tsx` 提供左侧幕列表和右侧镜头卡片，`workflow-scene-splits.tsx`、`workflow-storyboard-dialog.tsx` 复用分幕与宫格／故事板操作；`workflow-shot-media-dialog.tsx` 调整独立镜头图片、视频和音频，报价确认及执行复用原媒体 API。
+- 分集管理呈现：`workflow-episodes.tsx/css` 提供大封面卡、剧集类型与真实 `episode.updatedAt`、三个进度点与更多菜单、状态图例筛选和排序搜索；主体摘要未加载时保持未知，按已选集读取真实引用核对。新建草稿与提交状态回报父层，成功留在管理页、清筛并选中新集。`workflow.tsx` 与列表打开路径让已有集且非配置草稿的作品默认进入管理页，显式步骤和单集定位保留。
+- 新建分集：`studio/episode-source.tsx` 的 `AddEpisodeModal` 固定打开时的 `expectedRevision`，隔离账号/作品会话，保护关闭、提交及文件读取顺序；`services/api/drama.ts` 必传修订号，服务端追加在事务内核对版本与阶段。制作期末尾追加保留已有结果及确认阶段，前后插入仍要求原流程完成并沿用编号和引用顺延。
+- 分镜与媒体：`workflow-production.tsx` 协调单集详情、段级操作与预览，`workflow-storyboard-page.tsx` 按最新设计组织左侧真实剧情段列表和右侧段内镜头卡片，场景仅作镜头信息；`workflow-scene-splits.tsx`、`workflow-storyboard-dialog.tsx` 承载局部重拆与宫格／故事板操作，需明确实际镜头和段范围。`workflow-shot-media-dialog.tsx` 保留独立镜头图片、视频和音频，底部镜头条限当前段，报价确认及执行复用原媒体 API。此次集 → 段 → 镜头调整已通过组件与后端专项、前端构建及 lint，真实浏览器仍待验收，旧幕布局记录仅作历史参考。
 - 业务请求：`web/src/services/api/drama.ts`、`drama-shot-media.ts`；服务端 `app/project_workflow.go`、`drama_guide.go`、`drama_workflow.go` 校验阶段、版本、真实就绪状态和确认点；`drama_orchestrator.go` 调度既有文字、资产与媒体任务。
 - 通用画布 Agent：`components/canvas/canvas-cloud-agent-panel.tsx` 与 `stores/use-global-agent-store.ts` 仅接入画布上下文；`layouts/user-layout.tsx` 在短剧路由隐藏同一个面板实例。专用短剧 context、引用、启动、proposal 与建议展示链已移除；历史短剧会话与空草稿不再被通用画布 Agent 恢复或续发。
 - 设计与范围：`docs/design/short-drama-workflow-rebuild.md`、`short-drama-ui-recheck.md`、`short-drama-workflow-v2.md`；HTTP API、数据库与待测清单分别记录契约、持久状态和运行验收边界。书单授权接入、独立音频混音与逐镜剪映导出尚未实现，浏览器视觉仍待验收。
@@ -101,7 +104,7 @@ description: 从产品功能快速定位主要代码入口
 
 ## 短剧自动制作
 
-- 简易制作台：`web/src/pages/projects/workflow.tsx` 协调创作与作品管理；`workflow-episodes.tsx` 管理分集，`workflow-production.tsx` 与 `workflow-storyboard-page.tsx` 组织单集、幕列表、镜头卡片和预览；`workflow-segment-card.tsx`、`simple-studio-segment-editor.tsx` 保留剧情段卡片与原编辑弹窗。`studio/studio-route.ts` 保留简易／详细视图与定位，`studio/project-topbar.tsx` 提供工作区顶栏。旧 `view`、`tab` 深链接继续进入详细台。
+- 简易制作台：`web/src/pages/projects/workflow.tsx` 协调创作与作品管理；`workflow-episodes.tsx` 管理分集，`workflow-production.tsx` 与 `workflow-storyboard-page.tsx` 按集 → 段 → 镜头组织单集、段列表、段内镜头及段视频预览；批量生成与失败重试以真实段为范围。`workflow-segment-card.tsx`、`simple-studio-segment-editor.tsx` 保留剧情段卡片与原编辑弹窗，单镜生成在 `workflow-shot-media-dialog.tsx` 内完成。段导航调整已通过组件与后端专项、前端构建及 lint，真实浏览器仍待验收。`studio/studio-route.ts` 保留简易／详细视图与定位，`studio/project-topbar.tsx` 提供工作区顶栏。旧 `view`、`tab` 深链接继续进入详细台。
 - 媒体操作：`studio/use-drama-media-action.tsx` 与 `drama-media-action-dialog.tsx` 直接调用预检与执行接口，不经过短剧 Agent 建议。服务端 `app/drama_studio_actions.go` 及 `handler/drama_routes.go` 校验真实目标、作品／目标版本、范围、报价与显式确认；`segment_assets` 聚合本段缺失参考图及必要本体依赖，复用已有图片和在途任务，不放行整集或自动继续视频。
 - 剧集成片恢复：`RetryFailedDramaEpisodeRender` 与 `RetryDramaEpisodeRender` 只重试最新版本的失败合成，复用已有已采用视频。工作区侧栏闲置行为在 `components/layout/use-project-sidebar-idle.ts`，不写全局偏好。
 - 设定与跨季素材：`app/drama_cast_materials.go`（手工草稿、独立风格、预览与生图共用的提示词编排），`app/drama_cast_import.go`（来源权限、同名匹配、角色造型映射与原子导入）；迁移 `database/drama_cast_styles_import.go`。前端 `studio/cast-create-dialog.tsx`、`cast-project-import.tsx`、`cast-image-fields.tsx`；`panels.tsx` 管理角色缩略图切换与独立造型列表，`cast-looks.tsx` 管理新增造型和图片预览。

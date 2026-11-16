@@ -86,8 +86,8 @@ paths:
         "409": {$ref: "#/components/responses/Error"}
     patch:
       tags: [dramas]
-      summary: 保存设定文字、图片提示词与独立画风
-      description: 省略字段保持原值；imagePrompt 和画风字段传空串清空。保存保留当前参考图，不自动生成。引导期间须提交 expectedRevision，拒绝进行中的文字任务；制作阶段如提交版本亦须精确匹配。请求体最多 128 KiB。
+      summary: 保存主体设定与图片生成配置
+      description: 省略字段保持原值；imagePrompt 和画风字段传空串清空。传 imageOptions 时必须同时提交 expectedRevision/expectedCastRevision，在同一事务校验并保存文字与图片配置，任一校验失败均不写入。保存保留当前参考图，不自动生成。引导期间须提交 expectedRevision，拒绝进行中的文字任务；制作阶段如提交版本亦须精确匹配。请求体最多 128 KiB。
       requestBody:
         required: true
         content:
@@ -102,6 +102,69 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/workflow/style:
+    patch:
+      tags: [dramas]
+      summary: 保存全剧默认风格与共享绘图配置
+      description: 在作品锁内校验制作版本和相关文字作业，原子保存风格与可选的全剧共享绘图配置，仅递增制作版本。省略 drawing 保留原绘图配置；不修改其他制作参数或已有内容，不自动生成媒体。请求体最多 128 KiB。
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDramaWorkflowStyleRequest" }
+      responses:
+        "200": { description: 成功信封，data 为保存后的短剧概览 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/episodes/{episodeId}/style:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: episodeId, required: true, schema: { type: string } }
+    get:
+      tags: [dramas]
+      summary: 读取单集有效风格及全剧默认
+      responses:
+        "200":
+          description: 成功信封，data 包含继承模式、当前有效风格与全剧默认
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaEpisodeStyle" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [dramas]
+      summary: 保存单集独立风格或恢复沿用全剧默认
+      description: 双版本校验并递增作品制作版本，单集正文版本不变。继承模式跟随当前全剧默认；独立模式只用于本集后续显式撰写。可同时提交 drawing 原子保存全剧共享绘图配置，其范围不随 mode 改变。保存不改写旧提示词、共享主体记录或已有媒体，不自动生成。相关文字任务进行中拒绝保存。请求体最多 128 KiB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDramaEpisodeStyleRequest" }
+      responses:
+        "200":
+          description: 成功信封，data 为保存后的有效风格
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaEpisodeStyle" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/guide/source:
     put:
       tags: [dramas]
@@ -4469,6 +4532,60 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "416": { description: Range 不满足原始媒体长度 }
+  /dramas/{id}/episodes:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 末尾新建一集或插入到指定集前后
+      description: expectedRevision 必须是当前作品版本，0 有效，版本变化返回 409。无锚点时末尾追加，允许 assets/story 引导及已完成引导或普通制作，configuring 和未知引导阶段拒绝；活动引导有进行中的文字任务时返回 409。保留当前引导阶段、圣经、已有各集和媒体结果，不自动放行媒体。指定锚点插入仍要求完成引导，沿用调度租约，后续集号、章节位置、默认标题、作业标签与造型章节范围顺延。分集规划尚未完成时拒绝。写入与作品版本递增在同一事务中；已完成作品恢复制作，暂停作品保持暂停。请求体最多 1 MiB，返回新集详情。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddDramaEpisodeRequest" }
+      responses:
+        "200":
+          description: 新建分集详情，作品当前版本需从作品摘要刷新
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaEpisodeDetail" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/chapters/produce:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 将预留章节按章节顺序追加到制作分集
+      description: expectedRevision 必传当前作品版本，0 有效，版本变化返回 409。允许 assets/story 引导、已完成引导及普通制作；配置阶段须通过制作范围保存，未知引导阶段拒绝。活动引导有进行中的文字任务时返回 409，分集规划尚未完成时拒绝。全部 chapterIds 必须属于当前作品且仍为预留章节，拒绝空白、重复或混入已制作章节；整批校验及追加与作品版本递增处于同一事务。小说按 chaptersPerEpisode 合并连续章节，0 或省略沿用作品设置；剧本和分镜固定每章一集。保留原阶段门禁、圣经、已有集和媒体结果，不自动重做圣经或放行媒体。暂停作品保持暂停，已完成作品恢复制作。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProduceDramaChaptersRequest" }
+      responses:
+        "200":
+          description: 按集号排序的新集 ID 及写入后的作品版本
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/ProduceDramaChaptersResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/episodes/{episodeId}/render:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -5082,6 +5199,54 @@ components:
         available: { type: boolean }
         unavailableReason: { type: string }
         mediaUrl: { type: string, description: 仅 available=true 提供的同源管理员媒体路径，不包含外部 URL 或访问凭据 }
+    AddDramaEpisodeRequest:
+      type: object
+      required: [expectedRevision, text]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 0, description: 当前作品 production.revision，所有阶段必传 }
+        title: { type: string, maxLength: 60, description: 留空时按最终集号取默认标题 }
+        text: { type: string, minLength: 1, maxLength: 12000, description: 去除首尾空白后必须非空，不经过分集规划 }
+        sourceFormat: { type: string, enum: [novel, script, storyboard] }
+        anchorEpisodeId: { type: string, description: 省略或空串时末尾追加；非空时必须属于当前作品且须完成引导 }
+        position: { type: string, enum: [before, after], description: anchorEpisodeId 非空时必传 }
+    ProduceDramaChaptersRequest:
+      type: object
+      required: [expectedRevision, chapterIds]
+      properties:
+        expectedRevision: { type: integer, format: int64, minimum: 0, description: 当前作品 production.revision，所有阶段必传 }
+        chapterIds:
+          type: array
+          minItems: 1
+          maxItems: 3000
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+        chaptersPerEpisode: { type: integer, minimum: 0, maximum: 12, default: 0, description: 小说的每集章数；0 沿用作品设置，剧本和分镜始终为 1 }
+    ProduceDramaChaptersResult:
+      type: object
+      required: [episodeIds, revision]
+      properties:
+        episodeIds: { type: array, items: { type: string }, description: 本次新建分集 ID，按集号排序 }
+        revision: { type: integer, format: int64, minimum: 1, description: 事务提交后的作品版本 }
+    DramaEpisodeDetail:
+      type: object
+      required: [episode, shots, segments, chapters, jobs]
+      properties:
+        episode:
+          type: object
+          required: [id, projectId, number, title, stage, revision]
+          properties:
+            id: { type: string }
+            projectId: { type: string }
+            number: { type: integer, minimum: 1 }
+            title: { type: string }
+            stage: { type: string }
+            revision: { type: integer, format: int64, minimum: 1, description: 分集版本，区别于作品 production.revision }
+        shots: { type: array, items: { type: object } }
+        segments: { type: array, items: { type: object } }
+        chapters: { type: array, items: { type: object } }
+        jobs: { type: array, items: { type: object } }
+        scriptJob: { type: object }
+        dialogueCheck: { type: object }
     DramaCastImageSettings:
       type: object
       description: 图片提示词与画风独立于作品；三项画风字段全空时继承作品，任一非空时覆盖作品画风和 visualRules。更新传空串清空，省略保持原值。
@@ -5103,12 +5268,97 @@ components:
             description: { type: string, maxLength: 1000 }
             aliases: {type: array, maxItems: 20, items: {type: string, maxLength: 40}}
             voiceInstructions: {type: string, maxLength: 500}
+    DramaDrawingConfiguration:
+      type: object
+      description: 作品共享绘图配置，角色与场景模板均生成单张图片。提交时整组替换 assets 及列出的三项图片模型，其他制作参数保持原值。
+      required: [assets, models]
+      properties:
+        assets:
+          type: object
+          required: [mode, characterPrompt, scenePrompt, characterRatio]
+          properties:
+            mode: { type: string }
+            characterPrompt: { type: string, maxLength: 4000 }
+            scenePrompt: { type: string, maxLength: 4000 }
+            characterRatio: { type: string }
+            resolution: { type: string }
+            propResolution: { type: string }
+            sceneResolution: { type: string }
+            sourceSkillId: { type: string }
+            sourceSkillName: { type: string }
+            sourcePath: { type: string }
+        models:
+          type: object
+          required: [image, characterImage, sceneImage]
+          properties:
+            image: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            characterImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            sceneImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+    DramaDrawingModelChoice:
+      type: object
+      description: 选择当前用户可用的逻辑模型或系统渠道图片模型；角色与场景可传空对象以沿用默认图片模型。
+      properties:
+        logicalModelId: { type: string }
+        channelId: { type: string }
+        modelKey: { type: string }
+        label: { type: string }
+        priceLabel: { type: string }
+    UpdateDramaWorkflowStyleRequest:
+      type: object
+      required: [expectedRevision, styleName, stylePrompt]
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        styleName: { type: string, minLength: 1, maxLength: 60 }
+        stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: 最多 10000 个 Unicode 字符，完整保存并用于后续显式创作，不截短系统预设 }
+        drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+    DramaEpisodeStyle:
+      type: object
+      required: [projectId, episodeId, revision, episodeRevision, mode, styleName, stylePrompt, defaultStyleName, defaultStylePrompt, drawing]
+      properties:
+        projectId: { type: string }
+        episodeId: { type: string }
+        revision: { type: integer, minimum: 0, description: 作品制作版本 }
+        episodeRevision: { type: integer, minimum: 0, description: 单集正文版本 }
+        mode: { type: string, enum: [inherit, independent] }
+        styleName: { type: string, description: 当前有效风格名称 }
+        stylePrompt: { type: string, description: 当前有效风格说明 }
+        defaultStyleName: { type: string }
+        defaultStylePrompt: { type: string }
+        drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+    UpdateDramaEpisodeStyleRequest:
+      type: object
+      required: [expectedRevision, expectedEpisodeRevision, mode]
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        expectedEpisodeRevision: { type: integer, minimum: 0 }
+        mode: { type: string, enum: [inherit, independent] }
+        styleName: { type: string, minLength: 1, maxLength: 60, description: independent 模式必填，inherit 模式忽略 }
+        stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: independent 模式必填，inherit 模式忽略；与全剧默认共用 10000 个 Unicode 字符上限，完整用于后续显式创作 }
+        drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+    DramaCastImageOptions:
+      type: object
+      required: [model, ratio, resolution, subjectReferenceIds, styleReferenceIds]
+      properties:
+        model:
+          type: object
+          properties:
+            logicalModelId: { type: string }
+            channelId: { type: string }
+            modelKey: { type: string }
+            label: { type: string }
+            priceLabel: { type: string }
+        ratio: { type: string }
+        resolution: { type: string }
+        subjectReferenceIds: { type: array, items: { type: string } }
+        styleReferenceIds: { type: array, items: { type: string } }
     UpdateDramaCastRequest:
       allOf:
         - { $ref: "#/components/schemas/DramaCastImageSettings" }
         - type: object
           properties:
-            expectedRevision: {type: integer, minimum: 1, description: 活动引导必填；制作阶段可省略，提交时执行版本校验}
+            expectedRevision: {type: integer, minimum: 0, description: 活动引导或传 imageOptions 时必填；制作阶段其他请求可省略，提交时执行版本校验}
+            expectedCastRevision: { type: integer, minimum: 0, description: 传 imageOptions 时与 expectedRevision 一同必填 }
+            imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
             name: { type: string, minLength: 1, maxLength: 60 }
             appearance: { type: string, minLength: 1, maxLength: 1000 }
             description: { type: string, maxLength: 1000 }
@@ -5122,6 +5372,9 @@ components:
         - { $ref: "#/components/schemas/DramaCastImageSettings" }
         - type: object
           properties:
+            expectedRevision: { type: integer, minimum: 0, description: 传 imageOptions 时必填 }
+            expectedCastRevision: { type: integer, minimum: 0, description: 传 imageOptions 时必填 }
+            imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
             lookName: { type: string, minLength: 1, maxLength: 60 }
             appearance: { type: string, minLength: 1, maxLength: 1000 }
             fromChapter: { type: integer, description: 原著章节号，从 1 起；0 或空表示不限，负数归零，起止颠倒会交换 }

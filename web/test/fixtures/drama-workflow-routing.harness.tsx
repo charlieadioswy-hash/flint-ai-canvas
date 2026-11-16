@@ -236,7 +236,7 @@ test("新建入口在 StrictMode 中传入原 File，并保留正文聚焦与主
     try {
         expect(entryProps.initialFile).toBe(file);
         expect(entryProps.focusInput).toBe(true);
-        expect(entryProps.showSteps).toBe(true);
+        expect(mounted.host.querySelector('[aria-label="正文导入"]')).not.toBeNull();
         expect(mounted.host.querySelector(".drama-root")).not.toBeNull();
     } finally {
         await mounted.close();
@@ -342,7 +342,13 @@ test("进行中与完成作品均可打开详细制作台，返回简易保留�
 });
 
 test("作品卡区分文字就绪与真正成片，配置作品提供继续配置", async () => {
-    listItems = [item("未成片"), item("已成片", { doneCount: 3 }), item("配置项目", { guideStep: "configuring", status: "draft" })];
+    listItems = [
+        item("未成片"),
+        item("已成片", { doneCount: 3 }),
+        item("配置项目", { guideStep: "configuring", status: "draft" }),
+        item("空草稿", { episodeCount: 0, guideStep: "configuring", status: "draft", hasDraftForm: true }),
+        item("等待分集", { episodeCount: 0, guideStep: "story" }),
+    ];
     const mounted = await mount(<ListPage />, "/projects");
     try {
         const cards = [...mounted.host.querySelectorAll("article")];
@@ -351,6 +357,10 @@ test("作品卡区分文字就绪与真正成片，配置作品提供继续配�
         expect(cards[1].textContent).toContain("已完成");
         expect(cards[2].textContent).toContain("继续配置");
         expect(cards[2].querySelector("a")?.getAttribute("href")).toBe(`/projects/${encodeURIComponent("配置项目")}/guide`);
+        expect(cards[0].querySelector("a")?.getAttribute("href")).toBe(`/projects/${encodeURIComponent("未成片")}?manage=episodes`);
+        expect(cards[1].querySelector("a")?.getAttribute("href")).toBe(`/projects/${encodeURIComponent("已成片")}?manage=episodes`);
+        expect(cards[3].querySelector("a")?.getAttribute("href")).toBe(`/projects/new?draft=${encodeURIComponent("空草稿")}`);
+        expect(cards[4].querySelector("a")?.getAttribute("href")).toBe(`/projects/${encodeURIComponent("等待分集")}/guide`);
         expect(mounted.host.textContent).not.toContain("创作引导");
     } finally {
         await mounted.close();

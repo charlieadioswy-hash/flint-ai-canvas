@@ -25,8 +25,8 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
-	if err := requireDramaGuideComplete(productionRow); err != nil {
-		return DramaEpisodeDetail{}, err
+	if req.ExpectedRevision == nil {
+		return DramaEpisodeDetail{}, BadAuthRequest("请刷新作品当前版本后再新建分集")
 	}
 	text := strings.TrimSpace(strings.ReplaceAll(req.Text, "\r\n", "\n"))
 	runes := utf8.RuneCountInString(text)
@@ -46,12 +46,48 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 			return DramaEpisodeDetail{}, BadAuthRequest("请选择插入到这一集之前还是之后")
 		}
 		placement = &repository.DramaEpisodePlacement{AnchorEpisodeID: anchorID, Before: req.Position == "before"}
+		if err := requireDramaGuideComplete(productionRow); err != nil {
+			return DramaEpisodeDetail{}, err
+		}
+		// 插入会给后续集改号，继续与调度共用租约；末尾追加只需要作品行锁和版本校验。
+		release, err := s.lockDramaSchedule(project.ID)
+		if err != nil {
+			return DramaEpisodeDetail{}, err
+		}
+		defer release()
 	}
 	// 标题留空时由事务按最终集号取默认标题。
 	now := time.Now()
 	chapter := model.ProjectUnit{ID: newID(), ProjectID: project.ID, Kind: model.ProjectUnitKindChapter, Title: title, SourceText: text, WordCount: runes, Status: model.ProjectUnitStatusReady, CreatedAt: now, UpdatedAt: now}
 	episode := newDramaChapterEpisode(project.ID, 0, chapter, production.NormalizeSourceFormat(req.SourceFormat), now)
-	if err := s.addDramaEpisodeSource(project.ID, &chapter, &episode, placement); err != nil {
+	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		current, err := tx.DramaProduction(project.ID)
+		if err != nil {
+			return err
+		}
+		if current.UserID != userID {
+			return dramaLookupError(gorm.ErrRecordNotFound)
+		}
+		if _, err := tx.ProjectForUser(userID, project.ID); err != nil {
+			return dramaLookupError(err)
+		}
+		if placement != nil {
+			if err := requireDramaGuideComplete(current); err != nil {
+				return err
+			}
+		} else if current.GuideStep != "" && current.GuideStep != model.DramaGuideAssets && current.GuideStep != model.DramaGuideStory && current.GuideStep != model.DramaGuideCompleted {
+			return BadAuthRequest("请先确认制作方案；配置阶段请保存制作范围")
+		}
+		if err := tx.AddDramaEpisodeSource(project.ID, &chapter, &episode, placement); err != nil {
+			return err
+		}
+		// 活动引导保留阶段门禁；已完成作品重新交给调度，暂停中的保持暂停。
+		if !dramaGuideActive(current) && current.Status == model.DramaStatusCompleted {
+			return tx.UpdateDramaGuideDraftFields(project.ID, map[string]any{"status": model.DramaStatusRunning, "stage": model.DramaStageProduce})
+		}
+		return nil
+	})
+	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrDramaPlanPending):
 			if placement != nil {
@@ -63,24 +99,8 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 		}
 		return DramaEpisodeDetail{}, err
 	}
-	// 已完成的作品重新交给调度循环写新集剧本；暂停中的保持暂停，由用户点继续。
-	if err := s.reopenDrama(productionRow); err != nil {
-		return DramaEpisodeDetail{}, err
-	}
+	s.wakeDramaScheduler()
 	return s.DramaEpisodeDetail(userID, projectID, episode.ID)
-}
-
-// addDramaEpisodeSource 写入新集；插入会给后续集改号，期间持有调度租约，不让一轮调度拿着旧集号派发作业或写标签。
-func (s *Service) addDramaEpisodeSource(projectID string, chapter *model.ProjectUnit, episode *model.DramaEpisode, placement *repository.DramaEpisodePlacement) error {
-	if placement == nil {
-		return s.repo.AddDramaEpisodeSource(projectID, chapter, episode, nil)
-	}
-	release, err := s.lockDramaSchedule(projectID)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.repo.AddDramaEpisodeSource(projectID, chapter, episode, placement)
 }
 
 // DeleteDramaEpisode 删除一集：剧本、分镜、剧情段、段视频与成片的版本和调度作业一并删除，后续集号前移一位；
@@ -213,14 +233,14 @@ func (s *Service) DramaChapterOutline(userID, projectID string) ([]DramaChapterR
 }
 
 // ProduceDramaChapters 把预留的原著章节加入制作：按章节顺序建成新的集追加在末尾，调度循环随后为它们写剧本；
-// 这些章节里新出现的角色、道具与场景在写剧本时即时建档。暂停中的制作保持暂停。
+// 引导中服从当前阶段门禁，不重做作品圣经；新资产在剧本阶段即时建档。暂停中的制作保持暂停。
 func (s *Service) ProduceDramaChapters(userID, projectID string, req ProduceDramaChaptersRequest) (ProduceDramaChaptersResult, error) {
-	project, productionRow, err := s.dramaForUser(userID, projectID)
+	project, _, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return ProduceDramaChaptersResult{}, err
 	}
-	if err := requireDramaGuideComplete(productionRow); err != nil {
-		return ProduceDramaChaptersResult{}, err
+	if req.ExpectedRevision == nil {
+		return ProduceDramaChaptersResult{}, BadAuthRequest("请刷新作品当前版本后再加入制作")
 	}
 	if len(req.ChapterIDs) == 0 || len(req.ChapterIDs) > dramaMaxChapters {
 		return ProduceDramaChaptersResult{}, BadAuthRequest("请选择要加入制作的章节")
@@ -230,60 +250,87 @@ func (s *Service) ProduceDramaChapters(userID, projectID string, req ProduceDram
 	}
 	wanted := make(map[string]bool, len(req.ChapterIDs))
 	for _, id := range req.ChapterIDs {
-		if id = strings.TrimSpace(id); id != "" {
-			wanted[id] = true
+		if id == "" || id != strings.TrimSpace(id) || wanted[id] {
+			return ProduceDramaChaptersResult{}, BadAuthRequest("章节范围包含空白或重复项")
 		}
+		wanted[id] = true
 	}
-	units, err := s.repo.DramaChapterOutline(project.ID)
+	result := ProduceDramaChaptersResult{}
+	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		current, err := tx.DramaProduction(project.ID)
+		if err != nil {
+			return err
+		}
+		if current.UserID != userID {
+			return dramaLookupError(gorm.ErrRecordNotFound)
+		}
+		currentProject, err := tx.ProjectForUser(userID, project.ID)
+		if err != nil {
+			return dramaLookupError(err)
+		}
+		if current.GuideStep != "" && current.GuideStep != model.DramaGuideAssets && current.GuideStep != model.DramaGuideStory && current.GuideStep != model.DramaGuideCompleted {
+			return BadAuthRequest("请先确认制作方案；配置阶段请保存制作范围")
+		}
+		units, err := tx.DramaChapterOutline(project.ID)
+		if err != nil {
+			return err
+		}
+		chosen := make([]model.ProjectUnit, 0, len(wanted))
+		for _, unit := range units {
+			if !wanted[unit.ID] {
+				continue
+			}
+			if unit.Status != model.ProjectUnitStatusReserved {
+				return BadAuthRequest(fmt.Sprintf("“%s”已在制作中", unit.Title))
+			}
+			if unit.WordCount > production.ScriptSourceChapterRunes {
+				return BadAuthRequest(fmt.Sprintf("第 %d 章原文 %d 字，单章不超过 %d 字，请先修改原文拆开", unit.Position+1, unit.WordCount, production.ScriptSourceChapterRunes))
+			}
+			chosen = append(chosen, unit)
+		}
+		if len(chosen) == 0 || len(chosen) != len(wanted) {
+			return BadAuthRequest("选择的章节不存在，请刷新后重试")
+		}
+		perEpisode := req.ChaptersPerEpisode
+		if perEpisode == 0 {
+			perEpisode = max(1, parseDramaSettings(current.SettingsJSON).ChaptersPerEpisode)
+		}
+		format := production.NormalizeSourceFormat(currentProject.SourceType)
+		if format != production.SourceNovel {
+			perEpisode = 1
+		}
+		episodes, err := groupDramaChapterEpisodes(project.ID, 0, chosen, perEpisode, format, time.Now())
+		if err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(chosen))
+		for _, unit := range chosen {
+			ids = append(ids, unit.ID)
+		}
+		if err := tx.ProduceDramaChapters(project.ID, ids, episodes); err != nil {
+			if errors.Is(err, repository.ErrDramaPlanPending) {
+				return BadAuthRequest("分集规划尚未完成，请完成后再加入预留章节")
+			}
+			if errors.Is(err, repository.ErrDramaChaptersChanged) {
+				return dramaGuideConflict("章节状态已变化，请刷新后重试")
+			}
+			return err
+		}
+		if !dramaGuideActive(current) && current.Status == model.DramaStatusCompleted {
+			if err := tx.UpdateDramaGuideDraftFields(project.ID, map[string]any{"status": model.DramaStatusRunning, "stage": model.DramaStageProduce}); err != nil {
+				return err
+			}
+		}
+		result.EpisodeIDs, result.Revision = make([]string, 0, len(episodes)), current.Revision+1
+		for _, episode := range episodes {
+			result.EpisodeIDs = append(result.EpisodeIDs, episode.ID)
+		}
+		return nil
+	})
 	if err != nil {
 		return ProduceDramaChaptersResult{}, err
 	}
-	chosen := make([]model.ProjectUnit, 0, len(wanted))
-	for _, unit := range units {
-		if !wanted[unit.ID] {
-			continue
-		}
-		if unit.Status != model.ProjectUnitStatusReserved {
-			return ProduceDramaChaptersResult{}, BadAuthRequest(fmt.Sprintf("“%s”已在制作中", unit.Title))
-		}
-		// 与导入时同一上限：剧本提示词每章最多读取这么多字，超出会丢台词。
-		if unit.WordCount > production.ScriptSourceChapterRunes {
-			return ProduceDramaChaptersResult{}, BadAuthRequest(fmt.Sprintf("第 %d 章原文 %d 字，单章不超过 %d 字，请先修改原文拆开", unit.Position+1, unit.WordCount, production.ScriptSourceChapterRunes))
-		}
-		chosen = append(chosen, unit)
-	}
-	if len(chosen) == 0 || len(chosen) != len(wanted) {
-		return ProduceDramaChaptersResult{}, BadAuthRequest("选择的章节不存在，请刷新后重试")
-	}
-	perEpisode := req.ChaptersPerEpisode
-	if perEpisode == 0 {
-		perEpisode = max(1, parseDramaSettings(productionRow.SettingsJSON).ChaptersPerEpisode)
-	}
-	// 集号在事务内按现有最大集号分配。
-	episodes, err := groupDramaChapterEpisodes(project.ID, 0, chosen, perEpisode, production.NormalizeSourceFormat(project.SourceType), time.Now())
-	if err != nil {
-		return ProduceDramaChaptersResult{}, err
-	}
-	ids := make([]string, 0, len(chosen))
-	for _, unit := range chosen {
-		ids = append(ids, unit.ID)
-	}
-	if err := s.repo.ProduceDramaChapters(project.ID, ids, episodes); err != nil {
-		if errors.Is(err, repository.ErrDramaPlanPending) {
-			return ProduceDramaChaptersResult{}, BadAuthRequest("前面的章节还在分集规划，完成后再加入新的章节")
-		}
-		if errors.Is(err, repository.ErrDramaChaptersChanged) {
-			return ProduceDramaChaptersResult{}, BadAuthRequest("章节状态已变化，请刷新后重试")
-		}
-		return ProduceDramaChaptersResult{}, err
-	}
-	if err := s.reopenDrama(productionRow); err != nil {
-		return ProduceDramaChaptersResult{}, err
-	}
-	result := ProduceDramaChaptersResult{EpisodeIDs: make([]string, 0, len(episodes))}
-	for _, episode := range episodes {
-		result.EpisodeIDs = append(result.EpisodeIDs, episode.ID)
-	}
+	s.wakeDramaScheduler()
 	return result, nil
 }
 

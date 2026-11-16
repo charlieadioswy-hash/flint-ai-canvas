@@ -5,7 +5,7 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
-当前代码结构版本为 **115**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
+当前代码结构版本为 **116**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订；116 增加单集独立风格与默认继承。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
 
 ## 短剧宫格故事板（Schema 114）
 
@@ -246,6 +246,10 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 版本 79 `drama_episode_source_format` 为 `drama_episodes` 增加 `source_format`（最长 16 字）：`novel` 小说原文需改编，`script` 用户写好的剧本只拆镜、台词逐字保留，`storyboard` 用户做好的分镜按原镜头转录。旧集为空串，按 `novel` 处理。分镜原文是 JSON（`{"shots":[…]}` 或镜头数组）或带表头的 Markdown 表格 / 制表符文本时，剧本阶段直接解析入库，不调用文本模型。
 
+Schema 116 `drama_episode_style` 为 `drama_episodes` 增加 `style_mode`（16 字）、`style_name`（60 字）、`style_prompt`（text，单集与作品默认统一最多 10000 个 Unicode 字符，保存、读取及后续创作均保留完整说明），均非空、默认空串。空模式或 `inherit` 始终读取当前 `drama_productions.settings_json` 的风格；`independent` 使用本集保存的名称与说明，即使内容与默认相同也保留独立选择。恢复继承时清空本集名称与说明，不保存默认快照。旧集继续继承默认，迁移不修改已有正文、媒体、任务或版本。
+
+单集风格保存核对作品与单集版本，在同一事务内只写三项风格字段并递增制作控制面版本；不递增集内容 `revision`，不改变 `final_stale`、段提示词、媒体状态或排队任务。相关文字任务进行中拒绝保存。后续显式撰写本集分镜、重拆段分镜与段提示词时读取有效风格；独立模式沿用主体独立画风边界，不拼接可能包含旧画风的全剧 `bible_json.visualRules`。已保存完整提示词继续原有优先级，主体参考图与独立视图仍属作品共享资产，不新增单集图片版本。
+
 逐集追加（`POST /dramas/:id/episodes`）在同一事务内写入一行 `project_units`（`kind=chapter`，`position` 为末尾）和一行 `drama_episodes`（`number` 为当前最大值 + 1），并把 `drama_productions.plan_cursor` 推过这一章、保持 `plan_done=true`，调度循环不会再把这一章交给分集规划；`plan_done=false` 时拒绝追加。
 
 插到某一集前后（同一接口带 `anchorEpisodeId` / `position`）不改表结构，在同一事务内完成：新集的 `number` 取锚点集号（之前）或锚点集号 + 1（之后），这个号及之后的集整体 + 1；新章节的 `position` 取锚点集章节的最小值（之前）或最大值 + 1（之后），这个位置及之后的章节（含预留章节）整体 + 1，`drama_casts.look_from_chapter` / `look_to_chapter` 中不小于新章节号的值同步 + 1。删除一集（`DELETE /dramas/:id/episodes/:episodeId`）在同一事务内删除本集的 `drama_takes`（段视频与成片版本）、`drama_jobs`、`drama_segments`、`drama_shots` 与 `drama_episodes` 行，之后的集号整体 − 1；只属于这一集的章节改为 `status=reserved`，`plan_cursor` 重算为已加入制作的章节数。`(project_id, number)` 唯一，集号平移先把受影响行写成负数再写回目标值，避免逐行加减时撞号；`title` 仍是“第 N 集”的集与 `drama_jobs.label` 开头的“第 N 集”随新集号改写（标签改写不更新 `updated_at`）。删除后不再被引用的段视频、尾帧与成片资源按孤儿资源规则清理。
@@ -374,7 +378,7 @@ Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_re
 | --- | --- | --- |
 | `drama_productions` | 每个项目一行的控制面：`status`（draft/running/paused/completed）、全剧阶段 `stage`、作品设置 `settings_json`、作品圣经摘要 `bible_json`、预算与已用积分、分集游标 `plan_cursor` / `plan_done`、样片确认 `sample_approved`、参考图放行 `assets_released`、暂停原因 | 主键 `project_id`；用户操作只写状态、设置、预算与确认列；调度循环只写进度列，状态变更带 `status = running` 条件 |
 | `drama_casts` | 全剧设定：角色（`kind=character`，含别名、外貌与声线 `voice_instructions`）、关键道具（`kind=prop`）和场景（`kind=scene`），当前参考图 `image_resource_id` 与状态 | 作品圣经建档；剧本里首次出现的人物、道具或地点即时建档，按标准名与别名归并；锁定后不再重新生成 |
-| `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、阶段（queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；用户修改递增 `revision`，调度写入以 `revision` 为条件 |
+| `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、风格继承／独立值 `style_mode/style_name/style_prompt`（Schema 116）、阶段（queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；内容修改递增 `revision`，调度写入以它为条件；风格保存只递增作品制作控制版本 |
 | `drama_shots` | 镜头脚本：剧情段 `segment_index` / `segment_title`、场景与场景设定 `scene_cast_id`、出场角色 `cast_ids_json`、关键道具 `prop_ids_json`、说话人、台词、动作、景别、运镜、转场 `transition`、时长、起幅画面 `image_prompt`、运动描述 `video_prompt`、原文出处 | 供段提示词及独立镜头媒体读取；独立产物保存于 `drama_shot_media`，不写回脚本列。修改使所在段提示词/视频及对应逐镜媒体来源过期 |
 | `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、`revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；结果按 `revision` 条件写入，过期结果作废；某段视频变化会让后续已生成的段过期（它们承接的是旧最后一帧） |
 | `drama_takes` | 历史版本：设定参考图（`cast`）、独立视图（`cast_view`）、镜头图片/视频/音频（`shot_image/shot_video/shot_audio`）、剧情段视频（`video`，`owner_id` 为段 ID）与单集成片（`final`）；资产 AI 辅助使用其对应 kind | `(owner_id, kind)` 内递增 `version`；版本始终入库，当前采用与历史版本分开 |

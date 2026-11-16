@@ -110,7 +110,6 @@ async function mount(cast = fixture, disabled = false) {
             </QueryClientProvider>,
         ),
     );
-    await click("图片生成配置");
     await settle();
 }
 async function settle() {
@@ -138,6 +137,23 @@ afterEach(async () => {
     document.body.replaceChildren();
     mock.restore();
     root = undefined;
+});
+
+test("图片配置默认显示完整表单并读取作品配置，没有重复标题或折叠开关", async () => {
+    await mount();
+    const section = host.querySelector('[aria-label="图片生成配置"]')!;
+    expect(section).not.toBeNull();
+    expect(section.querySelector('[aria-label="资产图片模型"]')).not.toBeNull();
+    expect(section.querySelector('[aria-label="资产图片画幅"]')).not.toBeNull();
+    expect(section.querySelector('[aria-label="资产图片分辨率"]')).not.toBeNull();
+    expect(section.textContent).toContain("主体参考");
+    expect(section.textContent).toContain("风格参考");
+    expect(section.textContent).toContain("保存后仅影响下次生成，已有图片和提示词保留");
+    expect([...section.querySelectorAll("button")].some((item) => item.textContent?.trim() === "图片生成配置")).toBe(false);
+    expect(section.querySelector("button[aria-expanded]")).toBeNull();
+    expect(api.getDrama).toHaveBeenCalledTimes(1);
+    expect(changed).toBe(0);
+    expect(dirty).toBe(false);
 });
 
 test("保存独立模型和参考组时使用作品与资产两种版本，不触发生图", async () => {

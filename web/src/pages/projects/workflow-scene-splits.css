@@ -85,6 +85,9 @@
     padding: var(--space-5);
     overflow: auto;
 }
+.drama-scene-splits main > h3 {
+    margin-bottom: var(--space-3);
+}
 .drama-scene-splits section {
     display: flex;
     flex-direction: column;

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ImageIcon, Maximize2, SlidersHorizontal } from "lucide-react";
 import { App, Button, Input, Select } from "antd";
@@ -7,6 +7,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { CanvasStylePickerModal, canvasStylePresets, userStylePreset, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoOptionFits, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import { DRAMA_STYLE_CATEGORIES, filterDramaStyles, findDramaStyle, type DramaStyleCategory } from "@/lib/drama/drama-styles";
+import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import type { DramaSettings, DramaSummary } from "@/services/api/drama";
 import { listStyleProfiles } from "@/services/api/style-profiles";
 
@@ -30,7 +31,25 @@ function styleInstructions(preset: CanvasStylePreset) {
     return [preset.prompt, preset.profile?.negativePrompt ? `禁止：${preset.profile.negativePrompt}` : ""].filter(Boolean).join("\n");
 }
 
-export function WorkflowConfiguration({ summary, settings, onChange, disabled, styleOnly = false }: { summary: DramaSummary; settings: DramaSettings; onChange: (settings: DramaSettings) => void; disabled: boolean; styleOnly?: boolean }) {
+export type WorkflowConfigurationHandle = { focusIssue: () => void };
+
+export function WorkflowConfiguration({
+    summary,
+    settings,
+    onChange,
+    disabled,
+    styleDisabled = false,
+    styleOnly = false,
+    ref,
+}: {
+    summary: DramaSummary;
+    settings: DramaSettings;
+    onChange: (settings: DramaSettings) => void;
+    disabled: boolean;
+    styleDisabled?: boolean;
+    styleOnly?: boolean;
+    ref?: Ref<WorkflowConfigurationHandle>;
+}) {
     const { modal } = App.useApp();
     const catalog = useDramaModelCatalog();
     const schemes = useAssetSchemes();
@@ -40,6 +59,11 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
     const [custom, setCustom] = useState(false);
     const [previewImage, setPreviewImage] = useState<string>();
     const [unavailableImages, setUnavailableImages] = useState<Set<string>>(() => new Set());
+    const [parametersOpen, setParametersOpen] = useState(false);
+    const [advancedOpen, setAdvancedOpen] = useState(false);
+    const ratioField = useRef<HTMLDivElement>(null);
+    const resolutionField = useRef<HTMLDivElement>(null);
+    const continuityField = useRef<HTMLDivElement>(null);
     const profiles = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles });
     const style = resolveWorkflowConfigurationStyle(settings.stylePrompt);
     const libraryStyle = [
@@ -62,11 +86,30 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
     const resolutionIssue = dramaVideoResolutionIssue(videoOption, settings.videoResolution);
     const continuityIssue = videoOption && continuity === "tail_frame" && !videoOption.tailFrameChain ? "当前视频模型不支持尾帧续接" : "";
 
+    useEffect(() => {
+        if (styleOnly) return;
+        if (ratioIssue || resolutionIssue || continuityIssue) setParametersOpen(true);
+        if (continuityIssue) setAdvancedOpen(true);
+    }, [styleOnly, ratioIssue, resolutionIssue, continuityIssue]);
+    const locate = (field: typeof ratioField) => {
+        setParametersOpen(true);
+        if (field === continuityField) setAdvancedOpen(true);
+        window.requestAnimationFrame(() => {
+            field.current?.scrollIntoView?.({ block: "center", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+            field.current?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]')?.focus({ preventScroll: true });
+        });
+    };
+    useImperativeHandle(ref, () => ({ focusIssue: () => locate(ratioIssue ? ratioField : resolutionIssue ? resolutionField : continuityField) }));
+
     const patch = (change: Partial<DramaSettings>) => {
         if (disabled) return;
         if (styleOnly) {
-            if (change.styleName === undefined && change.stylePrompt === undefined) return;
-            onChange({ ...settings, styleName: change.styleName ?? settings.styleName, stylePrompt: change.stylePrompt ?? settings.stylePrompt });
+            onChange({
+                ...settings,
+                ...(!styleDisabled ? { styleName: change.styleName ?? settings.styleName, stylePrompt: change.stylePrompt ?? settings.stylePrompt } : {}),
+                assets: change.assets ?? settings.assets,
+                models: { ...settings.models, ...(change.models ? { image: change.models.image, characterImage: change.models.characterImage, sceneImage: change.models.sceneImage } : {}) },
+            });
             return;
         }
         onChange({ ...settings, ...change, mediaMode: "manual" });
@@ -94,21 +137,22 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
     return (
         <section className="drama-workflow-configuration" aria-label="风格设置">
             <div className="drama-workflow-config-form thin-scrollbar">
-                <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly} className="drama-workflow-drawing-fields">
+                <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields">
+                    <legend>绘图配置（全剧共用）</legend>
                     <label>
                         <span>绘图模型</span>
                         <DramaModelPicker capability="image" value={imageChoice} onChange={(choice) => patch({ models: { ...settings.models, image: choice, characterImage: choice, sceneImage: choice } })} />
                     </label>
                     <label>
                         <span>角色绘图模板</span>
-                        <CharacterTemplatePicker value={settings.assets.mode} disabled={disabled || styleOnly || !schemes.data} schemes={schemes.data?.schemes || []} onChange={(value) => selectTemplate("character", value)} />
+                        <CharacterTemplatePicker value={settings.assets.mode} disabled={disabled || !schemes.data} schemes={schemes.data?.schemes || []} onChange={(value) => selectTemplate("character", value)} />
                     </label>
                     <label>
                         <span>场景绘图模板</span>
                         <Select
                             aria-label="场景绘图模板"
                             value={schemes.data?.sceneSchemes?.find((item) => item.prompt.trim() === settings.assets.scenePrompt.trim())?.id || "custom"}
-                            disabled={disabled || styleOnly || !schemes.data}
+                            disabled={disabled || !schemes.data}
                             options={[...(schemes.data?.sceneSchemes?.map((item) => ({ value: item.id, label: item.name })) || []), { value: "custom", label: "自定义模板", disabled: true }]}
                             onChange={(value) => selectTemplate("scene", value)}
                         />
@@ -118,9 +162,14 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                             重新读取绘图模板
                         </Button>
                     ) : null}
+                    <details className="drama-workflow-more">
+                        <summary>绘图模板提示词与画幅</summary>
+                        <AssetSchemePicker value={settings.assets} imageModel={imageOption} layout="compact" onChange={(assets) => patch({ assets })} />
+                    </details>
                 </fieldset>
-                <fieldset disabled={disabled} inert={disabled}>
+                <fieldset disabled={disabled || styleDisabled} inert={disabled || styleDisabled}>
                     <legend>绘图风格</legend>
+                    {styleDisabled ? <p className="drama-workflow-notice">当前沿用全剧默认，选择“本集独立风格”后可修改本集画风。</p> : null}
                     <div className="drama-workflow-style-modes" role="group" aria-label="风格来源">
                         <button type="button" aria-pressed={!custom} onClick={() => setCustom(false)}>
                             预设风格
@@ -137,7 +186,13 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                             </label>
                             <label>
                                 <span>风格说明</span>
-                                <Input.TextArea value={settings.stylePrompt} autoSize={{ minRows: 5, maxRows: 12 }} onChange={(event) => patch({ stylePrompt: event.target.value })} placeholder="描述画面质感、色调、光线与服化道" />
+                                <Input.TextArea
+                                    value={settings.stylePrompt}
+                                    count={{ max: DRAMA_STYLE_PROMPT_MAX_LENGTH, show: true, strategy: (value) => Array.from(value).length }}
+                                    autoSize={{ minRows: 5, maxRows: 12 }}
+                                    onChange={(event) => patch({ stylePrompt: event.target.value })}
+                                    placeholder="描述画面质感、色调、光线与服化道"
+                                />
                             </label>
                         </>
                     ) : (
@@ -168,17 +223,17 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                         </>
                     )}
                     <div className="drama-workflow-style-library-actions">
-                        <Button size="small" disabled={disabled} onClick={() => setPickerOpen(true)}>
+                        <Button size="small" disabled={disabled || styleDisabled} onClick={() => setPickerOpen(true)}>
                             自由组合风格
                         </Button>
-                        <Button size="small" disabled={disabled} onClick={() => setLibraryOpen(true)}>
+                        <Button size="small" disabled={disabled || styleDisabled} onClick={() => setLibraryOpen(true)}>
                             风格库 / 我的风格
                         </Button>
                     </div>
                 </fieldset>
-                <details className="drama-workflow-more">
+                <details className="drama-workflow-more" open={parametersOpen} onToggle={(event) => setParametersOpen(event.currentTarget.open)}>
                     <summary>
-                        <SlidersHorizontal aria-hidden="true" /> 制作参数与模板提示词
+                        <SlidersHorizontal aria-hidden="true" /> 制作参数
                     </summary>
                     <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly}>
                         <label>
@@ -191,7 +246,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                                 onChange={(language) => patch({ language })}
                             />
                         </label>
-                        <div>
+                        <div ref={ratioField}>
                             <span>画幅</span>
                             <div className="drama-tabs" role="radiogroup" aria-label="画幅">
                                 {RATIOS.map((ratio) => (
@@ -200,12 +255,26 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                                     </button>
                                 ))}
                             </div>
-                            {ratioIssue ? <small role="alert">当前视频模型{ratioIssue}</small> : null}
+                            {ratioIssue ? (
+                                <small role="alert">
+                                    当前视频模型{ratioIssue}
+                                    <Button type="link" size="small" onClick={() => locate(ratioField)}>
+                                        去修改
+                                    </Button>
+                                </small>
+                            ) : null}
                         </div>
-                        <div>
+                        <div ref={resolutionField}>
                             <span>视频分辨率</span>
                             <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
-                            {resolutionIssue ? <small role="alert">当前视频模型{resolutionIssue}</small> : null}
+                            {resolutionIssue ? (
+                                <small role="alert">
+                                    当前视频模型{resolutionIssue}
+                                    <Button type="link" size="small" onClick={() => locate(resolutionField)}>
+                                        去修改
+                                    </Button>
+                                </small>
+                            ) : null}
                         </div>
                         <label>
                             <span>单集时长</span>
@@ -226,23 +295,31 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                                 />
                             </label>
                         ))}
-                        <AssetSchemePicker value={settings.assets} imageModel={imageOption} layout="compact" onChange={(assets) => patch({ assets })} />
-                        <details className="drama-workflow-more">
+                        <details className="drama-workflow-more" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
                             <summary>更多参数</summary>
-                            <label>
-                                <span>视频衔接</span>
-                                <Select
-                                    aria-label="视频衔接"
-                                    disabled={disabled || styleOnly}
-                                    value={continuity}
-                                    options={[
-                                        { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoOption && !videoOption.tailFrameChain) },
-                                        { value: "parallel", label: "各段独立生成" },
-                                    ]}
-                                    onChange={(videoContinuity) => patch({ videoContinuity })}
-                                />
-                                {continuityIssue ? <small role="alert">{continuityIssue}，请改成各段独立生成或更换模型。</small> : null}
-                            </label>
+                            <div ref={continuityField}>
+                                <label>
+                                    <span>视频衔接</span>
+                                    <Select
+                                        aria-label="视频衔接"
+                                        disabled={disabled || styleOnly}
+                                        value={continuity}
+                                        options={[
+                                            { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoOption && !videoOption.tailFrameChain) },
+                                            { value: "parallel", label: "各段独立生成" },
+                                        ]}
+                                        onChange={(videoContinuity) => patch({ videoContinuity })}
+                                    />
+                                    {continuityIssue ? (
+                                        <small role="alert">
+                                            {continuityIssue}，请改成各段独立生成或更换模型。
+                                            <Button type="link" size="small" onClick={() => locate(continuityField)}>
+                                                去修改
+                                            </Button>
+                                        </small>
+                                    ) : null}
+                                </label>
+                            </div>
                             <DramaTextSteps
                                 models={settings.models}
                                 onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })}
@@ -315,10 +392,10 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
             <AppModal open={Boolean(previewImage)} title={`${settings.styleName || "风格"}参考样图`} onCancel={() => setPreviewImage(undefined)} footer={null} width="min(1100px, calc(100vw - 32px))">
                 <img className="drama-workflow-style-lightbox" src={previewImage} alt={`${settings.styleName}参考样图`} />
             </AppModal>
-            <AppModal open={pickerOpen && !disabled} title="选择视觉风格" onCancel={() => setPickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
+            <AppModal open={pickerOpen && !disabled && !styleDisabled} title="选择视觉风格" onCancel={() => setPickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
                 <DramaStylePicker
                     value={style?.id || ""}
-                    disabled={disabled}
+                    disabled={disabled || styleDisabled}
                     onChange={(id) => {
                         const selected = findDramaStyle(id);
                         if (!selected) return;
@@ -328,7 +405,7 @@ export function WorkflowConfiguration({ summary, settings, onChange, disabled, s
                 />
             </AppModal>
             <CanvasStylePickerModal
-                open={libraryOpen && !disabled}
+                open={libraryOpen && !disabled && !styleDisabled}
                 value={libraryStyle?.id}
                 onClose={() => setLibraryOpen(false)}
                 onSelect={(selected) => {

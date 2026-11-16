@@ -9,6 +9,9 @@ import (
 	"unicode/utf8"
 )
 
+// MaxStylePromptRunes 与作品、单集风格保存和创作输入共用，容纳完整的系统风格规范。
+const MaxStylePromptRunes = 10000
+
 // Chapter 是小说原文的一章，只作为改编来源。
 type Chapter struct {
 	ID    string
@@ -64,11 +67,17 @@ func (s Settings) Normalized() Settings {
 	if s.Language == "" {
 		s.Language = "中文普通话"
 	}
-	// 风格基线会拼进每一次生图提示词，过长会挤占镜头本身的描述。
-	s.StylePrompt = truncateRunes(strings.TrimSpace(s.StylePrompt), 1200)
+	s.StylePrompt = truncateRunes(strings.TrimSpace(s.StylePrompt), MaxStylePromptRunes)
 	s.StyleName = truncateRunes(strings.TrimSpace(s.StyleName), 60)
 	s.Language = truncateRunes(strings.TrimSpace(s.Language), 30)
 	return s
+}
+
+func (s Settings) ValidateStylePrompt() error {
+	if utf8.RuneCountInString(strings.TrimSpace(s.StylePrompt)) > MaxStylePromptRunes {
+		return fmt.Errorf("风格说明不能超过 %d 字", MaxStylePromptRunes)
+	}
+	return nil
 }
 
 const jsonOnly = "只输出一个 JSON 对象，不要 Markdown 代码块，不要解释。"

@@ -5,14 +5,3 @@ export const DIRECTOR_TEMPLATES = [
 ] as const;
 
 export const CAMERA_PRESETS = ["无运镜", "推镜头", "拉镜头", "摇镜头", "移镜头", "跟镜头", "环绕镜头", "升镜头", "航拍镜头", "手持镜头", "荷兰角镜头", "希区柯克镜头", "POV镜头", "FPV镜头"];
-import type { DramaShot } from "@/services/api/drama";
-
-export function dramaSceneGroups(shots: DramaShot[]) {
-    const groups: DramaShot[][] = [];
-    for (const shot of shots) {
-        const previous = groups.at(-1)?.[0];
-        if (previous && previous.sceneCastId === shot.sceneCastId && previous.scene.trim() === shot.scene.trim()) groups.at(-1)!.push(shot);
-        else groups.push([shot]);
-    }
-    return groups;
-}

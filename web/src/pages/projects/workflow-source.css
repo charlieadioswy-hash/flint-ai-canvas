@@ -362,27 +362,21 @@
 }
 
 .drama-source-chapter-item > button > span {
-    display: none;
+    display: block;
     color: var(--text-secondary);
     font-size: var(--fs-label);
+    line-height: var(--lh-body);
 }
 
 .drama-source-chapter-scope {
-    display: none;
+    display: flex;
     min-height: var(--space-8);
     align-items: center;
     gap: var(--space-2);
+    padding-inline: var(--space-2);
     color: var(--text-secondary);
     font-size: var(--fs-label);
     cursor: pointer;
-}
-
-.drama-source-page.is-scope-adjustment .drama-source-chapter-scope {
-    display: flex;
-}
-
-.drama-source-page.is-scope-adjustment .drama-source-chapter-item > button > span {
-    display: block;
 }
 
 .drama-source-page input[type="checkbox"] {

@@ -8,6 +8,7 @@ import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { uploadResourceFile } from "@/services/api/resources";
 import { CastLibraryPicker } from "./cast-library-picker";
+import { useCastRegenerationGuard } from "./use-cast-regeneration-guard";
 
 import { mediaBusy, MediaThumb } from "../drama-shared";
 
@@ -86,6 +87,7 @@ export function CastLooks({
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
 }) {
     const { message, modal } = App.useApp();
+    const regenerationGuard = useCastRegenerationGuard(projectId);
     const [adding, setAdding] = useState(false);
     const [editingId, setEditingId] = useState<string>();
     const [libraryLook, setLibraryLook] = useState<DramaCast>();
@@ -114,11 +116,15 @@ export function CastLooks({
         onError: (error) => message.error(error instanceof Error ? error.message : "删除失败"),
     });
     const generate = useMutation({
-        mutationFn: async (look: DramaCast) => {
+        mutationFn: async ({ look, isCurrent }: { look: DramaCast; isCurrent: () => boolean }) => {
             if (look.locked) await updateDramaCast(projectId, look.id, { locked: false });
-            return regenerateDramaCast(projectId, look.id, restyle);
+            if (!isCurrent()) return;
+            const result = await regenerateDramaCast(projectId, look.id, restyle);
+            return { result, isCurrent };
         },
-        onSuccess: (result) => done("已请求生成造型图", result.affectedSegments),
+        onSuccess: (completed) => {
+            if (completed?.isCurrent()) done("已请求生成造型图", completed.result.affectedSegments);
+        },
         onError: (error) => message.error(error instanceof Error ? error.message : "生成失败"),
     });
     const upload = useMutation({
@@ -129,7 +135,7 @@ export function CastLooks({
         onSuccess: (result) => done("自定义造型图已保存并锁定", result.affectedSegments),
         onError: (error) => message.error(error instanceof Error ? error.message : "上传失败"),
     });
-    const busy = add.isPending || update.isPending || remove.isPending || generate.isPending || upload.isPending;
+    const busy = add.isPending || update.isPending || remove.isPending || generate.isPending || upload.isPending || regenerationGuard.busy;
     const stateChange = useRef(onDirtyChange);
     stateChange.current = onDirtyChange;
     useEffect(() => {
@@ -186,10 +192,7 @@ export function CastLooks({
                                     icon={<Play className="size-3.5" />}
                                     disabled={busy || mediaBusy(look.imageStatus) || character.imageStatus !== "ready" || !character.imageResourceId}
                                     title={!character.imageResourceId ? "请先生成或上传角色本体图" : undefined}
-                                    onClick={() => {
-                                        if (look.locked) modal.confirm({ title: "重新生成造型图？", content: "将解锁当前自定义图，并按已保存的提示词生成新图。", okText: "解锁并生成", cancelText: "取消", onOk: () => generate.mutateAsync(look) });
-                                        else generate.mutate(look);
-                                    }}
+                                    onClick={() => void regenerationGuard.request({ castId: look.id, name: look.lookName || look.name, restyleSegments: restyle, unlock: look.locked, execute: (isCurrent) => generate.mutateAsync({ look, isCurrent }) })}
                                 >
                                     {look.imageResourceId ? "重新生成" : "生成造型图"}
                                 </Button>

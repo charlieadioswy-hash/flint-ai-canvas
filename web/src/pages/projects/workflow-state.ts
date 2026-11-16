@@ -1,4 +1,4 @@
-import type { DramaGuideStep, DramaSummary } from "@/services/api/drama";
+import type { DramaEpisodeRow, DramaGuideStep, DramaSummary } from "@/services/api/drama";
 
 /** 简易制作台的浏览步骤。与服务端 GuideStep 分开：回看不改后端阶段。 */
 export type WorkflowStep = "source" | "review" | "style" | "assets" | "story" | "preview";
@@ -13,6 +13,10 @@ export const WORKFLOW_STEPS: ReadonlyArray<{ key: WorkflowStep; title: string }>
 ];
 
 export const EPISODE_WORKFLOW_STEPS = WORKFLOW_STEPS.filter((step) => step.key !== "source").map((step) => (step.key === "review" ? { ...step, title: "分集剧本" } : step));
+
+export function episodeWorkflowEntryStep(episode: Pick<DramaEpisodeRow, "shotCount" | "stats">): "review" | "story" {
+    return episode.shotCount > 0 || episode.stats.segments > 0 ? "story" : "review";
+}
 
 const STEP_INDEX = new Map(WORKFLOW_STEPS.map((step, index) => [step.key, index]));
 

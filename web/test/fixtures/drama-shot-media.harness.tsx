@@ -41,6 +41,7 @@ let confirmations: { onOk: () => void }[] = [];
 let readsFail = false;
 let closes = 0;
 let changed = 0;
+let selectedShots: Array<{ id: string; kind: DramaShotMediaKind }> = [];
 let server: Record<DramaShotMediaKind, DramaShotMedia>;
 const Input = Object.assign(({ onChange, ...props }: Record<string, unknown>) => createElement("input", { ...props, onInput: onChange }), {
     TextArea: ({ onChange, autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("textarea", { ...props, onInput: onChange }),
@@ -143,6 +144,7 @@ async function mount(page = false) {
     confirmations = [];
     readsFail = false;
     closes = changed = 0;
+    selectedShots = [];
     server = { image: media("image"), video: media("video") };
     userStore.setState({ user: { id: "user-a" } });
     const host = document.createElement("div");
@@ -156,18 +158,23 @@ async function mount(page = false) {
                 <WorkflowShotMediaDialog
                     open
                     projectId={projectId}
-                    shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1 } as DramaShot}
+                    shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1, segmentIndex: 2, scene: "同一房间", durationMs: 5000 } as DramaShot}
                     presentation={page ? "page" : "dialog"}
-                    actLabel="第 1 幕"
+                    segmentLabel="第 3 段"
                     shots={
                         page
                             ? ([
-                                  { id: "real-shot", projectId, position: 1 },
-                                  { id: "next-shot", projectId, position: 2 },
+                                  { id: "real-shot", projectId, episodeId: "episode", position: 1, segmentIndex: 2, scene: "同一房间" },
+                                  { id: "next-shot", projectId, episodeId: "episode", position: 2, segmentIndex: 2, scene: "另一场景" },
+                                  { id: "other-segment-shot", projectId, episodeId: "episode", position: 3, segmentIndex: 3, scene: "同一房间" },
+                                  { id: "other-episode-shot", projectId, episodeId: "other-episode", position: 4, segmentIndex: 2, scene: "同一房间" },
                               ] as DramaShot[])
                             : undefined
                     }
-                    onSelectShot={() => closes++}
+                    onSelectShot={(shot, kind) => {
+                        selectedShots.push({ id: shot.id, kind });
+                        closes++;
+                    }}
                     onClose={() => closes++}
                     onChanged={() => changed++}
                 />
@@ -394,18 +401,42 @@ test("镜头媒体音频标签打开独立音频编辑器", async () => {
     }
 });
 
-test("镜头页面直接展示三列与本幕镜头条，切镜头保护未保存内容", async () => {
+test("镜头页面只展示当前真实段镜头，切镜头保护未保存内容", async () => {
     const view = await mount(true);
     try {
         expect(view.host.querySelector("[role='dialog']")).toBeNull();
         expect(view.host.querySelector("[aria-label='镜头媒体预览']")).toBeTruthy();
-        expect(view.host.querySelector("[aria-label='本幕镜头']")).toBeTruthy();
+        const strip = view.host.querySelector("[aria-label='本段镜头']");
+        expect(strip).toBeTruthy();
+        expect(strip?.querySelectorAll("button")).toHaveLength(2);
+        expect(view.host.textContent).toContain("第 3 段 · 共 2 镜");
+        expect(view.host.textContent).not.toContain("幕");
+        expect(strip?.querySelector("[aria-label='切换分镜 4']")).toBeNull();
+        expect(strip?.querySelector("[aria-label='切换分镜 5']")).toBeNull();
         await prompt(view.host, "尚未保存");
         await act(async () => view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 3']")!.click());
         expect(closes).toBe(0);
         expect(confirmations).toHaveLength(1);
         await act(async () => confirmations[0].onOk());
         expect(closes).toBe(1);
+        expect(selectedShots).toEqual([{ id: "next-shot", kind: "image" }]);
+    } finally {
+        await view.close();
+    }
+});
+
+test("镜头页面提交期间禁止同段切镜且不触发重复确认或生成", async () => {
+    const view = await mount(true);
+    try {
+        await click(view.host, "预检生成");
+        await click(view.host, "确认生成当前镜头");
+        const next = view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 3']")!;
+        expect(next.disabled).toBe(true);
+        await act(async () => next.click());
+        expect(selectedShots).toHaveLength(0);
+        expect(confirmations).toHaveLength(0);
+        expect(executions).toHaveLength(1);
+        await resolveExecution();
     } finally {
         await view.close();
     }

@@ -18,7 +18,7 @@ func dramaSceneTaskMetadata(task *model.Task) (dramaSceneSplitMetadata, error) {
 	}
 	err := json.Unmarshal([]byte(task.InputJSON), &input)
 	if err == nil && (input.Metadata.Source != "drama_scene_split" || len(input.Metadata.ShotIDs) == 0 || input.Metadata.EpisodeID == "" || input.Metadata.SourceHash == "") {
-		err = BadAuthRequest("不是有效的场景重拆任务")
+		err = BadAuthRequest("不是有效的段分镜重拆任务")
 	}
 	return input.Metadata, err
 }
@@ -44,7 +44,7 @@ func (s *Service) replayDramaSceneSplit(userID, projectID, episodeID string, sub
 			return taskForOutput(*task), nil
 		}
 	}
-	return nil, dramaGuideConflict("重拆任务缺少真实场景来源绑定")
+	return nil, dramaGuideConflict("重拆任务缺少真实段来源绑定")
 }
 
 func (s *Service) ExecuteDramaSceneSplit(userID, projectID, episodeID string, req DramaSceneSplitRequest) (*model.Task, error) {
@@ -66,7 +66,7 @@ func (s *Service) ExecuteDramaSceneSplit(userID, projectID, episodeID string, re
 		return nil, dramaGuideError(err)
 	}
 	if !plan.view.Ready || plan.view.ConfirmationToken != req.ConfirmationToken {
-		return nil, dramaGuideConflict("场景、要求或报价已变化，请重新预检")
+		return nil, dramaGuideConflict("本段镜头、要求或报价已变化，请重新预检")
 	}
 	plan.metadata.RequestHash = submission.Hash
 	plan.request.Input["metadata"] = plan.metadata
@@ -167,7 +167,8 @@ func (s *Service) DramaSceneSplits(userID, projectID, episodeID string) ([]Drama
 		if err != nil || meta.EpisodeID != episodeID || take.OwnerID != meta.ShotIDs[0] || task.ProjectID != projectID {
 			return nil, BadAuthRequest("重拆任务来源不一致")
 		}
-		row := DramaSceneSplitResult{TakeID: take.ID, TaskID: task.ID, ShotIDs: meta.ShotIDs, Status: task.Status, Progress: task.Progress, Error: task.Error, Stale: meta.SourceHash != dramaSceneSourceHash(*p, *episode, shots, segments)}
+		_, scopeErr := dramaSceneRange(shots, meta.ShotIDs)
+		row := DramaSceneSplitResult{TakeID: take.ID, TaskID: task.ID, ShotIDs: meta.ShotIDs, Status: task.Status, Progress: task.Progress, Error: task.Error, Stale: scopeErr != nil || meta.SourceHash != dramaSceneSourceHash(*p, *episode, shots, segments)}
 		if task.Status == model.TaskStatusSucceeded {
 			row.Text, err = dramaTaskText(task)
 			if err != nil {
@@ -249,7 +250,7 @@ func (s *Service) AdoptDramaSceneSplit(userID, projectID, episodeID string, req 
 		}
 		meta, err := dramaSceneTaskMetadata(task)
 		if err != nil || meta.EpisodeID != episodeID || selected.OwnerID != meta.ShotIDs[0] || task.ProjectID != projectID || task.Status != model.TaskStatusSucceeded {
-			return BadAuthRequest("只能采用本场景已成功的重拆结果")
+			return BadAuthRequest("只能采用本段已成功的重拆结果")
 		}
 		if _, err := repo.DramaSceneRevision(projectID, task.ID); err == nil {
 			return dramaGuideConflict("该结果已采用，请刷新当前分镜")

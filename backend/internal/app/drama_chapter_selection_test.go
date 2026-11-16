@@ -46,14 +46,15 @@ func TestDramaSelectedChaptersReserveTheRest(t *testing.T) {
 	if _, err := svc.DramaChapterOutline("someone", project); err == nil {
 		t.Fatal("outline must check ownership")
 	}
-	if _, err := svc.ProduceDramaChapters("usr-drama", project, ProduceDramaChaptersRequest{ChapterIDs: []string{outline[0].ID}}); err == nil {
+	revision := guideSummary(t, svc, project).Production.Revision
+	if _, err := svc.ProduceDramaChapters("usr-drama", project, ProduceDramaChaptersRequest{ExpectedRevision: &revision, ChapterIDs: []string{outline[0].ID}}); err == nil {
 		t.Fatal("chapters already in production cannot be added again")
 	}
-	if _, err := svc.ProduceDramaChapters("someone", project, ProduceDramaChaptersRequest{ChapterIDs: []string{outline[2].ID}}); err == nil {
+	if _, err := svc.ProduceDramaChapters("someone", project, ProduceDramaChaptersRequest{ExpectedRevision: &revision, ChapterIDs: []string{outline[2].ID}}); err == nil {
 		t.Fatal("produce must check ownership")
 	}
 
-	result, err := svc.ProduceDramaChapters("usr-drama", project, ProduceDramaChaptersRequest{ChapterIDs: []string{outline[4].ID, outline[2].ID}})
+	result, err := svc.ProduceDramaChapters("usr-drama", project, ProduceDramaChaptersRequest{ExpectedRevision: &revision, ChapterIDs: []string{outline[4].ID, outline[2].ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestDramaSelectedChaptersValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ProduceDramaChapters("usr-drama", summary.Project.ID, ProduceDramaChaptersRequest{ChapterIDs: []string{outline[1].ID}}); err == nil || !strings.Contains(err.Error(), "单章不超过") {
+	if _, err := svc.ProduceDramaChapters("usr-drama", summary.Project.ID, ProduceDramaChaptersRequest{ExpectedRevision: &summary.Production.Revision, ChapterIDs: []string{outline[1].ID}}); err == nil || !strings.Contains(err.Error(), "单章不超过") {
 		t.Fatalf("oversized reserved chapter must be rejected when produced: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/production"
 	"yingce/backend/internal/repository"
 
 	"gorm.io/gorm"
@@ -36,9 +37,10 @@ type DramaWorkflowReadiness struct {
 }
 
 type UpdateDramaWorkflowStyleRequest struct {
-	ExpectedRevision *int64 `json:"expectedRevision"`
-	StyleName        string `json:"styleName"`
-	StylePrompt      string `json:"stylePrompt"`
+	ExpectedRevision *int64                     `json:"expectedRevision"`
+	StyleName        string                     `json:"styleName"`
+	StylePrompt      string                     `json:"stylePrompt"`
+	Drawing          *DramaDrawingConfiguration `json:"drawing,omitempty"`
 }
 
 // Readiness is derived from saved results; viewing another step never advances the workflow.
@@ -187,14 +189,25 @@ func dramaGuideAllowsScopedJob(repo *repository.Repository, p *model.DramaProduc
 }
 
 func (s *Service) UpdateDramaWorkflowStyle(userID, projectID string, req UpdateDramaWorkflowStyleRequest) (DramaSummary, error) {
-	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
+	_, current, err := s.dramaForUser(userID, projectID)
+	if err != nil {
 		return DramaSummary{}, err
 	}
 	name, prompt := strings.TrimSpace(req.StyleName), strings.TrimSpace(req.StylePrompt)
-	if req.ExpectedRevision == nil || *req.ExpectedRevision < 0 || name == "" || utf8.RuneCountInString(name) > 60 || prompt == "" || utf8.RuneCountInString(prompt) > 10000 {
-		return DramaSummary{}, BadAuthRequest("请提交当前版本、1 到 60 字的风格名称和不超过 10000 字的风格说明")
+	if req.ExpectedRevision == nil || *req.ExpectedRevision < 0 || name == "" || utf8.RuneCountInString(name) > 60 || prompt == "" || utf8.RuneCountInString(prompt) > production.MaxStylePromptRunes {
+		return DramaSummary{}, BadAuthRequest(fmt.Sprintf("请提交当前版本、1 到 60 字的风格名称和不超过 %d 字的风格说明", production.MaxStylePromptRunes))
 	}
-	err := s.repo.Transaction(func(tx *repository.Repository) error {
+	drawing, err := s.validateDramaDrawingConfiguration(userID, parseDramaSettings(current.SettingsJSON), req.Drawing)
+	if err != nil {
+		return DramaSummary{}, err
+	}
+	// 与调度共用租约，避免已完成引导的旧 tick 在保存后按旧默认风格派发文字任务。
+	release, err := s.lockDramaSchedule(projectID)
+	if err != nil {
+		return DramaSummary{}, err
+	}
+	defer release()
+	err = s.repo.Transaction(func(tx *repository.Repository) error {
 		p, err := tx.DramaProductionForUpdate(projectID)
 		if err != nil {
 			return err
@@ -209,7 +222,7 @@ func (s *Service) UpdateDramaWorkflowStyle(userID, projectID string, req UpdateD
 		if active {
 			return dramaGuideConflict("相关文字任务正在进行，请完成后再修改风格")
 		}
-		settings := parseDramaSettings(p.SettingsJSON)
+		settings := applyDramaDrawingConfiguration(parseDramaSettings(p.SettingsJSON), drawing)
 		settings.StyleName, settings.StylePrompt = name, prompt
 		return tx.UpdateDramaGuideIf(projectID, p.Revision, p.GuideStep, map[string]any{"settings_json": encodeDramaSettings(settings)})
 	})

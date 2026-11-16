@@ -30,7 +30,9 @@ mock.module("@/components/ui/product/app-modal", () => ({
         </section>
     ),
 }));
-mock.module("@/pages/projects/workflow-scene-splits", () => ({ WorkflowSceneSplits: ({ initialShotId, buttonLabel }: { initialShotId: string; buttonLabel: string }) => <button data-scene-shot={initialShotId}>{buttonLabel}</button> }));
+mock.module("@/pages/projects/workflow-scene-splits", () => ({
+    WorkflowSceneSplits: ({ initialSegmentIndex, buttonLabel }: { initialSegmentIndex: number; buttonLabel: string }) => <button data-split-segment={initialSegmentIndex}>{buttonLabel}</button>,
+}));
 mock.module("@/pages/projects/workflow-batch", () => ({
     WorkflowBatch: ({ triggerLabel, targetIds, scopeDescription }: { triggerLabel: string; targetIds: string[]; scopeDescription: string }) => (
         <button data-batch-targets={targetIds.join(",")} title={scopeDescription}>
@@ -41,7 +43,14 @@ mock.module("@/pages/projects/workflow-batch", () => ({
 mock.module("@/pages/projects/workflow-storyboard-dialog", () => ({
     WorkflowStoryboardDialog: ({ open, title, shots }: { open: boolean; title: string; shots: DramaShot[] }) => (open ? <section role="dialog" aria-label={title} data-board-shots={shots.map((shot) => shot.id).join(",")} /> : null),
 }));
-mock.module("@/pages/projects/drama-shared", () => ({ MediaThumb: ({ resourceId }: { resourceId: string }) => <img data-resource={resourceId} />, useResourceMediaUrl: () => "" }));
+mock.module("@/pages/projects/drama-shared", () => ({
+    CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具" },
+    aspectRatioValue: (ratio: string) => ratio.replace(":", "/"),
+    MediaThumb: ({ resourceId }: { resourceId: string }) => <img data-resource={resourceId} />,
+    mediaBusy: (status: string) => status === "queued" || status === "running",
+    useResourceMediaUrl: (resourceId?: string) => (resourceId ? `/resources/${resourceId}` : ""),
+}));
+mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => children }));
 let catalogVideoOptions: DramaModelOption[] = [];
 mock.module("@/pages/projects/drama-model-picker", () => ({
     useDramaModelCatalog: () => ({ data: { options: { image: [], video: catalogVideoOptions } } }),
@@ -88,17 +97,18 @@ const settings = {
 const summary = { project: { id: "p" }, production: { revision: 2, settings } } as DramaSummary;
 const shots = [
     { id: "s1", projectId: "p", episodeId: "e", position: 0, scene: "小区边缘 日 外", segmentIndex: 0, durationMs: 3000, action: "主角推门", dialogue: "别走", camera: "推镜头", shotSize: "近景" },
-    { id: "s2", projectId: "p", episodeId: "e", position: 1, scene: "小区边缘 日 外", segmentIndex: 0, durationMs: 2000, action: "人物回头" },
+    { id: "s2", projectId: "p", episodeId: "e", position: 1, scene: "秦家卧室 夜 内", segmentIndex: 0, durationMs: 2000, action: "人物回头" },
     { id: "s3", projectId: "p", episodeId: "e", position: 2, scene: "秦家卧室 夜 内", segmentIndex: 1, durationMs: 4000, action: "主角打开灯" },
 ] as DramaShot[];
 const detail = {
     episode: { id: "e", number: 1 },
     shots,
     segments: [
-        { id: "segment1", index: 0, shotIds: ["s1", "s2"] },
-        { id: "segment2", index: 1, shotIds: ["s3"] },
+        { id: "segment1", index: 0, title: "推门与回头", durationMs: 5000, shotIds: ["s1", "s2"], promptStatus: "ready", videoStatus: "idle", videoPrompt: "完整段提示词", generated: "", request: { references: [] } },
+        { id: "segment2", index: 1, title: "打开灯", durationMs: 4000, shotIds: ["s3"], promptStatus: "ready", videoStatus: "idle", videoPrompt: "后续段提示词", generated: "", request: { references: [] } },
     ],
 } as DramaEpisodeDetail;
+const segmentActions = { onOpenSegment: () => undefined, onGenerateSegment: () => undefined, onWriteSegmentPrompt: () => undefined, selectedSegmentIds: new Set<string>(), onSelectSegments: () => undefined };
 async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -114,6 +124,12 @@ async function mount(content: ReactNode) {
     await act(settle);
     return {
         host,
+        render: async (content: ReactNode) => {
+            await act(async () => {
+                root.render(<QueryClientProvider client={client}>{content}</QueryClientProvider>);
+                await settle();
+            });
+        },
         close: async () => {
             await act(async () => root.unmount());
             client.clear();
@@ -130,11 +146,12 @@ async function click(host: HTMLElement, label: string) {
     });
 }
 
-test("幕导航展示单镜，镜头直接打开真实媒体入口，新增定位本幕最后镜头", async () => {
+test("按真实段导航，段内跨场景仍显示完整镜头，新增定位本段最后镜头", async () => {
     const opened: Array<[string, string | undefined]> = [];
     const edited: string[] = [];
     const view = await mount(
         <WorkflowStoryboardPage
+            {...segmentActions}
             summary={summary}
             detail={detail}
             castById={new Map()}
@@ -147,9 +164,12 @@ test("幕导航展示单镜，镜头直接打开真实媒体入口，新增定�
         />,
     );
     try {
-        expect(view.host.textContent).toContain("共 2 幕");
+        expect(view.host.textContent).toContain("共 2 段");
+        expect(view.host.textContent).not.toContain("幕");
         expect(view.host.textContent).toContain("分镜 1");
-        expect(view.host.querySelector("[data-batch-targets='segment1']")?.getAttribute("title")).toContain("当前幕 2 镜");
+        expect(view.host.querySelectorAll(".drama-storyboard-shot")).toHaveLength(2);
+        expect(view.host.textContent).toContain("人物回头");
+        expect(view.host.querySelector("[data-split-segment='0']")).toBeTruthy();
         expect(view.host.textContent).not.toContain("主角打开灯");
         await click(view.host, "编辑分镜 1 的媒体");
         expect(opened).toEqual([["s1", "video"]]);
@@ -159,23 +179,25 @@ test("幕导航展示单镜，镜头直接打开真实媒体入口，新增定�
         expect(inserted).toEqual(["s2"]);
         expect(edited).toEqual(["s1", "inserted"]);
         await act(async () => {
-            view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label*='幕列表'] > button")[1].click();
+            view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label*='段列表'] .drama-storyboard-segment-row > button")[1].click();
             await settle();
         });
         expect(view.host.textContent).toContain("主角打开灯");
         expect(view.host.textContent).not.toContain("主角推门");
-        expect(view.host.querySelector("[data-scene-shot='s3']")).toBeTruthy();
+        expect(view.host.querySelector("[data-split-segment='1']")).toBeTruthy();
+        expect(view.host.querySelectorAll(".drama-storyboard-shot")).toHaveLength(1);
     } finally {
         await view.close();
     }
 });
 
-test("宫格与故事板保留独立模式入口，按当前幕范围调用已有故事板能力", async () => {
+test("宫格与故事板保留独立模式入口，只使用当前段的完整镜头", async () => {
     for (const mode of ["grid_image", "storyboard"] as const) {
         const opened: string[] = [];
         const value = { ...summary, production: { ...summary.production, settings: { ...settings, storyboard: { ...settings.storyboard, generationMode: mode } } } };
         const view = await mount(
             <WorkflowStoryboardPage
+                {...segmentActions}
                 summary={value}
                 detail={detail}
                 castById={new Map()}
@@ -198,13 +220,24 @@ test("宫格与故事板保留独立模式入口，按当前幕范围调用已�
     }
 });
 
-async function mountVideoFilter(status: string, videoAllowed = true) {
+async function mountVideoFilter(status: string, videoAllowed = true, data = detail) {
     return mount(
-        <WorkflowStoryboardPage summary={summary} detail={detail} castById={new Map()} status={status} videoAllowed={videoAllowed} onChanged={() => undefined} onOpenShot={() => undefined} onEditShot={() => undefined} onOpenCast={() => undefined} />,
+        <WorkflowStoryboardPage
+            {...segmentActions}
+            summary={summary}
+            detail={data}
+            castById={new Map()}
+            status={status}
+            videoAllowed={videoAllowed}
+            onChanged={() => undefined}
+            onOpenShot={() => undefined}
+            onEditShot={() => undefined}
+            onOpenCast={() => undefined}
+        />,
     );
 }
 
-test("视频已就绪筛选与着色不受独立图片失败、排队或过期影响", async () => {
+test("段视频就绪筛选保留段内全部镜头，不受单镜图片或视频状态影响", async () => {
     for (const [imageStatus, imageLabel] of [
         ["failed", "生成失败"],
         ["queued", "排队中"],
@@ -212,10 +245,10 @@ test("视频已就绪筛选与着色不受独立图片失败、排队或过期�
     ]) {
         mediaStates.set("s1:image", { status: imageStatus, resourceId: "image-1" });
         mediaStates.set("s1:video", { status: "ready", resourceId: "video-1" });
-        const view = await mountVideoFilter("ready");
+        const view = await mountVideoFilter("ready", true, { ...detail, segments: [{ ...detail.segments[0], videoStatus: "ready", videoResourceId: "segment-video" }, detail.segments[1]] });
         try {
             const cards = view.host.querySelectorAll(".drama-storyboard-shot");
-            expect(cards).toHaveLength(1);
+            expect(cards).toHaveLength(2);
             expect(cards[0].getAttribute("data-tone")).toBe("ready");
             expect(cards[0].textContent).toContain("分镜 1");
             expect(cards[0].querySelector(`[aria-label='分镜 1 图片 · ${imageLabel}']`)).toBeTruthy();
@@ -228,28 +261,130 @@ test("视频已就绪筛选与着色不受独立图片失败、排队或过期�
     }
 });
 
-test("镜头视频失败、处理中、过期与待生成状态仍按视频槽筛选", async () => {
+test("失败、处理中、过期与待生成筛选依据段状态，独立镜头状态保持各自标注", async () => {
     for (const [videoStatus, tone, videoAllowed] of [
         ["failed", "failed", true],
         ["queued", "busy", true],
         ["running", "busy", true],
         ["stale", "stale", true],
         ["idle", "idle", true],
-        ["idle", "blocked", false],
+        ["idle", "ready", false],
     ] as const) {
         mediaStates.set("s1:image", { status: "ready", resourceId: "image-1" });
         mediaStates.set("s1:video", { status: videoStatus });
         mediaStates.set("s2:video", { status: "ready", resourceId: "video-2" });
-        const view = await mountVideoFilter(tone, videoAllowed);
+        const view = await mountVideoFilter(tone, videoAllowed, {
+            ...detail,
+            segments: [
+                { ...detail.segments[0], videoStatus, request: { ...detail.segments[0].request, firstFramePending: false }, videoJob: videoStatus === "queued" ? { status: "running" } : undefined },
+                { ...detail.segments[1], promptStatus: "none", videoStatus: "ready" },
+            ],
+        });
         try {
             const cards = view.host.querySelectorAll(".drama-storyboard-shot");
-            expect(cards).toHaveLength(1);
-            expect(cards[0].getAttribute("data-tone")).toBe(tone);
+            expect(cards).toHaveLength(2);
+            expect(cards[0].getAttribute("data-tone")).toBe(!videoAllowed ? "blocked" : tone);
             expect(cards[0].textContent).toContain("分镜 1");
         } finally {
             await view.close();
             mediaStates.clear();
         }
+    }
+});
+
+test("段生成、失败重试、提示词与预览只操作定位的真实段，勾选传真实段ID", async () => {
+    const generated: string[] = [];
+    const written: string[] = [];
+    const edited: number[] = [];
+    const navigated: number[] = [];
+    const selected: Array<[string[], boolean]> = [];
+    const data = { ...detail, segments: [detail.segments[0], { ...detail.segments[1], videoStatus: "failed", videoResourceId: "previous-segment-video", promptStatus: "failed" }] } as DramaEpisodeDetail;
+    const view = await mount(
+        <WorkflowStoryboardPage
+            {...segmentActions}
+            summary={summary}
+            detail={data}
+            castById={new Map()}
+            status="all"
+            videoAllowed
+            segmentIndex={1}
+            onChanged={() => undefined}
+            onOpenShot={() => undefined}
+            onEditShot={() => undefined}
+            onOpenCast={() => undefined}
+            onGenerateSegment={(segment) => generated.push(segment.id)}
+            onWriteSegmentPrompt={(segment) => written.push(segment.id)}
+            onOpenSegment={(index) => edited.push(index)}
+            onSegmentChange={(index) => navigated.push(index)}
+            onSelectSegments={(ids, checked) => selected.push([ids, checked])}
+        />,
+    );
+    try {
+        expect(view.host.textContent).toContain("主角打开灯");
+        expect(view.host.textContent).not.toContain("主角推门");
+        for (const group of ["本段制作", "本段调整", "本段视图"]) expect(view.host.querySelector(`[role="group"][aria-label="${group}"]`)).not.toBeNull();
+        expect(view.host.querySelector('[aria-label="本段制作"]')?.textContent).toContain("重试本段视频");
+        expect(view.host.querySelector('[aria-label="本段调整"]')?.textContent).toContain("编辑本段");
+        expect(view.host.querySelector('[aria-label="本段制作"]')?.textContent).toContain("预览本段");
+        expect(view.host.querySelector('[aria-label="本段视图"]')?.textContent).toContain("收起");
+        await click(view.host, "重试本段视频");
+        await click(view.host, "重试本段提示词");
+        await click(view.host, "编辑本段");
+        expect(generated).toEqual(["segment2"]);
+        expect(written).toEqual(["segment2"]);
+        expect(edited).toEqual([1]);
+        await click(view.host, "预览本段");
+        expect(view.host.querySelector("[aria-label='第 2 段视频预览'] video")?.getAttribute("src")).toBe("/resources/previous-segment-video");
+        await act(async () => {
+            view.host.querySelector<HTMLInputElement>("[aria-label='选择第 1 集第 2 段']")!.click();
+            view.host.querySelector<HTMLInputElement>("[aria-label='选择第 1 集筛选出的 2 段']")!.click();
+            await settle();
+        });
+        expect(selected).toEqual([
+            [["segment2"], true],
+            [["segment1", "segment2"], true],
+        ]);
+        await click(view.host, "查看第 1 段：推门与回头");
+        expect(navigated).toEqual([0]);
+        expect(view.host.querySelector("[aria-label='第 2 段分镜']")).toBeTruthy();
+    } finally {
+        await view.close();
+    }
+});
+
+test("没有真实段或筛选无匹配时不退回场景分组，也不显示其他范围生成入口", async () => {
+    for (const [data, status, text] of [
+        [{ ...detail, segments: [] }, "all", "本集暂无剧情段"],
+        [detail, "failed", "没有符合筛选条件的段"],
+    ] as const) {
+        const view = await mountVideoFilter(status, true, data as DramaEpisodeDetail);
+        try {
+            expect(view.host.textContent).toContain(text);
+            expect(view.host.querySelectorAll(".drama-storyboard-shot")).toHaveLength(0);
+            expect(view.host.textContent).not.toContain("生成本段视频");
+            expect(view.host.textContent).not.toContain("幕");
+        } finally {
+            await view.close();
+        }
+    }
+});
+
+test("筛选下轮询使当前段状态变化时，已打开的宫格保留原段镜头快照", async () => {
+    const value = { ...summary, production: { ...summary.production, settings: { ...settings, storyboard: { ...settings.storyboard, generationMode: "grid_image" as const } } } };
+    const data = { ...detail, segments: detail.segments.map((segment) => ({ ...segment, videoStatus: "running" })) } as DramaEpisodeDetail;
+    const page = (current: DramaEpisodeDetail) => (
+        <WorkflowStoryboardPage {...segmentActions} summary={value} detail={current} castById={new Map()} status="busy" videoAllowed onChanged={() => undefined} onOpenShot={() => undefined} onEditShot={() => undefined} onOpenCast={() => undefined} />
+    );
+    const view = await mount(page(data));
+    try {
+        await click(view.host, "生成宫格图");
+        expect(view.host.querySelector("[data-board-shots='s1,s2']")).toBeTruthy();
+        await view.render(page({ ...data, segments: [{ ...data.segments[0], videoStatus: "ready" }, data.segments[1]] }));
+        expect(view.host.querySelector("[aria-label='第 2 段分镜']")).toBeTruthy();
+        expect(view.host.querySelector("[data-board-shots='s1,s2']")).toBeTruthy();
+        expect(view.host.querySelector("[data-board-shots='s3']")).toBeNull();
+    } finally {
+        await view.close();
     }
 });
 

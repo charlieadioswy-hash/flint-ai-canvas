@@ -223,7 +223,7 @@ function DramaCover({ item }: { item: DramaListItem }) {
 function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => void }) {
     const progress = item.episodeCount ? Math.round((item.doneCount / item.episodeCount) * 100) : 0;
     const needsAction = item.status === "paused" && Boolean(item.pauseReason);
-    const path = item.hasDraftForm ? `/projects/new?draft=${encodeURIComponent(item.project.id)}` : dramaProjectPath(item.project.id, item.guideStep);
+    const path = item.hasDraftForm ? `/projects/new?draft=${encodeURIComponent(item.project.id)}` : dramaProjectPath(item.project.id, item.guideStep, item.episodeCount);
     const stage = dramaListStage(item);
     return (
         <article className={`drama-library-card is-${item.status}`}>

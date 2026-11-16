@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, useEffect, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import type { DramaEpisodeDetail, DramaEpisodeRow, DramaSummary, DramaWorkflowReadiness } from "@/services/api/drama";
 
@@ -40,6 +40,17 @@ let downloadImpl: (resourceId: string) => Promise<void>;
 
 mock.module("antd", () => ({
     Button: ({ children, icon, type: _type, size: _size, loading: _loading, ...props }: any) => createElement("button", { ...props, type: "button" }, icon, children),
+    Dropdown: ({ children, menu }: any) =>
+        createElement(
+            "div",
+            null,
+            children,
+            createElement(
+                "div",
+                { role: "menu" },
+                menu.items.map((item: any) => createElement("button", { key: item.key, onClick: item.onClick, disabled: item.disabled }, item.label)),
+            ),
+        ),
     Input: ({ prefix: _prefix, allowClear: _allowClear, ...props }: any) => createElement("input", props),
     Select: ({ options, onChange, suffixIcon: _suffixIcon, ...props }: any) =>
         createElement(
@@ -54,9 +65,32 @@ mock.module("@/components/ui/product/app-modal", () => ({
         open ? createElement("section", { role: "dialog", "aria-label": title }, createElement("h2", null, title), children, footer) : null,
 }));
 mock.module("@/pages/projects/studio/asset-transfer", () => ({ AssetPackageModal: () => null }));
-mock.module("@/pages/projects/studio/episode-source", () => ({ AddEpisodeModal: () => null }));
+mock.module("@/pages/projects/studio/episode-source", () => ({
+    AddEpisodeModal: ({ onDirtyChange, onAdded, onClose }: { onDirtyChange?: (dirty: boolean, busy?: boolean) => void; onAdded: (id: string) => void; onClose: () => void }) => {
+        const [state, setState] = useState({ dirty: false, busy: false });
+        useEffect(() => {
+            onDirtyChange?.(state.dirty, state.busy);
+        }, [state, onDirtyChange]);
+        useEffect(() => () => onDirtyChange?.(false, false), [onDirtyChange]);
+        return createElement(
+            "section",
+            { role: "dialog", "aria-label": "新建分集" },
+            createElement("button", { onClick: () => setState({ dirty: true, busy: false }) }, "编辑新增正文"),
+            createElement("button", { onClick: () => setState({ dirty: true, busy: true }) }, "新增正文提交中"),
+            createElement("button", { onClick: () => onAdded("e4") }, "模拟新增成功"),
+            createElement("button", { onClick: onClose }, "关闭新增分集"),
+        );
+    },
+}));
 mock.module("@/pages/projects/workflow-batch", () => ({
-    WorkflowBatch: ({ targetIds, targetLabels }: any) => createElement("output", { "aria-label": "真实批次范围", "data-target-ids": targetIds.join(",") }, targetIds.map((id: string) => targetLabels[id]).join(" / ")),
+    WorkflowBatch: ({ targetIds, targetLabels, onBusyChange }: any) =>
+        createElement(
+            "div",
+            null,
+            createElement("output", { "aria-label": "真实批次范围", "data-target-ids": targetIds.join(",") }, targetIds.map((id: string) => targetLabels[id]).join(" / ")),
+            createElement("button", { onClick: () => onBusyChange?.(true) }, "批量制作提交中"),
+            createElement("button", { onClick: () => onBusyChange?.(false) }, "结束批量制作"),
+        ),
 }));
 mock.module("@/pages/projects/drama-shared", () => ({
     aspectRatioValue: () => "9 / 16",
@@ -138,13 +172,15 @@ afterAll(() => {
 async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 }
-async function mount(initial = summaryOf()) {
+async function mount(initial = summaryOf(), onPickChapters?: () => void) {
     const container = document.createElement("div");
     document.body.append(container);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     const root = createRoot(container);
     const changed: string[] = [];
     const opened: string[] = [];
+    const openedSteps: Array<{ id: string; step?: "review" | "story" }> = [];
+    const dirtyStates: Array<[boolean, boolean]> = [];
     let summary = initial;
     const update = async (next = summary) => {
         summary = next;
@@ -158,7 +194,12 @@ async function mount(initial = summaryOf()) {
                         onChanged: () => {
                             changed.push(summary.project.id);
                         },
-                        onOpenEpisode: (id) => opened.push(id),
+                        onOpenEpisode: (id, step) => {
+                            opened.push(id);
+                            openedSteps.push({ id, step });
+                        },
+                        onPickChapters,
+                        onDirtyChange: (dirty, busy = false) => dirtyStates.push([dirty, busy]),
                     }),
                 ),
             );
@@ -171,6 +212,8 @@ async function mount(initial = summaryOf()) {
         container,
         changed,
         opened,
+        openedSteps,
+        dirtyStates,
         update,
         dispose: async () => {
             await act(async () => root.unmount());
@@ -212,12 +255,82 @@ test("选择分集才读取对应剧情段，筛选与排序不会把批次换�
             sort.value = "desc";
             sort.dispatchEvent(new Event("change", { bubbles: true }));
         });
-        expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 3 集分镜");
+        expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 3 集");
         await edit(view.container.querySelector<HTMLInputElement>('[aria-label="搜索分集"]')!, "剧情 1");
         expect(view.container.querySelectorAll(".drama-workflow-episode-card")).toHaveLength(1);
         expect(view.container.querySelector('[aria-label="真实批次范围"]')?.getAttribute("data-target-ids")).toBe("e2-segment");
-        await click(button(view.container, "打开第 1 集分镜"));
+        await click(button(view.container, "打开第 1 集"));
         expect(view.opened).toEqual(["e1"]);
+        expect(renders).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("分集卡展示真实类型更新时间和三项进度，四状态筛选与继续选章复用现有入口", async () => {
+    const data = summaryOf("project-a", [
+        episodeOf("e1", 1, { updatedAt: "2026-11-13T01:00:00Z" }),
+        episodeOf("e2", 2, { updatedAt: "2026-11-15T01:00:00Z", stats: { segments: 2, promptReady: 2, promptSucceeded: 2, videoReady: 0, videoGenerated: 0, failed: 0 } }),
+        episodeOf("e3", 3, { updatedAt: "2026-11-14T01:00:00Z", error: "视频生成失败" }),
+    ]);
+    data.production.settings.dramaType = "live_action";
+    data.production.chapterCount = 1;
+    data.production.reservedChapterCount = 8;
+    let picks = 0;
+    const view = await mount(data, () => picks++);
+    try {
+        expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 2 集");
+        expect(view.container.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-15T01:00:00Z");
+        expect(view.container.textContent).toContain("真人剧");
+        expect(view.container.textContent).toContain("暂无图片");
+        expect(view.container.textContent).toContain("原文 9 章 · 制作 3 集 · 待制作 8 章");
+        expect(view.container.querySelectorAll(".drama-workflow-episode-card dl > div")).toHaveLength(9);
+        expect(view.container.querySelector('[data-status="unknown"]')?.textContent).toContain("勾选后检查");
+        expect(view.container.querySelector(".drama-workflow-episode-card dl > div:last-child")?.getAttribute("data-status")).toBe("idle");
+        expect(view.container.querySelector('[aria-label="第 2 集更多操作"]')).not.toBeNull();
+        await click(button(view.container, "继续选章"));
+        expect(picks).toBe(1);
+        await click(view.container.querySelector<HTMLInputElement>('[aria-label="选择第 2 集"]')!);
+        await click(button(view.container, "批量制作提交中"));
+        expect(button(view.container, "继续选章").disabled).toBe(true);
+        expect(view.dirtyStates.at(-1)).toEqual([false, true]);
+        await click(button(view.container, "结束批量制作"));
+        expect(button(view.container, "继续选章").disabled).toBe(false);
+        await click(button(view.container, "失败分集"));
+        expect(view.container.querySelectorAll(".drama-workflow-episode-card")).toHaveLength(1);
+        expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 3 集");
+        await click(button(view.container, "失败分集"));
+        expect(view.container.querySelectorAll(".drama-workflow-episode-card")).toHaveLength(3);
+        await click(button(view.container, "合成本集成片"));
+        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("第 2 集");
+        expect(renders).toHaveLength(0);
+        expect(downloads).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("新建分集草稿与提交回传保护状态，成功后保留管理页并选中新集", async () => {
+    const data = summaryOf();
+    data.production.chapterCount = 1;
+    data.production.reservedChapterCount = 8;
+    const view = await mount(data, () => {});
+    try {
+        await click(button(view.container, "新建分集"));
+        expect(button(view.container, "继续选章").disabled).toBe(true);
+        await click(button(view.container, "编辑新增正文"));
+        expect(view.dirtyStates.at(-1)).toEqual([true, false]);
+        await click(button(view.container, "新增正文提交中"));
+        expect(view.dirtyStates.at(-1)).toEqual([true, true]);
+        await click(button(view.container, "模拟新增成功"));
+        expect(view.opened).toEqual([]);
+        expect(view.changed).toEqual(["project-a"]);
+        expect(view.container.querySelector('[aria-label="新建分集"]')).toBeNull();
+        const next = { ...data, episodes: [...data.episodes, episodeOf("e4", 4)] };
+        await view.update(next);
+        expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择第 4 集"]')?.checked).toBe(true);
+        expect(view.container.querySelector('[aria-label="真实批次范围"]')?.getAttribute("data-target-ids")).toBe("e4-segment");
+        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
         expect(renders).toHaveLength(0);
     } finally {
         await view.dispose();
@@ -246,6 +359,45 @@ test("全部合成只提交就绪集的各自版本，失败逐项保留并可�
         expect(renders.at(-1)?.expectedRevision).toBe(51);
         expect(view.container.textContent).toContain("已提交合成");
         expect(view.changed).toEqual(["project-a", "project-a"]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("分集卡和更多菜单按真实段或镜头内容进入制作，没有分镜回到分集剧本", async () => {
+    const emptyStats = { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 };
+    const view = await mount(
+        summaryOf("project-a", [episodeOf("empty", 1, { shotCount: 0, stats: emptyStats }), episodeOf("segments", 2, { shotCount: 0, stats: { ...emptyStats, segments: 1 } }), episodeOf("shots", 3, { shotCount: 1, stats: emptyStats })]),
+    );
+    try {
+        for (const number of [1, 2, 3]) {
+            const matches = [...view.container.querySelectorAll<HTMLButtonElement>("button")].filter((item) => item.getAttribute("aria-label") === `打开第 ${number} 集` || item.textContent?.trim() === `打开第 ${number} 集`);
+            expect(matches).toHaveLength(2);
+            for (const entry of matches) await click(entry);
+        }
+        expect(view.openedSteps).toEqual([
+            { id: "empty", step: "review" },
+            { id: "empty", step: "review" },
+            { id: "segments", step: "story" },
+            { id: "segments", step: "story" },
+            { id: "shots", step: "story" },
+            { id: "shots", step: "story" },
+        ]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("批量异常的查看本集状态保留原分集剧本落点", async () => {
+    const view = await mount(summaryOf("project-a", [episodeOf("e1", 1)]));
+    try {
+        renderImpl = async () => {
+            throw new Error("合成失败");
+        };
+        await click(button(view.container, "合成全部就绪分集"));
+        await click(button(view.container, "合成 1 集"));
+        await click(button(view.container, "查看本集状态"));
+        expect(view.openedSteps).toEqual([{ id: "e1", step: undefined }]);
     } finally {
         await view.dispose();
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Checkbox, Input, InputNumber, Select, Switch } from "antd";
 import {
@@ -31,12 +31,15 @@ import {
 } from "lucide-react";
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { ApiError } from "@/services/api/request";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
-import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { useUserStore } from "@/stores/use-user-store";
 import {
-    getDramaCastImpact,
     regenerateDramaCast,
+    getDrama,
+    listDramaCast,
     regenerateDramaCasts,
     setDramaCastImage,
     updateDramaCast,
@@ -45,6 +48,7 @@ import {
     updateDramaSettings,
     type DramaCapability,
     type DramaCast,
+    type DramaCastPatch,
     type DramaCastKind,
     type DramaEpisodeMode,
     type DramaSettings,
@@ -67,9 +71,10 @@ import { uploadResourceFile } from "@/services/api/resources";
 import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoiceField, CastVoicePreview } from "./cast-voice";
-import { CastImageOptions } from "./cast-image-options";
-import { CastViews } from "./cast-views";
+import { CastImageOptions, castImageOptionsDraft } from "./cast-image-options";
+import { CastViews, CastViewWorkspace } from "./cast-views";
 import { CastLooks } from "./cast-looks";
+import { useCastRegenerationGuard } from "./use-cast-regeneration-guard";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { CastCreateDialog } from "./cast-create-dialog";
 import { CastProjectImport } from "./cast-project-import";
@@ -99,8 +104,22 @@ function castRatio(kind: DramaCastKind, ratios: CastRatios) {
 export type CastRatios = { character: string };
 
 /** 媒体轮询不重置输入，切换设定或服务端表单内容变化时重新回填。 */
-export function castEditorFormKey(cast: DramaCast) {
-    return JSON.stringify([cast.id, cast.name, cast.lookName, cast.appearance, cast.aliasesJson, cast.voiceInstructions, cast.imagePrompt, cast.imageStyleId, cast.imageStyleName, cast.imageStylePrompt, cast.lookFromChapter, cast.lookToChapter]);
+function castEditorFormKey(cast: DramaCast) {
+    return JSON.stringify([
+        cast.id,
+        cast.name,
+        cast.lookName,
+        cast.appearance,
+        cast.aliasesJson,
+        cast.voiceInstructions,
+        cast.imagePrompt,
+        cast.imageStyleId,
+        cast.imageStyleName,
+        cast.imageStylePrompt,
+        cast.lookFromChapter,
+        cast.lookToChapter,
+        cast.imageOptionsJson || "",
+    ]);
 }
 
 const castImageLoading = <span className="drama-cast-media-state is-loading" role="status" aria-label="参考图加载中" />;
@@ -171,7 +190,6 @@ export function CastPanel({
     const active = focused && (kind === "look" ? focused.parentId : focused.kind === kind) ? focused : list[0];
     const kindRatio = castRatio(kind === "look" ? "character" : kind, ratios);
     const tabLabel = (value: CastTab) => (value === "look" ? "造型" : CAST_KIND_LABEL[value]);
-    const activeFormKey = active ? castEditorFormKey(active) : "";
     return (
         <div className="drama-view drama-cast-layout">
             <section className="drama-view-main">
@@ -294,7 +312,7 @@ export function CastPanel({
             <aside className="drama-view-side thin-scrollbar">
                 {active ? (
                     <CastEditor
-                        key={activeFormKey}
+                        key={active.id}
                         projectId={projectId}
                         cast={active}
                         parent={active.parentId ? cast.find((item) => item.id === active.parentId) : undefined}
@@ -327,19 +345,7 @@ export function CastPanel({
     );
 }
 
-export function CastEditor({
-    projectId,
-    cast,
-    parent,
-    looks,
-    ratios,
-    onChanged,
-    onOpenCanvas,
-    canvasOpening,
-    layout = "sidebar",
-    tools,
-    onDirtyChange,
-}: {
+type CastEditorProps = {
     projectId: string;
     cast: DramaCast;
     parent?: DramaCast;
@@ -351,8 +357,68 @@ export function CastEditor({
     layout?: "sidebar" | "workspace";
     tools?: ReactNode;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+};
+
+export function CastEditor(props: CastEditorProps) {
+    const userId = useUserStore((state) => state.user?.id);
+    return <CastEditorSession key={JSON.stringify([userId, props.projectId, props.cast.id])} {...props} />;
+}
+
+function CastEditorSession(props: CastEditorProps) {
+    // 同资产保存后的表单回填不能取消尚未完成的生成；切换资产时由会话边界清理。
+    const regenerationGuard = useCastRegenerationGuard(props.projectId);
+    const [mainState, setMainState] = useState({ dirty: false, busy: false });
+    if (props.layout !== "workspace") return <CastEditorForm {...props} regenerationGuard={regenerationGuard} />;
+    return (
+        <CastViewWorkspace
+            projectId={props.projectId}
+            cast={props.cast}
+            disabled={mainState.dirty || mainState.busy}
+            onChanged={props.onChanged}
+            onDirtyChange={props.onDirtyChange}
+            renderMain={(viewSelector) => (
+                <CastEditorForm
+                    {...props}
+                    viewSelector={viewSelector}
+                    regenerationGuard={regenerationGuard}
+                    onDirtyChange={(dirty, busy) => {
+                        setMainState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }));
+                        props.onDirtyChange?.(dirty, busy);
+                    }}
+                />
+            )}
+        />
+    );
+}
+
+function CastEditorForm({
+    projectId,
+    cast,
+    parent,
+    looks,
+    ratios,
+    onChanged,
+    onOpenCanvas,
+    canvasOpening,
+    layout = "sidebar",
+    tools,
+    onDirtyChange,
+    regenerationGuard,
+    viewSelector,
+}: CastEditorProps & {
+    regenerationGuard: ReturnType<typeof useCastRegenerationGuard>;
+    viewSelector?: ReactNode;
 }) {
     const { message, modal } = App.useApp();
+    const { cancelBeforeExecution } = regenerationGuard;
+    useEffect(() => () => cancelBeforeExecution(), [cancelBeforeExecution]);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
     const [previewing, setPreviewing] = useState(false);
     const [name, setName] = useState(cast.lookName || cast.name);
     const [aliases, setAliases] = useState(parseList(cast.aliasesJson));
@@ -362,45 +428,107 @@ export function CastEditor({
     const [from, setFrom] = useState<number | null>(cast.lookFromChapter || null);
     const [to, setTo] = useState<number | null>(cast.lookToChapter || null);
     const [restyle, setRestyle] = useState(true);
-    const [imageOptionsDirty, setImageOptionsDirty] = useState(false);
+    const [imageOptions, setImageOptions] = useState(() => castImageOptionsDraft(cast.imageOptionsJson));
+    const [baselineCast, setBaselineCast] = useState(cast);
+    const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
+    const [generationNotice, setGenerationNotice] = useState<{ kind: "failed" | "uncertain" | "submitted"; text: string; version: number; resourceId?: string; saved: boolean }>();
+    const [checkingGeneration, setCheckingGeneration] = useState(false);
     const [lookState, setLookState] = useState({ dirty: false, busy: false });
     const isLook = Boolean(cast.parentId);
-    const impactQuery = useQuery({ queryKey: dramaKeys.castImpact(projectId, cast.id), queryFn: ({ signal }) => getDramaCastImpact(projectId, cast.id, signal) });
-    const snapshot = JSON.stringify({ name, aliases, appearance, voiceInstructions, ...imageFields, from: isLook ? from || 0 : 0, to: isLook ? to || 0 : 0 });
+    const snapshot = JSON.stringify({ name, aliases, appearance, voiceInstructions, ...imageFields, from: isLook ? from || 0 : 0, to: isLook ? to || 0 : 0, imageOptions });
     const [savedSnapshot, setSavedSnapshot] = useState(snapshot);
     const dirty = snapshot !== savedSnapshot;
+    const imageOptionsDirty = JSON.stringify(imageOptions) !== JSON.stringify(castImageOptionsDraft(baselineCast.imageOptionsJson));
     const fields = { name, aliases, appearance, voiceInstructions, ...imageFields };
-    const saveFields = () => (isLook ? updateDramaCastLook(projectId, cast.id, { lookName: name, appearance, ...imageFields, fromChapter: from || 0, toChapter: to || 0, restyleSegments: restyle }) : updateDramaCast(projectId, cast.id, fields));
+    const saveFields = async () => {
+        if (imageOptions.corrupt) throw new Error("请先重新配置无法读取的图片设置");
+        if (!summary.data || typeof baselineCast.revision !== "number") throw new Error("当前作品或主体版本尚未读取，请刷新后重试");
+        const revisions = { expectedRevision: summary.data.production.revision, expectedCastRevision: baselineCast.revision, imageOptions: imageOptions.options };
+        if (isLook) return (await updateDramaCastLook(projectId, cast.id, { lookName: name, appearance, ...imageFields, fromChapter: from || 0, toChapter: to || 0, restyleSegments: restyle, ...revisions })).look;
+        const changed: DramaCastPatch = { ...revisions };
+        const baseline = {
+            name: baselineCast.name,
+            aliases: parseList(baselineCast.aliasesJson),
+            appearance: baselineCast.appearance,
+            voiceInstructions: baselineCast.voiceInstructions,
+            imagePrompt: baselineCast.imagePrompt || "",
+            imageStyleId: baselineCast.imageStyleId || "",
+            imageStyleName: baselineCast.imageStyleName || "",
+            imageStylePrompt: baselineCast.imageStylePrompt || "",
+        };
+        for (const key of Object.keys(fields) as Array<keyof typeof fields>) {
+            if (JSON.stringify(fields[key]) !== JSON.stringify(baseline[key])) Object.assign(changed, { [key]: fields[key] });
+        }
+        return (await updateDramaCast(projectId, cast.id, changed)).cast;
+    };
+    const acceptSaved = (updated: DramaCast) => {
+        if (!mounted.current) return;
+        setBaselineCast(updated);
+        setSavedSnapshot(snapshot);
+    };
+    const acceptIndependentUpdate = useCallback((updated: DramaCast) => {
+        if (!mounted.current) return;
+        // 独立操作和轮询只更新媒体或锁定时接收新版本，外部表单改动仍交给保存时的版本校验。
+        setBaselineCast((baseline) => (castEditorFormKey(updated) === castEditorFormKey(baseline) && (updated.revision || 0) > (baseline.revision || 0) ? updated : baseline));
+    }, []);
     const save = useMutation({
         mutationFn: async () => {
-            await saveFields();
-            return snapshot;
+            return saveFields();
         },
-        onSuccess: (saved) => {
-            setSavedSnapshot(saved);
-            message.success("设定已保存");
+        onSuccess: (updated) => {
+            if (!mounted.current) return;
+            acceptSaved(updated);
+            message.success("修改已保存");
             onChanged();
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "保存失败"),
+        onError: (error) => {
+            if (mounted.current) message.error(error instanceof Error ? error.message : "保存失败，完整草稿已保留");
+        },
     });
-    const lock = useMutation({ mutationFn: (locked: boolean) => updateDramaCast(projectId, cast.id, { locked }), onSuccess: onChanged });
-    const regenerate = useMutation({
-        mutationFn: async () => {
-            if (dirty) await saveFields();
-            const result = await regenerateDramaCast(projectId, cast.id, restyle);
-            return { result, saved: snapshot };
-        },
-        onSuccess: ({ result, saved }) => {
-            setSavedSnapshot(saved);
-            message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "正在重新生成参考图");
+    const lock = useMutation({
+        mutationFn: (locked: boolean) => updateDramaCast(projectId, cast.id, { locked }),
+        onSuccess: ({ cast: updated }) => {
+            acceptIndependentUpdate(updated);
             onChanged();
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
+    });
+    const regenerate = useMutation({
+        mutationFn: async (isCurrent: () => boolean) => {
+            let saved = false;
+            if (dirty) {
+                const updated = await saveFields();
+                saved = true;
+                if (isCurrent()) acceptSaved(updated);
+            }
+            if (!isCurrent()) return;
+            try {
+                const result = await regenerateDramaCast(projectId, cast.id, restyle);
+                return { result, saved, isCurrent };
+            } catch (error) {
+                if (!isCurrent()) return;
+                const rejected = error instanceof ApiError && [error.status, error.code].some((status) => status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429);
+                const detail = error instanceof Error ? error.message : "请求未能完成";
+                setGenerationNotice({ kind: rejected ? "failed" : "uncertain", text: `${saved ? "修改已保存；" : ""}${rejected ? "生成提交失败" : "生成提交结果待核对"}：${detail}`, version: cast.imageVersion, resourceId: cast.imageResourceId, saved });
+                onChanged();
+                return;
+            }
+        },
+        onSuccess: (completed) => {
+            if (!completed?.isCurrent()) return;
+            const { result, saved } = completed;
+            setGenerationNotice(undefined);
+            message.success(`${saved ? "修改已保存；" : ""}${result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "正在重新生成参考图"}`);
+            onChanged();
+        },
+        onError: (error) => {
+            if (mounted.current) message.error(`保存失败，未提交生成：${error instanceof Error ? error.message : "请重试"}`);
+        },
     });
     // 上传或从素材库选的形象图直接成为参考图并锁定：不会被重新生成覆盖，剧情段视频按这张图生成。
     const fileRef = useRef<HTMLInputElement>(null);
     const [libraryOpen, setLibraryOpen] = useState(false);
     const imageAdopted = (result: Awaited<ReturnType<typeof setDramaCastImage>>) => {
+        acceptIndependentUpdate(result.cast);
         if (result.unchanged) message.info("已在使用这张图");
         else message.success(result.affectedSegments ? `已替换并锁定形象；${result.affectedSegments} 个剧情段的视频已标记为待更新` : "已替换并锁定形象，之后的剧情段视频按这张图生成");
         onChanged();
@@ -415,10 +543,9 @@ export function CastEditor({
     });
     // 素材库选图的失败由选择弹窗内联显示，这里只处理成功。
     const adoptLibraryImage = async (resourceId: string) => imageAdopted(await setDramaCastImage(projectId, cast.id, resourceId, restyle));
-    const impact = impactQuery.data;
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
-    const saving = save.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy;
+    const saving = save.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
     const busy = saving || mediaBusy(cast.imageStatus);
     const parentReady = !isLook || (parent?.imageStatus === "ready" && Boolean(parent.imageResourceId));
     const editorState = useRef(onDirtyChange);
@@ -427,6 +554,60 @@ export function CastEditor({
         editorState.current?.(dirty || imageOptionsDirty || lookState.dirty, saving);
     }, [dirty, imageOptionsDirty, lookState.dirty, saving]);
     useEffect(() => () => editorState.current?.(false, false), []);
+    const remoteKey = castEditorFormKey(cast);
+    const received = useRef(remoteKey);
+    useEffect(() => {
+        cancelBeforeExecution();
+    }, [remoteKey, cancelBeforeExecution]);
+    useEffect(() => {
+        acceptIndependentUpdate(cast);
+        if (dirty || busy) return;
+        if (received.current === remoteKey) {
+            return;
+        }
+        received.current = remoteKey;
+        setName(cast.lookName || cast.name);
+        setAliases(parseList(cast.aliasesJson));
+        setAppearance(cast.appearance);
+        setVoiceInstructions(cast.voiceInstructions);
+        const imageFields = { imagePrompt: cast.imagePrompt || "", imageStyleId: cast.imageStyleId || "", imageStyleName: cast.imageStyleName || "", imageStylePrompt: cast.imageStylePrompt || "" };
+        setImageFields(imageFields);
+        setFrom(cast.lookFromChapter || null);
+        setTo(cast.lookToChapter || null);
+        const imageOptions = castImageOptionsDraft(cast.imageOptionsJson);
+        setImageOptions(imageOptions);
+        setBaselineCast(cast);
+        setSavedSnapshot(
+            JSON.stringify({
+                name: cast.lookName || cast.name,
+                aliases: parseList(cast.aliasesJson),
+                appearance: cast.appearance,
+                voiceInstructions: cast.voiceInstructions,
+                ...imageFields,
+                from: isLook ? cast.lookFromChapter || 0 : 0,
+                to: isLook ? cast.lookToChapter || 0 : 0,
+                imageOptions,
+            }),
+        );
+    }, [remoteKey, dirty, busy, cast, isLook, acceptIndependentUpdate]);
+    const checkGeneration = async () => {
+        if (checkingGeneration || !generationNotice) return;
+        setCheckingGeneration(true);
+        try {
+            const latest = await listDramaCast(projectId);
+            if (!mounted.current) return;
+            const current = latest.cast.find((item) => item.id === cast.id);
+            if (current && (mediaBusy(current.imageStatus) || current.imageVersion > generationNotice.version || current.imageResourceId !== generationNotice.resourceId)) {
+                setGenerationNotice({ ...generationNotice, kind: "submitted", text: `${generationNotice.saved ? "修改已保存；" : ""}已核对到生成任务或新图片，无需重复提交。` });
+            } else if (current?.imageStatus === "failed") setGenerationNotice({ ...generationNotice, kind: "failed", text: `${generationNotice.saved ? "修改已保存；" : ""}生成已失败，可检查原因后重新生成。` });
+            else message.info("暂未确认提交结果，请稍后再次核对；不会自动重发");
+            onChanged();
+        } catch (error) {
+            if (mounted.current) message.error(error instanceof Error ? error.message : "生成状态读取失败");
+        } finally {
+            if (mounted.current) setCheckingGeneration(false);
+        }
+    };
     return (
         <div className={`drama-editor${layout === "workspace" ? ` is-workspace is-${cast.kind}` : ""}`}>
             <section className="drama-editor-preview" aria-label="当前参考图">
@@ -467,7 +648,7 @@ export function CastEditor({
                     <label className="drama-switch-label">
                         <Lock className="size-3.5" />
                         锁定形象
-                        <Switch size="small" checked={cast.locked} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
+                        <Switch size="small" checked={cast.locked} disabled={busy} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
                     </label>
                 </div>
                 <div className="drama-editor-assistance">{tools}</div>
@@ -505,35 +686,53 @@ export function CastEditor({
                     ) : null}
                     {isCharacter ? (
                         <Field label="声音样本" hint="支持参考音频的视频模型会在该角色开口的剧情段带上这段声音">
-                            <CastVoiceField projectId={projectId} cast={cast} restyle={restyle} onChanged={onChanged} />
+                            <CastVoiceField
+                                projectId={projectId}
+                                cast={cast}
+                                restyle={restyle}
+                                onChanged={(updated) => {
+                                    acceptIndependentUpdate(updated);
+                                    onChanged();
+                                }}
+                            />
                         </Field>
                     ) : null}
                     <div className="drama-editor-impact">
-                        <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
+                        <Checkbox checked={restyle} disabled={busy} onChange={(event) => setRestyle(event.target.checked)}>
                             将引用视频标记为待更新
                         </Checkbox>
-                        {impact ? (
-                            <span>
-                                {impact.episodes} 集 · {impact.segments} 段
-                            </span>
-                        ) : null}
                     </div>
-                    <Button disabled={!dirty || busy || !name.trim() || !appearance.trim()} loading={save.isPending} onClick={() => save.mutate()}>
-                        保存设定
-                    </Button>
                     {dirty || imageOptionsDirty || lookState.dirty ? (
                         <p className="drama-editor-note" role="status">
-                            有未保存的修改{imageOptionsDirty ? "，图片生成配置需单独保存" : ""}。
+                            有未保存的修改。文字、提示词与图片配置将一并保存。
                         </p>
                     ) : null}
                 </div>
                 <div className="drama-editor-image-settings">
                     {layout === "workspace" ? <h3>生图设置</h3> : null}
-                    <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} onDirtyChange={setImageOptionsDirty} />
+                    <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
                     <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
                 </div>
             </section>
             <div className="drama-editor-actions">
+                <Button
+                    className="drama-editor-wide"
+                    disabled={!dirty || busy || imageOptions.corrupt || !name.trim() || !appearance.trim() || !summary.data || typeof baselineCast.revision !== "number"}
+                    loading={save.isPending}
+                    onClick={() => save.mutate()}
+                >
+                    保存修改
+                </Button>
+                {generationNotice ? (
+                    <div className="drama-editor-note" role={generationNotice.kind === "submitted" ? "status" : "alert"}>
+                        <p>{generationNotice.text}</p>
+                        {generationNotice.kind === "uncertain" ? (
+                            <Button loading={checkingGeneration} onClick={() => void checkGeneration()}>
+                                核对生成状态
+                            </Button>
+                        ) : null}
+                    </div>
+                ) : null}
                 <Button icon={<Upload className="size-4" />} disabled={busy} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
                     上传形象图
                 </Button>
@@ -566,10 +765,10 @@ export function CastEditor({
                     type="primary"
                     className="drama-editor-wide"
                     icon={<RefreshCw className="size-4" />}
-                    disabled={cast.locked || busy || imageOptionsDirty || !parentReady || !name.trim() || !appearance.trim()}
-                    title={imageOptionsDirty ? "请先保存图片生成配置" : !parentReady ? "请先生成或上传角色本体图" : undefined}
-                    loading={regenerate.isPending}
-                    onClick={() => regenerate.mutate()}
+                    disabled={cast.locked || busy || imageOptions.corrupt || generationNotice?.kind === "uncertain" || !parentReady || !name.trim() || !appearance.trim() || (dirty && (!summary.data || typeof baselineCast.revision !== "number"))}
+                    title={!parentReady ? "请先生成或上传角色本体图" : undefined}
+                    loading={regenerate.isPending || regenerationGuard.busy}
+                    onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
                 >
                     {cast.imageResourceId ? (dirty ? "保存并重新生成" : "重新生成") : dirty ? "保存并生成参考图" : "生成参考图"}
                 </Button>
@@ -613,7 +812,7 @@ export function CastEditor({
                         <span>按需补充，独立保存与生成</span>
                     </div>
                 ) : null}
-                <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} preview={layout === "workspace"} />
+                {viewSelector || <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />}
                 {isCharacter ? (
                     <CastLooks
                         projectId={projectId}
@@ -632,7 +831,7 @@ export function CastEditor({
                         <h3>版本记录</h3>
                     </div>
                 ) : null}
-                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" />
+                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" showHeading={layout !== "workspace"} />
                 {layout === "workspace" ? <p className="drama-editor-note">生成、上传与画布精修产生的图片会保留在这里。</p> : null}
             </aside>
             {previewing && cast.imageResourceId ? <CanvasImagePreview storageKey={`resource:${cast.imageResourceId}`} alt={`${cast.lookName || cast.name} · ${kindLabel}参考图`} onClose={() => setPreviewing(false)} /> : null}

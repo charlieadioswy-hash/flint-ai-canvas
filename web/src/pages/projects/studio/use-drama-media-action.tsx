@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getActiveUserScope } from "@/lib/user-scope";
-import { executeDramaStudioAction, preflightDramaStudioAction, type DramaModelChoice, type DramaSegment, type DramaStudioActionPreflight, type DramaStudioActionRequest } from "@/services/api/drama";
+import { executeDramaStudioAction, getDramaCastImpact, preflightDramaStudioAction, type DramaModelChoice, type DramaSegment, type DramaStudioActionPreflight, type DramaStudioActionRequest, type DramaWorkflowImpact } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
+import { generatedCastVideoSegments } from "../workflow-impact";
 
 export type DramaMediaActionTarget = DramaStudioActionRequest & { episodeNumber?: number; segmentTitle?: string };
 type PendingVideo = { episodeId: string; episodeNumber?: number; segmentId: string; segmentTitle?: string; videoModel?: DramaModelChoice };
 
 export type DramaMediaActionState = {
     open: boolean;
+    projectId?: string;
     request: DramaMediaActionTarget | null;
     preview: DramaStudioActionPreflight | null;
+    castImpact?: DramaWorkflowImpact;
     loading: boolean;
     submitting: boolean;
     submitted: boolean;
@@ -38,6 +41,7 @@ type Operation = {
     request: DramaMediaActionTarget;
     pendingVideo: PendingVideo | null;
     preview: DramaStudioActionPreflight | null;
+    castImpact?: DramaWorkflowImpact;
     submitting: boolean;
     submitted: boolean;
 };
@@ -67,6 +71,30 @@ function sameQuote(accepted: DramaStudioActionPreflight, current: DramaStudioAct
         current.amountMicrocredits === accepted.amountMicrocredits &&
         current.priced === accepted.priced
     );
+}
+
+async function inspectMediaAction(projectId: string, request: DramaMediaActionTarget, fresh = false) {
+    const [preview, castImpact] = await Promise.all([
+        preflightDramaStudioAction(projectId, payload(request, fresh)),
+        request.action === "cast_image"
+            ? getDramaCastImpact(projectId, request.targetId).catch((cause: unknown) => {
+                  throw new Error(cause instanceof Error ? `已有视频依赖读取失败：${cause.message}` : "已有视频依赖读取失败，请重试");
+              })
+            : undefined,
+    ]);
+    if (preview.action !== request.action || preview.targetId !== request.targetId || (request.episodeId && preview.episodeId !== request.episodeId)) throw new Error("生成对象已变化，请重新打开操作");
+    if (
+        request.action === "cast_image" &&
+        (castImpact?.kind !== "cast" || castImpact.castId !== request.targetId || castImpact.revision !== preview.baseRevision || !Array.isArray(castImpact.directSegments) || !Array.isArray(castImpact.continuitySegments))
+    )
+        throw new Error("资产影响范围或制作内容已变化，请重新检查");
+    return { preview, castImpact };
+}
+
+function generatedCastScope(impact?: DramaWorkflowImpact) {
+    const direct = new Set(impact?.directSegments.map((segment) => segment.id));
+    const generated = impact ? generatedCastVideoSegments(impact) : [];
+    return JSON.stringify(generated.sort((a, b) => a.id.localeCompare(b.id)).map((segment) => [segment.id, segment.episodeId, segment.episodeNumber, segment.episodeTitle, segment.segmentIndex, direct.has(segment.id)]));
 }
 
 /** 媒体确认只调用业务预检和执行；授权仅存在当前打开的操作中。 */
@@ -121,18 +149,19 @@ export function useDramaMediaAction({ projectId, onChanged }: { projectId: strin
             const request = { ...input, ...(input.videoModel ? { videoModel: { ...input.videoModel } } : {}) };
             const operation: Operation = { account: accountKey(), projectId: project.current, request, pendingVideo, preview: null, submitting: false, submitted: false };
             active.current = operation;
-            setState({ ...CLOSED, open: true, request, pendingVideo, loading: true, notice });
-            void preflightDramaStudioAction(operation.projectId, payload(request))
-                .then((preview) => {
+            setState({ ...CLOSED, open: true, projectId: operation.projectId, request, pendingVideo, loading: true, notice });
+            void inspectMediaAction(operation.projectId, request)
+                .then(({ preview, castImpact }) => {
                     if (!current(operation)) return;
-                    if (preview.action !== request.action || preview.targetId !== request.targetId || (request.episodeId && preview.episodeId !== request.episodeId)) throw new Error("生成对象已变化，请重新打开操作");
                     operation.preview = preview;
-                    update(operation, { preview, loading: false, error: undefined });
+                    operation.castImpact = castImpact;
+                    update(operation, { preview, castImpact, loading: false, error: undefined });
                 })
                 .catch((cause: unknown) => {
                     if (!current(operation)) return;
                     operation.preview = null;
-                    update(operation, { preview: null, loading: false, error: cause instanceof Error ? cause.message : "暂时无法检查生成条件，请重试" });
+                    operation.castImpact = undefined;
+                    update(operation, { preview: null, castImpact: undefined, loading: false, error: cause instanceof Error ? cause.message : "暂时无法检查生成条件，请重试" });
                 });
         },
         [current, update],
@@ -179,14 +208,22 @@ export function useDramaMediaAction({ projectId, onChanged }: { projectId: strin
         const operation = active.current;
         const quote = operation?.preview;
         if (!operation || !current(operation) || operation.request !== state.request || quote !== state.preview || operation.submitting || operation.submitted || !quote?.ready || !quote.confirmationToken) return;
+        if (operation.request.action === "cast_image" && (!operation.castImpact || operation.castImpact !== state.castImpact)) return;
         operation.submitting = true;
         update(operation, { submitting: true, error: undefined, notice: undefined });
         try {
-            const fresh = await preflightDramaStudioAction(operation.projectId, payload(operation.request, true));
+            const { preview: fresh, castImpact } = await inspectMediaAction(operation.projectId, operation.request, true);
             if (!current(operation)) return;
+            const impactChanged = operation.request.action === "cast_image" && generatedCastScope(operation.castImpact) !== generatedCastScope(castImpact);
             operation.preview = fresh;
-            if (!sameQuote(quote, fresh)) {
-                update(operation, { preview: fresh, submitting: false, notice: "条件或费用已变化，请查看最新结果后重新确认" });
+            operation.castImpact = castImpact;
+            if (!sameQuote(quote, fresh) || impactChanged) {
+                update(operation, {
+                    preview: fresh,
+                    castImpact,
+                    submitting: false,
+                    notice: impactChanged ? "已有视频依赖范围已变化，请查看最新提示后重新确认" : operation.request.action === "segment_reprocess" ? "处理条件已变化，请查看最新结果后重新确认" : "条件或费用已变化，请查看最新结果后重新确认",
+                });
                 return;
             }
             const executed = await executeDramaStudioAction(operation.projectId, { ...payload(operation.request, true), baseRevision: fresh.baseRevision, targetRevision: fresh.targetRevision, confirmationToken: fresh.confirmationToken });
@@ -197,6 +234,7 @@ export function useDramaMediaAction({ projectId, onChanged }: { projectId: strin
             operation.submitted = !validReceipt || queued > 0;
             update(operation, {
                 preview: queued ? fresh : null,
+                castImpact,
                 submitting: false,
                 submitted: operation.submitted,
                 queued,
@@ -210,11 +248,12 @@ export function useDramaMediaAction({ projectId, onChanged }: { projectId: strin
         } catch (cause) {
             if (!current(operation)) return;
             operation.preview = null;
-            update(operation, { preview: null, submitting: false, error: cause instanceof Error ? cause.message : "提交失败，请重新检查后重试" });
+            operation.castImpact = undefined;
+            update(operation, { preview: null, castImpact: undefined, submitting: false, error: cause instanceof Error ? cause.message : "提交失败，请重新检查后重试" });
         } finally {
             operation.submitting = false;
         }
-    }, [current, state.preview, state.request, update]);
+    }, [current, state.castImpact, state.preview, state.request, update]);
 
     return { state, requestAction, requestVideo, requestCastImage, requestMissingAssets, recheckVideo, close, retry, confirm };
 }

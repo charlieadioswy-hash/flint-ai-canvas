@@ -62,6 +62,7 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerDramaCharacterLibraryRoutes(r, svc)
 	registerDramaShotMediaRoutes(r, svc)
 	registerDramaStoryboardRoutes(r, svc)
+	registerDramaEpisodeStyleRoutes(r, svc)
 	r.PUT("/dramas/:id/cast/:castId/image-options", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaCastImageOptionsRequest
 		if err := bindDramaJSON(c, &req); err != nil {
@@ -73,7 +74,7 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/dramas/:id/workflow/readiness", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.DramaWorkflowReadiness(userID, c.Param("id"))
 	}))
-	r.PATCH("/dramas/:id/workflow/style", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+	r.PATCH("/dramas/:id/workflow/style", dramaRoute(svc, 128<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaWorkflowStyleRequest
 		if err := bindDramaJSON(c, &req); err != nil {
 			return nil, err

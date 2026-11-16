@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
 	"yingce/backend/internal/production"
 )
 
@@ -100,6 +101,7 @@ func (f *fakeDramaBackend) submit(userID string, req CreateTaskRequest, timeline
 func newDramaTestService(t *testing.T) (*Service, *fakeDramaBackend) {
 	t.Helper()
 	svc, db := newTimelineTaskTestService(t)
+	svc.coordinator = platform.NewCoordinatorWithRedis(nil, t.Name())
 	fake := &fakeDramaBackend{t: t, db: db, byKind: map[string]int{}}
 	svc.dramaTaskHook = fake.submit
 	svc.dramaTailFrameHook = func(userID, resourceID string) (string, error) {

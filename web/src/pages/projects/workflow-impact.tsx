@@ -21,6 +21,35 @@ function ImpactSegments({ projectId, segments }: { projectId: string; segments: 
     );
 }
 
+/** 已有资源才属于重生成提醒；排队和生成中的空槽不算已生成视频。 */
+export function generatedCastVideoSegments(impact: { directSegments: DramaWorkflowAffectedSegment[]; continuitySegments: DramaWorkflowAffectedSegment[] }) {
+    const segments = new Map<string, DramaWorkflowAffectedSegment>();
+    for (const segment of [...impact.directSegments, ...impact.continuitySegments]) {
+        if (segment.hasVideo) segments.set(segment.id, segment);
+    }
+    return [...segments.values()];
+}
+
+export function CastVideoImpact({ impact, restyleSegments = false }: { projectId: string; impact: Parameters<typeof generatedCastVideoSegments>[0]; restyleSegments?: boolean }) {
+    const generated = generatedCastVideoSegments(impact);
+    if (!generated.length) return null;
+    const direct = new Set(impact.directSegments.filter((segment) => segment.hasVideo).map((segment) => segment.id));
+    return (
+        <section className="drama-workflow-impact" aria-label="已有视频影响范围">
+            <strong>已有 {generated.length} 段视频引用此资产或通过尾帧续接</strong>
+            <p>{restyleSegments ? "重新生成参考图后，相关视频需要检查，标记为待更新的视频可另行重新生成；旧视频保留。" : "已有视频保留当前画面。新参考图生成后，可按需更新相关视频。"}</p>
+            <ul>
+                {generated.map((segment) => (
+                    <li key={segment.id}>
+                        第 {segment.episodeNumber} 集 · 第 {segment.segmentIndex + 1} 段{segment.episodeTitle ? ` · ${segment.episodeTitle}` : ""}
+                        <span>{direct.has(segment.id) ? "直接引用" : "尾帧续接"}</span>
+                    </li>
+                ))}
+            </ul>
+        </section>
+    );
+}
+
 /** 仅展示已保存引用的真实影响，不启动重写或媒体生成。 */
 export function WorkflowImpact({ projectId, revision, castId }: { projectId: string; revision: number; castId?: string }) {
     const userId = useUserStore((state) => state.user?.id || "");

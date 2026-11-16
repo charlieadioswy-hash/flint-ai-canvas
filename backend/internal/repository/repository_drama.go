@@ -437,8 +437,8 @@ var ErrDramaChaptersChanged = errors.New("drama chapters changed")
 // 把规划游标推到已加入制作的章节数。只在分集规划完成后允许：在途的规划按游标批次读取章节，中途插入会错位。
 func (r *Repository) ProduceDramaChapters(projectID string, chapterIDs []string, episodes []model.DramaEpisode) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var production model.DramaProduction
-		if err := tx.First(&production, "project_id = ?", projectID).Error; err != nil {
+		production, err := New(tx).DramaProductionForUpdate(projectID)
+		if err != nil {
 			return err
 		}
 		if !production.PlanDone {

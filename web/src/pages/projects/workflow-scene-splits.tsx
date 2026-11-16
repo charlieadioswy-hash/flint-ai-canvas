@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, InputNumber, Select } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { DIRECTOR_TEMPLATES, dramaSceneGroups } from "@/lib/drama/director";
+import { DIRECTOR_TEMPLATES } from "@/lib/drama/director";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { DramaEpisodeDetail, DramaShot, DramaSummary } from "@/services/api/drama";
 import { getDramaShotMedia } from "@/services/api/drama-shot-media";
@@ -19,14 +19,14 @@ export function WorkflowSceneSplits({
     detail,
     onChanged,
     onOpenSegment,
-    initialShotId,
-    buttonLabel = "场景分镜",
+    initialSegmentIndex,
+    buttonLabel = "段分镜",
 }: {
     summary: DramaSummary;
     detail: DramaEpisodeDetail;
     onChanged: () => void;
     onOpenSegment: (index: number) => void;
-    initialShotId?: string;
+    initialSegmentIndex?: number;
     buttonLabel?: string;
 }) {
     const userId = useUserStore((state) => state.user?.id || "");
@@ -34,7 +34,7 @@ export function WorkflowSceneSplits({
     const [opened, setOpened] = useState<{ owner: string; revision: number; episodeRevision: number }>();
     return (
         <>
-            <Button size="small" disabled={!detail.shots.length} onClick={() => setOpened({ owner, revision: summary.production.revision, episodeRevision: detail.episode.revision })}>
+            <Button size="small" disabled={!detail.shots.length || !detail.segments.length} onClick={() => setOpened({ owner, revision: summary.production.revision, episodeRevision: detail.episode.revision })}>
                 {buttonLabel}
             </Button>
             <AppModal open={opened?.owner === owner} closable={false} maskClosable={false} keyboard={false} footer={null} width={1120} flush destroyOnHidden>
@@ -45,7 +45,7 @@ export function WorkflowSceneSplits({
                         detail={detail}
                         baseline={opened}
                         userId={userId}
-                        initialShotId={initialShotId}
+                        initialSegmentIndex={initialSegmentIndex}
                         onClose={() => setOpened(undefined)}
                         onChanged={onChanged}
                         onOpenSegment={(index) => {
@@ -67,7 +67,7 @@ function SceneSplitDialog({
     onClose,
     onChanged,
     onOpenSegment,
-    initialShotId,
+    initialSegmentIndex,
 }: {
     summary: DramaSummary;
     detail: DramaEpisodeDetail;
@@ -76,16 +76,17 @@ function SceneSplitDialog({
     onClose: () => void;
     onChanged: () => void;
     onOpenSegment: (index: number) => void;
-    initialShotId?: string;
+    initialSegmentIndex?: number;
 }) {
     const { modal, message } = App.useApp();
     const projectId = summary.project.id;
     const episodeId = detail.episode.id;
     const settings = summary.production.settings;
     const operation = useDramaOperationScope(projectId);
-    const groups = dramaSceneGroups(detail.shots);
-    const [groupId, setGroupId] = useState(groups.find((rows) => rows.some((shot) => shot.id === initialShotId))?.[0]?.id || groups[0]?.[0]?.id || "");
-    const group = groups.find((rows) => rows[0].id === groupId);
+    const segments = [...detail.segments].sort((a, b) => a.index - b.index).map((segment) => ({ segment, shots: detail.shots.filter((shot) => shot.segmentIndex === segment.index).sort((a, b) => a.position - b.position) }));
+    const [segmentId, setSegmentId] = useState(segments.find((row) => row.segment.index === initialSegmentIndex)?.segment.id || segments[0]?.segment.id || "");
+    const selected = segments.find((row) => row.segment.id === segmentId);
+    const group = selected?.shots;
     const [count, setCount] = useState(group?.length || 1);
     const [template, setTemplate] = useState<string>(settings.storyboard.directorTemplate || "");
     const [instruction, setInstruction] = useState("");
@@ -99,7 +100,7 @@ function SceneSplitDialog({
     const lock = useRef(false);
     const ownerActive = Boolean(userId && userId === getActiveUserScope());
     const stale = baseline.revision !== summary.production.revision || baseline.episodeRevision !== detail.episode.revision;
-    const disabled = busy || Boolean(pending) || !loaded || stale || !ownerActive || !group;
+    const disabled = busy || Boolean(pending) || !loaded || stale || !ownerActive || !group?.length;
     const ticket = operation.capture();
     const results = useQuery({
         queryKey: ["drama-scene-splits", userId, getActiveUserScope(), projectId, episodeId],
@@ -110,7 +111,7 @@ function SceneSplitDialog({
     useEffect(() => {
         setQuote(undefined);
         setOperationId("");
-    }, [instruction, count, template, groupId]);
+    }, [instruction, count, template, segmentId]);
     const loadPending = async () => {
         const current = operation.capture();
         setLoadError("");
@@ -169,12 +170,12 @@ function SceneSplitDialog({
                 if (!operation.isCurrent(ticket)) return;
                 setPending(undefined);
                 setQuote(undefined);
-                message.success("场景重拆已排队，完成后请审阅并采用");
+                message.success("本段重拆已排队，完成后请审阅并采用");
                 void results.refetch();
             } else {
                 await adoptDramaSceneSplit(projectId, episodeId, { expectedRevision: baseline.revision, episodeRevision: baseline.episodeRevision, takeId: takeId! });
                 if (!operation.isCurrent(ticket)) return;
-                message.success("已替换本场景分镜，相关媒体已标记过期");
+                message.success("已替换本段分镜，相关媒体已标记过期");
                 onChanged();
                 onClose();
             }
@@ -188,7 +189,7 @@ function SceneSplitDialog({
     const close = () => {
         if (busy || lock.current) return;
         if (pending) return onClose();
-        if (instruction.trim() || quote) modal.confirm({ title: "关闭场景分镜？", content: "未提交的重拆要求将丢弃，已提交任务和历史仍会保留。", onOk: onClose });
+        if (instruction.trim() || quote) modal.confirm({ title: "关闭段分镜？", content: "未提交的重拆要求将丢弃，已提交任务和历史仍会保留。", onOk: onClose });
         else onClose();
     };
     if (!ownerActive)
@@ -202,9 +203,9 @@ function SceneSplitDialog({
         <div className="drama-scene-splits">
             <header>
                 <div>
-                    <h2>第 {detail.episode.number} 集 · 场景分镜</h2>
+                    <h2>第 {detail.episode.number} 集 · 段分镜</h2>
                     <p>
-                        {groups.length} 个连续场景组 · {detail.shots.length} 镜
+                        {segments.length} 段 · {detail.shots.length} 镜
                     </p>
                 </div>
                 <Button disabled={busy} onClick={close}>
@@ -212,23 +213,23 @@ function SceneSplitDialog({
                 </Button>
             </header>
             <div className="drama-scene-splits-body">
-                <nav aria-label="场景组">
-                    {groups.map((rows, index) => (
+                <nav aria-label="分镜段">
+                    {segments.map(({ segment, shots }) => (
                         <button
-                            key={rows[0].id}
+                            key={segment.id}
                             type="button"
                             disabled={busy || Boolean(pending)}
-                            aria-pressed={rows[0].id === groupId}
+                            aria-pressed={segment.id === segmentId}
                             onClick={() => {
-                                setGroupId(rows[0].id);
-                                setCount(rows.length);
+                                setSegmentId(segment.id);
+                                setCount(shots.length || 1);
                                 setError("");
                             }}
                         >
-                            <b>第 {index + 1} 幕</b>
-                            <span>{rows[0].scene || "未命名场景"}</span>
+                            <b>第 {segment.index + 1} 段</b>
+                            <span>{segment.title || "未命名段"}</span>
                             <small>
-                                {rows.length} 镜 · {new Set(rows.map((shot) => shot.segmentIndex)).size} 段
+                                {shots.length} 镜 · {(shots.reduce((total, shot) => total + shot.durationMs, 0) / 1000).toFixed(1)}s
                             </small>
                         </button>
                     ))}
@@ -249,20 +250,26 @@ function SceneSplitDialog({
                             </Button>
                         </p>
                     ) : null}
+                    {selected ? (
+                        <h3>
+                            第 {selected.segment.index + 1} 段 · {selected.segment.title || "未命名段"}
+                        </h3>
+                    ) : null}
+                    {!group?.length ? <p role="alert">当前段没有可重拆的镜头，请先完善本集分镜。</p> : null}
                     <div className="drama-scene-splits-grid">
                         {group?.map((shot) => (
                             <SceneShotCard key={shot.id} shot={shot} userId={userId} revision={detail.episode.revision} disabled={busy || Boolean(pending)} onOpen={() => onOpenSegment(shot.segmentIndex)} />
                         ))}
                     </div>
-                    <section aria-label="重拆本场景">
-                        <h3>重拆本场景</h3>
-                        <p>先生成文字方案，审阅后再替换。保留原剧情段和组外镜头；相关视频与镜头图片会标为过期，旧版本保留。</p>
+                    <section aria-label="重拆本段">
+                        <h3>重拆本段</h3>
+                        <p>先生成文字方案，审阅后再替换本段全部镜头。保留本段台词，场景仅限本段已有场景；段边界及其他段内容保留。本段视频与镜头图片会标为过期，旧版本保留。</p>
                         <div className="drama-scene-splits-config">
                             <label>
                                 目标镜头数
                                 <InputNumber
-                                    aria-label="场景目标镜头数"
-                                    min={Math.max(1, new Set(group?.map((shot) => shot.segmentIndex)).size)}
+                                    aria-label="本段目标镜头数"
+                                    min={1}
                                     max={240 - detail.shots.length + (group?.length || 0)}
                                     precision={0}
                                     value={count}
@@ -274,10 +281,10 @@ function SceneSplitDialog({
                             </label>
                             <label>
                                 分镜模板
-                                <Select aria-label="场景分镜模板" value={template} disabled={disabled} options={DIRECTOR_TEMPLATES.map(({ value, label }) => ({ value, label }))} onChange={setTemplate} />
+                                <Select aria-label="本段分镜模板" value={template} disabled={disabled} options={DIRECTOR_TEMPLATES.map(({ value, label }) => ({ value, label }))} onChange={setTemplate} />
                             </label>
                         </div>
-                        <Input.TextArea aria-label="场景重拆要求" rows={3} maxLength={4000} disabled={disabled} value={instruction} placeholder="如：增加人物反应镜头，保持台词与场景不变" onChange={(event) => setInstruction(event.target.value)} />
+                        <Input.TextArea aria-label="本段重拆要求" rows={3} maxLength={4000} disabled={disabled} value={instruction} placeholder="如：增加人物反应镜头，保持本段台词与场景不变" onChange={(event) => setInstruction(event.target.value)} />
                         <div className="drama-scene-splits-config">
                             <Button disabled={disabled} loading={busy} onClick={() => void run("preflight")}>
                                 预检重拆
@@ -298,14 +305,14 @@ function SceneSplitDialog({
                             ) : null}
                         </div>
                     </section>
-                    <section aria-label="场景重拆历史">
+                    <section aria-label="本段重拆历史">
                         <h3>文字方案与历史</h3>
                         <Button disabled={busy || results.isFetching} onClick={() => void results.refetch()}>
                             刷新方案
                         </Button>
                         {results.isError ? <p role="alert">读取重拆方案失败，请刷新重试。</p> : null}
                         {results.data
-                            ?.filter((row) => row.shotIds[0] === groupId)
+                            ?.filter((row) => Boolean(group?.length) && row.shotIds.length === group?.length && row.shotIds.every((id, index) => id === group?.[index].id))
                             .map((row) => (
                                 <SceneSplitResult
                                     key={row.takeId}
@@ -313,9 +320,9 @@ function SceneSplitDialog({
                                     disabled={disabled}
                                     onAdopt={() =>
                                         modal.confirm({
-                                            title: "采用这份场景分镜？",
-                                            content: "将按镜头顺序复用原ID，数量不足时保留在历史中，新增镜头使用新ID。原台词必须完整保留；相关媒体会过期，组外内容不改写。",
-                                            okText: "确认替换本场景",
+                                            title: "采用这份段分镜？",
+                                            content: "将替换本段全部镜头，按顺序复用原ID，移除的镜头保留在历史中，新增镜头使用新ID。本段原台词必须完整保留，场景仅限本段已有场景；本段相关媒体会过期，其他段内容不改写。",
+                                            okText: "确认替换本段",
                                             onOk: () => run("adopt", row.takeId),
                                         })
                                     }
@@ -338,6 +345,7 @@ function SceneShotCard({ shot, userId, revision, disabled, onOpen }: { shot: Dra
             <strong>
                 镜头 {shot.position + 1} · {(shot.durationMs / 1000).toFixed(1)}s
             </strong>
+            <small>{shot.scene || "未命名场景"}</small>
             {url ? <img src={url} alt={`镜头${shot.position + 1}的已保存图片`} loading="lazy" /> : <span>{shot.action || shot.imagePrompt || "暂无画面说明"}</span>}
             <small>{[shot.shotSize, shot.camera, shot.dialogue].filter(Boolean).join(" · ")}</small>
             {media.data?.status === "stale" ? <small>图片已过期</small> : media.isError ? <small>图片读取失败，仍可编辑</small> : null}
@@ -375,7 +383,7 @@ function SceneSplitResult({ row, disabled, onAdopt }: { row: DramaSceneSplitResu
     );
 }
 
-type PreviewShot = { action?: string; imagePrompt?: string; dialogue?: string; shotSize?: string; camera?: string; durationMs?: number; durationSeconds?: number };
+type PreviewShot = { scene?: string; action?: string; imagePrompt?: string; dialogue?: string; shotSize?: string; camera?: string; durationMs?: number; durationSeconds?: number };
 function scenePreviewShots(text: string): PreviewShot[] {
     let raw = text.trim();
     try {
@@ -384,7 +392,7 @@ function scenePreviewShots(text: string): PreviewShot[] {
         const shots: unknown[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed.shots) ? parsed.shots : [];
         if (shots.some((shot) => !shot || typeof shot !== "object" || Array.isArray(shot))) return [];
         for (const shot of shots as Record<string, unknown>[]) {
-            for (const key of ["action", "imagePrompt", "dialogue", "shotSize", "camera"]) if (shot[key] != null && typeof shot[key] !== "string") return [];
+            for (const key of ["scene", "action", "imagePrompt", "dialogue", "shotSize", "camera"]) if (shot[key] != null && typeof shot[key] !== "string") return [];
             for (const key of ["durationMs", "durationSeconds"]) if (shot[key] != null && (typeof shot[key] !== "number" || !Number.isFinite(shot[key]))) return [];
         }
         return shots as PreviewShot[];
@@ -403,6 +411,7 @@ function SceneShotPreview({ text }: { text: string }) {
                     <strong>
                         镜头 {index + 1} · {shot.durationSeconds || (shot.durationMs || 0) / 1000}s
                     </strong>
+                    {shot.scene ? <small>{shot.scene}</small> : null}
                     <p>{shot.action || shot.imagePrompt}</p>
                     <small>{[shot.shotSize, shot.camera].filter(Boolean).join(" · ")}</small>
                     {shot.dialogue ? <p>台词：{shot.dialogue}</p> : null}

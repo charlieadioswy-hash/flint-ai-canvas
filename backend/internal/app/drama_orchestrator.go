@@ -1631,7 +1631,12 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 	if err != nil {
 		return nil, false, err
 	}
-	drafts := buildDramaSegmentDrafts(r.settings, r.meta, shots, castByID, rows)
+	episode, err := r.s.repo.DramaEpisode(r.project.ID, segment.EpisodeID)
+	if err != nil {
+		return nil, false, err
+	}
+	settings, meta := dramaEpisodeStyleSettings(r.settings, r.meta, *episode)
+	drafts := buildDramaSegmentDrafts(settings, meta, shots, castByID, rows)
 	for position, draft := range drafts {
 		if draft.view.Index != segment.SegmentIndex {
 			continue
@@ -1991,9 +1996,10 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 	if err != nil {
 		return nil, false, err
 	}
+	settings, meta := dramaEpisodeStyleSettings(r.settings, r.meta, *episode)
 	prompt := production.ScriptPrompt(production.ScriptContext{
 		Segment: r.settings.Storyboard.SegmentLimits(profile.Durations),
-		Title:   r.project.Name, Settings: r.settings.Settings, VisualRules: r.meta.VisualRules,
+		Title:   r.project.Name, Settings: settings.Settings, VisualRules: meta.VisualRules,
 		EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Synopsis: episode.Synopsis, Hook: episode.Hook, Cliffhanger: episode.Cliffhanger,
 		CastSummary: r.castSummary("character", 30), PropSummary: r.castSummary("prop", 20), SceneSummary: r.castSummary("scene", 20), SourceChapters: chapters,
 		SourceFormat: episode.SourceFormat, Skill: skill,

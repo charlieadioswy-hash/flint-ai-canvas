@@ -20,7 +20,7 @@ type ChapterDraft = { id: string; title: string; text: string; baseline: string;
 type MetadataDraft = { format: DramaSourceFormat; selected: string[]; baseline: string; revision: number };
 type Replacement = { fileName: string; chapters: DramaChapterInput[]; selected: number[]; revision: number };
 type CreationDraft = { mode: "selected" | "single"; revision: number; selected: string[]; format: DramaSourceFormat; name: string; description: string; dramaType: "comic" | "live_action" | "narration"; aspectRatio: string };
-type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
+type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; onPickChapters?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
 const DRAMA_TYPES = [
     { value: "comic" as const, label: "漫剧", cover: "/short-drama-styles/isekai-anime.jpg" },
@@ -55,7 +55,7 @@ export function WorkflowSourceReview(props: SourceProps) {
     return <SourceReview key={`${userId}:${props.summary.project.id}:${props.episodeId || ""}`} {...props} userId={userId} />;
 }
 
-function SourceReview({ summary, step = "review", episodeId, onChanged, onContinue, busy = false, onDirtyChange, userId }: SourceProps & { userId: string }) {
+function SourceReview({ summary, step = "review", episodeId, onChanged, onContinue, onPickChapters, busy = false, onDirtyChange, userId }: SourceProps & { userId: string }) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const projectId = summary.project.id;
@@ -266,6 +266,13 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
     });
 
     const working = busy || reading || reloading || downloading || save.isPending || replace.isPending || saveMetadata.isPending || createEpisodes.isPending;
+    const totalChapters = chapters.data?.chapters.length || 0;
+    const reservedChapters = chapters.data?.chapters.filter((chapter) => chapter.reserved).length || 0;
+    const chosenChapters = chapters.data?.chapters.filter((chapter) => (metadata ? metadata.selected.includes(chapter.id) : !chapter.reserved)).length || 0;
+    const chapterScopeSummary = configuring
+        ? `原文共 ${totalChapters} 章 · 本次选择 ${chosenChapters} 章 · 预留 ${totalChapters - chosenChapters} 章 · 当前待确认分集 ${summary.episodes.length} 集`
+        : `原文共 ${totalChapters} 章 · 已加入制作 ${totalChapters - reservedChapters} 章 · 待加入 ${reservedChapters} 章 · 实际 ${summary.episodes.length} 集`;
+    const canPickChapters = !configuring && reservedChapters > 0 && Boolean(onPickChapters);
     useEffect(() => {
         latest.current.onDirtyChange?.(dirty, working);
     }, [dirty, working]);
@@ -355,18 +362,22 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                 <div>
                     <h2>{step === "source" ? (serverFormat === "novel" ? "从小说开始" : serverFormat === "storyboard" ? "从分镜开始" : "从剧本开始") : "分集剧本"}</h2>
                     <p>{step === "source" ? "上传符合格式的正文，确认文件后继续核对剧本。" : episodeId ? "确认本集关联的剧本，保存仅修改当前章节。" : "确认您的剧本，并选择单集剧本进行视频创作。"}</p>
+                    {chapters.data ? <p className="drama-source-chapter-summary">{chapterScopeSummary}</p> : null}
+                    {configuring && !episodeId ? <p className="drama-source-note">导入默认先选首章，可在{step === "source" ? "剧本格式页" : "下方章节列表"}勾选调整本次范围；预留章节会保留，分集以确认后的实际结果为准。</p> : null}
                 </div>
-                {step === "review" ? (
+                {step === "review" || canPickChapters ? (
                     <div className="drama-source-actions">
-                        {!editing ? (
+                        {step === "review" && !editing ? (
                             <Button type="text" icon={<PencilLine className="size-3.5" aria-hidden />} disabled={working || !draft || Boolean(replacement)} onClick={() => setEditing(true)} data-source-edit>
                                 手动编辑
                             </Button>
                         ) : null}
-                        <Button icon={<Download className="size-3.5" aria-hidden />} disabled={working || !visibleChapters?.length} loading={downloading} onClick={() => void download()}>
-                            {episodeId ? "下载本集剧本" : "下载剧本"}
-                        </Button>
-                        {configuring && !episodeId ? (
+                        {step === "review" ? (
+                            <Button icon={<Download className="size-3.5" aria-hidden />} disabled={working || !visibleChapters?.length} loading={downloading} onClick={() => void download()}>
+                                {episodeId ? "下载本集剧本" : "下载剧本"}
+                            </Button>
+                        ) : null}
+                        {step === "review" && configuring && !episodeId ? (
                             <>
                                 <Button icon={<Plus className="size-3.5" aria-hidden />} disabled={working || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim()) || !chapterId} onClick={() => openCreation("single")}>
                                     创建单集
@@ -380,6 +391,18 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                                     创建剧集
                                 </Button>
                             </>
+                        ) : null}
+                        {canPickChapters ? (
+                            <Button
+                                icon={<Plus className="size-3.5" aria-hidden />}
+                                disabled={working || dirty || chapters.isError}
+                                title={dirty ? "请先保存或放弃未保存的修改，再继续选章" : undefined}
+                                onClick={() => {
+                                    if (!working && !dirty && !chapters.isError) onPickChapters?.();
+                                }}
+                            >
+                                继续选章
+                            </Button>
                         ) : null}
                     </div>
                 ) : null}
@@ -523,7 +546,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
             {configuring && !episodeId && metadata && (scopeOpen || metadataDirty) ? (
                 <div className="drama-source-bar drama-source-scope">
                     <span>
-                        本次制作 {metadata.selected.length} 章，其余预留。{metadataDirty ? "素材类型或制作范围有未保存的修改。" : ""}
+                        本次选择 {metadata.selected.length} 章，其余 {totalChapters - metadata.selected.length} 章预留。{metadataDirty ? "素材类型或制作范围有未保存的修改。" : ""}
                     </span>
                     {metadata.revision !== revision && metadataDirty ? (
                         <Button
@@ -552,7 +575,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
             {replacement ? (
                 <div className="drama-source-replacement" aria-label="替换正文预览">
                     <h3>替换预览：{replacement.fileName}</h3>
-                    <p>解析出 {replacement.chapters.length} 章，默认仅制作第一章。确认后会替换原正文与待制作分集。</p>
+                    <p>解析出 {replacement.chapters.length} 章，默认先选首章，可勾选调整本次范围，其余章节预留。确认后会替换原正文与待制作分集。</p>
                     {replacement.chapters.map((chapter, index) => (
                         <label key={index} className="drama-source-replacement-item">
                             <input
@@ -578,7 +601,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
             {step === "review" ? (
                 <div className="drama-source-review-layout">
                     <div className="drama-source-chapter-list thin-scrollbar" role="listbox" aria-label="章节列表">
-                        <p>{episodeId && episode.isPending ? "正在读取本集章节" : visibleChapters ? `共 ${visibleChapters.length} 章` : "正在读取章节"}</p>
+                        <p>{episodeId && episode.isPending ? "正在读取本集章节" : visibleChapters ? (episodeId ? `本集关联 ${visibleChapters.length} 章` : chapterScopeSummary) : "正在读取章节"}</p>
                         {visibleChapters?.map((chapter) => (
                             <div key={chapter.id} className={`drama-source-chapter-item ${chapter.id === chapterId ? "is-selected" : ""}`}>
                                 {configuring && !episodeId && metadata ? (
@@ -590,7 +613,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                                             disabled={working || Boolean(replacement)}
                                             onChange={(event) => setMetadata({ ...metadata, selected: event.target.checked ? [...metadata.selected, chapter.id] : metadata.selected.filter((id) => id !== chapter.id) })}
                                         />
-                                        本次制作
+                                        本次选择
                                     </label>
                                 ) : null}
                                 <button type="button" role="option" aria-selected={chapter.id === chapterId} onClick={() => setSelectedId(chapter.id)}>
@@ -599,7 +622,16 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                                         {drafts[chapter.id] && isDirty(drafts[chapter.id]) ? " · 未保存" : ""}
                                     </strong>
                                     <span>
-                                        {chapter.wordCount.toLocaleString()} 字{chapter.reserved ? " · 预留" : chapter.episodeNumber ? ` · 第 ${chapter.episodeNumber} 集` : ""}
+                                        {chapter.wordCount.toLocaleString()} 字 ·{" "}
+                                        {chapter.reserved
+                                            ? configuring
+                                                ? "待加入制作（预留）"
+                                                : "待加入制作"
+                                            : chapter.episodeNumber
+                                              ? `第 ${chapter.episodeNumber} 集${configuring ? "（待确认）" : ""}`
+                                              : configuring
+                                                ? "本次选择（待确认）"
+                                                : "已加入制作"}
                                     </span>
                                 </button>
                             </div>

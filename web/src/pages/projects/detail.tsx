@@ -758,6 +758,7 @@ function AdvancedDramaStudioPage() {
                 <AddEpisodeModal
                     open={adding}
                     projectId={projectId}
+                    expectedRevision={production.revision}
                     nextNumber={placement ? placement.anchorNumber + (placement.position === "after" ? 1 : 0) : (episodes[episodes.length - 1]?.number || 0) + 1}
                     placement={placement}
                     defaultFormat={sourceFormatOf((placement ? episodes.find((episode) => episode.id === placement.anchorId) : episodes[episodes.length - 1])?.sourceFormat)}
@@ -786,8 +787,7 @@ function AdvancedDramaStudioPage() {
                 {pickingChapters ? (
                     <ChapterPickerModal
                         open={pickingChapters}
-                        projectId={projectId}
-                        defaultPerEpisode={production.settings.chaptersPerEpisode || 1}
+                        summary={summary}
                         blockedReason={production.planDone ? undefined : "前面的章节还在分集规划，完成后才能加入新的章节。"}
                         onClose={() => setPickingChapters(false)}
                         onProduced={(ids) => {

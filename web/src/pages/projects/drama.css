@@ -2429,6 +2429,26 @@
     line-height: 1.6;
     color: var(--drama-faint);
 }
+.drama-thumb-state {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 4px;
+    color: var(--drama-muted);
+    font-size: var(--fs-ui);
+}
+.drama-thumb-state > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* 版本记录：设定与剧情段共用，来源标签区分流水线生成、上传与从精修画布采用。 */
 .drama-takes {
     display: grid;

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { DramaModelChoice, DramaSegment, DramaStudioActionPreflight, DramaStudioActionRequest } from "../../src/services/api/drama";
+import type { DramaModelChoice, DramaSegment, DramaStudioActionPreflight, DramaStudioActionRequest, DramaWorkflowAffectedSegment, DramaWorkflowImpact } from "../../src/services/api/drama";
 import type { DramaMediaActionController } from "../../src/pages/projects/studio/use-drama-media-action";
 
 const dom = new Window({ url: "http://localhost/projects/drama", settings: { disableJavaScriptEvaluation: true, disableCSSFileLoading: true } });
@@ -94,6 +94,12 @@ function preview(input: PreviewInput): DramaStudioActionPreflight {
 function segment(revision = 3): DramaSegment {
     return { id: "segment-1", revision, index: 2, title: "雨夜追车" } as DramaSegment;
 }
+function affectedSegment(id: string, input: Partial<DramaWorkflowAffectedSegment> = {}): DramaWorkflowAffectedSegment {
+    return { id, episodeId: `episode-${id}`, episodeNumber: 1, episodeTitle: "已生成剧集", segmentIndex: 0, revision: 3, videoStatus: "ready", hasVideo: true, ...input };
+}
+function impact(castId: string, input: Partial<DramaWorkflowImpact> = {}): DramaWorkflowImpact {
+    return { kind: "cast", castId, revision: 8, segments: 0, episodes: 0, affectedSegments: 0, assetIds: [castId], directSegments: [], continuitySegments: [], message: "资产影响范围", ...input };
+}
 function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (reason: unknown) => void;
@@ -136,6 +142,7 @@ beforeEach(() => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    spyOn(api, "getDramaCastImpact").mockImplementation(async (_projectId, castId) => impact(castId));
 });
 afterEach(async () => {
     await act(async () => root.unmount());
@@ -182,6 +189,7 @@ test("打开只预检，确认前不会执行", async () => {
     await render();
     await act(async () => controller!.requestAction({ action: "segment_prompt", targetId: "segment-1", episodeId: "episode-1", episodeNumber: 4, targetRevision: 3 }));
     expect(preflight).toHaveBeenCalledTimes(1);
+    expect(api.getDramaCastImpact).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     expect(dialogText()).toContain("重新撰写本段提示词");
     expect(dialogText()).toContain("第 4 集");
@@ -203,12 +211,16 @@ test("确认时重新预检，令牌或报价变化后不执行", async () => {
     expect(controller!.state.submitted).toBe(false);
 });
 
-test("确认通过后用最新令牌执行，并报告真实排队数", async () => {
-    const accepted = preview({ action: "segment_reprocess", targetId: "segment-1", confirmationToken: "token-1" });
+test("免费后处理显示零积分，确认后用最新令牌重开已有任务", async () => {
+    const accepted = preview({ action: "segment_reprocess", targetId: "segment-1", confirmationToken: "token-1", priced: false, amountMicrocredits: 0 });
     const preflight = spyOn(api, "preflightDramaStudioAction").mockResolvedValue(accepted);
     const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "segment_reprocess", targetId: "segment-1" });
     await render();
     await act(async () => controller!.requestAction({ action: "segment_reprocess", targetId: "segment-1", episodeId: "episode-1", videoModel: { modelKey: "keep" } }));
+    expect(dialogText()).toContain("确认重新处理已有视频");
+    expect(dialogText()).toContain("本次 0 积分");
+    expect(dialogText()).not.toContain("暂无法估算费用");
+    expect(dialogText()).not.toContain("确认生成");
     await click("确认提交");
     expect(preflight).toHaveBeenCalledTimes(2);
     const sent = execute.mock.calls[0]?.[1] as DramaStudioActionRequest;
@@ -216,7 +228,7 @@ test("确认通过后用最新令牌执行，并报告真实排队数", async ()
     expect(sent.baseRevision).toBe(8);
     expect(sent.targetRevision).toBe(3);
     expect(sent.videoModel).toEqual({ modelKey: "keep" });
-    expect(dialogText()).toContain("已提交 1 个任务");
+    expect(dialogText()).toContain("已提交 1 项视频重新处理");
     expect(dialogText()).toContain("可在下方制作队列查看进度");
     changed.resolve();
     await act(async () => {});
@@ -602,4 +614,215 @@ test("费用不可用和阻塞原因都原样展示", async () => {
     expect(dialogText()).toContain("预算已用完");
     expect(dialogText()).toContain("等待上一段");
     expect(controller!.state.preview?.ready).toBe(false);
+});
+
+test("资产无视频资源时报价弹窗不展示影响区，排队与运行空槽也不算已有视频", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    const dependency = impact("cast-1", {
+        directSegments: [affectedSegment("queued", { videoStatus: "queued", hasVideo: false })],
+        continuitySegments: [affectedSegment("running", { videoStatus: "running", hasVideo: false })],
+        affectedSegments: 2,
+    });
+    const impacts = spyOn(api, "getDramaCastImpact").mockResolvedValue(dependency);
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(impacts).toHaveBeenCalledWith("project-1", "cast-1");
+    expect(document.querySelector('[aria-label="已有视频影响范围"]')).toBeNull();
+    expect(dialogText()).toContain("2.5 积分");
+    await click("确认提交");
+    expect(impacts).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
+});
+
+test("资产已有直接和尾帧视频时在同一报价弹窗去重提示，并保留当前画面", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    const direct = affectedSegment("direct", { videoStatus: "stale", episodeNumber: 2, segmentIndex: 1 });
+    const tail = affectedSegment("tail", { episodeNumber: 2, segmentIndex: 2 });
+    spyOn(api, "getDramaCastImpact").mockResolvedValue(impact("cast-1", { directSegments: [direct, affectedSegment("pending", { episodeNumber: 8, videoStatus: "queued", hasVideo: false })], continuitySegments: [direct, tail] }));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    const range = document.querySelector('[aria-label="已有视频影响范围"]');
+    expect(range).not.toBeNull();
+    expect(range!.querySelectorAll("li")).toHaveLength(2);
+    expect(range!.textContent).toContain("已有 2 段视频");
+    expect(range!.textContent).toContain("第 2 集 · 第 2 段");
+    expect(range!.textContent).toContain("第 2 集 · 第 3 段");
+    expect(range!.textContent).not.toContain("第 8 集");
+    expect(range!.textContent).toContain("已有视频保留当前画面");
+    expect(range!.textContent).not.toContain("标记为待更新");
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(execute).not.toHaveBeenCalled();
+});
+
+test("资产影响读取失败不能当无依赖执行，重试只重新检查", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    const impacts = spyOn(api, "getDramaCastImpact").mockRejectedValueOnce(new Error("依赖接口不可用")).mockResolvedValue(impact("cast-1"));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(dialogText()).toContain("已有视频依赖读取失败");
+    expect(controller!.state.preview).toBeNull();
+    await act(async () => controller!.confirm());
+    expect(execute).not.toHaveBeenCalled();
+    await click("重试");
+    expect(impacts).toHaveBeenCalledTimes(2);
+    expect(controller!.state.preview?.confirmationToken).toBe("cast-token");
+    expect(execute).not.toHaveBeenCalled();
+    await click("确认提交");
+    expect(execute).toHaveBeenCalledTimes(1);
+});
+
+test("确认时新增已有视频依赖先刷新同一弹窗，用户重确认后才执行原报价", async () => {
+    const quoted = preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined });
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(quoted);
+    const dependency = impact("cast-1", { continuitySegments: [affectedSegment("new-tail", { episodeNumber: 4, segmentIndex: 3 })] });
+    const impacts = spyOn(api, "getDramaCastImpact").mockResolvedValueOnce(impact("cast-1")).mockResolvedValue(dependency);
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(document.querySelector('[aria-label="已有视频影响范围"]')).toBeNull();
+    await click("确认提交");
+    expect(execute).not.toHaveBeenCalled();
+    expect(dialogText()).toContain("已有视频依赖范围已变化");
+    expect(dialogText()).toContain("第 4 集 · 第 4 段");
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    await click("确认提交");
+    expect(impacts).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({ action: "cast_image", targetId: "cast-1", baseRevision: 8, targetRevision: 3, confirmationToken: "cast-token" });
+});
+
+test("资产确认重查影响失败清除旧授权，恢复后仍需重新检查", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    spyOn(api, "getDramaCastImpact").mockResolvedValueOnce(impact("cast-1")).mockRejectedValueOnce(new Error("重查失败")).mockResolvedValue(impact("cast-1"));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    await click("确认提交");
+    expect(execute).not.toHaveBeenCalled();
+    expect(controller!.state.preview).toBeNull();
+    expect(controller!.state.castImpact).toBeUndefined();
+    expect(dialogText()).toContain("已有视频依赖读取失败");
+    await act(async () => controller!.confirm());
+    expect(execute).not.toHaveBeenCalled();
+    await click("重试");
+    await click("确认提交");
+    expect(execute).toHaveBeenCalledTimes(1);
+});
+
+test("已有视频转为另一尾帧范围时更新展示并等待重确认", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    const original = affectedSegment("same-video", { episodeNumber: 2, segmentIndex: 1 });
+    const updated = { ...original, segmentIndex: 4 };
+    spyOn(api, "getDramaCastImpact")
+        .mockResolvedValueOnce(impact("cast-1", { directSegments: [original] }))
+        .mockResolvedValue(impact("cast-1", { continuitySegments: [updated] }));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(dialogText()).toContain("第 2 集 · 第 2 段");
+    await click("确认提交");
+    expect(execute).not.toHaveBeenCalled();
+    const range = document.querySelector('[aria-label="已有视频影响范围"]');
+    expect(range!.textContent).toContain("第 2 集 · 第 5 段");
+    expect(range!.textContent).toContain("尾帧续接");
+    expect(range!.textContent).not.toContain("直接引用");
+    await click("确认提交");
+    expect(execute).toHaveBeenCalledTimes(1);
+});
+
+test("旧资产晚到的影响响应不能覆盖新资产报价与提示", async () => {
+    const late = deferred<DramaWorkflowImpact>();
+    spyOn(api, "preflightDramaStudioAction").mockImplementation(async (_projectId, request) => preview({ action: "cast_image", targetId: request.targetId, confirmationToken: `${request.targetId}-token`, episodeId: undefined }));
+    spyOn(api, "getDramaCastImpact")
+        .mockImplementationOnce(() => late.promise)
+        .mockResolvedValueOnce(impact("cast-2", { directSegments: [affectedSegment("new", { episodeNumber: 7 })] }));
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "旧角色" }));
+    await act(async () => controller!.requestCastImage({ id: "cast-2", name: "新角色" }));
+    late.resolve(impact("cast-1", { directSegments: [affectedSegment("old", { episodeNumber: 99 })] }));
+    await flush();
+    expect(controller!.state.request?.targetId).toBe("cast-2");
+    expect(controller!.state.preview?.confirmationToken).toBe("cast-2-token");
+    expect(controller!.state.castImpact?.castId).toBe("cast-2");
+    expect(dialogText()).toContain("第 7 集");
+    expect(dialogText()).not.toContain("第 99 集");
+});
+
+test("资产影响身份或作品版本不匹配时拒绝使用旧范围", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    spyOn(api, "getDramaCastImpact")
+        .mockResolvedValueOnce(impact("foreign-cast"))
+        .mockResolvedValueOnce(impact("cast-1", { revision: 9 }))
+        .mockResolvedValue(impact("cast-1"));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(controller!.state.preview).toBeNull();
+    expect(dialogText()).toContain("资产影响范围或制作内容已变化");
+    await click("重试");
+    expect(controller!.state.preview).toBeNull();
+    await act(async () => controller!.confirm());
+    expect(execute).not.toHaveBeenCalled();
+    await click("重试");
+    expect(controller!.state.preview?.confirmationToken).toBe("cast-token");
+    expect(controller!.state.castImpact?.castId).toBe("cast-1");
+});
+
+test("资产确认重查期间切换账号，晚到影响不能执行或重开弹窗", async () => {
+    const late = deferred<DramaWorkflowImpact>();
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    spyOn(api, "getDramaCastImpact")
+        .mockResolvedValueOnce(impact("cast-1"))
+        .mockImplementationOnce(() => late.promise);
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    let pending!: Promise<void>;
+    await act(async () => {
+        pending = controller!.confirm();
+        useUserStore.setState({ user: { id: "user-b", username: "b", displayName: "乙", role: "user", status: "active" } });
+    });
+    late.resolve(impact("cast-1", { directSegments: [affectedSegment("late")] }));
+    await act(async () => pending);
+    expect(execute).not.toHaveBeenCalled();
+    expect(controller!.state.open).toBe(false);
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0);
+});
+
+test("资产影响缺少或畸形段数组时进入可重试错误态，初次与确认重查均不能执行", async () => {
+    spyOn(api, "preflightDramaStudioAction").mockResolvedValue(preview({ action: "cast_image", targetId: "cast-1", confirmationToken: "cast-token", episodeId: undefined }));
+    const valid = impact("cast-1");
+    spyOn(api, "getDramaCastImpact")
+        .mockResolvedValueOnce({ ...valid, directSegments: undefined } as unknown as DramaWorkflowImpact)
+        .mockResolvedValueOnce(valid)
+        .mockResolvedValueOnce({ ...valid, continuitySegments: null } as unknown as DramaWorkflowImpact)
+        .mockResolvedValueOnce({ ...valid, directSegments: {} } as unknown as DramaWorkflowImpact)
+        .mockResolvedValueOnce({ ...valid, continuitySegments: "invalid" } as unknown as DramaWorkflowImpact)
+        .mockResolvedValue(valid);
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "cast-1" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "cast-1", name: "林夏" }));
+    expect(controller!.state.preview).toBeNull();
+    expect(controller!.state.castImpact).toBeUndefined();
+    expect(dialogText()).toContain("资产影响范围或制作内容已变化");
+    await act(async () => controller!.confirm());
+    expect(execute).not.toHaveBeenCalled();
+    await click("重试");
+    expect(controller!.state.preview?.confirmationToken).toBe("cast-token");
+    await click("确认提交");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        expect(controller!.state.preview).toBeNull();
+        expect(controller!.state.castImpact).toBeUndefined();
+        expect(document.querySelector('[aria-label="已有视频影响范围"]')).toBeNull();
+        expect(dialogText()).toContain("资产影响范围或制作内容已变化");
+        await act(async () => controller!.confirm());
+        expect(execute).not.toHaveBeenCalled();
+        await click("重试");
+    }
+    expect(controller!.state.preview?.confirmationToken).toBe("cast-token");
+    await click("确认提交");
+    expect(execute).toHaveBeenCalledTimes(1);
 });
