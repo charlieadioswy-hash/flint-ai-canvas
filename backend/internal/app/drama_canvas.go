@@ -386,7 +386,8 @@ func (s *Service) prepareDramaSegmentAdoption(userID, projectID, episodeID strin
 		return nil, BadAuthRequest("请选择已完成的视频")
 	}
 	// 并行出片的段不以上一段尾帧为首帧，换掉本段不影响后续段，级联重生成只会白白计费。
-	cascade := req.Cascade && !parseDramaSettings(productionRow.SettingsJSON).parallelVideo()
+	settings := dramaEpisodeSettings(parseDramaSettings(productionRow.SettingsJSON), *episode)
+	cascade := req.Cascade && !settings.parallelVideo()
 	plan := &dramaSegmentAdoption{project: project, production: productionRow, episode: episode, segment: *segment, resource: resource, cascade: cascade}
 	plan.task = s.dramaCanvasSourceTask(userID, req.TaskID, resource.ID)
 	plan.unchanged = segment.VideoResourceID == resource.ID && segment.VideoStatus == model.DramaMediaReady

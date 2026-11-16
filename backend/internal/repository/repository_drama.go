@@ -234,6 +234,13 @@ func (r *Repository) DeleteDramaEpisode(projectID, episodeID string, releaseChap
 		if running > 0 {
 			return ErrDramaEpisodeBusy
 		}
+		var pendingImages int64
+		if err := tx.Model(&model.DramaCast{}).Where("project_id = ? AND image_episode_id = ? AND image_status IN ?", projectID, episode.ID, []string{model.DramaMediaQueued, model.DramaMediaRunning}).Count(&pendingImages).Error; err != nil {
+			return err
+		}
+		if pendingImages > 0 {
+			return ErrDramaEpisodeBusy
+		}
 		if !confirmed {
 			generated, err := dramaEpisodeHasVideo(tx, projectID, episode)
 			if err != nil {
@@ -248,6 +255,9 @@ func (r *Repository) DeleteDramaEpisode(projectID, episodeID string, releaseChap
 			return err
 		}
 		if err := tx.Where("project_id = ? AND episode_id = ?", projectID, episode.ID).Delete(&model.DramaJob{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.DramaCast{}).Where("project_id = ? AND image_episode_id = ?", projectID, episode.ID).UpdateColumn("image_episode_id", "").Error; err != nil {
 			return err
 		}
 		for _, entity := range []any{&model.DramaSegment{}, &model.DramaShot{}, &model.DramaSceneRevision{}} {
@@ -1253,17 +1263,20 @@ func (r *Repository) SetDramaSegmentTail(id string, revision int64, videoResourc
 // markLaterSegmentsStale returns whether later segments depend on the edited
 // segment. Independent videos keep their revisions and in-flight result slots.
 func markLaterSegmentsStale(tx *gorm.DB, episodeID string, index int) (bool, error) {
-	var production model.DramaProduction
-	if err := tx.Select("drama_productions.settings_json").
-		Joins("JOIN drama_episodes ON drama_episodes.project_id = drama_productions.project_id").
-		Where("drama_episodes.id = ?", episodeID).First(&production).Error; err != nil {
+	var episodeSettings struct {
+		SettingsJSON string
+	}
+	if err := tx.Model(&model.DramaEpisode{}).
+		Select("COALESCE(NULLIF(TRIM(drama_episodes.settings_json), ''), drama_productions.settings_json) AS settings_json").
+		Joins("JOIN drama_productions ON drama_productions.project_id = drama_episodes.project_id").
+		Where("drama_episodes.id = ?", episodeID).Take(&episodeSettings).Error; err != nil {
 		return false, err
 	}
 	var settings struct {
 		VideoContinuity string `json:"videoContinuity"`
 	}
-	if strings.TrimSpace(production.SettingsJSON) != "" {
-		if err := json.Unmarshal([]byte(production.SettingsJSON), &settings); err != nil {
+	if strings.TrimSpace(episodeSettings.SettingsJSON) != "" {
+		if err := json.Unmarshal([]byte(episodeSettings.SettingsJSON), &settings); err != nil {
 			return false, err
 		}
 	}

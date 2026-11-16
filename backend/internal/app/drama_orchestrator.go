@@ -130,6 +130,10 @@ type dramaEpisodeMediaSnapshot struct {
 }
 
 func dramaJobKey(kind, episodeID, shotID, castID string) string {
+	if kind == model.DramaJobCastImage {
+		// 主体图片仍是作品共享槽位，本集 ID 只记录生成配置来源。
+		episodeID = ""
+	}
 	return kind + "|" + episodeID + "|" + shotID + "|" + castID
 }
 
@@ -537,7 +541,7 @@ func (r *dramaRun) plan() error {
 				continue
 			}
 		}
-		if _, err := r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil); err != nil {
+		if _, err := r.enqueue(model.DramaJobCastImage, cast.ImageEpisodeID, "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil); err != nil {
 			return err
 		}
 	}
@@ -764,12 +768,13 @@ func (r *dramaRun) advanceEpisode(e *model.DramaEpisode, loadedStage string) err
 // requestedOnly 时只提交用户明确请求（queued）的段，用于全集尚未进入视频阶段时。返回全部段视频是否就绪。
 // 等待条件与 dramaVideoWaitReason 同源，详情页显示的等待原因就是这里卡住的条件。
 func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.DramaSegment, requestedOnly bool) (bool, error) {
+	settings := dramaEpisodeSettings(r.settings, *e)
 	// 单段明确请求可越过整集媒体闸门，其余段仍须用户放行。
 	requestedOnly = requestedOnly || r.mediaHeld(e)
 	if len(segments) == 0 {
 		return false, nil
 	}
-	if r.settings.parallelVideo() {
+	if settings.parallelVideo() {
 		return r.enqueueParallelSegmentVideos(e, segments, requestedOnly)
 	}
 	var shots []model.DramaShot
@@ -789,7 +794,7 @@ func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.
 			}
 			shots = loaded
 		}
-		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
+		if dramaVideoWaitReason(settings, r.production, e, segments, i, shots, r.castLookup) == "" {
 			if _, err := r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil); err != nil {
 				return false, err
 			}
@@ -802,6 +807,7 @@ func (r *dramaRun) enqueueSegmentVideos(e *model.DramaEpisode, segments []model.
 // enqueueParallelSegmentVideos 是并行出片的提交：段与段互不依赖，过期、失败或未请求的段只影响自己。
 // r.enqueue 按作业键去重，已在队列或生成中的段不会重复提交。
 func (r *dramaRun) enqueueParallelSegmentVideos(e *model.DramaEpisode, segments []model.DramaSegment, requestedOnly bool) (bool, error) {
+	settings := dramaEpisodeSettings(r.settings, *e)
 	var shots []model.DramaShot
 	ready := true
 	for i, seg := range segments {
@@ -820,7 +826,7 @@ func (r *dramaRun) enqueueParallelSegmentVideos(e *model.DramaEpisode, segments 
 			}
 			shots = loaded
 		}
-		if dramaVideoWaitReason(r.settings, r.production, e, segments, i, shots, r.castLookup) == "" {
+		if dramaVideoWaitReason(settings, r.production, e, segments, i, shots, r.castLookup) == "" {
 			if _, err := r.enqueue(model.DramaJobSegmentVideo, e.ID, seg.ID, "", segmentPriority(dramaRankVideo, e.Number, seg.SegmentIndex), fmt.Sprintf("第 %d 集 第 %d 段视频", e.Number, seg.SegmentIndex+1), nil); err != nil {
 				return false, err
 			}
@@ -1223,6 +1229,7 @@ func (r *dramaRun) applyPlan(job *model.DramaJob, task *model.Task) error {
 		}
 		episodes = append(episodes, model.DramaEpisode{ID: newID(), ProjectID: r.project.ID, Number: next, Title: truncateRunes(item.Title, 60), Synopsis: truncateRunes(item.Synopsis, 1000), Hook: truncateRunes(item.Hook, 300), Cliffhanger: truncateRunes(item.Cliffhanger, 300), ChapterIDsJSON: encodeStringList(ids), SourceFormat: model.DramaSourceNovel, Stage: model.DramaEpisodeQueued, Revision: 1, CreatedAt: now, UpdatedAt: now})
 	}
+	initializeDramaEpisodeSettings(episodes, dramaInitialEpisodeSettingsJSON(*r.production))
 	expected := r.production.PlanCursor
 	r.production.PlanCursor = payload.End
 	r.production.PlanDone = payload.End >= len(chapters)
@@ -1243,6 +1250,7 @@ func (r *dramaRun) groupRemainingChapters(chapters []model.ProjectUnit) error {
 		r.production.Status, r.production.PauseReason = model.DramaStatusPaused, "分集失败："+err.Error()
 		return nil
 	}
+	initializeDramaEpisodeSettings(episodes, dramaInitialEpisodeSettingsJSON(*r.production))
 	expected := r.production.PlanCursor
 	r.production.PlanCursor, r.production.PlanDone = len(chapters), true
 	if err := r.s.repo.AppendDramaEpisodes(r.production, episodes, expected); err != nil {
@@ -1299,12 +1307,13 @@ func (r *dramaRun) applyDirectStoryboard(e *model.DramaEpisode) (bool, error) {
 // hints 是剧本给出的新设定外观，用于即时建档；info 补齐逐集追加时缺少的梗概。
 // imported 表示镜头来自用户分镜：写明的时长照写执行，只有模型写的剧本才按镜头节奏夹紧。
 func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []production.ScriptShot, hints []production.ScriptCast, info production.ScriptEpisode, imported bool) error {
-	if target := r.settings.Storyboard.TargetShotCount; !imported && target > 0 && len(scripted) != target {
+	settings := dramaEpisodeSettings(r.settings, *episode)
+	if target := settings.Storyboard.TargetShotCount; !imported && target > 0 && len(scripted) != target {
 		return fmt.Errorf("模型返回 %d 镜，未满足指定的 %d 镜；请调整镜头数或重试", len(scripted), target)
 	}
-	shotMs := r.settings.Storyboard.ShotMs
+	shotMs := settings.Storyboard.ShotMs
 	if imported {
-		shotMs = r.settings.Storyboard.ImportedShotMs
+		shotMs = settings.Storyboard.ImportedShotMs
 	}
 	casts, err := r.s.repo.DramaCasts(r.project.ID)
 	if err != nil {
@@ -1417,7 +1426,7 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 		shot := model.DramaShot{ID: newID(), ProjectID: r.project.ID, EpisodeID: episode.ID, Position: index, Scene: truncateRunes(item.Scene, 120), SceneCastID: resolve(scenes, "scene", item.Scene), CastIDsJSON: encodeStringList(castIDs), LookCastIDsJSON: encodeStringList(lookIDs), PropIDsJSON: encodeStringList(propIDs), Speaker: truncateRunes(item.Speaker, 60), Dialogue: truncateRunes(item.Dialogue, dramaMaxDialogueRunes), Action: truncateRunes(item.Action, 1000), ShotSize: truncateRunes(item.ShotSize, 30), Camera: truncateRunes(item.Camera, 60), DurationMs: shotMs(item.DurationSeconds, item.Dialogue), ImagePrompt: truncateRunes(item.ImagePrompt, 2000), VideoPrompt: truncateRunes(item.VideoPrompt, 2000), SourceQuote: truncateRunes(item.SourceQuote, 300), Transition: production.NormalizeTransition(item.Transition), CreatedAt: now, UpdatedAt: now}
 		shots = append(shots, shot)
 	}
-	profile, err := r.s.dramaVideoProfile(r.settings.Models.Video)
+	profile, err := r.s.dramaVideoProfile(settings.Models.Video)
 	if err != nil {
 		return err
 	}
@@ -1430,7 +1439,7 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 		}
 		total += shots[i].DurationMs
 	}
-	assignDramaSegments(shots, r.settings.Storyboard.SegmentLimits(profile.Durations))
+	assignDramaSegments(shots, settings.Storyboard.SegmentLimits(profile.Durations))
 	if err := r.s.repo.CreateDramaCasts(created); err != nil {
 		return err
 	}
@@ -1544,7 +1553,10 @@ func (r *dramaRun) applyCastImage(job *model.DramaJob, task *model.Task) error {
 	// 有的模型会无视尺寸参数出方图：画幅明显不符时不设为当前参考图（否则会带进每个剧情段），
 	// 结果保留在版本记录里，设定标记失败并写明实际尺寸。
 	if cast, err := r.s.repo.DramaCast(r.project.ID, job.CastID); err == nil {
-		ratio := r.castImageRatio(cast.Kind)
+		ratio, err := r.castImageResultRatio(job, task, *cast)
+		if err != nil {
+			return err
+		}
 		if resource, err := r.s.repo.ResourceForUser(r.project.UserID, resourceID); err == nil && resource != nil && dramaImageRatioMismatch(resource.Width, resource.Height, ratio) {
 			return &dramaResultIssue{message: fmt.Sprintf("图片模型返回了 %d×%d（%s）的参考图，与要求的 %s 不符；结果已保留在版本记录中，请换用支持 %s 的图片模型后重新生成", resource.Width, resource.Height, dramaRatioLabel(fmt.Sprintf("%dx%d", resource.Width, resource.Height)), ratio, ratio)}
 		}
@@ -1553,6 +1565,42 @@ func (r *dramaRun) applyCastImage(job *model.DramaJob, task *model.Task) error {
 	_ = json.Unmarshal([]byte(job.PayloadJSON), &payload)
 	_, err = r.s.repo.UpdateDramaCastImageRevision(job.CastID, payload.Revision, []string{model.DramaMediaQueued, model.DramaMediaRunning}, map[string]any{"image_resource_id": resourceID, "image_status": model.DramaMediaReady, "image_version": gorm.Expr("image_version + 1")})
 	return err
+}
+
+func (r *dramaRun) castImageResultRatio(job *model.DramaJob, task *model.Task, cast model.DramaCast) (string, error) {
+	var input struct {
+		Metadata struct {
+			AssetRatio string `json:"assetRatio"`
+		} `json:"metadata"`
+	}
+	if strings.TrimSpace(task.InputJSON) != "" {
+		if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+			return "", &dramaResultIssue{message: "图片任务配置无法读取；结果已保留在版本记录中"}
+		}
+	}
+	// 回写验收以提交时的快照为准，避免后来修改作品或本集画幅误拒已付费结果。
+	if ratio := strings.TrimSpace(input.Metadata.AssetRatio); ratio != "" {
+		return ratio, nil
+	}
+	settings := r.settings
+	if job.EpisodeID != "" {
+		episode, err := r.s.repo.DramaEpisode(r.project.ID, job.EpisodeID)
+		if err != nil {
+			return "", err
+		}
+		settings = dramaEpisodeSettings(settings, *episode)
+	}
+	options, err := parseDramaCastImageOptions(cast.ImageOptionsJSON)
+	if err != nil {
+		return "", err
+	}
+	if options.Ratio != "" {
+		return options.Ratio, nil
+	}
+	if cast.Kind == "character" {
+		return settings.Assets.CharacterRatio, nil
+	}
+	return production.AssetImageRatio, nil
 }
 
 func (r *dramaRun) applyRender(job *model.DramaJob, task *model.Task) error {
@@ -1596,6 +1644,9 @@ func (r *dramaRun) submit(job *model.DramaJob) (*model.Task, bool, error) {
 		cast, err := r.s.repo.DramaCast(r.project.ID, job.CastID)
 		if err != nil {
 			return nil, false, err
+		}
+		if job.EpisodeID != cast.ImageEpisodeID {
+			return nil, true, nil
 		}
 		job.PayloadJSON = encodeDramaRevision(cast.Revision)
 		return r.submitCastImage(job)
@@ -1646,7 +1697,7 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 			last := drafts[position-1].shots[len(drafts[position-1].shots)-1]
 			previous = strings.TrimSpace(strings.Join([]string{last.Action, last.VideoPrompt, last.Dialogue}, "；"))
 		}
-		profile, err := r.s.dramaVideoProfile(segmentVideoChoice(*segment, r.settings.Models.Video))
+		profile, err := r.s.dramaVideoProfile(segmentVideoChoice(*segment, settings.Models.Video))
 		if err != nil {
 			return nil, false, err
 		}
@@ -1655,11 +1706,11 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 		}
 		seconds := production.SnapVideoSeconds(draft.view.DurationMs, profile.Durations)
 		// 并行出片不带上一段尾帧，提示词不能写“首帧承接上一段”。
-		draft.input.FirstFrame = position > 0 && !r.settings.parallelVideo()
+		draft.input.FirstFrame = position > 0 && !settings.parallelVideo()
 		if len(draft.input.Shots) > 0 {
 			draft.input.Shots[len(draft.input.Shots)-1].DurationMs += int64(seconds)*1000 - draft.view.DurationMs
 		}
-		maxChars, err := r.segmentPromptBudget(profile, draft, segment, rows, castByID)
+		maxChars, err := r.segmentPromptBudget(settings, profile, draft, segment, rows, castByID)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1667,12 +1718,12 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 		draft.input.MaxChars = maxChars * 9 / 10
 		payload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, Seconds: seconds, MaxChars: maxChars})
 		job.PayloadJSON = string(payload)
-		skill, err := r.s.dramaWritingSkill(r.project.UserID, r.settings.PromptSkill, "视频提示词")
+		skill, err := r.s.dramaWritingSkill(r.project.UserID, settings.PromptSkill, "视频提示词")
 		if err != nil {
 			return nil, false, err
 		}
 		prompt := production.SegmentWriterPrompt(draft.input, production.SegmentVideoPrompt(draft.input), previous, skill)
-		task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", prompt, r.textInput(job, production.SegmentWriterSystemPrompt(), DramaStepPrompt))
+		task, err := r.createTaskWith(job, settings.Models.textFor(DramaStepPrompt), "text", "text", prompt, r.textInputWithSettings(job, production.SegmentWriterSystemPrompt(), DramaStepPrompt, settings))
 		return task, false, err
 	}
 	return nil, true, nil
@@ -1686,18 +1737,18 @@ const dramaMinPromptBudget = 300
 
 // segmentPromptBudget 是本段提示词正文的字符上限：视频模型提示词上限减去提交时加在开头的参考图说明。
 // 参考图说明按当前参考图状态预演；之后参考图状态变化导致超长时，提交视频前会退回重写（见 submitSegmentVideo）。返回 0 表示不限。
-func (r *dramaRun) segmentPromptBudget(profile dramaVideoProfile, draft dramaSegmentDraft, segment *model.DramaSegment, rows []model.DramaSegment, casts map[string]model.DramaCast) (int, error) {
+func (r *dramaRun) segmentPromptBudget(settings DramaSettings, profile dramaVideoProfile, draft dramaSegmentDraft, segment *model.DramaSegment, rows []model.DramaSegment, casts map[string]model.DramaCast) (int, error) {
 	if profile.PromptMaxChars <= 0 {
 		return 0, nil
 	}
 	var previous *model.DramaSegment
 	for i := range rows {
-		if rows[i].ID == segment.ID && i > 0 && !r.settings.parallelVideo() {
+		if rows[i].ID == segment.ID && i > 0 && !settings.parallelVideo() {
 			previous = &rows[i-1]
 		}
 	}
 	// 预演失败（如画幅不符）不阻止撰写：提交视频时会报出同一原因，届时也会再核对一次字数。
-	request, _, _, _ := r.s.prepareDramaSegment(r.settings, draft, *segment, previous, casts)
+	request, _, _, _ := r.s.prepareDramaSegment(settings, draft, *segment, previous, casts)
 	header := utf8.RuneCountInString(request.Header)
 	budget := profile.PromptMaxChars - header - 2
 	if budget < dramaMinPromptBudget {
@@ -1756,12 +1807,17 @@ func (r *dramaRun) condenseSegmentPrompt(job *model.DramaJob, payload dramaRevis
 		// 撰写期间镜头或参考图已改，这一版作废，调度会按新素材重写。
 		return nil
 	}
+	episode, err := r.s.repo.DramaEpisode(r.project.ID, segment.EpisodeID)
+	if err != nil {
+		return err
+	}
+	settings := dramaEpisodeSettings(r.settings, *episode)
 	// 计数随绑定一起落库；提交失败时恢复原值，不占用用户重试时的精简次数。
 	previousPayload := job.PayloadJSON
 	payload.Condensed++
 	encoded, _ := json.Marshal(payload)
 	job.PayloadJSON = string(encoded)
-	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepPrompt), "text", "text", production.SegmentCondensePrompt(prompt, payload.MaxChars), r.textInput(job, production.SegmentCondenseSystemPrompt(), DramaStepPrompt))
+	task, err := r.createTaskWith(job, settings.Models.textFor(DramaStepPrompt), "text", "text", production.SegmentCondensePrompt(prompt, payload.MaxChars), r.textInputWithSettings(job, production.SegmentCondenseSystemPrompt(), DramaStepPrompt, settings))
 	if err != nil {
 		job.PayloadJSON = previousPayload
 		if errors.Is(err, repository.ErrDramaJobChanged) {
@@ -1836,9 +1892,13 @@ func (r *dramaRun) castImageRatio(kind string) string {
 // 中转站前的网关（如 Cloudflare 约 100 秒无响应）会先断开并报 524；流式边写边回，连接一直有数据。
 // 结果仍在流结束后整段写入任务结果，模型声明不支持流式时由执行层改走非流式。
 func (r *dramaRun) textInput(job *model.DramaJob, systemPrompt string, step string) map[string]any {
+	return r.textInputWithSettings(job, systemPrompt, step, r.settings)
+}
+
+func (r *dramaRun) textInputWithSettings(job *model.DramaJob, systemPrompt string, step string, settings DramaSettings) map[string]any {
 	return map[string]any{
 		"config":      map[string]any{"systemPrompt": systemPrompt},
-		"textOptions": map[string]any{"stream": true, "thinkingLevel": r.settings.TextThinking.levelFor(step)},
+		"textOptions": map[string]any{"stream": true, "thinkingLevel": settings.TextThinking.levelFor(step)},
 		"metadata":    r.metadata(job),
 	}
 }
@@ -1984,27 +2044,27 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 	if episode.Stage != model.DramaEpisodeScript {
 		return nil, true, nil
 	}
+	settings, meta := dramaEpisodeStyleSettings(r.settings, r.meta, *episode)
 	chapters, err := r.loadChapters(decodeStringList(episode.ChapterIDsJSON))
 	if err != nil {
 		return nil, false, err
 	}
-	profile, err := r.s.dramaVideoProfile(r.settings.Models.Video)
+	profile, err := r.s.dramaVideoProfile(settings.Models.Video)
 	if err != nil {
 		return nil, false, err
 	}
-	skill, err := r.s.dramaWritingSkill(r.project.UserID, r.settings.ScriptSkill, "分镜拆分")
+	skill, err := r.s.dramaWritingSkill(r.project.UserID, settings.ScriptSkill, "分镜拆分")
 	if err != nil {
 		return nil, false, err
 	}
-	settings, meta := dramaEpisodeStyleSettings(r.settings, r.meta, *episode)
 	prompt := production.ScriptPrompt(production.ScriptContext{
-		Segment: r.settings.Storyboard.SegmentLimits(profile.Durations),
+		Segment: settings.Storyboard.SegmentLimits(profile.Durations),
 		Title:   r.project.Name, Settings: settings.Settings, VisualRules: meta.VisualRules,
 		EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Synopsis: episode.Synopsis, Hook: episode.Hook, Cliffhanger: episode.Cliffhanger,
 		CastSummary: r.castSummary("character", 30), PropSummary: r.castSummary("prop", 20), SceneSummary: r.castSummary("scene", 20), SourceChapters: chapters,
 		SourceFormat: episode.SourceFormat, Skill: skill,
 	})
-	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepScript), "text", "text", prompt, r.textInput(job, production.ScriptSystemPrompt(), DramaStepScript))
+	task, err := r.createTaskWith(job, settings.Models.textFor(DramaStepScript), "text", "text", prompt, r.textInputWithSettings(job, production.ScriptSystemPrompt(), DramaStepScript, settings))
 	return task, false, err
 }
 
@@ -2014,7 +2074,15 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 	if err != nil || cast.Locked || cast.ImageStatus == model.DramaMediaReady || cast.ImageStatus == model.DramaMediaDraft || cast.ImageStatus == model.DramaMediaFailed {
 		return nil, true, nil
 	}
-	assets := r.settings.Assets
+	settings, meta := r.settings, r.meta
+	if job.EpisodeID != "" {
+		episode, err := r.s.repo.DramaEpisode(r.project.ID, job.EpisodeID)
+		if err != nil {
+			return nil, false, dramaLookupError(err)
+		}
+		settings, meta = dramaEpisodeStyleSettings(settings, meta, *episode)
+	}
+	assets := settings.Assets
 	// 造型以所属角色参考图识别身份，年龄、体态和服装按本次造型，仍使用作品的参考图方案。
 	var baseImage *model.DramaCast
 	if cast.ParentID != "" {
@@ -2028,8 +2096,8 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 		}
 		baseImage = base
 	}
-	prompt := buildDramaCastImagePrompt(r.settings, r.meta, *cast)
-	plan, err := r.s.dramaCastImagePlanFor(r.s.repo, r.project.UserID, r.settings, *cast)
+	prompt := buildDramaCastImagePrompt(settings, meta, *cast)
+	plan, err := r.s.dramaCastImagePlanFor(r.s.repo, r.project.UserID, settings, *cast)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2135,7 +2203,8 @@ func (r *dramaRun) submitRender(job *model.DramaJob) (*model.Task, bool, error) 
 	}
 	// 先记下版本：时间线装配失败时 failJob 要按这个版本把原因写到本集上，否则本集没有错误、每轮重新排队合成。
 	job.PayloadJSON = encodeDramaRevision(episode.Revision)
-	videos, err := dramaEpisodeVideoTimeline(r.s.repo, r.project.UserID, r.project.ID, episode.ID, r.settings.AspectRatio)
+	settings := dramaEpisodeSettings(r.settings, *episode)
+	videos, err := dramaEpisodeVideoTimeline(r.s.repo, r.project.UserID, r.project.ID, episode.ID, settings.AspectRatio)
 	if err != nil {
 		return nil, false, err
 	}

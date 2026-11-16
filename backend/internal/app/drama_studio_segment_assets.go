@@ -32,6 +32,7 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 	if err != nil {
 		return plan, err
 	}
+	settings, meta := dramaEpisodeStyleSettings(settings, parseDramaBibleMeta(p.BibleJSON), *episode)
 	plan.segment, v.EpisodeID, v.TargetRevision = segment, segment.EpisodeID, segment.Revision
 	index := segment.SegmentIndex
 	v.SegmentIndex = &index
@@ -57,7 +58,7 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 			busy[job.CastID] = true
 		}
 	}
-	snapshot = append(snapshot, segment, episode.Revision)
+	snapshot = append(snapshot, segment, episode.Revision, episode.SettingsJSON)
 	visited := map[string]int{}
 	waiting := 0
 	var include func(string) error
@@ -125,7 +126,7 @@ func (s *Service) prepareDramaStudioSegmentAssets(repo *repository.Repository, u
 		return nil
 	}
 	found := false
-	for _, draft := range buildDramaSegmentDrafts(settings, parseDramaBibleMeta(p.BibleJSON), shots, castByID, []model.DramaSegment{*segment}) {
+	for _, draft := range buildDramaSegmentDrafts(settings, meta, shots, castByID, []model.DramaSegment{*segment}) {
 		if draft.view.Index != segment.SegmentIndex {
 			continue
 		}

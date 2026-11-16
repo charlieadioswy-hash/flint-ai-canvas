@@ -40,9 +40,9 @@ description: 信封、错误码与 OpenAPI
 
 ### 短剧资产独立多视图
 
-`GET /api/dramas/:id/cast/:castId/views` 返回 `{views}`，每项有独立 `revision/config/taskId/resourceId/status/takes`。`POST` 同路径创建，`PUT …/:viewId` 编辑，接受 `{expectedRevision,expectedCastRevision,viewRevision,config:{name,direction,prompt,imageOptions}}`；新增视图版本为 0。角色本体、造型、场景和道具均支持正面、背面、左/右侧、俯视、局部和自定义视图，每资产最多 24 个。视图不占用造型或主体图片版本，保存不生成媒体；正在生成的视图不能修改或删除。
+`GET /api/dramas/:id/cast/:castId/views` 返回 `{views}`，每项有独立 `revision/config/taskId/resourceId/status/takes`。`POST` 同路径创建，`PUT …/:viewId` 编辑，接受 `{episodeId?,expectedRevision,expectedCastRevision,viewRevision,config:{name,direction,prompt,imageOptions}}`；新增视图版本为 0。传 `episodeId` 时默认模型、画幅及模板使用本集配置，主体和视图的显式参数优先；省略则使用作品配置。角色本体、造型、场景和道具均支持正面、背面、左/右侧、俯视、局部和自定义视图，每资产最多 24 个。视图不占用造型或主体图片版本，保存不生成媒体；正在生成的视图不能修改或删除。
 
-空模型、画幅和分辨率先继承该资产，再继承作品。两组参考的 `null`/省略表示继承本资产，`[]` 明确清空；真实主体图自动加入主体参考，造型本体图固定排第一，全部参考仍按模型能力校验。`POST …/:viewId/preflight` 返回当前作品/视图版本、报价和令牌；`execute` 必须带 `{expectedRevision,viewRevision,confirmationToken,clientOperationId}`，同标识重放不重复计费。`adopt` 带 `{expectedRevision,viewRevision,takeId}` 只切换该视图成功的历史图片；`DELETE` 带作品和视图版本。设定或风格变化后旧结果只进历史，显式采用不会覆盖主体图或自动生成视频。删除视图保留已付费 Take；仍有视图时须先处理视图才能删除所属资产/造型。
+空模型、画幅和分辨率先继承该资产，再继承本集或作品配置。两组参考的 `null`/省略表示继承本资产，`[]` 明确清空；真实主体图自动加入主体参考，造型本体图固定排第一，全部参考仍按模型能力校验。`POST …/:viewId/preflight` 可带 `episodeId`，返回当前作品/视图版本、报价和令牌；`execute` 必须带相同的本集上下文及 `{expectedRevision,viewRevision,confirmationToken,clientOperationId}`，同标识重放不重复计费。`adopt` 带 `{expectedRevision,viewRevision,takeId}` 只切换该视图成功的历史图片；`DELETE` 带作品和视图版本。设定、风格或本集配置变化，或所属集删除后，迟到结果只进历史，不自动采用；显式采用不会覆盖主体图或自动生成视频。删除视图保留已付费 Take；仍有视图时须先处理视图才能删除所属资产/造型。
 
 ### 短剧资产 AI 辅助
 
@@ -62,15 +62,19 @@ description: 信封、错误码与 OpenAPI
 
 `PATCH /api/dramas/:id/workflow/style` 接收 `{expectedRevision,styleName,stylePrompt,drawing?}`，风格名称为 1–60 字，说明为 1–10000 字，返回更新后的短剧概览。配置、资产、分镜及制作阶段均可保存风格；在作品锁内检查 CAS 和相关活跃文字作业，原子更新默认风格与可选的共享绘图配置并递增制作版本，保留画幅、拆集、阶段及已有媒体。风格保存不重写旧分镜、不自动生图或生成视频，也不产生生成费用。
 
-`GET /api/dramas/:id/episodes/:episodeId/style` 返回 `{projectId,episodeId,revision,episodeRevision,mode,styleName,stylePrompt,defaultStyleName,defaultStylePrompt,drawing}`。`mode=inherit` 的集实时沿用全剧默认，`independent` 使用本集覆盖。`PATCH` 同路径接收 `{expectedRevision,expectedEpisodeRevision,mode,styleName?,stylePrompt?,drawing?}`；独立模式要求名称 1–60 字、说明 1–10000 字，继承模式清除覆盖。双版本与相关文字任务校验后，在同一事务保存单集风格与可选的作品共享绘图配置，只递增制作版本，不改变单集正文版本或已有媒体状态。
+`GET /api/dramas/:id/episodes/:episodeId/style` 返回 `{projectId,episodeId,revision,episodeRevision,settings}`，其中 `settings` 是完整的本集 `DramaSettings`。`PATCH` 同路径接收 `{expectedRevision,expectedEpisodeRevision,settings}`；画风、模型、绘图模板、画幅、时长、语言与分镜／视频制作参数只保存到本集，不再提供继承模式选择，不修改作品或其他集。初值来自首次制作配置；后续新建的集也复制此初值。并发、审核模式、媒体放行方式和分集分章仍由作品控制。双版本与相关文字任务校验后原子保存；本集图片／视频任务或采用本集配置的主体图片仍在排队／生成时返回冲突，防止已确认任务在派发前换用新配置。保存只递增制作控制版本，不改变单集正文版本、已有内容或媒体，也不自动生成；空画风合法，非空风格说明最多 10000 个 Unicode 字符。
 
-作品默认与单集独立风格的说明统一按 Unicode 字符计数，上限 10000；完整系统预设和负面说明保存、读取及后续显式创作时保持全文。创建、重存草稿和修改制作设置也在规范化前校验此上限，超限返回 400，不截短后再保存；这些入口原有的空风格规则保持。两个风格 `PATCH` 请求体上限为 128 KiB，容纳长风格说明与同次保存的共享绘图模板。
+`POST /api/dramas/:id/cast/:castId/regenerate` 接收 `{restyleSegments,episodeId?}`，分集主体及造型入口传入所属集；省略集 ID 表示作品配置。共享主体已有排队或运行的图片作业时返回 409，原作业、配置来源与资产版本保持不变；同时重试的失败造型也参与检查，全部请求在同一事务入队。图片结果按任务提交时的 `metadata.assetRatio` 验收，正确结果不会因作品后来使用另一画幅而被误拒；无快照时按主体显式画幅及本集配置判定。画幅不符的产物仍保留在历史中。
 
-两个保存接口的 `drawing` 均为 `{assets,models:{image,characterImage,sceneImage}}`，省略时保留原配置，提交时替换作品的角色／场景绘图模板与这三项图片模型；角色或场景模型为空则沿用默认图片模型。绘图配置始终由全剧共享，即使单集仍沿用默认风格也可修改，不存入单集风格覆盖。后端校验模板变量、模型可用性及图片画幅／分辨率，任一字段、版本或写入失败都不部分保存。文字、视频、道具独立模型及其他制作参数保持原值；已有完整图片提示词、图片和视频不会被自动改写。
+剧情段编辑及重做时，后续段是否依赖旧尾帧以本集 `videoContinuity` 为准。画布 Agent 采用视频的审批预览与执行也使用目标集的同一配置：仅尾帧续接且明确要求级联时，提示并排队重生成后续已生成视频。
+
+作品默认与单集独立风格的说明统一按 Unicode 字符计数，上限 10000；完整系统预设和负面说明保存、读取及后续显式创作时保持全文。创建、重存草稿、引导确认和修改制作设置均在规范化前校验此上限，超限返回 400，不截短后再保存；这些入口原有的空风格规则保持。两个风格 `PATCH` 请求体上限为 128 KiB，容纳长风格说明与同次保存的绘图模板。
+
+作品风格保存接口的 `drawing` 为 `{assets,models:{image,characterImage,sceneImage}}`，省略时保留原配置，提交时替换作品的角色／场景绘图模板与这三项图片模型；角色或场景模型为空则沿用默认图片模型。单集使用完整 `settings`，其绘图配置随本集独立保存。后端校验模板变量、模型可用性及图片画幅／分辨率，任一字段、版本或写入失败都不部分保存；已有完整图片提示词、图片和视频不会被自动改写。
 
 单集有效风格接入后续显式撰写分镜、段提示词和重拆本段；已有完整自定义提示词保持优先，不自动重写。共享主体及其独立视图继续使用作品级设置，不新增集级图片版本；改本集风格不会替换旧图或自动生成。
 
-主体详情通过 `PATCH /api/dramas/:id/cast/:castId` 一次保存文字、图片提示词、独立画风与 `imageOptions:{model,ratio,resolution,subjectReferenceIds,styleReferenceIds}`。传图片配置时必须提供 `expectedRevision/expectedCastRevision`；文字、参数、模型能力及引用校验与写入在同一事务完成，失败全部回滚。`PUT /api/dramas/:id/looks/:lookId` 接受同样的双版本和图片配置，返回原 `{look,affectedSegments}`。只改图片参数不改写分镜文字；保存不生成。旧的单独图片配置接口保留。
+主体详情通过 `PATCH /api/dramas/:id/cast/:castId` 一次保存文字、图片提示词、独立画风与 `imageOptions:{model,ratio,resolution,subjectReferenceIds,styleReferenceIds}`。传图片配置时必须提供 `expectedRevision/expectedCastRevision`；可同时传 `episodeId`，按所属本集默认模型、画幅和模板校验空值，否则使用作品配置，主体显式配置始终优先。文字、参数、模型能力及引用校验与写入在同一事务完成，失败全部回滚。`PUT /api/dramas/:id/looks/:lookId` 接受同样的双版本、可选本集上下文和图片配置，返回原 `{look,affectedSegments}`。只改图片参数不改写分镜文字；保存不生成。旧的单独图片配置接口保留。
 
 ### 专用短剧 Agent 退场
 
@@ -1257,8 +1261,8 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 独立镜头音频使用平台 TTS 模型，`operation=audio`、`prompt` 为最多 1000 字的朗读文本、`audioVoice` 为真实模型音色，`audioInstructions` 为最多 4000 字的演绎要求；请求固定 MP3、1 倍速，拒绝图片、首尾帧与视频规格。真实音频产物按实际 MIME 保存和下载；完成后状态为 `awaiting_adoption`，先试听再显式采用，不自动覆盖已采用音频或角色声音。资产包只导出所选集内已采用的独立音频，镜头清单的 `audio` 为文件路径，`audioText` 为该版本实际朗读文本；不会混入成片或剪映时间线。
 | `GET /dramas/:id/cast` · `PATCH /dramas/:id/cast/:castId` | 读取 / 修改角色、道具与场景设定（名称、别名、外观、声线、锁定、`imagePrompt`、`imageStyleId/imageStyleName/imageStylePrompt`）；图片提示词最多 12000 字，独立风格字段分别最多 64/120/4000 字，三项全空表示沿用作品风格 |
 | `POST /dramas/:id/cast` | 手工新增 `{ kind, name, appearance?, description?, imagePrompt?, imageStyleId?, imageStyleName?, imageStylePrompt?, expectedRevision? }`，`kind=character/prop/scene`，名称 1–60 字；引导阶段必须提供当前制作版本，普通制作台可省略，保存后递增制作版本；返回 `{ cast }`，保存 `imageStatus=draft`，不创建生成任务 |
-| `POST /dramas/:id/cast/:castId/image-prompt` | `{ appearance?, imageStyleId?, imageStyleName?, imageStylePrompt? }` 根据当前外观、风格与作品参考图方案重新编排，忽略旧的自定义提示词；返回 `{ imagePrompt }`，不保存、不调用模型。造型保留身份参考说明和多视图方案；独立风格不拼入全剧的旧画风规则 |
-| `PUT /dramas/:id/cast/:castId/image-options` | `{ expectedRevision, expectedCastRevision, options:{model,ratio,resolution,subjectReferenceIds,styleReferenceIds} }`，返回 `{cast}`。空参数继承作品配置；两组参考合计最多 8 张，检查资源归属、就绪图片、重复和模型能力（造型另计本体图）。生成或排队中拒绝修改，版本变化返回 409。保存不生成图片、不改已采用结果；之后单图和段补图预检、报价、执行共用相同配置。主体参考保持身份/结构，风格参考只指导画风/材质/光色，两组顺序及语义随真实任务发送 |
+| `POST /dramas/:id/cast/:castId/image-prompt` | `{ episodeId?, appearance?, imageStyleId?, imageStyleName?, imageStylePrompt? }` 根据当前外观、风格与参考图方案重新编排，传 `episodeId` 时使用本集画风和模板并校验归属，否则使用作品配置；忽略旧的自定义提示词，返回 `{ imagePrompt }`，不保存、不调用模型。造型保留身份参考说明和多视图方案；独立风格不拼入全剧的旧画风规则 |
+| `PUT /dramas/:id/cast/:castId/image-options` | `{ episodeId?, expectedRevision, expectedCastRevision, options:{model,ratio,resolution,subjectReferenceIds,styleReferenceIds} }`，返回 `{cast}`。传 `episodeId` 时以本集默认配置校验图片参数，否则使用作品配置；主体显式设置优先。两组参考合计最多 8 张，检查资源归属、就绪图片、重复和模型能力（造型另计本体图）。生成或排队中拒绝修改，版本变化返回 409。保存不生成图片、不改已采用结果；之后单图和段补图预检、报价、执行共用相同配置。主体参考保持身份/结构，风格参考只指导画风/材质/光色，两组顺序及语义随真实任务发送 |
 | `POST /dramas/:id/cast/import` | `{ sourceProjectId, castIds, matchByName?, replaceExisting? }`，选择 1–500 个基础设定，角色自动携带造型。源和目标须为当前用户不同作品，事务内复用图片/声音并建立独立目标记录和来源关系；返回 `{ imported, skipped, cast }`，计数含造型。`matchByName` 只匹配唯一同类型同名记录；默认保留目标已有图片，明确 `replaceExisting=true` 才替换并保留旧版本。重复来源默认跳过，造型章节重置不限，不提交生成任务。歧义、关联冲突或目标正在生成返回 409，`reason=drama_cast_import_conflict` |
 | `POST /dramas/:id/cast/character-library/import` | `{ expectedRevision, libraryAssetId, libraryVersionId, targetCastId?, expectedCastRevision?, replaceText, representationId?, includeVoice }`，返回 `{cast}`。只复制本人未归档角色库卡的指定当前版本；指定目标时须提交其 Revision，且只支持基础角色。默认保留目标名称、文字与原文定义；明确 `replaceText=true` 才替换文字，目标名称仍保留。形象只采用明确选中的该版本 representation，声音只在 `includeVoice=true` 时采用实际绑定。全部资源校验归属和就绪状态；版本变化返回 409，无生成、收费或源卡修改 |
 | `POST /dramas/:id/cast/:castId/character-library/save` | `{ expectedRevision, expectedCastRevision, name }`，以当前角色完整定义、当前图片和绑定声音另存全新个人角色卡，返回既有 `{asset,character}` 合同。保留未知 JSON 键、原文定义及当前手工字段，不覆盖旧库卡、不修改来源作品；不生成缺失媒体 |

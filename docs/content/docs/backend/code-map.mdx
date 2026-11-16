@@ -10,6 +10,7 @@ description: 从产品功能快速定位主要代码入口
 - 列表与创建入口：`web/src/pages/projects/index.tsx`、`workflow-entry.tsx`、`workflow-create.tsx`；正文导入、起草和审阅：`workflow-source.tsx`、`workflow-idea.tsx`。原详细创建保留在 `create.tsx`。
 - 章节与制作集：`workflow-source.tsx/css` 常显字数、章节制作关系与配置期勾选，分别计数原文、选择/预留章和实际集；`workflow.tsx` 在来源、资产、分镜和分集管理统一接入“继续选章”，与详细台共用 `studio/chapter-picker.tsx`、`chapter-pick-list.tsx`，通过既有 `produceDramaChapters` 接口按真实预留章 ID、修订号追加分集。查看、勾选和提交分开，正文与设置脏稿及忙碌状态先处理；成功关闭选择器并刷新数据，保留当前步骤与筛选。
 - 页面协调：`pages/projects/workflow.tsx` 与 `workflow-state.ts` 管理短剧创作六步（上传剧本、剧本格式、风格设置、角色场景、漫剧分镜、视频预览）、单集创作五步（从分集剧本开始）及作品管理四页（剧本设定、风格设置、主体资产、分集管理）。`detail.tsx` 与 `studio/studio-route.ts` 保留简易／详细切换、深链接和定位，页面浏览步骤与服务端制作阶段独立。
+- 单集配置：`app/drama_episode_style.go` 读取和保存完整配置快照，首次定稿及建集复制初值；`database/drama_episode_settings.go` 完成 Schema 117 存量迁移。生成、预检、合成与导出读取本集有效配置，共享主体图片通过 `image_episode_id` 保留其配置来源。
 - 配置与模式：`workflow-configuration.tsx` 管理风格与基础配置，`workflow-mode-dialog.tsx` 管理参考生视频、宫格图、智能导演、故事板四模式及对应参数；`app/drama_guide.go` 在确认事务内通过阶段与修订号 CAS 同时保存配置和推进，冲突不落配置、不推进。`internal/production/director.go`、`storyboard.go` 将导演模板与模式落实到分镜提示词。
 - 资产与分集：`workflow-assets.tsx` 同屏展示角色、场景、道具并复用原写接口与引用保护；`studio/cast-editor-dialog.tsx`、`panels.tsx` 管理设置、主图、历史版本、造型和多视图。`workflow-episodes.tsx` 负责真实分集筛选、选择、按集检查及合成／下载回执；生成批次继续使用实际剧情段范围。
 - 分集管理呈现：`workflow-episodes.tsx/css` 提供大封面卡、剧集类型与真实 `episode.updatedAt`、三个进度点与更多菜单、状态图例筛选和排序搜索；主体摘要未加载时保持未知，按已选集读取真实引用核对。新建草稿与提交状态回报父层，成功留在管理页、清筛并选中新集。`workflow.tsx` 与列表打开路径让已有集且非配置草稿的作品默认进入管理页，显式步骤和单集定位保留。

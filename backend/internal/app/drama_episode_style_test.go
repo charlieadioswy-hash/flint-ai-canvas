@@ -9,14 +9,15 @@ import (
 	"yingce/backend/internal/production"
 )
 
-func saveDramaEpisodeStyle(t *testing.T, svc *Service, projectID, episodeID, mode, name, prompt string) DramaEpisodeStyle {
+func saveDramaEpisodeStyle(t *testing.T, svc *Service, projectID, episodeID, name, prompt string) DramaEpisodeStyle {
 	t.Helper()
 	current, err := svc.DramaEpisodeStyle("usr-drama", projectID, episodeID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	current.Settings.StyleName, current.Settings.StylePrompt = name, prompt
 	view, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, episodeID, UpdateDramaEpisodeStyleRequest{
-		ExpectedRevision: &current.Revision, ExpectedEpisodeRevision: &current.EpisodeRevision, Mode: mode, StyleName: name, StylePrompt: prompt,
+		ExpectedRevision: &current.Revision, ExpectedEpisodeRevision: &current.EpisodeRevision, Settings: &current.Settings,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +28,7 @@ func saveDramaEpisodeStyle(t *testing.T, svc *Service, projectID, episodeID, mod
 	return view
 }
 
-func TestDramaEpisodeStyleInheritsCurrentDefaultAndPreservesIndependentChoice(t *testing.T) {
+func TestDramaEpisodeStyleSnapshotsFirstSettingsAndIsolatesEpisodeEdits(t *testing.T) {
 	svc, fake, projectID, detail := dramaStudioFixture(t)
 	episodes, _ := svc.repo.DramaEpisodes(projectID)
 	p, _ := svc.repo.DramaProduction(projectID)
@@ -35,30 +36,28 @@ func TestDramaEpisodeStyleInheritsCurrentDefaultAndPreservesIndependentChoice(t 
 		t.Fatal(err)
 	}
 	initial, err := svc.DramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID)
-	if err != nil || initial.Mode != dramaEpisodeStyleInherit {
-		t.Fatalf("initial inheritance: %+v %v", initial, err)
+	if err != nil {
+		t.Fatalf("initial settings: %+v %v", initial, err)
 	}
 	requests := len(fake.requests)
-	// 内容相同也必须保存独立选择，不能按文字相等推断继承。
-	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, dramaEpisodeStyleIndependent, initial.StyleName, initial.StylePrompt)
+	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "本集独立风格", "只修改当前集的风格")
 	p, _ = svc.repo.DramaProduction(projectID)
 	if _, err := svc.UpdateDramaWorkflowStyle("usr-drama", projectID, UpdateDramaWorkflowStyleRequest{ExpectedRevision: &p.Revision, StyleName: "全剧新默认", StylePrompt: "全剧新默认画风"}); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := svc.DramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID)
 	second, _ := svc.DramaEpisodeStyle("usr-drama", projectID, episodes[1].ID)
-	if first.Mode != dramaEpisodeStyleIndependent || first.StyleName != initial.StyleName || first.StylePrompt != initial.StylePrompt || first.DefaultStylePrompt != "全剧新默认画风" {
-		t.Fatalf("same-value independent choice was overwritten: %+v", first)
+	if first.Settings.StyleName != "本集独立风格" || first.Settings.StylePrompt != "只修改当前集的风格" {
+		t.Fatalf("episode settings were overwritten: %+v", first)
 	}
-	if second.Mode != dramaEpisodeStyleInherit || second.StylePrompt != "全剧新默认画风" {
-		t.Fatalf("inheriting episode retained a default snapshot: %+v", second)
+	if second.Settings.StylePrompt != initial.Settings.StylePrompt {
+		t.Fatalf("untouched episode followed a later project edit: %+v", second)
 	}
-	saveDramaEpisodeStyle(t, svc, projectID, episodes[1].ID, dramaEpisodeStyleIndependent, "第二集水彩", "第二集独立水彩画风")
-	first = saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, dramaEpisodeStyleInherit, "应被清除", "应被清除")
-	stored, _ := svc.repo.DramaEpisode(projectID, detail.Episode.ID)
+	saveDramaEpisodeStyle(t, svc, projectID, episodes[1].ID, "第二集水彩", "第二集独立水彩画风")
+	first = saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "", "")
 	second, _ = svc.DramaEpisodeStyle("usr-drama", projectID, episodes[1].ID)
-	if first.Mode != dramaEpisodeStyleInherit || first.StylePrompt != "全剧新默认画风" || stored.StyleName != "" || stored.StylePrompt != "" || second.StylePrompt != "第二集独立水彩画风" {
-		t.Fatalf("reset inheritance crossed episode scope: first=%+v stored=%+v second=%+v", first, stored, second)
+	if first.Settings.StyleName != "" || first.Settings.StylePrompt != "" || second.Settings.StylePrompt != "第二集独立水彩画风" {
+		t.Fatalf("empty style reset crossed episode scope: first=%+v second=%+v", first, second)
 	}
 	if len(fake.requests) != requests {
 		t.Fatal("saving style generated a task")
@@ -84,7 +83,7 @@ func TestDramaEpisodeStyleSavePreservesExistingTextMediaAndVersions(t *testing.T
 	beforeCasts, _ := svc.repo.DramaCasts(projectID)
 	beforeJobs, _ := svc.repo.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
 	requests := len(fake.requests)
-	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, dramaEpisodeStyleIndependent, "本集油画", "本集独立油画风格")
+	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "本集油画", "本集独立油画风格")
 	afterEpisode, _ := svc.repo.DramaEpisode(projectID, detail.Episode.ID)
 	afterShots, _ := svc.repo.DramaShots(detail.Episode.ID)
 	afterSegments, _ := svc.repo.DramaSegments(detail.Episode.ID)
@@ -94,7 +93,7 @@ func TestDramaEpisodeStyleSavePreservesExistingTextMediaAndVersions(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterEpisode.StyleMode, afterEpisode.StyleName, afterEpisode.StylePrompt = beforeEpisode.StyleMode, beforeEpisode.StyleName, beforeEpisode.StylePrompt
+	afterEpisode.SettingsJSON = beforeEpisode.SettingsJSON
 	afterEpisode.UpdatedAt = beforeEpisode.UpdatedAt
 	if !reflect.DeepEqual(beforeEpisode, afterEpisode) || !reflect.DeepEqual(beforeShots, afterShots) || !reflect.DeepEqual(beforeSegments, afterSegments) || !reflect.DeepEqual(beforeCasts, afterCasts) || !reflect.DeepEqual(beforeJobs, afterJobs) || !reflect.DeepEqual(beforeMedia, afterMedia) || len(fake.requests) != requests {
 		t.Fatal("style save changed content, media, content revisions, shared assets or queued work")
@@ -104,7 +103,7 @@ func TestDramaEpisodeStyleSavePreservesExistingTextMediaAndVersions(t *testing.T
 func TestDramaEpisodeStyleRejectsStaleInvalidOrForeignWrites(t *testing.T) {
 	svc, _, projectID, detail := dramaStudioFixture(t)
 	view, _ := svc.DramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID)
-	valid := UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Mode: dramaEpisodeStyleIndependent, StyleName: "水彩", StylePrompt: "水彩风格"}
+	valid := UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Settings: &view.Settings}
 	stale := int64(-1)
 	for _, tc := range []struct {
 		name, user, episode string
@@ -114,15 +113,16 @@ func TestDramaEpisodeStyleRejectsStaleInvalidOrForeignWrites(t *testing.T) {
 		{name: "foreign episode", user: "usr-drama", episode: "missing-episode"},
 		{name: "missing production version", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.ExpectedRevision = nil }},
 		{name: "missing episode version", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.ExpectedEpisodeRevision = nil }},
-		{name: "invalid mode", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.Mode = "snapshot" }},
-		{name: "empty prompt", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.StylePrompt = " " }},
+		{name: "missing settings", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.Settings = nil }},
 		{name: "oversized prompt", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) {
-			req.StylePrompt = strings.Repeat("中", production.MaxStylePromptRunes+1)
+			req.Settings.StylePrompt = strings.Repeat("中", production.MaxStylePromptRunes+1)
 		}},
 		{name: "invalid version", user: "usr-drama", episode: detail.Episode.ID, mutate: func(req *UpdateDramaEpisodeStyleRequest) { req.ExpectedRevision = &stale }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := valid
+			settings := *valid.Settings
+			req.Settings = &settings
 			if tc.mutate != nil {
 				tc.mutate(&req)
 			}
@@ -161,18 +161,14 @@ func TestDramaLongStylePromptRoundTripsAcrossScopes(t *testing.T) {
 		if err != nil || summary.Production.Settings.StylePrompt != prompt {
 			t.Fatalf("project style was rejected or truncated: %v", err)
 		}
-		inherited, err := svc.DramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID)
-		if err != nil || inherited.DefaultStylePrompt != prompt {
-			t.Fatalf("default style did not round-trip: %v", err)
-		}
 		casts, _ := svc.repo.DramaCasts(projectID)
 		preview, err := svc.PreviewDramaCastImagePrompt("usr-drama", projectID, casts[0].ID, DramaCastImagePromptRequest{})
 		if err != nil || !strings.Contains(preview, prompt) {
 			t.Fatalf("asset image prompt truncated the saved default style: %v", err)
 		}
-		saved := saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, dramaEpisodeStyleIndependent, "完整本集", prompt)
+		saved := saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "完整本集", prompt)
 		loaded, err := svc.DramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID)
-		if err != nil || saved.StylePrompt != prompt || loaded.StylePrompt != prompt {
+		if err != nil || saved.Settings.StylePrompt != prompt || loaded.Settings.StylePrompt != prompt {
 			t.Fatalf("episode style was rejected or truncated: %v", err)
 		}
 	}
@@ -216,7 +212,7 @@ func TestDramaEpisodeStyleRejectsActiveTextJobs(t *testing.T) {
 				if err := fake.db.Create(&job).Error; err != nil {
 					t.Fatal(err)
 				}
-				_, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Mode: dramaEpisodeStyleIndependent, StyleName: "水彩", StylePrompt: "水彩风格"})
+				_, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Settings: &view.Settings})
 				if !isAppErrorStatus(err, 409) {
 					t.Fatalf("active text task accepted style edit: %v", err)
 				}
@@ -230,7 +226,7 @@ func TestDramaEpisodeStyleRejectsActiveTextJobs(t *testing.T) {
 }
 
 func TestDramaEpisodeStyleReachesExplicitScriptAndSegmentPromptWriting(t *testing.T) {
-	for _, mode := range []string{dramaEpisodeStyleInherit, dramaEpisodeStyleIndependent} {
+	for _, mode := range []string{"initial", "edited"} {
 		t.Run(mode, func(t *testing.T) {
 			svc, fake, projectID, detail := dramaStudioFixture(t)
 			p, _ := svc.repo.DramaProduction(projectID)
@@ -239,11 +235,15 @@ func TestDramaEpisodeStyleReachesExplicitScriptAndSegmentPromptWriting(t *testin
 			if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"settings_json": encodeDramaSettings(settings), "bible_json": `{"visualRules":"全剧旧画面规则独有标记"}`}); err != nil {
 				t.Fatal(err)
 			}
-			if mode == dramaEpisodeStyleIndependent {
+			if mode == "edited" {
 				const suffix = "本集水彩独有标记"
 				// 上限内的末尾约束必须同时进入分镜和段提示词，不能被其中一个入口静默截掉。
 				prompt := strings.Repeat("水", production.MaxStylePromptRunes-len([]rune(suffix))) + suffix
-				saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, mode, "本集水彩", prompt)
+				saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "本集水彩", prompt)
+			} else {
+				if err := fake.db.Model(&model.DramaEpisode{}).Where("id = ?", detail.Episode.ID).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := fake.db.Model(&model.DramaEpisode{}).Where("id = ?", detail.Episode.ID).Update("stage", model.DramaEpisodeScript).Error; err != nil {
 				t.Fatal(err)
@@ -266,7 +266,7 @@ func TestDramaEpisodeStyleReachesExplicitScriptAndSegmentPromptWriting(t *testin
 				t.Fatalf("segment prompt submission: %+v %v %v", prompt, skip, err)
 			}
 			for _, task := range []*model.Task{script, prompt} {
-				if mode == dramaEpisodeStyleIndependent {
+				if mode == "edited" {
 					if !strings.Contains(task.Prompt, "本集水彩独有标记") || !strings.Contains(task.Prompt, "保持本集视觉风格统一") || strings.Contains(task.Prompt, "全剧默认风格独有标记") || strings.Contains(task.Prompt, "全剧旧画面规则独有标记") {
 						t.Fatalf("independent episode used global style or rules: %s", task.Prompt)
 					}
@@ -280,7 +280,10 @@ func TestDramaEpisodeStyleReachesExplicitScriptAndSegmentPromptWriting(t *testin
 
 func TestDramaEpisodeStyleReachesExplicitSegmentResplit(t *testing.T) {
 	svc, db, req := sceneSplitFixture(t)
-	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "scene-episode").Updates(map[string]any{"style_mode": dramaEpisodeStyleIndependent, "style_name": "本集水彩", "style_prompt": "本集重拆水彩标记"}).Error; err != nil {
+	p, _ := svc.repo.DramaProduction("scene-project")
+	settings := parseDramaSettings(p.SettingsJSON)
+	settings.StyleName, settings.StylePrompt = "本集水彩", "本集重拆水彩标记"
+	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "scene-episode").Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
 		t.Fatal(err)
 	}
 	plan, err := svc.prepareDramaSceneSplit(svc.repo, "user", "scene-project", "scene-episode", req)
@@ -299,7 +302,7 @@ func TestDramaEpisodeStyleKeepsSavedCompleteVideoPromptAndInvalidatesOldConfirma
 	if err != nil || !preflight.Ready {
 		t.Fatalf("preflight: %+v %v", preflight, err)
 	}
-	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, dramaEpisodeStyleIndependent, "本集新风格", "只用于后续明确撰写的新风格标记")
+	saveDramaEpisodeStyle(t, svc, projectID, detail.Episode.ID, "本集新风格", "只用于后续明确撰写的新风格标记")
 	if _, err := svc.ExecuteDramaStudioAction("usr-drama", projectID, confirmedDramaStudioRequest(preflight)); err == nil {
 		t.Fatal("style save left old generation confirmation valid")
 	}

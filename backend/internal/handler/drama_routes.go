@@ -515,11 +515,12 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	}))
 	r.POST("/dramas/:id/cast/:castId/regenerate", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {
 		var req struct {
-			RestyleSegments bool `json:"restyleSegments"`
+			RestyleSegments bool   `json:"restyleSegments"`
+			EpisodeID       string `json:"episodeId,omitempty"`
 		}
 		if err := bindDramaJSON(c, &req); err != nil {
 			return nil, err
 		}
-		return svc.RegenerateDramaCast(userID, c.Param("id"), c.Param("castId"), req.RestyleSegments)
+		return svc.RegenerateDramaCast(userID, c.Param("id"), c.Param("castId"), req.RestyleSegments, req.EpisodeID)
 	}))
 }

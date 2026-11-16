@@ -112,6 +112,15 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		return s.prepareDramaStudioSegmentAssets(repo, userID, req, plan, settings, snapshot)
 	}
 	if req.Action == "cast_image" {
+		if req.EpisodeID != "" {
+			episode, err := repo.DramaEpisode(projectID, req.EpisodeID)
+			if err != nil {
+				return plan, err
+			}
+			settings = dramaEpisodeSettings(settings, *episode)
+			v.EpisodeID = episode.ID
+			snapshot = append(snapshot, episode.ID, episode.Revision, episode.SettingsJSON)
+		}
 		cast, err := repo.DramaCast(projectID, req.TargetID)
 		if err != nil {
 			return plan, err
@@ -173,6 +182,8 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		if err != nil {
 			return plan, err
 		}
+		settings, meta := dramaEpisodeStyleSettings(settings, parseDramaBibleMeta(p.BibleJSON), *episode)
+		snapshot = append(snapshot, episode.SettingsJSON)
 		plan.segment, v.EpisodeID, v.TargetRevision = segment, segment.EpisodeID, segment.Revision
 		if storyMedia {
 			readiness, err := dramaWorkflowEpisodeReadiness(repo, p, episode)
@@ -273,7 +284,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 			for _, cast := range casts {
 				castByID[cast.ID] = cast
 			}
-			drafts := buildDramaSegmentDrafts(settings, parseDramaBibleMeta(p.BibleJSON), shots, castByID, rows)
+			drafts := buildDramaSegmentDrafts(settings, meta, shots, castByID, rows)
 			for i, row := range rows {
 				if row.ID != segment.ID {
 					continue
@@ -429,7 +440,7 @@ func applyDramaStudioAction(tx *repository.Repository, action string, plan drama
 	projectID := plan.production.ProjectID
 	switch action {
 	case "cast_image":
-		changed, err := tx.UpdateDramaCastImageRevision(plan.cast.ID, plan.cast.Revision, []string{plan.cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
+		changed, err := tx.UpdateDramaCastImageRevision(plan.cast.ID, plan.cast.Revision, []string{plan.cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued, "image_episode_id": plan.view.EpisodeID})
 		if err != nil {
 			return err
 		}
@@ -439,7 +450,7 @@ func applyDramaStudioAction(tx *repository.Repository, action string, plan drama
 		return nil
 	case "segment_assets":
 		for _, cast := range plan.casts {
-			changed, err := tx.UpdateDramaCastImageRevision(cast.ID, cast.Revision, []string{cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued})
+			changed, err := tx.UpdateDramaCastImageRevision(cast.ID, cast.Revision, []string{cast.ImageStatus}, map[string]any{"image_status": model.DramaMediaQueued, "image_episode_id": plan.view.EpisodeID})
 			if err != nil {
 				return err
 			}

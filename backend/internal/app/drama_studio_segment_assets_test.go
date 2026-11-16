@@ -352,7 +352,7 @@ func TestDramaStudioSegmentAssetsQuotesTotalAndChecksBudget(t *testing.T) {
 	settings.Models.PropImage = DramaModelChoice{ChannelID: "ch", ModelKey: "prop-image"}
 	settings.Assets.Resolution, settings.Assets.PropResolution = "1k", "2k"
 	settingsRaw, _ := json.Marshal(settings)
-	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("settings_json", string(settingsRaw)).Error; err != nil {
+	if err := fake.db.Model(&model.DramaEpisode{}).Where("id = ?", detail.Episode.ID).Update("settings_json", string(settingsRaw)).Error; err != nil {
 		t.Fatal(err)
 	}
 	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceGeminiImage), "image")

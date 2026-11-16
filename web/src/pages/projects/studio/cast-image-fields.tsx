@@ -11,6 +11,7 @@ export type CastImageFieldsValue = DramaCastImageStyle & { imagePrompt?: string 
 
 export function CastImageFields({
     projectId,
+    episodeId,
     castId,
     appearance,
     value,
@@ -18,6 +19,7 @@ export function CastImageFields({
     disabled = false,
 }: {
     projectId: string;
+    episodeId?: string;
     castId?: string;
     appearance: string;
     value: CastImageFieldsValue;
@@ -30,7 +32,7 @@ export function CastImageFields({
     const buildingRef = useRef(false);
     const confirmation = useRef<{ destroy: () => void } | undefined>(undefined);
     useEffect(() => () => confirmation.current?.destroy(), []);
-    const snapshot = JSON.stringify({ projectId, castId, appearance, ...value });
+    const snapshot = JSON.stringify({ projectId, episodeId, castId, appearance, ...value });
     const latest = useRef(snapshot);
     latest.current = snapshot;
     const ownStyle = Boolean(value.imageStyleId || value.imageStyleName || value.imageStylePrompt);
@@ -41,7 +43,13 @@ export function CastImageFields({
     const rebuild = async (ticket: ReturnType<typeof operation.capture>, accepted: string) => {
         if (!castId || !operation.isCurrent(ticket) || latest.current !== accepted) return;
         try {
-            const result = await rebuildDramaCastImagePrompt(projectId, castId, { appearance, imageStyleId: value.imageStyleId || "", imageStyleName: value.imageStyleName || "", imageStylePrompt: value.imageStylePrompt || "" });
+            const result = await rebuildDramaCastImagePrompt(projectId, castId, {
+                appearance,
+                imageStyleId: value.imageStyleId || "",
+                imageStyleName: value.imageStyleName || "",
+                imageStylePrompt: value.imageStylePrompt || "",
+                ...(episodeId ? { episodeId } : {}),
+            });
             if (!operation.isCurrent(ticket)) return;
             if (latest.current === accepted) {
                 onChange({ imagePrompt: result.imagePrompt });
@@ -99,7 +107,7 @@ export function CastImageFields({
             {ownStyle ? (
                 <StyleCompositionPicker value={value.imageStyleId || DEFAULT_DRAMA_STYLE_ID} onChange={chooseStyle} disabled={disabled || building} />
             ) : (
-                <small className="drama-editor-note">沿用作品风格；穿越、幼年或不同世界的造型可在此单独选择。</small>
+                <small className="drama-editor-note">沿用{episodeId ? "本集" : "作品"}风格；穿越、幼年或不同世界的造型可在此单独选择。</small>
             )}
             <div className="drama-field-label">
                 <span>参考图生成提示词</span>
@@ -115,10 +123,10 @@ export function CastImageFields({
                 maxLength={12000}
                 autoSize={{ minRows: 3, maxRows: 8 }}
                 disabled={disabled || building}
-                placeholder="留空继承作品模板；也可填写自己的生图要求"
+                placeholder={`留空使用${episodeId ? "本集" : "作品"}模板；也可填写自己的生图要求`}
                 onChange={(event) => onChange({ imagePrompt: event.target.value })}
             />
-            <small className="drama-editor-note">留空继承作品模板；切换模板或风格后可重新编排，已有人工提示词不会自动修改。编排不调用模型，保存后点击生成才开始生图。</small>
+            <small className="drama-editor-note">留空使用{episodeId ? "本集" : "作品"}模板；切换模板或风格后可重新编排，已有人工提示词不会自动修改。编排不调用模型，保存后点击生成才开始生图。</small>
         </div>
     );
 }

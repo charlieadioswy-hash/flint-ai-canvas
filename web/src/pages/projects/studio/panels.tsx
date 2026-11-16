@@ -347,6 +347,7 @@ export function CastPanel({
 
 type CastEditorProps = {
     projectId: string;
+    episodeId?: string;
     cast: DramaCast;
     parent?: DramaCast;
     looks: DramaCast[];
@@ -361,7 +362,7 @@ type CastEditorProps = {
 
 export function CastEditor(props: CastEditorProps) {
     const userId = useUserStore((state) => state.user?.id);
-    return <CastEditorSession key={JSON.stringify([userId, props.projectId, props.cast.id])} {...props} />;
+    return <CastEditorSession key={JSON.stringify([userId, props.projectId, props.episodeId || "", props.cast.id])} {...props} />;
 }
 
 function CastEditorSession(props: CastEditorProps) {
@@ -372,6 +373,7 @@ function CastEditorSession(props: CastEditorProps) {
     return (
         <CastViewWorkspace
             projectId={props.projectId}
+            episodeId={props.episodeId}
             cast={props.cast}
             disabled={mainState.dirty || mainState.busy}
             onChanged={props.onChanged}
@@ -393,6 +395,7 @@ function CastEditorSession(props: CastEditorProps) {
 
 function CastEditorForm({
     projectId,
+    episodeId,
     cast,
     parent,
     looks,
@@ -443,7 +446,7 @@ function CastEditorForm({
     const saveFields = async () => {
         if (imageOptions.corrupt) throw new Error("请先重新配置无法读取的图片设置");
         if (!summary.data || typeof baselineCast.revision !== "number") throw new Error("当前作品或主体版本尚未读取，请刷新后重试");
-        const revisions = { expectedRevision: summary.data.production.revision, expectedCastRevision: baselineCast.revision, imageOptions: imageOptions.options };
+        const revisions = { expectedRevision: summary.data.production.revision, expectedCastRevision: baselineCast.revision, imageOptions: imageOptions.options, ...(episodeId ? { episodeId } : {}) };
         if (isLook) return (await updateDramaCastLook(projectId, cast.id, { lookName: name, appearance, ...imageFields, fromChapter: from || 0, toChapter: to || 0, restyleSegments: restyle, ...revisions })).look;
         const changed: DramaCastPatch = { ...revisions };
         const baseline = {
@@ -502,7 +505,7 @@ function CastEditorForm({
             }
             if (!isCurrent()) return;
             try {
-                const result = await regenerateDramaCast(projectId, cast.id, restyle);
+                const result = await (episodeId ? regenerateDramaCast(projectId, cast.id, restyle, episodeId) : regenerateDramaCast(projectId, cast.id, restyle));
                 return { result, saved, isCurrent };
             } catch (error) {
                 if (!isCurrent()) return;
@@ -710,8 +713,8 @@ function CastEditorForm({
                 </div>
                 <div className="drama-editor-image-settings">
                     {layout === "workspace" ? <h3>生图设置</h3> : null}
-                    <CastImageOptions projectId={projectId} cast={cast} disabled={busy} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
-                    <CastImageFields projectId={projectId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+                    <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
+                    <CastImageFields projectId={projectId} episodeId={episodeId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
                 </div>
             </section>
             <div className="drama-editor-actions">
@@ -812,10 +815,11 @@ function CastEditorForm({
                         <span>按需补充，独立保存与生成</span>
                     </div>
                 ) : null}
-                {viewSelector || <CastViews projectId={projectId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />}
+                {viewSelector || <CastViews projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />}
                 {isCharacter ? (
                     <CastLooks
                         projectId={projectId}
+                        episodeId={episodeId}
                         character={cast}
                         looks={looks}
                         restyle={restyle}

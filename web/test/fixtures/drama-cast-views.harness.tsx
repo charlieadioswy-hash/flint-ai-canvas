@@ -99,7 +99,12 @@ mock.module("@/lib/localforage-storage", () => ({
         },
     }),
 }));
-mock.module("@/services/api/drama", () => ({ getDrama: async () => ({ project: { id: "project-a", userId: userStore.getState().user.id }, production: { revision, settings: { models: { image: { channelId: "system", modelKey: "image-new" } } } } }) }));
+mock.module("@/services/api/drama", () => ({
+    getDrama: async () => ({ project: { id: "project-a", userId: userStore.getState().user.id }, production: { revision, settings: { models: { image: { channelId: "system", modelKey: "image-new" } } } } }),
+    getDramaEpisodeStyle: async () => {
+        throw new Error("作品级视图不应读取单集配置");
+    },
+}));
 mock.module("@/services/api/drama-cast-views", () => ({
     listDramaCastViews: async () => ({ views: structuredClone(rows) }),
     saveDramaCastView: async (_projectId: string, _castId: string, viewId: string | undefined, input: { expectedRevision: number; expectedCastRevision: number; viewRevision: number; config: CastViewConfig }) => {

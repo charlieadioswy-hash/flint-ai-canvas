@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { createElement, type ReactNode } from "react";
 import { create } from "zustand";
 import type { Root } from "react-dom/client";
-import type { DramaEpisodeDetail, DramaEpisodeRow, DramaSegment, DramaShot, DramaStudioActionRequest, DramaSummary, DramaWorkflowReadiness } from "@/services/api/drama";
+import type { DramaCast, DramaEpisodeDetail, DramaEpisodeRow, DramaSegment, DramaShot, DramaStudioActionRequest, DramaSummary, DramaWorkflowReadiness } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/project/guide?step=story&mode=simple" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -39,6 +39,7 @@ const calls = {
 let episodeOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | undefined;
 let readinessOverride: (() => Promise<DramaWorkflowReadiness>) | undefined;
 const userStore = create(() => ({ user: { id: "user" } }));
+const subject = { id: "cast-1", projectId: "project", kind: "character", name: "林夏" } as DramaCast;
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
 mock.module("@/pages/projects/workflow-scene-splits", () => ({ WorkflowSceneSplits: () => null }));
@@ -76,6 +77,7 @@ mock.module("@/pages/projects/workflow-shot-media-dialog", () => ({
 }));
 
 beforeEach(() => {
+    userStore.setState({ user: { id: "user" } });
     calls.retried = [];
     calls.videos = [];
     calls.actions = [];
@@ -138,7 +140,7 @@ mock.module("@/pages/projects/studio/use-studio", () => ({
         cast: (projectId: string) => ["drama", projectId, "cast"],
         jobs: (projectId: string) => ["drama", projectId, "jobs"],
     },
-    useDramaCast: () => ({ cast: [], byId: new Map() }),
+    useDramaCast: () => ({ cast: [subject], byId: new Map([[subject.id, subject]]) }),
     useDramaInvalidate: () => async () => undefined,
 }));
 mock.module("@/pages/projects/studio/use-drama-media-action", () => ({
@@ -198,7 +200,7 @@ mock.module("@/pages/projects/simple-studio-segment-editor", () => ({
               ),
 }));
 mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
-    CastEditorDialog: ({ castId }: { castId: string }) => createElement("div", { role: "dialog", "aria-label": "资产设定" }, castId),
+    CastEditorDialog: ({ castId, episodeId }: { castId: string; episodeId?: string }) => createElement("div", { role: "dialog", "aria-label": "资产设定", "data-episode": episodeId }, castId),
 }));
 mock.module("@/pages/projects/studio/asset-transfer", () => ({
     AssetPackageModal: ({ projectId, episodes, onClose }: { projectId: string; episodes: DramaEpisodeRow[]; onClose: () => void }) =>
@@ -541,6 +543,7 @@ test("主工作区编辑真实段，段生成传真实目标且不重复展示�
         expect(view.host.querySelector("[data-editor]")?.getAttribute("data-editor")).toBe("ep-ready:0");
         await click(view.host, "打开资产");
         expect(view.host.querySelector("[role='dialog']")?.textContent).toContain("cast-1");
+        expect(view.host.querySelector("[aria-label='资产设定']")?.getAttribute("data-episode")).toBe(ready.id);
         await click(view.host, "编辑器生成");
         expect(calls.videos).toEqual([["ep-ready", "segment-editor", "video-a"]]);
         expect(view.host.querySelector("[data-editor]")).toBeNull();
@@ -548,6 +551,26 @@ test("主工作区编辑真实段，段生成传真实目标且不重复展示�
         expect(view.host.querySelector("[data-editor]")).toBeNull();
         await click(view.host, "重新生成本段视频");
         expect(calls.videos.at(-1)?.[1]).toBe("segment-2");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("全部集分镜打开主体使用镜头所属集，切集或切账号后关闭旧主体窗口", async () => {
+    for (const row of [ready, preview]) {
+        const current = details.get(row.id)!;
+        details.set(row.id, { ...current, shots: current.shots.map((item) => ({ ...item, castIdsJson: JSON.stringify([subject.id]) })) });
+    }
+    const view = await renderProduction("story", summary("completed", [ready, preview]), "/projects/project/e/ep-ready?step=story&scope=all");
+    try {
+        await click(view.host.querySelector('[aria-label="第 3 集"]')!, subject.name);
+        expect(view.host.querySelector("[aria-label='资产设定']")?.getAttribute("data-episode")).toBe(preview.id);
+        await select(view.host, "选择集数", ready.id);
+        expect(view.host.querySelector("[aria-label='资产设定']")).toBeNull();
+        await click(view.host.querySelector('[aria-label="第 1 集"]')!, subject.name);
+        expect(view.host.querySelector("[aria-label='资产设定']")?.getAttribute("data-episode")).toBe(ready.id);
+        await act(async () => userStore.setState({ user: { id: "other-user" } }));
+        expect(view.host.querySelector("[aria-label='资产设定']")).toBeNull();
     } finally {
         await view.dispose();
     }

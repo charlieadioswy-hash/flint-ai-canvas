@@ -14,6 +14,7 @@ export type CastEditorDialogProps = {
     summary: DramaSummary;
     cast: DramaCast[];
     castId?: string;
+    episodeId?: string;
     onClose: () => void;
     onChanged: () => void;
     children?: ReactNode;
@@ -22,10 +23,10 @@ export type CastEditorDialogProps = {
 
 /** 与原设定页共用编辑器，关闭或切换作品、设定后销毁本次表单。 */
 export function CastEditorDialog(props: CastEditorDialogProps) {
-    return props.castId ? <CastEditorDialogSession key={`${props.summary.project.id}:${props.castId}`} {...props} /> : null;
+    return props.castId ? <CastEditorDialogSession key={`${props.summary.project.id}:${props.episodeId || ""}:${props.castId}`} {...props} /> : null;
 }
 
-function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged, children, onDirtyChange }: CastEditorDialogProps) {
+function CastEditorDialogSession({ summary, cast, castId, episodeId, onClose, onChanged, children, onDirtyChange }: CastEditorDialogProps) {
     const { modal, message } = App.useApp();
     const [editorState, setEditorState] = useState({ dirty: false, busy: false });
     const stateChange = useRef(onDirtyChange);
@@ -87,6 +88,7 @@ function CastEditorDialogSession({ summary, cast, castId, onClose, onChanged, ch
                     {current ? (
                         <CastEditor
                             projectId={projectId}
+                            episodeId={episodeId}
                             cast={current}
                             parent={current.parentId ? cast.find((item) => item.id === current.parentId && item.projectId === projectId) : undefined}
                             looks={cast.filter((item) => item.parentId === current.id && item.projectId === projectId)}

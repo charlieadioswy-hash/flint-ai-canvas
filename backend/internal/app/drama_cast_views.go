@@ -13,6 +13,7 @@ import (
 )
 
 type DramaCastViewSaveRequest struct {
+	EpisodeID            string              `json:"episodeId,omitempty"`
 	ExpectedRevision     *int64              `json:"expectedRevision"`
 	ExpectedCastRevision *int64              `json:"expectedCastRevision"`
 	ViewRevision         *int64              `json:"viewRevision"`
@@ -20,6 +21,7 @@ type DramaCastViewSaveRequest struct {
 }
 
 type DramaCastViewActionRequest struct {
+	EpisodeID         string `json:"episodeId,omitempty"`
 	ExpectedRevision  *int64 `json:"expectedRevision"`
 	ViewRevision      *int64 `json:"viewRevision"`
 	ConfirmationToken string `json:"confirmationToken,omitempty"`
@@ -73,6 +75,10 @@ func dramaCastViewDigest(value any) string {
 }
 
 func dramaCastViewSource(repo *repository.Repository, cast model.DramaCast) (string, error) {
+	return dramaCastViewContextSource(repo, cast, "")
+}
+
+func dramaCastViewContextSource(repo *repository.Repository, cast model.DramaCast, episodeID string) (string, error) {
 	p, err := repo.DramaProduction(cast.ProjectID)
 	if err != nil {
 		return "", err
@@ -84,7 +90,15 @@ func dramaCastViewSource(repo *repository.Repository, cast model.DramaCast) (str
 			return "", err
 		}
 	}
-	return dramaCastViewDigest([]any{cast.Revision, cast.Name, cast.Kind, cast.ParentID, cast.Appearance, cast.Description, cast.DefinitionJSON, cast.ImagePrompt, cast.ImageOptionsJSON, cast.ImageResourceID, cast.ImageStylePrompt, parent, p.SettingsJSON, p.BibleJSON}), nil
+	settingsSource := any(p.SettingsJSON)
+	if episodeID != "" {
+		settings, err := dramaCastContextSettings(repo, p, episodeID)
+		if err != nil {
+			return "", err
+		}
+		settingsSource = []any{episodeID, settings}
+	}
+	return dramaCastViewDigest([]any{cast.Revision, cast.Name, cast.Kind, cast.ParentID, cast.Appearance, cast.Description, cast.DefinitionJSON, cast.ImagePrompt, cast.ImageOptionsJSON, cast.ImageResourceID, cast.ImageStylePrompt, parent, settingsSource, p.BibleJSON}), nil
 }
 
 func dramaCastViewError(err error) error {
@@ -103,6 +117,7 @@ func (s *Service) dramaCastViewScope(userID, projectID, castID string) error {
 }
 
 func (s *Service) SaveDramaCastView(userID, projectID, castID, viewID string, req DramaCastViewSaveRequest) (DramaCastViewResult, error) {
+	req.EpisodeID = strings.TrimSpace(req.EpisodeID)
 	if err := s.dramaCastViewScope(userID, projectID, castID); err != nil {
 		return DramaCastViewResult{}, err
 	}
@@ -153,6 +168,10 @@ func (s *Service) SaveDramaCastView(userID, projectID, castID, viewID string, re
 		if err != nil {
 			return err
 		}
+		settings, err := dramaCastContextSettings(repo, p, req.EpisodeID)
+		if err != nil {
+			return err
+		}
 		compiled, err := dramaCastViewImageCast(*cast, config)
 		if err != nil {
 			return err
@@ -161,7 +180,7 @@ func (s *Service) SaveDramaCastView(userID, projectID, castID, viewID string, re
 		if err := repo.LockDramaCastImageReferences(userID, ids); err != nil {
 			return BadAuthRequest("参考图片不可用，请重新选择")
 		}
-		if _, err := s.dramaCastImagePlanFor(repo, userID, parseDramaSettings(p.SettingsJSON), compiled); err != nil {
+		if _, err := s.dramaCastImagePlanFor(repo, userID, settings, compiled); err != nil {
 			return err
 		}
 		encoded, _ := json.Marshal(config)
@@ -227,6 +246,7 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 		return DramaCastViewResult{}, err
 	}
 	results := []DramaCastViewTake{}
+	episodeID := ""
 	for _, take := range takes {
 		result := DramaCastViewTake{DramaTake: take, Status: "ready"}
 		if take.TaskID != "" {
@@ -235,6 +255,15 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 				return DramaCastViewResult{}, err
 			}
 			result.Status, result.Error = string(task.Status), task.Error
+			if task.ID == row.TaskID {
+				var input struct {
+					Metadata struct {
+						EpisodeID string `json:"dramaEpisodeId"`
+					} `json:"metadata"`
+				}
+				_ = json.Unmarshal([]byte(task.InputJSON), &input)
+				episodeID = input.Metadata.EpisodeID
+			}
 			if task.Status == model.TaskStatusSucceeded && take.ResourceID == "" {
 				if _, outputErr := dramaCastImageResource(task); outputErr != nil {
 					result.Status, result.Error = "failed", outputErr.Error()
@@ -274,9 +303,12 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 	if err != nil {
 		return view, err
 	}
-	currentHash, err := dramaCastViewSource(s.repo, *cast)
+	currentHash, err := dramaCastViewContextSource(s.repo, *cast, episodeID)
 	if err != nil {
-		return view, err
+		var appErr *AppError
+		if episodeID == "" || !errors.As(err, &appErr) || appErr.Status != 404 {
+			return view, err
+		}
 	}
 	if row.SourceHash != "" && row.SourceHash != currentHash && view.ResourceID != "" {
 		view.Status = "stale"

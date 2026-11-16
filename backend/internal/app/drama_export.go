@@ -367,12 +367,13 @@ type dramaAssetCast struct {
 }
 
 type dramaAssetEpisode struct {
-	Number   int                 `json:"number"`
-	Title    string              `json:"title"`
-	Synopsis string              `json:"synopsis,omitempty"`
-	Final    string              `json:"final,omitempty"`
-	Segments []dramaAssetSegment `json:"segments"`
-	Shots    []dramaAssetShot    `json:"shots"`
+	AspectRatio string              `json:"aspectRatio,omitempty"`
+	Number      int                 `json:"number"`
+	Title       string              `json:"title"`
+	Synopsis    string              `json:"synopsis,omitempty"`
+	Final       string              `json:"final,omitempty"`
+	Segments    []dramaAssetSegment `json:"segments"`
+	Shots       []dramaAssetShot    `json:"shots"`
 }
 
 type dramaAssetSegment struct {
@@ -455,7 +456,7 @@ func (s *Service) PrepareDramaAssetPackage(userID, projectID string, req DramaAs
 	}
 	sort.Slice(episodes, func(i, j int) bool { return episodes[i].Number < episodes[j].Number })
 	for _, episode := range episodes {
-		if err := s.packDramaEpisode(userID, root, episode, req, archive, &manifest); err != nil {
+		if err := s.packDramaEpisode(userID, root, episode, dramaEpisodeSettings(settings, episode), req, archive, &manifest); err != nil {
 			return nil, err
 		}
 	}
@@ -546,7 +547,7 @@ func (s *Service) dramaCastImagePrompt(projectID string, cast model.DramaCast) s
 	return ""
 }
 
-func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpisode, req DramaAssetPackageRequest, archive *DramaArchive, manifest *dramaAssetManifest) error {
+func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpisode, settings DramaSettings, req DramaAssetPackageRequest, archive *DramaArchive, manifest *dramaAssetManifest) error {
 	shots, err := s.repo.DramaShots(episode.ID)
 	if err != nil {
 		return err
@@ -559,7 +560,7 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 		return err
 	}
 	folder := fmt.Sprintf("%s/第%02d集-%s", root, episode.Number, jianying.SafeName(episode.Title, "未命名", 40))
-	item := dramaAssetEpisode{Number: episode.Number, Title: episode.Title, Synopsis: episode.Synopsis, Segments: []dramaAssetSegment{}, Shots: []dramaAssetShot{}}
+	item := dramaAssetEpisode{Number: episode.Number, Title: episode.Title, Synopsis: episode.Synopsis, AspectRatio: settings.AspectRatio, Segments: []dramaAssetSegment{}, Shots: []dramaAssetShot{}}
 	shotsBySegment := dramaShotsBySegment(shots)
 	segmentByIndex := make(map[int]model.DramaSegment, len(segments))
 	for _, segment := range segments {

@@ -23,7 +23,7 @@ function chapterLabel(from?: number, to?: number) {
 }
 
 /** 一套造型的编辑表单（新增或修改共用）。 */
-function LookForm({ projectId, initial, submitting, onCancel, onSubmit }: { projectId: string; initial?: DramaCast; submitting: boolean; onCancel: () => void; onSubmit: (value: LookInput) => void }) {
+function LookForm({ projectId, episodeId, initial, submitting, onCancel, onSubmit }: { projectId: string; episodeId?: string; initial?: DramaCast; submitting: boolean; onCancel: () => void; onSubmit: (value: LookInput) => void }) {
     const [name, setName] = useState(initial?.lookName || "");
     const [appearance, setAppearance] = useState(initial?.appearance || "");
     const [imageFields, setImageFields] = useState<CastImageFieldsValue>({
@@ -39,7 +39,7 @@ function LookForm({ projectId, initial, submitting, onCancel, onSubmit }: { proj
         <div className="drama-look-form">
             <Input value={name} maxLength={60} placeholder="造型名，如 外门弟子、霸道总裁" aria-label="造型名" onChange={(event) => setName(event.target.value)} />
             <Input.TextArea value={appearance} maxLength={1000} autoSize={{ minRows: 2, maxRows: 5 }} placeholder="这套造型的服装、发型与妆容；五官脸型沿用角色本体" aria-label="造型外观" onChange={(event) => setAppearance(event.target.value)} />
-            <CastImageFields projectId={projectId} castId={initial?.id} appearance={appearance} value={imageFields} disabled={submitting} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+            <CastImageFields projectId={projectId} episodeId={episodeId} castId={initial?.id} appearance={appearance} value={imageFields} disabled={submitting} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
             <small>以角色本体图保持人物一致。确认只保存设定，点击“生成造型图”才调用模型。</small>
             <div className="drama-look-form-range">
                 <span>默认适用</span>
@@ -73,6 +73,7 @@ function LookForm({ projectId, initial, submitting, onCancel, onSubmit }: { proj
  */
 export function CastLooks({
     projectId,
+    episodeId,
     character,
     looks,
     restyle,
@@ -80,6 +81,7 @@ export function CastLooks({
     onDirtyChange,
 }: {
     projectId: string;
+    episodeId?: string;
     character: DramaCast;
     looks: DramaCast[];
     restyle: boolean;
@@ -106,7 +108,7 @@ export function CastLooks({
         onError: (error) => message.error(error instanceof Error ? error.message : "添加失败"),
     });
     const update = useMutation({
-        mutationFn: ({ id, value }: { id: string; value: LookInput }) => updateDramaCastLook(projectId, id, { ...value, restyleSegments: restyle }),
+        mutationFn: ({ id, value }: { id: string; value: LookInput }) => updateDramaCastLook(projectId, id, { ...value, restyleSegments: restyle, ...(episodeId ? { episodeId } : {}) }),
         onSuccess: (result) => done("已更新造型", result.affectedSegments),
         onError: (error) => message.error(error instanceof Error ? error.message : "更新失败"),
     });
@@ -119,7 +121,7 @@ export function CastLooks({
         mutationFn: async ({ look, isCurrent }: { look: DramaCast; isCurrent: () => boolean }) => {
             if (look.locked) await updateDramaCast(projectId, look.id, { locked: false });
             if (!isCurrent()) return;
-            const result = await regenerateDramaCast(projectId, look.id, restyle);
+            const result = await (episodeId ? regenerateDramaCast(projectId, look.id, restyle, episodeId) : regenerateDramaCast(projectId, look.id, restyle));
             return { result, isCurrent };
         },
         onSuccess: (completed) => {
@@ -153,7 +155,7 @@ export function CastLooks({
             <div className="drama-looks">
                 {looks.map((look) =>
                     editingId === look.id ? (
-                        <LookForm projectId={projectId} key={look.id} initial={look} submitting={update.isPending} onCancel={() => setEditingId(undefined)} onSubmit={(value) => update.mutate({ id: look.id, value })} />
+                        <LookForm projectId={projectId} episodeId={episodeId} key={look.id} initial={look} submitting={update.isPending} onCancel={() => setEditingId(undefined)} onSubmit={(value) => update.mutate({ id: look.id, value })} />
                     ) : (
                         <div key={look.id} className="drama-look-item">
                             <div className="drama-look">
@@ -201,7 +203,7 @@ export function CastLooks({
                     ),
                 )}
                 {adding ? (
-                    <LookForm projectId={projectId} submitting={add.isPending} onCancel={() => setAdding(false)} onSubmit={(value) => add.mutate(value)} />
+                    <LookForm projectId={projectId} episodeId={episodeId} submitting={add.isPending} onCancel={() => setAdding(false)} onSubmit={(value) => add.mutate(value)} />
                 ) : looks.length < MAX_LOOKS ? (
                     <Button size="small" icon={<Plus className="size-3.5" />} disabled={busy} onClick={() => setAdding(true)}>
                         添加造型

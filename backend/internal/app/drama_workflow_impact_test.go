@@ -20,7 +20,7 @@ func TestDramaWorkflowCastImpactIncludesManualLookReferencesAndRealContinuity(t 
 			if parallel {
 				settings.VideoContinuity = DramaContinuityParallel
 			}
-			if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"settings_json": encodeDramaSettings(settings)}); err != nil {
+			if err := fake.db.Model(&model.DramaEpisode{}).Where("id = ?", detail.Episode.ID).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
 				t.Fatal(err)
 			}
 			if err := fake.db.Model(&model.DramaShot{}).Where("project_id = ?", projectID).Updates(map[string]any{"cast_ids_json": "[]", "prop_ids_json": "[]", "look_cast_ids_json": "[]", "scene_cast_id": ""}).Error; err != nil {

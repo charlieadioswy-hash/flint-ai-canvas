@@ -107,7 +107,8 @@ func (s *Service) planDramaJianyingDraft(userID, projectID, episodeID string, re
 		ordered = append(ordered, index)
 	}
 	sort.Ints(ordered)
-	width, height := dramaRenderSize(parseDramaSettings(productionRow.SettingsJSON).AspectRatio)
+	settings := dramaEpisodeSettings(parseDramaSettings(productionRow.SettingsJSON), *episode)
+	width, height := dramaRenderSize(settings.AspectRatio)
 	preview := &DramaJianyingDraftPreview{DraftRoot: root, TotalSegments: len(ordered), Segments: []DramaJianyingSegmentPreview{}, Warnings: []string{}}
 	plan := &dramaJianyingPlan{Preview: preview, Project: project, Episode: episode, Width: width, Height: height}
 	// 只对实际交付相关字段作指纹：不受任务日志或轮询时间变化干扰，也不缓存任何路径令牌。

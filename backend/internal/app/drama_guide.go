@@ -197,6 +197,12 @@ func (s *Service) dramaGuideView(p *model.DramaProduction) (*DramaGuideView, err
 }
 
 func (s *Service) validateDramaGuideSettings(userID string, settings DramaSettings) (DramaSettings, error) {
+	if err := settings.ValidateStylePrompt(); err != nil {
+		return settings, BadAuthRequest(err.Error())
+	}
+	if err := settings.TextThinking.validate(); err != nil {
+		return settings, err
+	}
 	if err := settings.Storyboard.ValidateDirector(); err != nil {
 		return settings, BadAuthRequest(err.Error())
 	}
@@ -298,14 +304,33 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 				}
 				cursor, done = len(chapters), true
 			}
+			initializeDramaEpisodeSettings(episodes, encodeDramaSettings(settings))
 			if err := tx.ResetDramaGuideEpisodes(projectID, format, episodes, cursor, done); err != nil {
 				return err
 			}
 			fields["settings_json"], fields["status"], fields["pause_reason"] = encodeDramaSettings(settings), model.DramaStatusRunning, ""
+			fields["initial_settings_json"] = encodeDramaSettings(settings)
 			fields["guide_step"] = model.DramaGuideAssets
 		case model.DramaGuideAssets:
 			if req.Settings != nil {
 				fields["settings_json"] = encodeDramaSettings(settings)
+				previous := parseDramaSettings(dramaInitialEpisodeSettingsJSON(*current))
+				nextInitial := dramaGuideEpisodeInitialSettings(previous, previous, settings)
+				fields["initial_settings_json"] = encodeDramaSettings(nextInitial)
+				episodes, err := tx.DramaEpisodes(projectID)
+				if err != nil {
+					return err
+				}
+				for _, episode := range episodes {
+					effective := previous
+					if strings.TrimSpace(episode.SettingsJSON) != "" {
+						effective = parseDramaSettings(episode.SettingsJSON)
+					}
+					updated := dramaGuideEpisodeInitialSettings(effective, previous, nextInitial)
+					if err := tx.UpdateDramaEpisodeSettings(projectID, episode.ID, episode.Revision, encodeDramaSettings(updated)); err != nil {
+						return err
+					}
+				}
 			}
 			fields["guide_step"] = model.DramaGuideStory
 			fields["status"], fields["pause_reason"] = model.DramaStatusRunning, ""
@@ -450,5 +475,6 @@ func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInp
 		return chapters, nil, 0, false, nil
 	}
 	episodes, err := groupDramaChapterEpisodes(projectID, 1, produced, settings.ChaptersPerEpisode, format, now)
+	initializeDramaEpisodeSettings(episodes, encodeDramaSettings(settings))
 	return chapters, episodes, len(produced), true, err
 }

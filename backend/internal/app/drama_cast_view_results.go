@@ -18,10 +18,11 @@ func (s *Service) RegisterDramaCastViewTaskOutput(task model.Task) (bool, error)
 	}
 	var input struct {
 		Metadata struct {
-			CastID   string `json:"dramaCastId"`
-			ViewID   string `json:"dramaCastViewId"`
-			Revision int64  `json:"dramaCastViewRevision"`
-			Hash     string `json:"dramaCastViewSourceHash"`
+			EpisodeID string `json:"dramaEpisodeId"`
+			CastID    string `json:"dramaCastId"`
+			ViewID    string `json:"dramaCastViewId"`
+			Revision  int64  `json:"dramaCastViewRevision"`
+			Hash      string `json:"dramaCastViewSourceHash"`
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
@@ -62,8 +63,9 @@ func (s *Service) RegisterDramaCastViewTaskOutput(task model.Task) (bool, error)
 		}
 		currentHash := ""
 		if cast != nil {
-			currentHash, err = dramaCastViewSource(repo, *cast)
-			if err != nil {
+			currentHash, err = dramaCastViewContextSource(repo, *cast, input.Metadata.EpisodeID)
+			var appErr *AppError
+			if err != nil && (input.Metadata.EpisodeID == "" || !errors.As(err, &appErr) || appErr.Status != 404) {
 				return err
 			}
 		}

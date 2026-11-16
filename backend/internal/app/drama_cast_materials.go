@@ -126,6 +126,14 @@ func (s *Service) PreviewDramaCastImagePrompt(userID, projectID, castID string, 
 	if _, err := applyDramaCastImageFields(cast, nil, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt); err != nil {
 		return "", err
 	}
+	settings, meta := parseDramaSettings(row.SettingsJSON), parseDramaBibleMeta(row.BibleJSON)
+	if episodeID := strings.TrimSpace(req.EpisodeID); episodeID != "" {
+		episode, err := s.repo.DramaEpisode(project.ID, episodeID)
+		if err != nil {
+			return "", dramaLookupError(err)
+		}
+		settings, meta = dramaEpisodeStyleSettings(settings, meta, *episode)
+	}
 	cast.ImagePrompt = ""
-	return buildDramaCastImagePrompt(parseDramaSettings(row.SettingsJSON), parseDramaBibleMeta(row.BibleJSON), *cast), nil
+	return buildDramaCastImagePrompt(settings, meta, *cast), nil
 }

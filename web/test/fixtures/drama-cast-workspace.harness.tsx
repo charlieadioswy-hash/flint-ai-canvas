@@ -95,6 +95,7 @@ beforeEach(() => {
     spyOn(resources, "getResourceAccess").mockRejectedValue(new Error("No remote media in this fixture"));
     spyOn(api, "getDramaCastImpact").mockImplementation(async (_projectId, castId) => impactOf(castId));
     spyOn(api, "getDrama").mockResolvedValue(dialogSummary);
+    spyOn(api, "getDramaEpisodeStyle").mockImplementation(async (projectId, episodeId) => ({ projectId, episodeId, revision: dialogSummary.production.revision, episodeRevision: 1, settings: dialogSummary.production.settings }));
     spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [] });
     spyOn(viewApi, "listDramaCastViews").mockResolvedValue({ views: [] });
     spyOn(viewState, "readCastViewPending").mockResolvedValue(undefined);
@@ -208,7 +209,7 @@ function PanelHarness({ onFocus = () => {}, onChanged = () => {}, items = [hero,
 
 const dialogSummary = { project: { id: "current", name: "当前作品" }, production: { revision: 9, settings: { models: {}, assets: { characterRatio: "16:9" } } } } as DramaSummary;
 const room = castFixture("room", "秦家卧室", { kind: "scene", imageStatus: "ready", imageResourceId: "room-image" });
-function DialogHarness({ castId, items, onChanged = () => {}, onClose = () => {} }: { castId: string; items: DramaCast[]; onChanged?: () => void; onClose?: () => void }) {
+function DialogHarness({ castId, items, episodeId, onChanged = () => {}, onClose = () => {} }: { castId: string; items: DramaCast[]; episodeId?: string; onChanged?: () => void; onClose?: () => void }) {
     const [open, setOpen] = useState(true);
     const location = useLocation();
     return (
@@ -218,6 +219,7 @@ function DialogHarness({ castId, items, onChanged = () => {}, onClose = () => {}
                 summary={dialogSummary}
                 cast={items}
                 castId={open ? castId : undefined}
+                episodeId={episodeId}
                 onChanged={onChanged}
                 onClose={() => {
                     setOpen(false);
@@ -365,6 +367,62 @@ test("首次生成且没有已生成视频依赖时直接生成，不展示影�
     expect(generation.batch).not.toHaveBeenCalled();
 });
 
+test("同一主体在不同分集详情生成时始终提交当前分集配置范围", async () => {
+    const first = { ...hero, imageResourceId: undefined, imageStatus: "draft" as const };
+    const generation = spyGeneration();
+    const save = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: first });
+    for (const [index, episodeId] of ["episode-a", "episode-b"].entries()) {
+        await render(<DialogHarness castId={first.id} items={[first]} episodeId={episodeId} />);
+        await click("生成参考图", document.querySelector(".drama-cast-dialog")!);
+        await settleUntil(() => generation.single.mock.calls.length === index + 1);
+        expect(generation.single.mock.calls[index]).toEqual(["current", first.id, true, episodeId]);
+    }
+    expect(save).not.toHaveBeenCalled();
+    expect(generation.batch).not.toHaveBeenCalled();
+});
+
+test("分集角色详情内生成造型图保留当前集", async () => {
+    const generation = spyGeneration();
+    for (const [index, episodeId] of ["episode-a", "episode-b"].entries()) {
+        await render(<DialogHarness castId={hero.id} items={[hero, childhood]} episodeId={episodeId} />);
+        await click("生成造型图", document.querySelector(".drama-cast-dialog")!);
+        await settleUntil(() => generation.single.mock.calls.length === index + 1);
+        expect(generation.single.mock.calls[index]).toEqual(["current", childhood.id, true, episodeId]);
+    }
+});
+
+test("分集角色详情内造型重编排与保存保留当前集", async () => {
+    const rebuilt = spyOn(api, "rebuildDramaCastImagePrompt").mockResolvedValue({ imagePrompt: "本集造型新提示词" });
+    const save = spyOn(api, "updateDramaCastLook").mockResolvedValue({ look: childhood, affectedSegments: 0 });
+    await render(<DialogHarness castId={hero.id} items={[hero, childhood]} episodeId="episode-b" />);
+    await click("编辑造型 幼年", document.querySelector(".drama-cast-dialog")!);
+    const form = document.querySelector(".drama-look-form")!;
+    await fill("造型外观", "短发与本集蓝色外套", form);
+    await click("重新编排提示词", form);
+    await click("确认替换", [...document.querySelectorAll('[role="dialog"]')].at(-1)!);
+    expect(rebuilt).toHaveBeenCalledWith("current", childhood.id, expect.objectContaining({ episodeId: "episode-b", appearance: "短发与本集蓝色外套" }));
+    await click("确认保存", form);
+    expect(save).toHaveBeenCalledWith("current", childhood.id, expect.objectContaining({ episodeId: "episode-b", appearance: "短发与本集蓝色外套", imagePrompt: "本集造型新提示词" }));
+});
+
+test("同一主体切集后旧分集的影响检查迟到不提交生成，新操作使用当前集", async () => {
+    const first = { ...hero, imageResourceId: undefined, imageStatus: "draft" as const };
+    let resolveImpact!: (value: DramaWorkflowImpact) => void;
+    const impactRead = spyOn(api, "getDramaCastImpact")
+        .mockResolvedValue(impactOf(first.id))
+        .mockReturnValueOnce(new Promise((resolve) => (resolveImpact = resolve)));
+    const generation = spyGeneration();
+    await render(<DialogHarness castId={first.id} items={[first]} episodeId="episode-a" />);
+    await click("生成参考图", document.querySelector(".drama-cast-dialog")!);
+    await settleUntil(() => impactRead.mock.calls.length === 1);
+    await render(<DialogHarness castId={first.id} items={[first]} episodeId="episode-b" />);
+    await act(async () => resolveImpact(impactOf(first.id)));
+    expectNoGeneration(generation);
+    await click("生成参考图", document.querySelector(".drama-cast-dialog")!);
+    await settleUntil(() => generation.single.mock.calls.length === 1);
+    expect(generation.single).toHaveBeenCalledWith("current", first.id, true, "episode-b");
+});
+
 for (const surface of ["workspace", "sidebar"] as const) {
     test(`${surface} 保存响应返回前轮询到新设定仍继续生成，并保持忙碌直到生成请求完成`, async () => {
         const refreshed = { ...hero, name: "林溪·新设定", appearance: "保存后的白色外套与银色纽扣" };
@@ -403,19 +461,20 @@ for (const surface of ["workspace", "sidebar"] as const) {
     });
 }
 
-for (const change of ["asset", "account"] as const) {
+for (const change of ["asset", "account", "episode"] as const) {
     test(`保存途中切换 ${change} 仍取消旧资产的后续生成`, async () => {
         const other = { ...hero, id: "other-hero", name: "其他角色" };
         let resolveSave!: (value: { cast: DramaCast }) => void;
         const save = spyOn(api, "updateDramaCast").mockReturnValue(new Promise((resolve) => (resolveSave = resolve)));
         const generation = spyGeneration();
         const changed = mock();
-        const view = (castId: string) => <DialogHarness castId={castId} items={[hero, other]} onChanged={changed} />;
+        const view = (castId: string, episodeId = "episode-a") => <DialogHarness castId={castId} items={[hero, other]} episodeId={episodeId} onChanged={changed} />;
         await render(view(hero.id));
         await fill("外貌描述", "未返回的保存内容");
         await click("保存并重新生成");
         await settleUntil(() => save.mock.calls.length === 1);
         if (change === "asset") await render(view(other.id));
+        else if (change === "episode") await render(view(hero.id, "episode-b"));
         else await act(async () => useUserStore.setState({ user: { id: "another-workspace-user" } as never }));
         await act(async () => resolveSave({ cast: { ...hero, appearance: "未返回的保存内容" } }));
         expectNoGeneration(generation);
@@ -779,7 +838,7 @@ test("import preview matches names across Unicode whitespace, punctuation and ca
     expect(imported).toHaveBeenCalledWith("current", { sourceProjectId: "season-one", castIds: [variants[0].id], matchByName: true, replaceExisting: true });
 });
 
-function ImageFieldsHarness({ initial = {}, onChange = () => {}, overrideAppearance }: { initial?: CastImageFieldsValue; onChange?: (patch: CastImageFieldsValue) => void; overrideAppearance?: string }) {
+function ImageFieldsHarness({ initial = {}, onChange = () => {}, overrideAppearance, episodeId }: { initial?: CastImageFieldsValue; onChange?: (patch: CastImageFieldsValue) => void; overrideAppearance?: string; episodeId?: string }) {
     const [appearance, setAppearance] = useState("初始外观");
     const [value, setValue] = useState(initial);
     return (
@@ -787,6 +846,7 @@ function ImageFieldsHarness({ initial = {}, onChange = () => {}, overrideAppeara
             <input aria-label="当前外观" value={appearance} onChange={(event) => setAppearance(event.target.value)} />
             <CastImageFields
                 projectId="current"
+                episodeId={episodeId}
                 castId={evening.id}
                 appearance={overrideAppearance ?? appearance}
                 value={value}
@@ -810,7 +870,7 @@ test("prompt rebuilding uses the currently edited appearance and composed style 
     const save = spyOn(api, "updateDramaCastLook").mockResolvedValue({ look: evening, affectedSegments: 0 });
     const generation = spyGeneration();
     const changed = mock();
-    await render(<ImageFieldsHarness initial={{ imagePrompt: "手写原提示词" }} onChange={changed} />);
+    await render(<ImageFieldsHarness initial={{ imagePrompt: "手写原提示词" }} onChange={changed} episodeId="episode-b" />);
     await fill("当前外观", "白色风衣，短发，银色耳饰");
     await enableOwnStyle();
     await chooseAxis("表现形式", "3d");
@@ -820,7 +880,7 @@ test("prompt rebuilding uses the currently edited appearance and composed style 
     await click("重新编排提示词");
     expect(rebuilt).not.toHaveBeenCalled();
     await click("确认替换", [...document.querySelectorAll('[role="dialog"]')].at(-1)!);
-    expect(rebuilt).toHaveBeenCalledWith("current", evening.id, { appearance: "白色风衣，短发，银色耳饰", imageStyleId: style.id, imageStyleName: style.name, imageStylePrompt: style.prompt });
+    expect(rebuilt).toHaveBeenCalledWith("current", evening.id, { episodeId: "episode-b", appearance: "白色风衣，短发，银色耳饰", imageStyleId: style.id, imageStyleName: style.name, imageStylePrompt: style.prompt });
     expect(changed).toHaveBeenLastCalledWith({ imagePrompt: "已编排：3D 都市，白色风衣" });
     expect(document.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("已编排：3D 都市，白色风衣");
     expect(save).not.toHaveBeenCalled();
@@ -1006,7 +1066,7 @@ test("独立视图在当前工作区单独保存、预检确认生成和采用�
     const check = spyOn(viewApi, "preflightDramaCastView").mockResolvedValue({ revision: 9, viewRevision: 5, ready: true, priced: true, estimated: true, amountMicrocredits: 1000, confirmationToken: "view-token" });
     const execute = spyOn(viewApi, "executeDramaCastView").mockResolvedValue({ id: "view-task" } as never);
     const adopt = spyOn(viewApi, "adoptDramaCastView").mockResolvedValue(row);
-    await render(<DialogHarness castId={hero.id} items={[hero]} />);
+    await render(<DialogHarness castId={hero.id} items={[hero]} episodeId="episode-b" />);
     await fill("外貌描述", "主体的未保存修改");
     expect(button("选择正面图独立视图").disabled).toBe(true);
     await fill("外貌描述", hero.appearance);
@@ -1014,16 +1074,16 @@ test("独立视图在当前工作区单独保存、预检确认生成和采用�
     await fill("视图名称", "正面特写");
     expect(button("预检生成").disabled).toBe(true);
     await click("保存视图配置");
-    expect(viewSave).toHaveBeenCalledWith("current", hero.id, row.id, expect.objectContaining({ expectedRevision: 9, expectedCastRevision: 1, viewRevision: 4, config: expect.objectContaining({ name: "正面特写" }) }));
+    expect(viewSave).toHaveBeenCalledWith("current", hero.id, row.id, expect.objectContaining({ episodeId: "episode-b", expectedRevision: 9, expectedCastRevision: 1, viewRevision: 4, config: expect.objectContaining({ name: "正面特写" }) }));
     expect(mainSave).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     await settleUntil(() => !button("预检生成").disabled);
     await click("预检生成");
-    expect(check).toHaveBeenCalledWith("current", hero.id, row.id, { viewRevision: 5 });
+    expect(check).toHaveBeenCalledWith("current", hero.id, row.id, { episodeId: "episode-b", viewRevision: 5 });
     expect(execute).not.toHaveBeenCalled();
     await click("确认生成此视图");
-    expect(execute).toHaveBeenCalledWith("current", hero.id, row.id, expect.objectContaining({ expectedRevision: 9, viewRevision: 5, confirmationToken: "view-token", clientOperationId: expect.stringContaining("cast-view:") }));
+    expect(execute).toHaveBeenCalledWith("current", hero.id, row.id, expect.objectContaining({ episodeId: "episode-b", expectedRevision: 9, viewRevision: 5, confirmationToken: "view-token", clientOperationId: expect.stringContaining("cast-view:") }));
     await click("采用此版本");
     expect(adopt).toHaveBeenCalledWith("current", hero.id, row.id, { expectedRevision: 9, viewRevision: 5, takeId: row.takes[0].id });
 });

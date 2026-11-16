@@ -90,7 +90,6 @@ func TestOpenAPIDramaStyleDrawingContracts(t *testing.T) {
 	}
 	for _, tc := range []struct{ path, request string }{
 		{"/dramas/{id}/workflow/style", "UpdateDramaWorkflowStyleRequest"},
-		{"/dramas/{id}/episodes/{episodeId}/style", "UpdateDramaEpisodeStyleRequest"},
 	} {
 		body := spec.Paths[tc.path].Patch.RequestBody
 		if !body.Required || body.Content["application/json"].Schema.Ref != "#/components/schemas/"+tc.request {
@@ -106,8 +105,12 @@ func TestOpenAPIDramaStyleDrawingContracts(t *testing.T) {
 		}
 	}
 	view := spec.Components.Schemas["DramaEpisodeStyle"]
-	if !slices.Contains(view.Required, "drawing") || view.Properties["drawing"].Ref != "#/components/schemas/DramaDrawingConfiguration" {
-		t.Fatal("episode style must return the current shared drawing configuration")
+	request := spec.Components.Schemas["UpdateDramaEpisodeStyleRequest"]
+	if !slices.Contains(view.Required, "settings") || view.Properties["settings"].Ref != "#/components/schemas/DramaSettings" || !slices.Contains(request.Required, "settings") || request.Properties["settings"].Ref != "#/components/schemas/DramaSettings" {
+		t.Fatal("episode settings must read and save a complete independent configuration")
+	}
+	if _, exists := request.Properties["mode"]; exists {
+		t.Fatal("episode configuration must not require a user-selected inheritance mode")
 	}
 	drawing := spec.Components.Schemas["DramaDrawingConfiguration"]
 	if !slices.Contains(drawing.Required, "assets") || !slices.Contains(drawing.Required, "models") {

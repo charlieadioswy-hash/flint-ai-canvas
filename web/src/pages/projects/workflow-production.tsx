@@ -84,7 +84,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
     const queryClient = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const invalidate = useDramaInvalidate(projectId);
-    const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
+    const [castSelection, setCastSelection] = useState<{ owner: string; episodeId: string; id: string }>();
     const [exportProjectId, setExportProjectId] = useState<string>();
     const [mediaEditingState, setMediaEditingState] = useState({ dirty: false, busy: false });
     const mediaEditingChanged = useCallback(
@@ -108,7 +108,6 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
         },
         [projectId],
     );
-    useEffect(() => setCastSelection(undefined), [projectId]);
 
     const jobsActive = Boolean((summary.jobCounts.queued || 0) + (summary.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary.production.revision);
@@ -127,6 +126,8 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
     const queryEpisodeId = search.get("episode");
     const activeEpisodeId = selectedEpisodeId(routeEpisodeId, queryEpisodeId);
     const all = search.get("scope") === "all" || !activeEpisodeId;
+    const castSelectionOwner = JSON.stringify([userId, projectId, activeEpisodeId, all]);
+    useEffect(() => setCastSelection(undefined), [castSelectionOwner]);
     const visibleEpisodes = all ? episodes : episodes.filter((episode) => episode.id === activeEpisodeId);
     const queries = useQueries({
         queries: episodes.map((episode) => ({
@@ -522,7 +523,7 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                               onChanged={() => void refresh(episode.id)}
                                               onOpenShot={(shot, kind) => openShot(episode.id, shot.id, kind)}
                                               onEditShot={(shot) => openSegment(episode.id, shot.segmentIndex, shot.id)}
-                                              onOpenCast={(id) => setCastSelection({ projectId, id })}
+                                              onOpenCast={(id) => setCastSelection({ owner: castSelectionOwner, episodeId: episode.id, id })}
                                               segmentIndex={episode.id === activeEpisodeId ? segmentIndex : undefined}
                                               onSegmentChange={(index) =>
                                                   replaceQuery(episode.id, (next) => {
@@ -681,11 +682,19 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                         closeSegmentEditor();
                         media.requestVideo(currentEpisode, segment, model);
                     }}
-                    onOpenCast={(id) => setCastSelection({ projectId, id })}
+                    onOpenCast={(id) => setCastSelection({ owner: castSelectionOwner, episodeId: activeEpisodeId, id })}
                 />
             ) : null}
-            {castSelection?.projectId === projectId ? (
-                <CastEditorDialog key={`${projectId}:${castSelection.id}`} summary={summary} cast={castQuery.cast} castId={castSelection.id} onClose={() => setCastSelection(undefined)} onChanged={() => void refresh()} />
+            {castSelection?.owner === castSelectionOwner ? (
+                <CastEditorDialog
+                    key={`${castSelectionOwner}:${castSelection.episodeId}:${castSelection.id}`}
+                    summary={summary}
+                    episodeId={castSelection.episodeId}
+                    cast={castQuery.cast}
+                    castId={castSelection.id}
+                    onClose={() => setCastSelection(undefined)}
+                    onChanged={() => void refresh(castSelection.episodeId)}
+                />
             ) : null}
             {exportProjectId === projectId ? <AssetPackageModal key={projectId} open projectId={projectId} episodes={episodes} onClose={() => setExportProjectId(undefined)} /> : null}
             <DramaMediaActionDialog controller={media} />

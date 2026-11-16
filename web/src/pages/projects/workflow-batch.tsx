@@ -20,6 +20,7 @@ const STATUS_LABEL = { ready: "可提交", queued: "已入队", already_queued: 
 
 export type WorkflowBatchProps = {
     projectId: string;
+    episodeId?: string;
     revision: number;
     targetIds: string[];
     actions: DramaStudioBatchAction[];
@@ -54,10 +55,10 @@ export function WorkflowBatch(props: WorkflowBatchProps) {
 }
 
 /** 批次以服务端预检的范围与报价确认；执行只有一个批量请求，不逐项触发生成。 */
-function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetLabels = {}, disabled, onChanged, onClearSelection, triggerLabel, scopeDescription, compact, onBusyChange }: WorkflowBatchProps) {
+function WorkflowBatchSession({ projectId, episodeId, revision, targetIds, actions, targetLabels = {}, disabled, onChanged, onClearSelection, triggerLabel, scopeDescription, compact, onBusyChange }: WorkflowBatchProps) {
     const operation = useDramaOperationScope(projectId);
     const ids = [...new Set(targetIds)].sort();
-    const signature = JSON.stringify(ids);
+    const signature = JSON.stringify([episodeId || "", ids]);
     const actionSignature = JSON.stringify(actions);
     const latest = useRef({ signature, revision, actions, onChanged });
     latest.current = { signature, revision, actions, onChanged };
@@ -99,7 +100,7 @@ function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetL
         locked.current = true;
         setState({ open: true, action, phase: "checking", signature: startedSignature });
         try {
-            const preview = await preflightDramaStudioBatch(projectId, { action, targetIds: ids, baseRevision: startedRevision });
+            const preview = await preflightDramaStudioBatch(projectId, { action, targetIds: ids, baseRevision: startedRevision, ...(episodeId ? { episodeId } : {}) });
             if (!operation.isCurrent(ticket) || request.current !== sequence || latest.current.signature !== startedSignature || !latest.current.actions.includes(action)) return;
             if (!batchMatches(preview, action, ids)) throw new Error("批次范围与预检结果不一致，请重新预检");
             setState({ open: true, action, phase: "ready", preview, signature: startedSignature });
@@ -134,7 +135,7 @@ function WorkflowBatchSession({ projectId, revision, targetIds, actions, targetL
         locked.current = true;
         setState((previous) => ({ ...previous, phase: "submitting", error: undefined, notice: undefined }));
         try {
-            const receipt = await executeDramaStudioBatch(projectId, { action: current.action, targetIds: ids, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken });
+            const receipt = await executeDramaStudioBatch(projectId, { action: current.action, targetIds: ids, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, ...(episodeId ? { episodeId } : {}) });
             if (!operation.isCurrent(ticket) || request.current !== sequence || latest.current.signature !== startedSignature) return;
             if (!batchMatches(receipt, current.action, ids)) {
                 setState((previous) => ({ ...previous, phase: "uncertain", error: "已发送批次，但回执范围无法核对。请先核对最新状态，勿重复提交。" }));

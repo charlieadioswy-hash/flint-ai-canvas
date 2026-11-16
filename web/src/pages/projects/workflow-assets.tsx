@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Select } from "antd";
 import { ArrowRight, ChevronLeft, ChevronRight, Gem, MapPinned, Plus, UsersRound } from "lucide-react";
 
-import { createDramaCast, updateDramaWorkflowStyle, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { createDramaCast, getDramaEpisodeStyle, updateDramaEpisodeStyle, updateDramaWorkflowStyle, type DramaAssetSettings, type DramaCast, type DramaCastKind, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { dramaDrawingConfiguration } from "@/lib/drama/drawing-configuration";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -32,7 +32,7 @@ export type WorkflowAssetsProps = {
     error?: unknown;
     onRetry?: () => void;
     onChanged: () => void;
-    onGenerate: (cast: DramaCast) => void;
+    onGenerate: (cast: DramaCast, episodeId?: string) => void;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
     onContinue?: () => void;
     continueDisabled?: boolean;
@@ -40,7 +40,7 @@ export type WorkflowAssetsProps = {
 };
 
 type AddDraft = { name: string };
-type SchemeDraft = { value: DramaAssetSettings; baseline: string; revision: number };
+type SchemeDraft = { value: DramaAssetSettings; baseline: string; revision: number; episodeId: string; episodeRevision: number };
 
 function assetBaseline(settings: DramaAssetSettings) {
     return JSON.stringify(settings);
@@ -52,7 +52,7 @@ function belongsToProject(item: DramaCast, projectId: string) {
 
 export function WorkflowAssets(props: WorkflowAssetsProps) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return <WorkflowAssetsSession key={`${userId}:${props.summary.project.id}`} {...props} />;
+    return <WorkflowAssetsSession key={`${userId}:${props.summary.project.id}:${props.variant || "episode"}:${props.episodeId || ""}`} {...props} />;
 }
 
 function WorkflowAssetsSession({
@@ -75,6 +75,7 @@ function WorkflowAssetsSession({
 }: WorkflowAssetsProps) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
+    const userId = useUserStore((state) => state.user?.id || "");
     const projectId = summary.project.id;
     const revision = summary.production.revision;
     const assetEditBlocked = (summary.guide?.step || summary.production.guideStep) === "configuring";
@@ -95,28 +96,39 @@ function WorkflowAssetsSession({
     const mutationLock = useRef(false);
     const latest = useRef({ onChanged, onGenerate, onDirtyChange, revision, frozen: busy, schemeStale: false });
 
-    useEffect(() => {
-        const current = summary.production.settings.assets;
-        setScheme((previous) => {
-            if (!previous) return null;
-            if (assetBaseline(previous.value) !== previous.baseline) return previous;
-            if (previous.baseline === assetBaseline(current) && previous.revision === revision) return previous;
-            return { value: current, baseline: assetBaseline(current), revision };
-        });
-    }, [summary.production.settings.assets, revision]);
-
     const projectCast = cast.filter((item) => belongsToProject(item, projectId));
     const counts = Object.fromEntries(KINDS.map((item) => [item, projectCast.filter((entry) => entry.kind === item && !entry.parentId).length])) as Record<DramaCastKind, number>;
     const episodes = summary.episodes.filter((episode) => episode.id).toSorted((left, right) => left.number - right.number);
     const selectedEpisodeId = episodeId ?? localEpisodeId;
+    const configurationEpisodeId = variant === "episode" ? selectedEpisodeId : "";
+    const episodeSettingsQuery = useQuery({
+        queryKey: ["drama-episode-style", userId, projectId, configurationEpisodeId, revision],
+        queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, configurationEpisodeId, signal),
+        enabled: Boolean(configurationEpisodeId),
+    });
+    const episodeConfiguration = episodeSettingsQuery.data?.episodeId === configurationEpisodeId && episodeSettingsQuery.data.projectId === projectId ? episodeSettingsQuery.data : undefined;
+    const configurationBusy = variant === "episode" && (!episodeConfiguration || episodeSettingsQuery.isError);
+    const effectiveSettings = variant === "episode" ? episodeConfiguration?.settings || summary.production.settings : summary.production.settings;
+    const assetSummary = effectiveSettings === summary.production.settings ? summary : { ...summary, production: { ...summary.production, settings: effectiveSettings } };
+    const episodeRevision = episodeConfiguration?.episodeRevision || 0;
     const episodeIndex = episodes.findIndex((episode) => episode.id === selectedEpisodeId);
     const schemeDirty = Boolean(scheme && assetBaseline(scheme.value) !== scheme.baseline);
-    const schemeStale = Boolean(scheme && scheme.revision !== revision);
+    const schemeStale = Boolean(scheme && (scheme.revision !== revision || scheme.episodeId !== configurationEpisodeId || scheme.episodeRevision !== episodeRevision));
+    useEffect(() => {
+        const current = effectiveSettings.assets;
+        setScheme((previous) => {
+            if (!previous) return null;
+            if (previous.episodeId !== configurationEpisodeId) return null;
+            if (assetBaseline(previous.value) !== previous.baseline) return previous;
+            if (previous.baseline === assetBaseline(current) && previous.revision === revision && previous.episodeRevision === episodeRevision) return previous;
+            return { value: current, baseline: assetBaseline(current), revision, episodeId: configurationEpisodeId, episodeRevision };
+        });
+    }, [effectiveSettings.assets, revision, configurationEpisodeId, episodeRevision]);
     useEffect(() => {
         if (created && cast.some((item) => item.id === created.id && item.projectId === projectId)) setCreated(undefined);
     }, [cast, created, projectId]);
     const editorCast = created && created.projectId === projectId && !projectCast.some((item) => item.id === created.id) ? [...projectCast, created] : projectCast;
-    const locked = busy;
+    const locked = busy || configurationBusy;
 
     const refreshProject = (ticket: ReturnType<typeof operation.capture>) => {
         if (!operation.isCurrent(ticket)) return;
@@ -157,6 +169,14 @@ function WorkflowAssetsSession({
         mutationFn: async (input: { draft: SchemeDraft; settings: DramaSettings; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
             if (input.draft.revision !== latest.current.revision) throw new Error("参考图方案已有更新，未保存。请重新载入或放弃修改。");
+            if (variant === "episode") {
+                if (!input.draft.episodeId) throw new Error("请先选择剧集并读取本集配置");
+                return updateDramaEpisodeStyle(input.ticket.projectId, input.draft.episodeId, {
+                    expectedRevision: input.draft.revision,
+                    expectedEpisodeRevision: input.draft.episodeRevision,
+                    settings: { ...input.settings, assets: input.draft.value },
+                });
+            }
             return updateDramaWorkflowStyle(input.ticket.projectId, {
                 expectedRevision: input.draft.revision,
                 styleName: input.settings.styleName,
@@ -167,6 +187,7 @@ function WorkflowAssetsSession({
         onSuccess: (_result, input) => {
             if (!operation.isCurrent(input.ticket)) return;
             setScheme(null);
+            void queryClient.invalidateQueries({ queryKey: ["drama-episode-style", userId, input.ticket.projectId] });
             refreshProject(input.ticket);
             message.success("已保存后续参考图方案，不会覆盖已有图片");
         },
@@ -186,8 +207,8 @@ function WorkflowAssetsSession({
     latest.current = { onChanged, onGenerate, onDirtyChange, revision, frozen, schemeStale };
     const dirty = schemeDirty || Boolean(addDraft.name.trim()) || libraryState.dirty || editorState.dirty;
     useEffect(() => {
-        latest.current.onDirtyChange?.(dirty, pending || busy || libraryState.busy || editorState.busy || batchBusy);
-    }, [dirty, pending, busy, libraryState.busy, editorState.busy, batchBusy]);
+        latest.current.onDirtyChange?.(dirty, pending || locked || libraryState.busy || editorState.busy || batchBusy);
+    }, [dirty, pending, locked, libraryState.busy, editorState.busy, batchBusy]);
     useEffect(() => () => latest.current.onDirtyChange?.(false, false), []);
 
     const submitAdd = () => {
@@ -201,11 +222,11 @@ function WorkflowAssetsSession({
     const submitScheme = () => {
         if (!scheme || frozen || mutationLock.current || schemeStale) return;
         mutationLock.current = true;
-        saveScheme.mutate({ draft: scheme, settings: summary.production.settings, ticket: operation.capture() });
+        saveScheme.mutate({ draft: scheme, settings: effectiveSettings, ticket: operation.capture() });
     };
 
     const reloadScheme = () => {
-        setScheme({ value: summary.production.settings.assets, baseline: assetBaseline(summary.production.settings.assets), revision });
+        setScheme({ value: effectiveSettings.assets, baseline: assetBaseline(effectiveSettings.assets), revision, episodeId: configurationEpisodeId, episodeRevision });
     };
     const openAdd = (nextKind: DramaCastKind) => {
         if (assetFrozen) return;
@@ -281,6 +302,13 @@ function WorkflowAssetsSession({
             </header>
 
             {assetEditBlocked ? <p role="status">请先完成风格设置，进入角色场景后再新增或编辑资产。</p> : null}
+            {variant === "episode" && episodeSettingsQuery.isError ? (
+                <p role="alert">
+                    本集配置读取失败，暂不能修改或生成资产。<Button onClick={() => void episodeSettingsQuery.refetch()}>重新读取</Button>
+                </p>
+            ) : configurationBusy ? (
+                <p role="status">{configurationEpisodeId ? "正在读取本集配置…" : "请先创建或选择剧集"}</p>
+            ) : null}
 
             {variant === "library" ? (
                 <div className="drama-workflow-assets-library-toolbar">
@@ -364,7 +392,8 @@ function WorkflowAssetsSession({
                             {(variant === "library" ? [kind] : KINDS).map((columnKind) => (
                                 <WorkflowAssetColumn
                                     key={`${selectedEpisodeId}:${columnKind}`}
-                                    summary={summary}
+                                    summary={assetSummary}
+                                    episodeId={configurationEpisodeId || undefined}
                                     kind={columnKind}
                                     cast={visible.filter((item) => item.kind === columnKind)}
                                     sharedCast={sharedCast.filter((item) => item.kind === columnKind)}
@@ -379,7 +408,7 @@ function WorkflowAssetsSession({
                                         if (!assetFrozen) setEditingId(item.id);
                                     }}
                                     onGenerate={(item) => {
-                                        if (!assetFrozen) onGenerate(item);
+                                        if (!assetFrozen) onGenerate(item, configurationEpisodeId || undefined);
                                     }}
                                 />
                             ))}
@@ -390,7 +419,7 @@ function WorkflowAssetsSession({
 
             {variant === "episode" ? (
                 <WorkflowCharacterLibrary
-                    summary={summary}
+                    summary={assetSummary}
                     cast={projectCast}
                     busy={locked || pending || assetEditBlocked}
                     onChanged={onChanged}
@@ -402,7 +431,7 @@ function WorkflowAssetsSession({
                 <summary>后续参考图方案</summary>
                 {schemeOpen ? (
                     <div className="drama-workflow-assets-scheme-body">
-                        <p>这是本作品后续生成角色和场景参考图时使用的方案。道具模板固定。保存只影响以后的生成，不会覆盖已有图片，也不会重新生成或改写已有资产提示词。</p>
+                        <p>这是{variant === "episode" ? "本集" : "本作品"}后续生成角色和场景参考图时使用的方案。道具模板固定。保存只影响以后的生成，不会覆盖已有图片，也不会重新生成或改写已有资产提示词。</p>
                         {schemeStale && schemeDirty ? (
                             <div role="alert">
                                 <p>参考图方案已有更新，当前修改已保留，暂时不能保存。</p>
@@ -419,7 +448,7 @@ function WorkflowAssetsSession({
                         {frozen || (schemeStale && schemeDirty) ? (
                             <div className="drama-workflow-assets-scheme-preview" aria-label="参考图方案只读预览">
                                 <p>
-                                    当前方案：{summary.production.settings.assets.mode} · 角色画幅 {summary.production.settings.assets.characterRatio}
+                                    当前方案：{effectiveSettings.assets.mode} · 角色画幅 {effectiveSettings.assets.characterRatio}
                                     {schemeDirty ? "（本地修改未保存）" : ""}
                                 </p>
                             </div>
@@ -428,13 +457,13 @@ function WorkflowAssetsSession({
                                 <legend className="sr-only">编辑后续参考图方案</legend>
                                 <AssetSchemePicker
                                     layout="compact"
-                                    value={scheme?.value || summary.production.settings.assets}
+                                    value={scheme?.value || effectiveSettings.assets}
                                     onChange={(value) => {
                                         if (latest.current.frozen || latest.current.schemeStale || latest.current.revision !== revision) return;
                                         setScheme((previous) => {
-                                            const baseline = previous?.baseline || assetBaseline(summary.production.settings.assets);
+                                            const baseline = previous?.baseline || assetBaseline(effectiveSettings.assets);
                                             const captured = previous?.revision || revision;
-                                            return { value, baseline, revision: captured };
+                                            return { value, baseline, revision: captured, episodeId: configurationEpisodeId, episodeRevision: previous?.episodeRevision || episodeRevision };
                                         });
                                     }}
                                 />
@@ -454,12 +483,13 @@ function WorkflowAssetsSession({
                         ) : null}
                     </div>
                 ) : (
-                    <p>展开后选择本作品后续参考图方案。道具模板固定，保存不会改写已有资产。</p>
+                    <p>展开后选择{variant === "episode" ? "本集" : "本作品"}后续参考图方案。道具模板固定，保存不会改写已有资产。</p>
                 )}
             </details>
 
             <CastEditorDialog
-                summary={summary}
+                summary={assetSummary}
+                episodeId={configurationEpisodeId || undefined}
                 cast={editorCast}
                 castId={editingId}
                 onDirtyChange={(dirty, busy) => setEditorState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
@@ -478,6 +508,7 @@ function WorkflowAssetsSession({
 
 function WorkflowAssetColumn({
     summary,
+    episodeId,
     kind,
     cast,
     sharedCast,
@@ -492,6 +523,7 @@ function WorkflowAssetColumn({
     onGenerate,
 }: {
     summary: DramaSummary;
+    episodeId?: string;
     kind: DramaCastKind;
     cast: DramaCast[];
     sharedCast: DramaCast[];
@@ -542,6 +574,7 @@ function WorkflowAssetColumn({
                     {selectable ? (
                         <WorkflowBatch
                             projectId={summary.project.id}
+                            episodeId={episodeId}
                             revision={summary.production.revision}
                             targetIds={selected}
                             targetLabels={Object.fromEntries([...cast, ...sharedCast].map((item) => [item.id, item.name]))}

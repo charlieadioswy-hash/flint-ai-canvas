@@ -415,6 +415,7 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 	if err != nil {
 		return nil, false, err
 	}
+	settings, meta := dramaEpisodeStyleSettings(r.settings, r.meta, *episode)
 	explicit := segment.VideoStatus == model.DramaMediaQueued && (episode.Stage == model.DramaEpisodePrompts || episode.Stage == model.DramaEpisodeReview)
 	if (episode.Stage != model.DramaEpisodeVideo && !explicit) || (r.mediaHeld(episode) && segment.VideoStatus != model.DramaMediaQueued) || r.sampleBlocked(episode) {
 		return nil, true, nil
@@ -436,15 +437,15 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 	}
 	var previous *model.DramaSegment
 	for i := range rows {
-		if rows[i].ID == segment.ID && i > 0 && !r.settings.parallelVideo() {
+		if rows[i].ID == segment.ID && i > 0 && !settings.parallelVideo() {
 			previous = &rows[i-1]
 		}
 	}
-	for _, draft := range buildDramaSegmentDrafts(r.settings, r.meta, shots, casts, rows) {
+	for _, draft := range buildDramaSegmentDrafts(settings, meta, shots, casts, rows) {
 		if draft.view.Index != segment.SegmentIndex {
 			continue
 		}
-		request, refs, audios, err := r.s.prepareDramaSegment(r.settings, draft, *segment, previous, casts)
+		request, refs, audios, err := r.s.prepareDramaSegment(settings, draft, *segment, previous, casts)
 		if err != nil {
 			return nil, false, err
 		}
@@ -489,7 +490,7 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 		if len(audios) > 0 {
 			input["referenceAudios"] = audios
 		}
-		task, err := r.createTaskWith(job, segmentVideoChoice(*segment, r.settings.Models.Video), "video", request.Operation, prompt, input)
+		task, err := r.createTaskWith(job, segmentVideoChoice(*segment, settings.Models.Video), "video", request.Operation, prompt, input)
 		return task, false, err
 	}
 	return nil, false, errors.New("剧情段没有对应分镜")

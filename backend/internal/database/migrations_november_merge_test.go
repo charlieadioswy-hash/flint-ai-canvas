@@ -30,6 +30,8 @@ func TestNovemberMergePreservesReleased102AndExactMediaScope(t *testing.T) {
 	if err := db.First(&episode, "id = ?", episode.ID).Error; err != nil {
 		t.Fatal(err)
 	}
+	// Schema 117 为缺省制作配置建立独立快照，权限与内容字段仍须保持原值。
+	episode.SettingsJSON = "{}"
 	for _, entity := range []any{&model.ChannelWebsite{}, &model.SiteTrafficEvent{}} {
 		if err := db.Migrator().DropTable(entity); err != nil {
 			t.Fatal(err)

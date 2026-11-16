@@ -18,6 +18,7 @@ import (
 type DramaStudioBatchRequest struct {
 	Action            string            `json:"action"`
 	TargetIDs         []string          `json:"targetIds"`
+	EpisodeID         string            `json:"episodeId,omitempty"`
 	VideoModel        *DramaModelChoice `json:"videoModel,omitempty"`
 	BaseRevision      *int64            `json:"baseRevision,omitempty"`
 	ConfirmationToken string            `json:"confirmationToken,omitempty"`
@@ -119,12 +120,14 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 		busy[dramaJobKey(job.Kind, job.EpisodeID, job.ShotID, job.CastID)] = true
 	}
 	sources := map[string][]string{}
+	sourceEpisodes := map[string]string{}
+	conflictingEpisodes := map[string]bool{}
 	targets := map[string]bool{}
 	pendingParents := map[string]bool{}
-	snapshots := []any{req.Action, projectID, req.TargetIDs, req.VideoModel, p.Revision, p.SettingsJSON, p.BibleJSON, p.GuideStep, p.SampleApproved, p.MediaRequestsOnly, p.AssetsReleased, p.BudgetMicrocredits}
+	snapshots := []any{req.Action, projectID, req.TargetIDs, req.EpisodeID, req.VideoModel, p.Revision, p.SettingsJSON, p.BibleJSON, p.GuideStep, p.SampleApproved, p.MediaRequestsOnly, p.AssetsReleased, p.BudgetMicrocredits}
 	if req.Action == "segment_assets" {
 		for _, id := range req.TargetIDs {
-			source, err := s.prepareDramaStudioAction(repo, userID, projectID, DramaStudioActionRequest{Action: req.Action, TargetID: id})
+			source, err := s.prepareDramaStudioAction(repo, userID, projectID, DramaStudioActionRequest{Action: req.Action, TargetID: id, EpisodeID: req.EpisodeID})
 			if err != nil {
 				item, itemErr := dramaStudioBatchReadFailure(id, "segment", err)
 				if itemErr != nil {
@@ -144,6 +147,10 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 			for _, cast := range source.sourceCasts {
 				targets[cast.ID], pendingParents[cast.ID] = true, true
 				sources[cast.ID] = append(sources[cast.ID], id)
+				if previous := sourceEpisodes[cast.ID]; previous != "" && previous != source.view.EpisodeID {
+					conflictingEpisodes[cast.ID] = true
+				}
+				sourceEpisodes[cast.ID] = source.view.EpisodeID
 			}
 		}
 	} else {
@@ -158,8 +165,14 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 	sort.Strings(ids)
 	for _, id := range ids {
 		action := req.Action
+		episodeID := req.EpisodeID
 		if action == "segment_assets" {
 			action = "cast_image"
+			episodeID = sourceEpisodes[id]
+			if conflictingEpisodes[id] {
+				plan.view.Items = append(plan.view.Items, DramaStudioBatchItem{TargetID: id, TargetKind: "cast", SourceTargetIDs: sources[id], Status: "blocked", Reason: "同一主体涉及多个分集，请按集补图"})
+				continue
+			}
 		}
 		if action == "cast_image" {
 			if cast, err := repo.DramaCast(projectID, id); err == nil && cast.ParentID != "" {
@@ -168,7 +181,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 				}
 			}
 		}
-		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, VideoModel: req.VideoModel}, dramaStudioActionOptions{pendingParents: pendingParents, allowPendingPrompt: true})
+		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, EpisodeID: episodeID, VideoModel: req.VideoModel}, dramaStudioActionOptions{pendingParents: pendingParents, allowPendingPrompt: true})
 		if err != nil {
 			kind := "segment"
 			if action == "cast_image" {

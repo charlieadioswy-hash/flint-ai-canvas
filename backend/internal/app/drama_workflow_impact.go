@@ -47,7 +47,7 @@ func (s *Service) dramaWorkflowImpact(userID, projectID, castID string) (DramaWo
 			return err
 		}
 		view.Revision = p.Revision
-		parallel := parseDramaSettings(p.SettingsJSON).parallelVideo()
+		defaults := parseDramaSettings(p.SettingsJSON)
 		casts, err := tx.DramaCasts(projectID)
 		if err != nil {
 			return err
@@ -88,6 +88,7 @@ func (s *Service) dramaWorkflowImpact(userID, projectID, castID string) (DramaWo
 			return err
 		}
 		for _, episode := range episodes {
+			parallel := dramaEpisodeSettings(defaults, episode).parallelVideo()
 			segments, err := tx.DramaSegments(episode.ID)
 			if err != nil {
 				return err

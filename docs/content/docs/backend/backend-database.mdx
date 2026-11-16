@@ -246,7 +246,7 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 版本 79 `drama_episode_source_format` 为 `drama_episodes` 增加 `source_format`（最长 16 字）：`novel` 小说原文需改编，`script` 用户写好的剧本只拆镜、台词逐字保留，`storyboard` 用户做好的分镜按原镜头转录。旧集为空串，按 `novel` 处理。分镜原文是 JSON（`{"shots":[…]}` 或镜头数组）或带表头的 Markdown 表格 / 制表符文本时，剧本阶段直接解析入库，不调用文本模型。
 
-Schema 116 `drama_episode_style` 为 `drama_episodes` 增加 `style_mode`（16 字）、`style_name`（60 字）、`style_prompt`（text，单集与作品默认统一最多 10000 个 Unicode 字符，保存、读取及后续创作均保留完整说明），均非空、默认空串。空模式或 `inherit` 始终读取当前 `drama_productions.settings_json` 的风格；`independent` 使用本集保存的名称与说明，即使内容与默认相同也保留独立选择。恢复继承时清空本集名称与说明，不保存默认快照。旧集继续继承默认，迁移不修改已有正文、媒体、任务或版本。
+Schema 116 `drama_episode_style` 的 `style_mode/style_name/style_prompt` 为历史风格字段。Schema 117 `drama_episode_settings` 新增 `drama_productions.initial_settings_json` 与 `drama_episodes.settings_json`（text，非空、默认空串），保存首次制作配置和各集独立快照。旧集以升级时的作品配置回填，原 `independent` 集保留自己的画风；历史首次配置无法还原，升级时配置作为初值。首次引导确认制作方案写入初值，资产确认时补充模式参数，仅更新本集仍等于旧初值的字段；新建、插入、预留章加入制作和模型规划的集均复制首次配置。高级台未开工且尚无制作成果的草稿在保存设置及正式开工时定稿，逐字段保留各集已独立修改的值。后续本集保存不修改作品或其他集，也不改写已有正文、媒体、任务、内容版本或费用。Schema 116 列保留供迁移读取，运行时只使用完整配置。风格说明最多 10000 个 Unicode 字符，保留完整系统预设；并发、审核、放行和分集方式仍由作品控制。117 同时新增 `drama_casts.image_episode_id`（36 字，默认空串），为已请求的共享主体图片记录本集生成配置上下文；空串使用作品配置，生成结果仍是共享主体当前图。采用本集配置的图片仍排队或生成时禁止删集；已完成的上下文在删集事务中清空。
 
 单集风格保存核对作品与单集版本，在同一事务内只写三项风格字段并递增制作控制面版本；不递增集内容 `revision`，不改变 `final_stale`、段提示词、媒体状态或排队任务。相关文字任务进行中拒绝保存。后续显式撰写本集分镜、重拆段分镜与段提示词时读取有效风格；独立模式沿用主体独立画风边界，不拼接可能包含旧画风的全剧 `bible_json.visualRules`。已保存完整提示词继续原有优先级，主体参考图与独立视图仍属作品共享资产，不新增单集图片版本。
 
@@ -376,9 +376,9 @@ Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_re
 
 | 表 | 用途 | 约束 |
 | --- | --- | --- |
-| `drama_productions` | 每个项目一行的控制面：`status`（draft/running/paused/completed）、全剧阶段 `stage`、作品设置 `settings_json`、作品圣经摘要 `bible_json`、预算与已用积分、分集游标 `plan_cursor` / `plan_done`、样片确认 `sample_approved`、参考图放行 `assets_released`、暂停原因 | 主键 `project_id`；用户操作只写状态、设置、预算与确认列；调度循环只写进度列，状态变更带 `status = running` 条件 |
+| `drama_productions` | 每个项目一行的控制面：`status`（draft/running/paused/completed）、全剧阶段 `stage`、作品设置 `settings_json`、首次配置 `initial_settings_json`（Schema 117）、作品圣经摘要 `bible_json`、预算与已用积分、分集游标 `plan_cursor` / `plan_done`、样片确认 `sample_approved`、参考图放行 `assets_released`、暂停原因 | 主键 `project_id`；用户操作只写状态、设置、预算与确认列；调度循环只写进度列，状态变更带 `status = running` 条件 |
 | `drama_casts` | 全剧设定：角色（`kind=character`，含别名、外貌与声线 `voice_instructions`）、关键道具（`kind=prop`）和场景（`kind=scene`），当前参考图 `image_resource_id` 与状态 | 作品圣经建档；剧本里首次出现的人物、道具或地点即时建档，按标准名与别名归并；锁定后不再重新生成 |
-| `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、风格继承／独立值 `style_mode/style_name/style_prompt`（Schema 116）、阶段（queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；内容修改递增 `revision`，调度写入以它为条件；风格保存只递增作品制作控制版本 |
+| `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、独立制作配置 `settings_json`（Schema 117）、阶段（queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；内容修改递增 `revision`，调度写入以它为条件；配置保存只递增作品制作控制版本 |
 | `drama_shots` | 镜头脚本：剧情段 `segment_index` / `segment_title`、场景与场景设定 `scene_cast_id`、出场角色 `cast_ids_json`、关键道具 `prop_ids_json`、说话人、台词、动作、景别、运镜、转场 `transition`、时长、起幅画面 `image_prompt`、运动描述 `video_prompt`、原文出处 | 供段提示词及独立镜头媒体读取；独立产物保存于 `drama_shot_media`，不写回脚本列。修改使所在段提示词/视频及对应逐镜媒体来源过期 |
 | `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、`revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；结果按 `revision` 条件写入，过期结果作废；某段视频变化会让后续已生成的段过期（它们承接的是旧最后一帧） |
 | `drama_takes` | 历史版本：设定参考图（`cast`）、独立视图（`cast_view`）、镜头图片/视频/音频（`shot_image/shot_video/shot_audio`）、剧情段视频（`video`，`owner_id` 为段 ID）与单集成片（`final`）；资产 AI 辅助使用其对应 kind | `(owner_id, kind)` 内递增 `version`；版本始终入库，当前采用与历史版本分开 |

@@ -44,6 +44,7 @@ export type DramaStudioBatchStatus = "ready" | "queued" | "already_queued" | "sk
 export type DramaStudioBatchRequest = {
     action: DramaStudioBatchAction;
     targetIds: string[];
+    episodeId?: string;
     videoModel?: DramaModelChoice;
     baseRevision?: number;
     confirmationToken?: string;
@@ -140,21 +141,13 @@ export type DramaEpisodeStyle = {
     episodeId: string;
     revision: number;
     episodeRevision: number;
-    mode: "inherit" | "independent";
-    styleName: string;
-    stylePrompt: string;
-    defaultStyleName: string;
-    defaultStylePrompt: string;
-    drawing: DramaDrawingConfiguration;
+    settings: DramaSettings;
 };
 
 export type UpdateDramaEpisodeStyleRequest = {
     expectedRevision: number;
     expectedEpisodeRevision: number;
-    mode: DramaEpisodeStyle["mode"];
-    styleName?: string;
-    stylePrompt?: string;
-    drawing?: DramaDrawingConfiguration;
+    settings: DramaSettings;
 };
 
 export function getDramaEpisodeStyle(projectId: string, episodeId: string, signal?: AbortSignal) {
@@ -647,8 +640,8 @@ export type DramaCastImageOptions = {
     styleReferenceIds: string[];
 };
 
-export function updateDramaCastImageOptions(projectId: string, castId: string, expectedRevision: number, expectedCastRevision: number, options: DramaCastImageOptions) {
-    return http.put<{ cast: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image-options`, { expectedRevision, expectedCastRevision, options });
+export function updateDramaCastImageOptions(projectId: string, castId: string, expectedRevision: number, expectedCastRevision: number, options: DramaCastImageOptions, episodeId?: string) {
+    return http.put<{ cast: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image-options`, { expectedRevision, expectedCastRevision, options, ...(episodeId ? { episodeId } : {}) });
 }
 
 export type DramaListItem = {
@@ -931,7 +924,7 @@ export function listDramaCast(projectId: string, signal?: AbortSignal) {
 
 export type DramaCastImageStyle = Pick<DramaCast, "imageStyleId" | "imageStyleName" | "imageStylePrompt">;
 export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked" | "imagePrompt">> &
-    DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number; expectedCastRevision?: number; imageOptions?: DramaCastImageOptions };
+    DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number; expectedCastRevision?: number; imageOptions?: DramaCastImageOptions; episodeId?: string };
 
 export type DramaCastCreateInput = Pick<DramaCast, "kind" | "name"> & Partial<Pick<DramaCast, "appearance" | "description" | "voiceInstructions" | "imagePrompt">> & DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number };
 export type CreateDramaCastInput = DramaCastCreateInput;
@@ -950,7 +943,7 @@ export function importDramaCast(projectId: string, input: { sourceProjectId: str
 }
 
 /** 按外观、独立风格和参考图方案编排提示词；不保存，也不调用模型。 */
-export function rebuildDramaCastImagePrompt(projectId: string, castId: string, input: DramaCastImageStyle & { appearance?: string }) {
+export function rebuildDramaCastImagePrompt(projectId: string, castId: string, input: DramaCastImageStyle & { appearance?: string; episodeId?: string }) {
     return http.post<{ imagePrompt: string }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image-prompt`, input);
 }
 
@@ -997,6 +990,7 @@ export function updateDramaCastLook(
         expectedRevision?: number;
         expectedCastRevision?: number;
         imageOptions?: DramaCastImageOptions;
+        episodeId?: string;
     },
 ) {
     return http.patch<{ look: DramaCast; affectedSegments: number }>(`${base(projectId)}/looks/${encodeURIComponent(lookId)}`, input);
@@ -1011,8 +1005,8 @@ export function getDramaCastImpact(projectId: string, castId: string, signal?: A
 }
 
 /** restyleSegments=true 时引用该设定的剧情段视频标记过期，需要重新生成；段提示词保持不变。 */
-export function regenerateDramaCast(projectId: string, castId: string, restyleSegments: boolean) {
-    return http.post<{ affectedSegments: number }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/regenerate`, { restyleSegments });
+export function regenerateDramaCast(projectId: string, castId: string, restyleSegments: boolean, episodeId?: string) {
+    return http.post<{ affectedSegments: number }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/regenerate`, { restyleSegments, ...(episodeId ? { episodeId } : {}) });
 }
 
 /** 重新处理已生成但后处理失败的段视频：重放原任务结果，不重新生成、不扣费。 */

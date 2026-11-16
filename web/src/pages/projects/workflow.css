@@ -166,7 +166,6 @@
     font-size: var(--fs-tiny);
 }
 
-.drama-workflow-style-scope,
 .drama-workflow-production-batch {
     display: flex;
     flex-wrap: wrap;
@@ -174,19 +173,6 @@
     gap: var(--space-3);
     min-width: 0;
     padding: var(--space-3) 0;
-}
-
-.drama-workflow-style-scope p {
-    flex-basis: 100%;
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--fs-ui);
-}
-
-.drama-workflow-style-scope .ant-btn[aria-pressed="true"] {
-    border-color: var(--control-selected-border);
-    background: var(--control-selected-bg);
-    color: var(--control-selected-fg);
 }
 
 .drama-workflow-production-batch {

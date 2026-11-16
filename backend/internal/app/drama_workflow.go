@@ -110,7 +110,8 @@ func dramaWorkflowEpisodeReadiness(repo *repository.Repository, p *model.DramaPr
 	}
 	view.TextReady = view.BlockingReason == ""
 	view.CanGenerateVideo = view.TextReady
-	videos, videoErr := dramaEpisodeVideoTimeline(repo, p.UserID, p.ProjectID, episode.ID, parseDramaSettings(p.SettingsJSON).AspectRatio)
+	settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
+	videos, videoErr := dramaEpisodeVideoTimeline(repo, p.UserID, p.ProjectID, episode.ID, settings.AspectRatio)
 	view.RenderSource, view.RenderVideoCount, view.RenderReadyVideos = videos.Source, videos.Total, videos.Ready
 	if videoErr != nil {
 		view.RenderBlockingReason = videoErr.Error()

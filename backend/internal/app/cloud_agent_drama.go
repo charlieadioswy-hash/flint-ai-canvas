@@ -305,11 +305,12 @@ func prepareCloudAgentDramaAdopt(repo *repository.Repository, userID, canvasID s
 		item.TargetNodeTitle = fmt.Sprintf("第 %d 集第 %d 段", episode.Number, plan.SegmentIndex+1)
 		item.Summary = fmt.Sprintf("把视频《%s》设为第 %d 集第 %d 段的当前视频", nodeTitle, episode.Number, plan.SegmentIndex+1)
 		item.Details = []string{"旧视频保留在版本记录中；已有成片会重新合成"}
-		parallel := false
-		if productionRow, err := repo.DramaProduction(drama.ID); err == nil {
-			parallel = parseDramaSettings(productionRow.SettingsJSON).parallelVideo()
+		productionRow, err := repo.DramaProduction(drama.ID)
+		if err != nil {
+			return nil, err
 		}
-		if args.Cascade && later > 0 && !parallel {
+		settings := dramaEpisodeSettings(parseDramaSettings(productionRow.SettingsJSON), *episode)
+		if args.Cascade && later > 0 && !settings.parallelVideo() {
 			item.Details = append(item.Details, fmt.Sprintf("后续 %d 段已生成的视频会重新排队生成以保证衔接，按实际用量计费", later))
 		} else {
 			item.Details = append(item.Details, "只换本段，后续段保持不变")

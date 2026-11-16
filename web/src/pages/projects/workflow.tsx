@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
 import { ArrowRight, ChevronRight, FolderKanban, MoreHorizontal } from "lucide-react";
 import { useBlocker, useNavigate, useParams, useSearchParams } from "react-router";
@@ -9,6 +9,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { dramaChoiceKey, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import { dramaDrawingConfiguration } from "@/lib/drama/drawing-configuration";
+import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import { ApiError } from "@/services/api/request";
 import { confirmDramaGuide, getDramaEpisodeStyle, listDramaJobs, retryFailedDrama, updateDramaEpisodeStyle, updateDramaWorkflowStyle, type DramaGuideStep, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
@@ -35,7 +36,7 @@ import "./drama.css";
 import "./guide.css";
 import "./workflow.css";
 
-type SettingsDraft = { value: DramaSettings; baseline: DramaSettings; revision: number; episodeRevision?: number; mode?: "inherit" | "independent"; baselineMode?: "inherit" | "independent" };
+type SettingsDraft = { value: DramaSettings; baseline: DramaSettings; revision: number; episodeRevision?: number };
 
 function sameSettings(left: DramaSettings, right: DramaSettings) {
     return JSON.stringify(left) === JSON.stringify(right);
@@ -43,8 +44,10 @@ function sameSettings(left: DramaSettings, right: DramaSettings) {
 
 export default function DramaWorkflowPage() {
     const { projectId = "", episodeId } = useParams();
+    const [searchParams] = useSearchParams();
     const userId = useUserStore((state) => state.user?.id);
-    return <DramaWorkflowSession key={`${userId}:${projectId}:${episodeId || "project"}`} projectId={projectId} />;
+    const episodeScope = episodeId || (!searchParams.has("manage") && searchParams.get("episode")) || "project";
+    return <DramaWorkflowSession key={`${userId}:${projectId}:${episodeScope}`} projectId={projectId} />;
 }
 
 function DramaWorkflowSession({ projectId }: { projectId: string }) {
@@ -99,18 +102,17 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const steps = routeEpisodeId ? EPISODE_WORKFLOW_STEPS : WORKFLOW_STEPS;
 
     const revision = summary?.production.revision || 0;
-    const episodeStyleId = managing ? undefined : routeEpisodeId;
+    const episodeStyleId = managing ? undefined : routeEpisodeId || searchParams.get("episode") || undefined;
     const initialConfiguration = stage === "configuring" && !episodeStyleId;
     const episodeStyleKey = ["drama-episode-style", userId, projectId, episodeStyleId, revision];
-    const episodeStyleQuery = useQuery({ queryKey: episodeStyleKey, queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeStyleId!, signal), enabled: Boolean(summary && episodeStyleId && active === "style") });
+    const episodeStyleQuery = useQuery({ queryKey: episodeStyleKey, queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeStyleId!, signal), enabled: Boolean(summary && episodeStyleId), placeholderData: keepPreviousData });
     const episodeStyle = episodeStyleQuery.data && episodeStyleQuery.data.episodeId === episodeStyleId && episodeStyleQuery.data.projectId === projectId ? episodeStyleQuery.data : undefined;
-    const styleMode = settingsDraft?.mode || episodeStyle?.mode || "inherit";
-    const savedSettings = summary && episodeStyleId && episodeStyle ? { ...summary.production.settings, styleName: episodeStyle.styleName, stylePrompt: episodeStyle.stylePrompt } : summary?.production.settings;
-    const draftSettings = settingsDraft?.value || savedSettings;
-    const settings = draftSettings && episodeStyle && styleMode === "inherit" ? { ...draftSettings, styleName: episodeStyle.defaultStyleName, stylePrompt: episodeStyle.defaultStylePrompt } : draftSettings;
+    const episodeConfigurationBusy = Boolean(episodeStyleId && (!episodeStyle || episodeStyleQuery.isPlaceholderData || episodeStyleQuery.isError));
+    const episodeSummary = useMemo(() => (summary && episodeStyle ? { ...summary, production: { ...summary.production, settings: episodeStyle.settings } } : summary), [summary, episodeStyle]);
+    const savedSettings = episodeStyleId ? episodeStyle?.settings : summary?.production.settings;
+    const settings = settingsDraft?.value || savedSettings || summary?.production.settings;
     const settingsStale = Boolean(settingsDraft && settingsDraft.revision !== revision);
-    const drawingDirty = Boolean(settingsDraft && JSON.stringify(dramaDrawingConfiguration(settingsDraft.value)) !== JSON.stringify(dramaDrawingConfiguration(settingsDraft.baseline)));
-    const settingsDirty = Boolean(settingsDraft && (settingsDraft.mode !== settingsDraft.baselineMode || drawingDirty || (settingsDraft.mode !== "inherit" && !sameSettings(settingsDraft.value, settingsDraft.baseline))));
+    const settingsDirty = Boolean(settingsDraft && !sameSettings(settingsDraft.value, settingsDraft.baseline));
     const confirmedNavigation = useRef<string | undefined>(undefined);
     const confirmedMediaNavigation = useRef<{ pathname: string; search: string } | undefined>(undefined);
     const blocker = useBlocker(({ currentLocation, nextLocation }) => {
@@ -217,13 +219,11 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
             const drawing = dramaDrawingConfiguration(draft.value);
             const drawingChange = JSON.stringify(drawing) !== JSON.stringify(dramaDrawingConfiguration(draft.baseline)) ? { drawing } : {};
             if (episodeStyleId) {
-                if (draft.episodeRevision === undefined || !draft.mode) throw new Error("本集风格尚未读取，请重新载入");
+                if (draft.episodeRevision === undefined) throw new Error("本集配置尚未读取，请重新载入");
                 const style = await updateDramaEpisodeStyle(ticket.projectId, episodeStyleId, {
                     expectedRevision: draft.revision,
                     expectedEpisodeRevision: draft.episodeRevision,
-                    mode: draft.mode,
-                    ...drawingChange,
-                    ...(draft.mode === "independent" ? { styleName: draft.value.styleName, stylePrompt: draft.value.stylePrompt } : {}),
+                    settings: draft.value,
                 });
                 return { scope: "episode" as const, style };
             }
@@ -240,7 +240,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                     current && current.production.revision <= style.revision
                         ? {
                               ...current,
-                              production: { ...current.production, revision: style.revision, settings: { ...current.production.settings, assets: style.drawing.assets, models: { ...current.production.settings.models, ...style.drawing.models } } },
+                              production: { ...current.production, revision: style.revision },
                               episodes: current.episodes.map((episode) => (episode.id === style.episodeId ? { ...episode, revision: style.episodeRevision } : episode)),
                           }
                         : current,
@@ -251,7 +251,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
             }
             void queryClient.invalidateQueries({ queryKey: ["drama-episode-style", userId, projectId] });
             void queryClient.invalidateQueries({ queryKey: ["drama", ticket.projectId] });
-            message.success(episodeStyleId ? "风格与绘图设置已保存，已有产物保持当前版本" : "全剧默认设置已保存，已有产物保持当前版本");
+            message.success(episodeStyleId ? "本集配置已保存，已有产物保持当前版本" : "作品配置已保存，各集保持自己的配置");
             continueToAssets();
         },
         onError: (error, { ticket }) => {
@@ -282,7 +282,15 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
           dramaVideoResolutionIssue(videoOption, settings.videoResolution) ||
           (videoOption && (settings.videoContinuity || "tail_frame") === "tail_frame" && !videoOption.tailFrameChain ? "不支持尾帧续接" : "")
         : "";
-    const canConfirm = Boolean(summary?.guide?.canConfirm) && !settingsStale && !confirm.isPending && !saveStyle.isPending && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
+    const episodeStyleIssue =
+        episodeStyleId && settings
+            ? Array.from(settings.styleName).length > 60
+                ? "本集风格名称不能超过 60 字，请缩短名称后再保存。"
+                : Array.from(settings.stylePrompt).length > DRAMA_STYLE_PROMPT_MAX_LENGTH
+                  ? `本集风格说明不能超过 ${DRAMA_STYLE_PROMPT_MAX_LENGTH} 字，请缩短说明后再保存。`
+                  : ""
+            : "";
+    const canConfirm = Boolean(summary?.guide?.canConfirm) && !episodeConfigurationBusy && !settingsStale && !confirm.isPending && !saveStyle.isPending && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
     const blocking = (stage === "assets" && active === "assets") || (stage === "story" && active === "story") ? summary?.guide?.blockingReason : undefined;
     const chapterPickerBusy = confirm.isPending || saveStyle.isPending || retryText.isPending || media.state.submitting || sourceEditorState.busy;
     const openChapterPicker = () => {
@@ -369,6 +377,11 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
             {summary && settings ? (
                 <>
                     <div className="drama-workflow-body app-workspace-scroll">
+                        {episodeStyleId && episodeStyleQuery.isError ? (
+                            <WorkspaceErrorState compact title="本集配置读取失败" description="请重新读取后再编辑或生成。" onRetry={() => void episodeStyleQuery.refetch()} />
+                        ) : episodeConfigurationBusy ? (
+                            <WorkspaceLoadingState label="正在读取本集配置" rows={1} />
+                        ) : null}
                         {episodesView ? (
                             <WorkflowEpisodes
                                 summary={summary}
@@ -404,45 +417,10 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                         ) : null}
                         {active === "style" ? (
                             <>
-                                {episodeStyleId && !episodeStyle ? (
-                                    episodeStyleQuery.isError ? (
-                                        <WorkspaceErrorState compact title="本集风格读取失败" description="请重新读取后再编辑，当前不会修改全剧默认。" onRetry={() => void episodeStyleQuery.refetch()} />
-                                    ) : (
-                                        <WorkspaceLoadingState label="正在读取本集风格" rows={1} />
-                                    )
-                                ) : null}
                                 {episodeStyleId && episodeStyle ? (
-                                    <div className="drama-workflow-style-scope" role="group" aria-label="本集风格范围">
-                                        <strong>第 {summary.episodes.find((episode) => episode.id === episodeStyleId)?.number || "当前"} 集风格</strong>
-                                        {(
-                                            [
-                                                { value: "inherit", label: "沿用全剧默认" },
-                                                { value: "independent", label: "本集独立风格" },
-                                            ] as const
-                                        ).map((item) => (
-                                            <Button
-                                                key={item.value}
-                                                aria-pressed={styleMode === item.value}
-                                                disabled={confirm.isPending || saveStyle.isPending || settingsStale}
-                                                onClick={() => {
-                                                    if (!savedSettings) return;
-                                                    setSettingsDraft({
-                                                        value: settingsDraft?.value || savedSettings,
-                                                        baseline: settingsDraft?.baseline || savedSettings,
-                                                        revision: settingsDraft?.revision || revision,
-                                                        episodeRevision: settingsDraft?.episodeRevision ?? episodeStyle.episodeRevision,
-                                                        mode: item.value,
-                                                        baselineMode: settingsDraft?.baselineMode || episodeStyle.mode,
-                                                    });
-                                                }}
-                                            >
-                                                {item.label}
-                                            </Button>
-                                        ))}
-                                        <p>{styleMode === "inherit" ? "本集画风跟随全剧默认。" : "下方绘图风格仅作用于本集。"}绘图模型与模板为全剧共用；已有内容不会自动重写或重新生成。</p>
-                                    </div>
+                                    <p className="drama-workflow-notice">第 {summary.episodes.find((episode) => episode.id === episodeStyleId)?.number || "当前"} 集配置；修改仅作用于本集，已有产物保持当前版本。</p>
                                 ) : !episodeStyleId ? (
-                                    <p className="drama-workflow-notice">全剧默认风格；未独立设置风格的集将沿用此设置。</p>
+                                    <p className="drama-workflow-notice">首次配置作为各集初始值；后续每集可单独修改，已有集保持各自配置。</p>
                                 ) : null}
                                 {settingsStale ? (
                                     <p className="drama-workflow-notice" role="alert">
@@ -452,25 +430,22 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         </Button>
                                     </p>
                                 ) : null}
-                                {!episodeStyleId || episodeStyle ? (
+                                {!episodeStyleId || (episodeStyle && !episodeStyleQuery.isError) ? (
                                     <WorkflowConfiguration
                                         ref={configuration}
                                         summary={summary}
                                         settings={settings}
-                                        disabled={confirm.isPending || saveStyle.isPending || settingsStale}
-                                        styleDisabled={Boolean(episodeStyleId && styleMode === "inherit")}
-                                        styleOnly={stage !== "configuring" || Boolean(episodeStyleId)}
+                                        disabled={confirm.isPending || saveStyle.isPending || settingsStale || episodeConfigurationBusy}
+                                        styleOnly={stage !== "configuring" && !episodeStyleId}
+                                        scope={episodeStyleId ? "episode" : "project"}
                                         onChange={(value) => {
                                             if (settingsDraft && settingsDraft.revision !== revision) return;
-                                            if (episodeStyleId && !episodeStyle) return;
+                                            if (!savedSettings || (episodeStyleId && !episodeStyle)) return;
                                             setSettingsDraft({
-                                                value:
-                                                    episodeStyleId && styleMode === "inherit"
-                                                        ? { ...value, styleName: settingsDraft?.value.styleName ?? savedSettings!.styleName, stylePrompt: settingsDraft?.value.stylePrompt ?? savedSettings!.stylePrompt }
-                                                        : value,
-                                                baseline: settingsDraft?.baseline || savedSettings!,
+                                                value,
+                                                baseline: settingsDraft?.baseline || savedSettings,
                                                 revision: settingsDraft?.revision || revision,
-                                                ...(episodeStyle ? { episodeRevision: settingsDraft?.episodeRevision ?? episodeStyle.episodeRevision, mode: styleMode, baselineMode: settingsDraft?.baselineMode || episodeStyle.mode } : {}),
+                                                ...(episodeStyle ? { episodeRevision: settingsDraft?.episodeRevision ?? episodeStyle.episodeRevision } : {}),
                                             });
                                         }}
                                     />
@@ -500,15 +475,17 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         next.set("step", "assets");
                                         navigate(`/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(episodeId)}?${next}`, { replace: true });
                                     }}
-                                    summary={summary}
+                                    summary={episodeSummary!}
                                     cast={castQuery.cast}
-                                    busy={confirm.isPending || media.state.submitting || retryText.isPending}
+                                    busy={confirm.isPending || media.state.submitting || retryText.isPending || episodeConfigurationBusy}
                                     loading={castQuery.isLoading}
                                     error={castQuery.error}
                                     onRetry={() => void castQuery.refetch()}
                                     onChanged={refresh}
                                     onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
-                                    onGenerate={(cast) => media.requestCastImage(cast)}
+                                    onGenerate={(cast, selectedId) => {
+                                        if (!episodeConfigurationBusy) media.requestCastImage(cast, selectedId || episodeStyleId);
+                                    }}
                                     onDirtyChange={sourceChanged}
                                     onContinue={stage === "assets" ? () => setModeOpen(true) : undefined}
                                     continueDisabled={!canConfirm}
@@ -518,11 +495,11 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                         ) : null}
                         {!episodesView && (active === "story" || active === "preview") ? (
                             <WorkflowProduction
-                                summary={summary}
+                                summary={episodeSummary!}
                                 step={active}
                                 onChanged={refresh}
                                 onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
-                                busy={chapterPickerState.busy || confirm.isPending || saveStyle.isPending}
+                                busy={chapterPickerState.busy || confirm.isPending || saveStyle.isPending || episodeConfigurationBusy}
                                 onDirtyChange={sourceChanged}
                                 onAllowMediaNavigation={(next) => {
                                     confirmedMediaNavigation.current = next;
@@ -535,7 +512,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                 projectId={projectId}
                                 summary={summary}
                                 onJump={(job) => {
-                                    if (job.kind === "cast_image" && job.shotId) setEditingCast(job.shotId);
+                                    if (!episodeConfigurationBusy && job.kind === "cast_image" && job.shotId) setEditingCast(job.shotId);
                                 }}
                             />
                         ) : null}
@@ -562,7 +539,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     ) : null}
                                     <Button
                                         type="primary"
-                                        disabled={Boolean(episodeStyleId && !episodeStyle) || !settings?.styleName.trim() || !settings?.stylePrompt.trim()}
+                                        disabled={episodeConfigurationBusy || (episodeStyleId ? Boolean(configIssue || episodeStyleIssue) : !settings?.styleName.trim() || !settings?.stylePrompt.trim())}
                                         loading={saveStyle.isPending}
                                         onClick={() => (settingsDirty && settingsDraft ? saveStyle.mutate({ ticket: operation.capture(), draft: settingsDraft }) : openStep("assets"))}
                                     >
@@ -586,7 +563,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     完成分镜编排
                                 </Button>
                             ) : null}
-                            {active === "style" && initialConfiguration && configIssue ? (
+                            {active === "style" && (initialConfiguration || episodeStyleId) && configIssue ? (
                                 <span role="alert">
                                     当前视频模型{configIssue}，请先调整后再确认。
                                     <Button type="link" size="small" onClick={() => configuration.current?.focusIssue()}>
@@ -594,11 +571,12 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     </Button>
                                 </span>
                             ) : null}
+                            {active === "style" && episodeStyleIssue ? <span role="alert">{episodeStyleIssue}</span> : null}
                         </footer>
                     ) : null}
                 </>
             ) : null}
-            {summary && editingCast ? <CastEditorDialog summary={summary} cast={castQuery.cast} castId={editingCast} onClose={() => setEditingCast(undefined)} onChanged={refresh} /> : null}
+            {episodeSummary && editingCast ? <CastEditorDialog summary={episodeSummary} cast={castQuery.cast} castId={editingCast} episodeId={episodeStyleId} onClose={() => setEditingCast(undefined)} onChanged={refresh} /> : null}
             {summary && chapterPickerOpen ? (
                 <ChapterPickerModal
                     open

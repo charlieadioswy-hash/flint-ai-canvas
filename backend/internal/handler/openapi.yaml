@@ -127,10 +127,10 @@ paths:
       - { in: path, name: episodeId, required: true, schema: { type: string } }
     get:
       tags: [dramas]
-      summary: 读取单集有效风格及全剧默认
+      summary: 读取本集独立制作配置
       responses:
         "200":
-          description: 成功信封，data 包含继承模式、当前有效风格与全剧默认
+          description: 成功信封，data 包含本集制作配置和作品、单集双版本
           content:
             application/json:
               schema:
@@ -143,8 +143,8 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
     patch:
       tags: [dramas]
-      summary: 保存单集独立风格或恢复沿用全剧默认
-      description: 双版本校验并递增作品制作版本，单集正文版本不变。继承模式跟随当前全剧默认；独立模式只用于本集后续显式撰写。可同时提交 drawing 原子保存全剧共享绘图配置，其范围不随 mode 改变。保存不改写旧提示词、共享主体记录或已有媒体，不自动生成。相关文字任务进行中拒绝保存。请求体最多 128 KiB。
+      summary: 保存本集独立制作配置
+      description: 双版本校验并递增作品制作版本，单集正文版本不变。初值复制首次制作配置，后续保存只修改本集的画风、模型、模板和制作参数，不回写作品默认或其他集。并发、审核、媒体放行和分集方式仍按作品控制。保存不改写已有正文、提示词、共享主体或媒体，不自动生成。相关文字任务进行中、本集媒体或采用本集配置的主体图片仍排队或生成时拒绝保存。请求体最多 128 KiB。
       requestBody:
         required: true
         content:
@@ -152,7 +152,7 @@ paths:
             schema: { $ref: "#/components/schemas/UpdateDramaEpisodeStyleRequest" }
       responses:
         "200":
-          description: 成功信封，data 为保存后的有效风格
+          description: 成功信封，data 为保存后的本集制作配置
           content:
             application/json:
               schema:
@@ -4710,6 +4710,115 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+    get:
+      tags: [dramas]
+      summary: 读取主体独立视图与历史
+      responses:
+        "200": { description: 成功信封，data 为含 views 的对象 }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [dramas]
+      summary: 保存新增独立视图
+      description: 可传 episodeId 使用本集默认配置校验，主体和视图显式参数优先；不生成图片。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaCastViewSaveRequest" }
+      responses:
+        "200": { description: 成功信封 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/{viewId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+      - { in: path, name: viewId, required: true, schema: { type: string } }
+    put:
+      tags: [dramas]
+      summary: 保存独立视图配置
+      description: 可传 episodeId 使用本集默认配置校验，主体和视图显式参数优先；不生成图片。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaCastViewSaveRequest" }
+      responses:
+        "200": { description: 成功信封 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/{viewId}/preflight:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+      - { in: path, name: viewId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 预检独立视图图片生成
+      description: 可传 episodeId 以本集配置提供默认值并绑定确认上下文；返回报价和确认令牌，不收费、不生成。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaCastViewActionRequest" }
+      responses:
+        "200": { description: 成功信封，data 为就绪状态、双版本、报价和 confirmationToken }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/{viewId}/execute:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+      - { in: path, name: viewId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 执行独立视图图片生成
+      description: 携带预检时相同 episodeId 与确认令牌；本集配置变化会使确认失效。重复 clientOperationId 不重复生成或收费。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/DramaCastViewActionRequest" }
+                - type: object
+                  required: [confirmationToken, clientOperationId]
+      responses:
+        "200": { description: 成功信封 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/image-options:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+    put:
+      tags: [dramas]
+      summary: 保存主体图片配置
+      description: 双版本校验；可传 episodeId 以本集默认模型、画幅与模板校验，空值继承本集配置，否则继承作品配置。主体显式配置优先。保存不生成，不修改已有图片；排队或生成中拒绝修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDramaCastImageOptionsRequest" }
+      responses:
+        "200": { description: 成功信封，data 为含 cast 的对象 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/cast/{castId}/image-prompt:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -4717,7 +4826,7 @@ paths:
     post:
       tags: [dramas]
       summary: 按当前外观和画风重新编排参考图提示词
-      description: 省略字段使用已保存值；覆盖字段仅供本次预览。使用真实生成入口的编排函数和作品参考图方案，忽略旧 imagePrompt，不调用收费模型、不保存、不递归嵌入旧提示词。适用于基础设定和造型。
+      description: 省略字段使用已保存值；覆盖字段仅供本次预览。传 episodeId 时使用当前用户所属作品中该集的画风和参考图模板，否则使用作品配置。使用真实生成入口的编排函数，忽略旧 imagePrompt，不调用收费模型、不保存、不递归嵌入旧提示词。适用于基础设定和造型。
       requestBody:
         required: true
         content:
@@ -5296,7 +5405,7 @@ components:
             sceneImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
     DramaDrawingModelChoice:
       type: object
-      description: 选择当前用户可用的逻辑模型或系统渠道图片模型；角色与场景可传空对象以沿用默认图片模型。
+      description: 选择当前用户可用的逻辑模型或系统渠道模型；可选步骤与主体覆盖可传空对象以沿用同能力的默认模型。
       properties:
         logicalModelId: { type: string }
         channelId: { type: string }
@@ -5311,30 +5420,101 @@ components:
         styleName: { type: string, minLength: 1, maxLength: 60 }
         stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: 最多 10000 个 Unicode 字符，完整保存并用于后续显式创作，不截短系统预设 }
         drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+    DramaSettings:
+      type: object
+      description: 完整制作配置。单集保存画风、模型、模板及制作参数；dramaType、concurrency、reviewMode、mediaMode、episodeMode 和 chaptersPerEpisode 仍由作品控制，单集提交不会覆盖这些作品控制字段。
+      properties:
+        aspectRatio: { type: string, enum: ["9:16", "16:9", "1:1", "3:4", "4:3"] }
+        episodeSeconds: { type: integer, minimum: 30, maximum: 1200 }
+        styleName: { type: string, maxLength: 60 }
+        stylePrompt: { type: string, maxLength: 10000, description: 最多 10000 个 Unicode 字符；允许空串，完整保存系统预设 }
+        language: { type: string, maxLength: 30 }
+        dramaType: { type: string }
+        reviewMode: { type: string }
+        mediaMode: { type: string }
+        concurrency: { type: integer }
+        episodeMode: { type: string }
+        chaptersPerEpisode: { type: integer }
+        referenceLimit: { type: integer, minimum: 0, maximum: 20 }
+        videoContinuity: { type: string, enum: [tail_frame, parallel] }
+        videoResolution: { type: string }
+        assets:
+          type: object
+          properties:
+            mode: { type: string }
+            characterPrompt: { type: string, maxLength: 4000 }
+            scenePrompt: { type: string, maxLength: 4000 }
+            characterRatio: { type: string }
+            resolution: { type: string }
+            propResolution: { type: string }
+            sceneResolution: { type: string }
+            sourceSkillId: { type: string }
+            sourceSkillName: { type: string }
+            sourcePath: { type: string }
+        models:
+          type: object
+          properties:
+            text: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            image: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            video: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            bibleText: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            scriptText: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            promptText: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            characterImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            propImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            sceneImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+        storyboard:
+          type: object
+          properties:
+            generationMode: { type: string }
+            segmentMode: { type: string }
+            segmentSeconds: { type: integer }
+            segmentMinSeconds: { type: integer }
+            segmentMaxSeconds: { type: integer }
+            pacing: { type: string }
+            dialogue: { type: string }
+            speechRate: { type: number }
+            lineSeconds: { type: number }
+            lineMaxRunes: { type: integer }
+            linePauseMs: { type: integer }
+            transition: { type: string }
+            transitionMs: { type: integer }
+            performance: { type: integer }
+            cameraMotion: { type: integer }
+            directorTemplate: { type: string }
+            targetShotCount: { type: integer }
+        textThinking:
+          type: object
+          properties:
+            bible: { type: string }
+            plan: { type: string }
+            script: { type: string }
+            prompt: { type: string }
+        promptSkill: { $ref: "#/components/schemas/DramaSkillRef" }
+        bibleSkill: { $ref: "#/components/schemas/DramaSkillRef" }
+        scriptSkill: { $ref: "#/components/schemas/DramaSkillRef" }
+    DramaSkillRef:
+      type: object
+      properties:
+        skillId: { type: string }
+        skillName: { type: string }
+        path: { type: string }
     DramaEpisodeStyle:
       type: object
-      required: [projectId, episodeId, revision, episodeRevision, mode, styleName, stylePrompt, defaultStyleName, defaultStylePrompt, drawing]
+      required: [projectId, episodeId, revision, episodeRevision, settings]
       properties:
         projectId: { type: string }
         episodeId: { type: string }
         revision: { type: integer, minimum: 0, description: 作品制作版本 }
         episodeRevision: { type: integer, minimum: 0, description: 单集正文版本 }
-        mode: { type: string, enum: [inherit, independent] }
-        styleName: { type: string, description: 当前有效风格名称 }
-        stylePrompt: { type: string, description: 当前有效风格说明 }
-        defaultStyleName: { type: string }
-        defaultStylePrompt: { type: string }
-        drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+        settings: { $ref: "#/components/schemas/DramaSettings" }
     UpdateDramaEpisodeStyleRequest:
       type: object
-      required: [expectedRevision, expectedEpisodeRevision, mode]
+      required: [expectedRevision, expectedEpisodeRevision, settings]
       properties:
         expectedRevision: { type: integer, minimum: 0 }
         expectedEpisodeRevision: { type: integer, minimum: 0 }
-        mode: { type: string, enum: [inherit, independent] }
-        styleName: { type: string, minLength: 1, maxLength: 60, description: independent 模式必填，inherit 模式忽略 }
-        stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: independent 模式必填，inherit 模式忽略；与全剧默认共用 10000 个 Unicode 字符上限，完整用于后续显式创作 }
-        drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+        settings: { $ref: "#/components/schemas/DramaSettings" }
     DramaCastImageOptions:
       type: object
       required: [model, ratio, resolution, subjectReferenceIds, styleReferenceIds]
@@ -5356,6 +5536,7 @@ components:
         - { $ref: "#/components/schemas/DramaCastImageSettings" }
         - type: object
           properties:
+            episodeId: { type: string, maxLength: 36, description: 可选本集配置上下文，必须属于当前作品；图片参数空值按本集默认校验 }
             expectedRevision: {type: integer, minimum: 0, description: 活动引导或传 imageOptions 时必填；制作阶段其他请求可省略，提交时执行版本校验}
             expectedCastRevision: { type: integer, minimum: 0, description: 传 imageOptions 时与 expectedRevision 一同必填 }
             imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
@@ -5372,6 +5553,7 @@ components:
         - { $ref: "#/components/schemas/DramaCastImageSettings" }
         - type: object
           properties:
+            episodeId: { type: string, maxLength: 36, description: 可选本集配置上下文，必须属于当前作品；图片参数空值按本集默认校验 }
             expectedRevision: { type: integer, minimum: 0, description: 传 imageOptions 时必填 }
             expectedCastRevision: { type: integer, minimum: 0, description: 传 imageOptions 时必填 }
             imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
@@ -5380,9 +5562,42 @@ components:
             fromChapter: { type: integer, description: 原著章节号，从 1 起；0 或空表示不限，负数归零，起止颠倒会交换 }
             toChapter: { type: integer }
             restyleSegments: { type: boolean, default: false }
+    DramaCastViewSaveRequest:
+      type: object
+      required: [expectedRevision, expectedCastRevision, viewRevision, config]
+      properties:
+        episodeId: { type: string, maxLength: 36, description: 可选的本集配置上下文，必须属于当前作品 }
+        expectedRevision: { type: integer, minimum: 0 }
+        expectedCastRevision: { type: integer, minimum: 0 }
+        viewRevision: { type: integer, minimum: 0 }
+        config:
+          type: object
+          properties:
+            name: { type: string }
+            direction: { type: string }
+            prompt: { type: string }
+            imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
+    DramaCastViewActionRequest:
+      type: object
+      required: [expectedRevision, viewRevision]
+      properties:
+        episodeId: { type: string, maxLength: 36, description: 本集配置上下文，执行时须与预检相同 }
+        expectedRevision: { type: integer, minimum: 0 }
+        viewRevision: { type: integer, minimum: 0 }
+        confirmationToken: { type: string }
+        clientOperationId: { type: string }
+    UpdateDramaCastImageOptionsRequest:
+      type: object
+      required: [expectedRevision, expectedCastRevision, options]
+      properties:
+        episodeId: { type: string, maxLength: 36, description: 可选本集配置上下文，必须属于当前作品 }
+        expectedRevision: { type: integer, minimum: 0 }
+        expectedCastRevision: { type: integer, minimum: 0 }
+        options: { $ref: "#/components/schemas/DramaCastImageOptions" }
     DramaCastImagePromptRequest:
       type: object
       properties:
+        episodeId: { type: string, maxLength: 36, description: 可选的本集配置上下文，必须属于当前作品 }
         appearance: { type: string, minLength: 1, maxLength: 1000 }
         imageStyleId: { type: string, maxLength: 64 }
         imageStyleName: { type: string, maxLength: 120 }

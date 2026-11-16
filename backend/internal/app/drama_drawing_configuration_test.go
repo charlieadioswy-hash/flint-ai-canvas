@@ -26,8 +26,8 @@ func dramaDrawingTestConfiguration(t *testing.T, fake *fakeDramaBackend) DramaDr
 	return DramaDrawingConfiguration{Assets: production.AssetSettings{Mode: production.AssetModeHeadshotFullbody}.Normalized(), Models: DramaDrawingModels{Image: choice, CharacterImage: choice, SceneImage: choice}}
 }
 
-func TestDramaStyleDrawingSavesSharedTemplatesWithoutChangingContent(t *testing.T) {
-	for _, scope := range []string{"episode-inherit", "project"} {
+func TestDramaStyleDrawingSavesTemplatesWithinSelectedScope(t *testing.T) {
+	for _, scope := range []string{"episode", "project"} {
 		t.Run(scope, func(t *testing.T) {
 			svc, fake, projectID, detail := dramaStudioFixture(t)
 			drawing := dramaDrawingTestConfiguration(t, fake)
@@ -48,10 +48,11 @@ func TestDramaStyleDrawingSavesSharedTemplatesWithoutChangingContent(t *testing.
 			beforeCasts, _ := svc.repo.DramaCasts(projectID)
 			beforeJobs, _ := svc.repo.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
 			requests := len(fake.requests)
-			if scope == "episode-inherit" {
-				saved, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Mode: dramaEpisodeStyleInherit, Drawing: &drawing})
-				if err != nil || saved.Mode != dramaEpisodeStyleInherit || saved.StylePrompt != view.StylePrompt || !reflect.DeepEqual(saved.Drawing, drawing) {
-					t.Fatalf("inherited style drawing save: %+v %v", saved, err)
+			if scope == "episode" {
+				next := applyDramaDrawingConfiguration(view.Settings, &drawing)
+				saved, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Settings: &next})
+				if err != nil || saved.Settings.StylePrompt != view.Settings.StylePrompt || !reflect.DeepEqual(dramaDrawingConfiguration(saved.Settings), drawing) {
+					t.Fatalf("episode drawing save: %+v %v", saved, err)
 				}
 			} else {
 				if _, err := svc.UpdateDramaWorkflowStyle("usr-drama", projectID, UpdateDramaWorkflowStyleRequest{ExpectedRevision: &view.Revision, StyleName: before.StyleName, StylePrompt: before.StylePrompt, Drawing: &drawing}); err != nil {
@@ -60,22 +61,24 @@ func TestDramaStyleDrawingSavesSharedTemplatesWithoutChangingContent(t *testing.
 			}
 			afterProduction, _ := svc.repo.DramaProduction(projectID)
 			expected := before
-			expected.Assets = drawing.Assets
-			expected.Models.Image, expected.Models.CharacterImage, expected.Models.SceneImage = drawing.Models.Image, drawing.Models.CharacterImage, drawing.Models.SceneImage
+			if scope == "project" {
+				expected.Assets = drawing.Assets
+				expected.Models.Image, expected.Models.CharacterImage, expected.Models.SceneImage = drawing.Models.Image, drawing.Models.CharacterImage, drawing.Models.SceneImage
+			}
 			if afterProduction.Revision != view.Revision+1 || afterProduction.GuideStep != model.DramaGuideStory || !reflect.DeepEqual(parseDramaSettings(afterProduction.SettingsJSON), expected) {
 				t.Fatalf("drawing save changed unrelated settings: %+v", afterProduction)
 			}
 			episodes, _ := svc.repo.DramaEpisodes(projectID)
 			shared, _ := svc.DramaEpisodeStyle("usr-drama", projectID, episodes[1].ID)
-			if !reflect.DeepEqual(shared.Drawing, drawing) {
-				t.Fatal("drawing configuration was not shared with other episodes")
+			if reflect.DeepEqual(dramaDrawingConfiguration(shared.Settings), drawing) {
+				t.Fatal("later drawing edit leaked into another episode's initial snapshot")
 			}
 			afterEpisode, _ := svc.repo.DramaEpisode(projectID, detail.Episode.ID)
 			afterShots, _ := svc.repo.DramaShots(detail.Episode.ID)
 			afterSegments, _ := svc.repo.DramaSegments(detail.Episode.ID)
 			afterCasts, _ := svc.repo.DramaCasts(projectID)
 			afterJobs, _ := svc.repo.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
-			afterEpisode.StyleMode, afterEpisode.UpdatedAt = beforeEpisode.StyleMode, beforeEpisode.UpdatedAt
+			afterEpisode.SettingsJSON, afterEpisode.UpdatedAt = beforeEpisode.SettingsJSON, beforeEpisode.UpdatedAt
 			if !reflect.DeepEqual(beforeEpisode, afterEpisode) || !reflect.DeepEqual(beforeShots, afterShots) || !reflect.DeepEqual(beforeSegments, afterSegments) || !reflect.DeepEqual(beforeCasts, afterCasts) || !reflect.DeepEqual(beforeJobs, afterJobs) || len(fake.requests) != requests {
 				t.Fatal("saving drawing configuration rewrote existing content or submitted generation")
 			}
@@ -92,7 +95,9 @@ func TestDramaStyleDrawingInvalidOrStaleSaveKeepsBothScopes(t *testing.T) {
 	for _, kind := range []string{"production-version", "episode-version", "template", "image-model", "active-job"} {
 		t.Run(kind, func(t *testing.T) {
 			input := drawing
-			req := UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Mode: dramaEpisodeStyleIndependent, StyleName: "新风格", StylePrompt: "不应部分保存的风格", Drawing: &input}
+			next := view.Settings
+			next.StyleName, next.StylePrompt = "新风格", "不应部分保存的风格"
+			req := UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision}
 			switch kind {
 			case "production-version":
 				wrong := view.Revision + 1
@@ -109,6 +114,8 @@ func TestDramaStyleDrawingInvalidOrStaleSaveKeepsBothScopes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			next = applyDramaDrawingConfiguration(next, &input)
+			req.Settings = &next
 			if _, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, req); err == nil {
 				t.Fatal("invalid or stale drawing save accepted")
 			}
@@ -129,7 +136,7 @@ func TestDramaStyleDrawingLateFailureRollsBackEpisodeAndProduction(t *testing.T)
 	beforeEpisode, _ := svc.repo.DramaEpisode(projectID, detail.Episode.ID)
 	injected := false
 	if err := fake.db.Callback().Update().Before("gorm:update").Register("drawing-production-failure", func(tx *gorm.DB) {
-		if fields, ok := tx.Statement.Dest.(map[string]any); tx.Statement.Table == "drama_productions" && ok && fields["settings_json"] != nil {
+		if fields, ok := tx.Statement.Dest.(map[string]any); tx.Statement.Table == "drama_productions" && ok && fields["revision"] != nil {
 			injected = true
 			tx.AddError(errors.New("injected drawing settings failure"))
 		}
@@ -137,7 +144,9 @@ func TestDramaStyleDrawingLateFailureRollsBackEpisodeAndProduction(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fake.db.Callback().Update().Remove("drawing-production-failure") })
-	if _, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Mode: dramaEpisodeStyleIndependent, StyleName: "不应保存", StylePrompt: "事务失败不能留下本集风格", Drawing: &drawing}); err == nil {
+	next := applyDramaDrawingConfiguration(view.Settings, &drawing)
+	next.StyleName, next.StylePrompt = "不应保存", "事务失败不能留下本集风格"
+	if _, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, detail.Episode.ID, UpdateDramaEpisodeStyleRequest{ExpectedRevision: &view.Revision, ExpectedEpisodeRevision: &view.EpisodeRevision, Settings: &next}); err == nil {
 		t.Fatal("late production write failure ignored")
 	}
 	if !injected {

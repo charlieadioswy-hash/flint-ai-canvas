@@ -38,16 +38,16 @@ export function WorkflowConfiguration({
     settings,
     onChange,
     disabled,
-    styleDisabled = false,
     styleOnly = false,
+    scope = "project",
     ref,
 }: {
     summary: DramaSummary;
     settings: DramaSettings;
     onChange: (settings: DramaSettings) => void;
     disabled: boolean;
-    styleDisabled?: boolean;
     styleOnly?: boolean;
+    scope?: "project" | "episode";
     ref?: Ref<WorkflowConfigurationHandle>;
 }) {
     const { modal } = App.useApp();
@@ -106,13 +106,14 @@ export function WorkflowConfiguration({
         if (styleOnly) {
             onChange({
                 ...settings,
-                ...(!styleDisabled ? { styleName: change.styleName ?? settings.styleName, stylePrompt: change.stylePrompt ?? settings.stylePrompt } : {}),
+                styleName: change.styleName ?? settings.styleName,
+                stylePrompt: change.stylePrompt ?? settings.stylePrompt,
                 assets: change.assets ?? settings.assets,
                 models: { ...settings.models, ...(change.models ? { image: change.models.image, characterImage: change.models.characterImage, sceneImage: change.models.sceneImage } : {}) },
             });
             return;
         }
-        onChange({ ...settings, ...change, mediaMode: "manual" });
+        onChange({ ...settings, ...change, ...(scope === "project" ? { mediaMode: "manual" } : {}) });
     };
 
     const selectTemplate = (kind: "character" | "scene", value: string) => {
@@ -138,7 +139,7 @@ export function WorkflowConfiguration({
         <section className="drama-workflow-configuration" aria-label="风格设置">
             <div className="drama-workflow-config-form thin-scrollbar">
                 <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields">
-                    <legend>绘图配置（全剧共用）</legend>
+                    <legend>{scope === "episode" ? "绘图配置（本集）" : "绘图配置（作品）"}</legend>
                     <label>
                         <span>绘图模型</span>
                         <DramaModelPicker capability="image" value={imageChoice} onChange={(choice) => patch({ models: { ...settings.models, image: choice, characterImage: choice, sceneImage: choice } })} />
@@ -167,9 +168,8 @@ export function WorkflowConfiguration({
                         <AssetSchemePicker value={settings.assets} imageModel={imageOption} layout="compact" onChange={(assets) => patch({ assets })} />
                     </details>
                 </fieldset>
-                <fieldset disabled={disabled || styleDisabled} inert={disabled || styleDisabled}>
+                <fieldset disabled={disabled} inert={disabled}>
                     <legend>绘图风格</legend>
-                    {styleDisabled ? <p className="drama-workflow-notice">当前沿用全剧默认，选择“本集独立风格”后可修改本集画风。</p> : null}
                     <div className="drama-workflow-style-modes" role="group" aria-label="风格来源">
                         <button type="button" aria-pressed={!custom} onClick={() => setCustom(false)}>
                             预设风格
@@ -182,7 +182,7 @@ export function WorkflowConfiguration({
                         <>
                             <label>
                                 <span>风格名称</span>
-                                <Input value={settings.styleName} maxLength={100} onChange={(event) => patch({ styleName: event.target.value })} />
+                                <Input value={settings.styleName} maxLength={60} onChange={(event) => patch({ styleName: event.target.value })} />
                             </label>
                             <label>
                                 <span>风格说明</span>
@@ -223,10 +223,10 @@ export function WorkflowConfiguration({
                         </>
                     )}
                     <div className="drama-workflow-style-library-actions">
-                        <Button size="small" disabled={disabled || styleDisabled} onClick={() => setPickerOpen(true)}>
+                        <Button size="small" disabled={disabled} onClick={() => setPickerOpen(true)}>
                             自由组合风格
                         </Button>
-                        <Button size="small" disabled={disabled || styleDisabled} onClick={() => setLibraryOpen(true)}>
+                        <Button size="small" disabled={disabled} onClick={() => setLibraryOpen(true)}>
                             风格库 / 我的风格
                         </Button>
                     </div>
@@ -392,10 +392,10 @@ export function WorkflowConfiguration({
             <AppModal open={Boolean(previewImage)} title={`${settings.styleName || "风格"}参考样图`} onCancel={() => setPreviewImage(undefined)} footer={null} width="min(1100px, calc(100vw - 32px))">
                 <img className="drama-workflow-style-lightbox" src={previewImage} alt={`${settings.styleName}参考样图`} />
             </AppModal>
-            <AppModal open={pickerOpen && !disabled && !styleDisabled} title="选择视觉风格" onCancel={() => setPickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
+            <AppModal open={pickerOpen && !disabled} title="选择视觉风格" onCancel={() => setPickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
                 <DramaStylePicker
                     value={style?.id || ""}
-                    disabled={disabled || styleDisabled}
+                    disabled={disabled}
                     onChange={(id) => {
                         const selected = findDramaStyle(id);
                         if (!selected) return;
@@ -405,7 +405,7 @@ export function WorkflowConfiguration({
                 />
             </AppModal>
             <CanvasStylePickerModal
-                open={libraryOpen && !disabled && !styleDisabled}
+                open={libraryOpen && !disabled}
                 value={libraryStyle?.id}
                 onClose={() => setLibraryOpen(false)}
                 onSelect={(selected) => {

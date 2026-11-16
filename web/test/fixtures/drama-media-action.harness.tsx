@@ -247,6 +247,41 @@ test("排队数为 0 也如实展示，不算成功提交了任务", async () =>
     expect(dialogText()).toContain("林夏");
 });
 
+test("同一主体按所选分集预检并提交主图，两次确认均保留各自集ID", async () => {
+    const preflight = spyOn(api, "preflightDramaStudioAction").mockImplementation(async (_projectId, request) => preview({ action: "cast_image", targetId: request.targetId, episodeId: request.episodeId, confirmationToken: `${request.episodeId}-token` }));
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "shared-cast" });
+    await render();
+    for (const episodeId of ["episode-a", "episode-b"]) {
+        await act(async () => controller!.requestCastImage({ id: "shared-cast", name: "林夏" }, episodeId));
+        expect(controller!.state.request?.episodeId).toBe(episodeId);
+        await click("确认提交");
+    }
+    expect(preflight.mock.calls.map((call) => call[1].episodeId)).toEqual(["episode-a", "episode-a", "episode-b", "episode-b"]);
+    expect(execute.mock.calls.map((call) => call[1])).toEqual([
+        { action: "cast_image", targetId: "shared-cast", episodeId: "episode-a", confirmationToken: "episode-a-token", baseRevision: 8, targetRevision: 3 },
+        { action: "cast_image", targetId: "shared-cast", episodeId: "episode-b", confirmationToken: "episode-b-token", baseRevision: 8, targetRevision: 3 },
+    ]);
+});
+
+test("同主体切集后旧集主图预检迟到不覆盖新集，确认只提交当前集", async () => {
+    const previous = deferred<DramaStudioActionPreflight>();
+    spyOn(api, "preflightDramaStudioAction").mockImplementation(async (_projectId, request) =>
+        request.episodeId === "episode-a" ? previous.promise : preview({ action: "cast_image", targetId: request.targetId, episodeId: request.episodeId, confirmationToken: "episode-b-token" }),
+    );
+    const execute = spyOn(api, "executeDramaStudioAction").mockResolvedValue({ queued: 1, action: "cast_image", targetId: "shared-cast" });
+    await render();
+    await act(async () => controller!.requestCastImage({ id: "shared-cast", name: "林夏" }, "episode-a"));
+    await act(async () => controller!.requestCastImage({ id: "shared-cast", name: "林夏" }, "episode-b"));
+    previous.resolve(preview({ action: "cast_image", targetId: "shared-cast", episodeId: "episode-a", confirmationToken: "episode-a-token" }));
+    await flush();
+    expect(controller!.state.request?.episodeId).toBe("episode-b");
+    expect(controller!.state.preview?.episodeId).toBe("episode-b");
+    expect(controller!.state.preview?.confirmationToken).toBe("episode-b-token");
+    await click("确认提交");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({ targetId: "shared-cast", episodeId: "episode-b", confirmationToken: "episode-b-token" });
+});
+
 test("缺失资产只切换到参考图预检，不会自动提交视频", async () => {
     const video = preview({
         action: "segment_video",

@@ -753,6 +753,7 @@ type SetDramaCastVoiceRequest struct {
 // DramaCastLookRequest 新增或修改一套角色造型：LookName 造型名，Appearance 这套造型的外观，
 // FromChapter / ToChapter 默认适用的原著章节号（从 1 起，0 或 nil 表示该端不限）。
 type DramaCastLookRequest struct {
+	EpisodeID            string                 `json:"episodeId,omitempty"`
 	ExpectedRevision     *int64                 `json:"expectedRevision,omitempty"`
 	ExpectedCastRevision *int64                 `json:"expectedCastRevision,omitempty"`
 	ImageOptions         *DramaCastImageOptions `json:"imageOptions,omitempty"`
@@ -786,6 +787,7 @@ type DeleteDramaCastRequest struct {
 }
 
 type UpdateDramaCastRequest struct {
+	EpisodeID            string                 `json:"episodeId,omitempty"`
 	ExpectedCastRevision *int64                 `json:"expectedCastRevision,omitempty"`
 	ImageOptions         *DramaCastImageOptions `json:"imageOptions,omitempty"`
 	ExpectedRevision     *int64                 `json:"expectedRevision,omitempty"`
@@ -803,6 +805,7 @@ type UpdateDramaCastRequest struct {
 
 // 只编排当前表单的提示词，不调用模型、不保存，也不嵌入已有自定义提示词。
 type DramaCastImagePromptRequest struct {
+	EpisodeID        string  `json:"episodeId,omitempty"`
 	Appearance       *string `json:"appearance"`
 	ImageStyleID     *string `json:"imageStyleId"`
 	ImageStyleName   *string `json:"imageStyleName"`

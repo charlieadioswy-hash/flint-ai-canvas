@@ -9,7 +9,7 @@ import { createClientUUID } from "@/lib/client-id";
 import { formatDramaCredits } from "@/lib/drama/drama-format";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { getDrama, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
+import { getDrama, getDramaEpisodeStyle, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
 import {
     adoptDramaCastView,
     deleteDramaCastView,
@@ -43,13 +43,13 @@ const DIRECTIONS: { value: CastViewDirection; label: string }[] = [
     { value: "custom", label: "自定义" },
 ];
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已就绪", stale: "设定已更新", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
-type Props = { projectId: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
+type Props = { projectId: string; episodeId?: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
 type Quote = PendingCastView & { preview: CastViewPreflight };
 type Workspace = { renderMain: (selector: ReactNode) => ReactNode; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
 export function CastViewWorkspace(props: Props & Workspace) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return <CastViewsSession key={`${userId}:${props.projectId}:${props.cast.id}`} {...props} userId={userId} onClose={() => undefined} workspace={props} />;
+    return <CastViewsSession key={`${userId}:${props.projectId}:${props.episodeId || ""}:${props.cast.id}`} {...props} userId={userId} onClose={() => undefined} workspace={props} />;
 }
 
 export function CastViews(props: Props) {
@@ -92,12 +92,12 @@ export function CastViews(props: Props) {
                     )}
                 </div>
             ) : null}
-            {open ? <CastViewsSession key={`${userId}:${props.projectId}:${props.cast.id}`} {...props} userId={userId} onClose={() => setOpen(false)} /> : null}
+            {open ? <CastViewsSession key={`${userId}:${props.projectId}:${props.episodeId || ""}:${props.cast.id}`} {...props} userId={userId} onClose={() => setOpen(false)} /> : null}
         </section>
     );
 }
 
-function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userId, workspace }: Props & { userId: string; onClose: () => void; workspace?: Workspace }) {
+function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onClose, userId, workspace }: Props & { userId: string; onClose: () => void; workspace?: Workspace }) {
     const { modal } = App.useApp();
     const operation = useDramaOperationScope(projectId);
     const queryKey = ["drama-cast-views", userId, projectId, cast.id];
@@ -313,6 +313,7 @@ function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userI
                         <CastViewEditor
                             key={`${selected}:${workspaceEditor.row?.revision || 0}:${workspaceEditor.expectedRevision ?? revision}:${workspaceEditor.castRevision ?? cast.revision}`}
                             projectId={projectId}
+                            episodeId={episodeId}
                             cast={cast}
                             row={workspaceEditor.row}
                             expectedRevision={workspaceEditor.expectedRevision ?? revision}
@@ -355,14 +356,20 @@ function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userI
                                 disabled={blocked || editorState.dirty || editorState.busy || Boolean(active)}
                                 onClick={() =>
                                     void run(`check:${row.id}`, async (ticket) => {
-                                        const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision });
+                                        const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) });
                                         const current = await summary.refetch();
                                         if (current.isError) throw new Error("无法确认最新作品版本，请刷新后重试");
                                         if (operation.isCurrent(ticket))
                                             setQuote({
                                                 viewId: row.id,
                                                 preview,
-                                                action: { expectedRevision: preview.revision, viewRevision: preview.viewRevision, confirmationToken: preview.confirmationToken, clientOperationId: `cast-view:${createClientUUID()}` },
+                                                action: {
+                                                    expectedRevision: preview.revision,
+                                                    viewRevision: preview.viewRevision,
+                                                    confirmationToken: preview.confirmationToken,
+                                                    clientOperationId: `cast-view:${createClientUUID()}`,
+                                                    ...(episodeId ? { episodeId } : {}),
+                                                },
                                             });
                                     })
                                 }
@@ -536,14 +543,20 @@ function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userI
                                         loading={busy === `check:${row.id}`}
                                         onClick={() =>
                                             void run(`check:${row.id}`, async (ticket) => {
-                                                const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision });
+                                                const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) });
                                                 const current = await summary.refetch();
                                                 if (current.isError) throw new Error("无法确认最新作品版本，请刷新后重试");
                                                 if (operation.isCurrent(ticket))
                                                     setQuote({
                                                         viewId: row.id,
                                                         preview,
-                                                        action: { expectedRevision: preview.revision, viewRevision: preview.viewRevision, confirmationToken: preview.confirmationToken, clientOperationId: `cast-view:${createClientUUID()}` },
+                                                        action: {
+                                                            expectedRevision: preview.revision,
+                                                            viewRevision: preview.viewRevision,
+                                                            confirmationToken: preview.confirmationToken,
+                                                            clientOperationId: `cast-view:${createClientUUID()}`,
+                                                            ...(episodeId ? { episodeId } : {}),
+                                                        },
                                                     });
                                             })
                                         }
@@ -624,6 +637,7 @@ function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userI
                     <CastViewEditor
                         key={`${editor.row?.id || "new"}:${editor.row?.revision || 0}`}
                         projectId={projectId}
+                        episodeId={episodeId}
                         cast={cast}
                         row={editor.row}
                         expectedRevision={revision}
@@ -642,6 +656,7 @@ function CastViewsSession({ projectId, cast, disabled, onChanged, onClose, userI
 
 function CastViewEditor({
     projectId,
+    episodeId,
     cast,
     row,
     expectedRevision,
@@ -652,6 +667,7 @@ function CastViewEditor({
     onDirtyChange,
 }: {
     projectId: string;
+    episodeId?: string;
     cast: DramaCast;
     row?: CastView;
     expectedRevision: number;
@@ -662,6 +678,7 @@ function CastViewEditor({
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
 }) {
     const { modal } = App.useApp();
+    const userId = useUserStore((state) => state.user?.id || "");
     const operation = useDramaOperationScope(projectId);
     const [draft, setDraft] = useState<CastViewConfig>(() => (row ? structuredClone(row.config) : { name: "", direction: "front", prompt: "", imageOptions: { model: {}, ratio: "", resolution: "" } }));
     const initial = useRef(JSON.stringify(draft));
@@ -685,8 +702,15 @@ function CastViewEditor({
         /* The server refuses invalid inherited configuration on save. */
     }
     const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
-    const categoryModel = cast.kind === "character" ? summary.data?.production.settings.models.characterImage : cast.kind === "scene" ? summary.data?.production.settings.models.sceneImage : summary.data?.production.settings.models.propImage;
-    const model = dramaChoiceKey(draft.imageOptions.model) ? draft.imageOptions.model : dramaChoiceKey(inherited?.model) ? inherited?.model : dramaChoiceKey(categoryModel) ? categoryModel : summary.data?.production.settings.models.image;
+    const episodeSettings = useQuery({
+        queryKey: ["drama-episode-style", userId, projectId, episodeId, summary.data?.production.revision || 0],
+        queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeId!, signal),
+        enabled: Boolean(episodeId && summary.data),
+    });
+    const contextBlocked = Boolean(summary.isPending || summary.isError || (episodeId && (!episodeSettings.data || episodeSettings.isError)));
+    const settings = episodeId ? episodeSettings.data?.settings : summary.data?.production.settings;
+    const categoryModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
+    const model = dramaChoiceKey(draft.imageOptions.model) ? draft.imageOptions.model : dramaChoiceKey(inherited?.model) ? inherited?.model : dramaChoiceKey(categoryModel) ? categoryModel : settings?.models.image;
     const option = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(model));
     const patch = (value: Partial<CastViewConfig>) => {
         if (!locked.current) setDraft((current) => ({ ...current, ...value }));
@@ -707,13 +731,13 @@ function CastViewEditor({
         });
     };
     const save = async () => {
-        if (disabled || locked.current || typeof baseVersions.current.expectedCastRevision !== "number") return;
+        if (disabled || contextBlocked || locked.current || typeof baseVersions.current.expectedCastRevision !== "number") return;
         locked.current = true;
         setSaving(true);
         setError("");
         const ticket = operation.capture();
         try {
-            const saved = await saveDramaCastView(projectId, cast.id, row?.id, { ...baseVersions.current, expectedCastRevision: baseVersions.current.expectedCastRevision, config: draft });
+            const saved = await saveDramaCastView(projectId, cast.id, row?.id, { ...baseVersions.current, expectedCastRevision: baseVersions.current.expectedCastRevision, config: draft, ...(episodeId ? { episodeId } : {}) });
             if (operation.isCurrent(ticket)) {
                 initial.current = JSON.stringify(draft);
                 await onSaved(saved);
@@ -727,7 +751,8 @@ function CastViewEditor({
     };
     return (
         <CastViewEditorShell inline={inline} title={row ? "编辑视图配置" : "新增独立视图"} onClose={close} saving={saving}>
-            <fieldset className="drama-cast-view-form" disabled={saving || disabled} inert={saving || disabled}>
+            {contextBlocked ? <p role={summary.isError || episodeSettings.isError ? "alert" : "status"}>{summary.isError || episodeSettings.isError ? "制作配置读取失败，请重新进入后再操作。" : "正在读取制作配置…"}</p> : null}
+            <fieldset className="drama-cast-view-form" disabled={saving || disabled || contextBlocked} inert={saving || disabled || contextBlocked}>
                 <label>
                     <span>视图名称</span>
                     <Input aria-label="视图名称" value={draft.name} maxLength={60} onChange={(event) => patch({ name: event.target.value })} />

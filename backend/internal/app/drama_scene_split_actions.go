@@ -294,7 +294,7 @@ func (s *Service) AdoptDramaSceneSplit(userID, projectID, episodeID string, req 
 		if err != nil {
 			return err
 		}
-		settings := parseDramaSettings(p.SettingsJSON)
+		settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
 		after, affected, err := s.buildDramaSceneReplacement(settings, all, before, scripted, cast, segments)
 		if err != nil {
 			return err

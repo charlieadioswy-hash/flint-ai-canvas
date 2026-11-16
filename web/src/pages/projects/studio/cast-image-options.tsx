@@ -5,7 +5,7 @@ import { Plus, X } from "lucide-react";
 
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { getDrama, updateDramaCastImageOptions, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
+import { getDrama, getDramaEpisodeStyle, updateDramaCastImageOptions, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
 import { MediaThumb } from "../drama-shared";
@@ -38,6 +38,7 @@ export function castImageOptionsDraft(value?: string): CastImageOptionsDraft {
 
 export function CastImageOptions({
     projectId,
+    episodeId,
     cast,
     disabled,
     onChanged,
@@ -46,6 +47,7 @@ export function CastImageOptions({
     onChange,
 }: {
     projectId: string;
+    episodeId?: string;
     cast: DramaCast;
     disabled: boolean;
     onChanged: () => void;
@@ -54,10 +56,10 @@ export function CastImageOptions({
     onChange?: (draft: CastImageOptionsDraft) => void;
 }) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return <CastImageOptionsSession key={`${userId}:${projectId}:${cast.id}:${value ? "controlled" : cast.imageOptionsJson || ""}`} {...{ projectId, cast, disabled, onChanged, onDirtyChange, userId, value, onChange }} />;
+    return <CastImageOptionsSession key={`${userId}:${projectId}:${episodeId || ""}:${cast.id}:${value ? "controlled" : cast.imageOptionsJson || ""}`} {...{ projectId, episodeId, cast, disabled, onChanged, onDirtyChange, userId, value, onChange }} />;
 }
 
-function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirtyChange, userId, value, onChange }: Parameters<typeof CastImageOptions>[0] & { userId: string }) {
+function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDisabled, onChanged, onDirtyChange, userId, value, onChange }: Parameters<typeof CastImageOptions>[0] & { userId: string }) {
     const { message } = App.useApp();
     const [localCorrupt, setLocalCorrupt] = useState(false);
     const [localOptions, setLocalOptions] = useState<DramaCastImageOptions>(() => {
@@ -81,6 +83,12 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
     const mounted = useRef(true);
     const [picker, setPicker] = useState<"subject" | "style">();
     const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
+    const episodeSettings = useQuery({
+        queryKey: ["drama-episode-style", userId, projectId, episodeId, summary.data?.production.revision || 0],
+        queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeId!, signal),
+        enabled: Boolean(episodeId && summary.data),
+    });
+    const disabled = inputDisabled || Boolean(episodeId && (!episodeSettings.data || episodeSettings.isError));
     const catalog = useDramaModelCatalog();
     const current = () => mounted.current && (useUserStore.getState().user?.id || "") === userId;
     useEffect(() => {
@@ -99,7 +107,8 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
         onDirtyChange?.(dirty || saving);
         return () => onDirtyChange?.(false);
     }, [dirty, saving, onDirtyChange]);
-    const settings = summary.data?.production.settings;
+    const settings = episodeId ? episodeSettings.data?.settings : summary.data?.production.settings;
+    const configurationScope = episodeId ? "本集" : "作品";
     const inheritedModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
     const effectiveModel = dramaChoiceKey(options.model) ? options.model : inheritedModel && dramaChoiceKey(inheritedModel) ? inheritedModel : settings?.models.image;
     const model = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(effectiveModel));
@@ -111,7 +120,8 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
         savingRef.current = true;
         setSaving(true);
         try {
-            await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, cast.revision, options);
+            if (episodeId) await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, cast.revision, options, episodeId);
+            else await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, cast.revision, options);
             if (!current()) return;
             initial.current = JSON.stringify(options);
             onDirtyChange?.(false);
@@ -127,6 +137,7 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
     return (
         <section className="drama-cast-image-options" aria-label="图片生成配置">
             <div className="drama-cast-image-options-body">
+                {episodeId && !episodeSettings.data ? <p role={episodeSettings.isError ? "alert" : "status"}>{episodeSettings.isError ? "本集图片配置读取失败，请重新进入" : "正在读取本集图片配置…"}</p> : null}
                 {corrupt ? (
                     <p role="alert">
                         原图片配置无法读取。
@@ -142,7 +153,7 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
                         </Button>
                     </p>
                 ) : null}
-                <Field label="本资产图片模型" hint="未单独指定时沿用该类资产的作品配置">
+                <Field label="本资产图片模型" hint={`未单独指定时使用该类资产的${configurationScope}配置`}>
                     <fieldset disabled={disabled || saving}>
                         <DramaModelPicker
                             capability="image"
@@ -153,7 +164,7 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
                         />
                     </fieldset>
                     <Button size="small" disabled={disabled || saving || !dramaChoiceKey(options.model)} onClick={() => setOptions({ ...options, model: {}, ratio: "", resolution: "" })}>
-                        沿用作品模型
+                        使用{configurationScope}模型
                     </Button>
                 </Field>
                 <div className="drama-cast-image-options-grid">
@@ -162,7 +173,7 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
                             aria-label="资产图片画幅"
                             disabled={disabled || saving}
                             value={options.ratio}
-                            options={[{ value: "", label: "沿用作品画幅" }, ...ratios.map((value) => ({ value, label: value }))]}
+                            options={[{ value: "", label: `使用${configurationScope}画幅` }, ...ratios.map((value) => ({ value, label: value }))]}
                             onChange={(ratio) => setOptions({ ...options, ratio })}
                         />
                     </Field>
@@ -171,7 +182,7 @@ function CastImageOptionsSession({ projectId, cast, disabled, onChanged, onDirty
                             aria-label="资产图片分辨率"
                             disabled={disabled || saving}
                             value={options.resolution}
-                            options={[{ value: "", label: "沿用作品分辨率" }, ...resolutions.map((value) => ({ value, label: value.toUpperCase() }))]}
+                            options={[{ value: "", label: `使用${configurationScope}分辨率` }, ...resolutions.map((value) => ({ value, label: value.toUpperCase() }))]}
                             onChange={(resolution) => setOptions({ ...options, resolution })}
                         />
                     </Field>

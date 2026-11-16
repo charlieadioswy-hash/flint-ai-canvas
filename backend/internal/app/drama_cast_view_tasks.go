@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -20,6 +21,7 @@ func (s *Service) PreflightDramaCastView(userID, projectID, castID, viewID strin
 }
 
 func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, projectID, castID, viewID string, req DramaCastViewActionRequest) (dramaCastViewPlan, error) {
+	req.EpisodeID = strings.TrimSpace(req.EpisodeID)
 	plan := dramaCastViewPlan{}
 	row, err := repo.DramaCastView(projectID, castID, viewID)
 	if err != nil {
@@ -34,7 +36,7 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 		return plan, err
 	}
 	plan.row, plan.cast, plan.view.Revision, plan.view.ViewRevision = *row, *cast, p.Revision, row.Revision
-	plan.sourceHash, err = dramaCastViewSource(repo, *cast)
+	plan.sourceHash, err = dramaCastViewContextSource(repo, *cast, req.EpisodeID)
 	if err != nil {
 		return plan, err
 	}
@@ -55,10 +57,18 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 	if err := json.Unmarshal([]byte(row.ConfigJSON), &config); err != nil {
 		return plan, BadAuthRequest("视图配置损坏")
 	}
-	settings := parseDramaSettings(p.SettingsJSON)
+	settings, err := dramaCastContextSettings(repo, p, req.EpisodeID)
+	if err != nil {
+		return plan, err
+	}
+	meta := parseDramaBibleMeta(p.BibleJSON)
+	defaults := parseDramaSettings(p.SettingsJSON)
+	if settings.StyleName != defaults.StyleName || settings.StylePrompt != defaults.StylePrompt {
+		meta.VisualRules = "保持本集视觉风格统一"
+	}
 	source := *cast
 	if source.ImagePrompt == "" {
-		source.ImagePrompt = buildDramaCastImagePrompt(settings, parseDramaBibleMeta(p.BibleJSON), *cast)
+		source.ImagePrompt = buildDramaCastImagePrompt(settings, meta, *cast)
 	}
 	compiled, err := dramaCastViewImageCast(source, config)
 	if err != nil {
@@ -109,8 +119,8 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 	for _, resource := range image.Resources {
 		appendReference(resource)
 	}
-	prompt := buildDramaCastImagePrompt(settings, parseDramaBibleMeta(p.BibleJSON), compiled)
-	input := map[string]any{"mode": "image", "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": map[string]any{"source": "drama_cast_view", "domainProjectId": projectID, "dramaCastId": castID, "dramaCastViewId": viewID}}
+	prompt := buildDramaCastImagePrompt(settings, meta, compiled)
+	input := map[string]any{"mode": "image", "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": map[string]any{"source": "drama_cast_view", "domainProjectId": projectID, "dramaCastId": castID, "dramaCastViewId": viewID, "dramaEpisodeId": req.EpisodeID}}
 	encoded, _ := json.Marshal(input)
 	var requestInput map[string]any
 	_ = json.Unmarshal(encoded, &requestInput)
@@ -153,7 +163,7 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 		}
 	}
 	plan.view.Ready = true
-	plan.view.ConfirmationToken = dramaCastViewDigest([]any{projectID, cast, row, p.Revision, p.GuideStep, image.Options, prompt, plan.resourceIDs, intent, quote})
+	plan.view.ConfirmationToken = dramaCastViewDigest([]any{projectID, cast, row, p.Revision, p.GuideStep, req.EpisodeID, plan.sourceHash, image.Options, prompt, plan.resourceIDs, intent, quote})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_image", Operation: image.Intent.Operation, Prompt: prompt, LogicalModelID: image.Choice.LogicalModelID, Model: image.Choice.ModelKey, Input: requestInput}
 	return plan, nil
 }

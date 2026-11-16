@@ -133,6 +133,11 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 				}
 				return tx.UpdateDramaGuideIf(projectID, current.Revision, current.GuideStep, fields)
 			}
+			if req.Settings != nil {
+				if err := finalizeDramaInitialSettings(tx, current, parseDramaSettings(fields["settings_json"].(string)), fields); err != nil {
+					return err
+				}
+			}
 			return tx.UpdateDramaProduction(projectID, fields)
 		})
 		if err != nil {
@@ -184,8 +189,20 @@ func (s *Service) resumeDrama(productionRow *model.DramaProduction) error {
 	if productionRow.Status == model.DramaStatusCompleted {
 		fields["stage"] = model.DramaStageProduce
 	}
-	if err := s.repo.UpdateDramaProduction(productionRow.ProjectID, fields); err != nil {
-		return err
+	if err := s.repo.Transaction(func(tx *repository.Repository) error {
+		current, err := tx.DramaProductionForUpdate(productionRow.ProjectID)
+		if err != nil {
+			return err
+		}
+		if current.SettingsJSON != productionRow.SettingsJSON || current.GuideStep != productionRow.GuideStep {
+			return repository.ErrDramaGuideChanged
+		}
+		if err := finalizeDramaInitialSettings(tx, current, settings, fields); err != nil {
+			return err
+		}
+		return tx.UpdateDramaProduction(productionRow.ProjectID, fields)
+	}); err != nil {
+		return dramaGuideError(err)
 	}
 	productionRow.Status, productionRow.PauseReason = model.DramaStatusRunning, ""
 	return nil
@@ -533,7 +550,7 @@ func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCa
 // UpdateDramaCastLook 只保存造型设定；外观变化可按请求标记下游视频过期，图片始终由用户单独请求生成。
 func (s *Service) UpdateDramaCastLook(userID, projectID, lookID string, req DramaCastLookRequest) (map[string]any, error) {
 	if req.ImageOptions != nil || req.ExpectedCastRevision != nil {
-		cast, affected, err := s.saveDramaCastWorkspace(userID, projectID, lookID, UpdateDramaCastRequest{ExpectedRevision: req.ExpectedRevision, ExpectedCastRevision: req.ExpectedCastRevision, ImageOptions: req.ImageOptions, ImagePrompt: req.ImagePrompt, ImageStyleID: req.ImageStyleID, ImageStyleName: req.ImageStyleName, ImageStylePrompt: req.ImageStylePrompt}, &req)
+		cast, affected, err := s.saveDramaCastWorkspace(userID, projectID, lookID, UpdateDramaCastRequest{EpisodeID: req.EpisodeID, ExpectedRevision: req.ExpectedRevision, ExpectedCastRevision: req.ExpectedCastRevision, ImageOptions: req.ImageOptions, ImagePrompt: req.ImagePrompt, ImageStyleID: req.ImageStyleID, ImageStyleName: req.ImageStyleName, ImageStylePrompt: req.ImageStylePrompt}, &req)
 		if err != nil {
 			return nil, err
 		}
@@ -694,48 +711,84 @@ func (s *Service) SetDramaCastVoice(userID, projectID, castID string, req SetDra
 
 // RegenerateDramaCast 重做参考图；restyleSegments=true 时让引用该设定的剧情段视频过期，需重新生成。
 // 段提示词只引用“参考图N”编号，不随图片内容变化，保持不变。
-func (s *Service) RegenerateDramaCast(userID string, projectID string, castID string, restyleSegments bool) (map[string]any, error) {
-	project, productionRow, err := s.dramaForUser(userID, projectID)
+func (s *Service) RegenerateDramaCast(userID string, projectID string, castID string, restyleSegments bool, episodeIDs ...string) (map[string]any, error) {
+	_, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	if productionRow.GuideStep == model.DramaGuideConfiguring {
-		return nil, BadAuthRequest("请先确认制作方案并生成资产文字设定")
+	episodeID := ""
+	if len(episodeIDs) > 0 {
+		episodeID = strings.TrimSpace(episodeIDs[0])
 	}
-	cast, err := s.repo.DramaCast(project.ID, castID)
+	release, err := s.lockDramaSchedule(projectID)
 	if err != nil {
 		return nil, err
 	}
-	if cast.Locked {
-		return nil, BadAuthRequest("设定已锁定，请先解锁")
-	}
-	if !dramaCastHasImageDefinition(*cast) {
-		return nil, BadAuthRequest("请先补充资产描述或图片提示词，再生成参考图")
-	}
-	// queued 表示用户明确请求：手动生图模式下即使资产尚未整体放行也会生成。
-	if err := s.repo.UpdateDramaCastFields(cast.ID, map[string]any{"image_status": model.DramaMediaQueued}); err != nil {
-		return nil, err
-	}
-	// 重试角色本体时，把它因本体失败而落败的造型一起重新排队。
-	if cast.ParentID == "" {
-		casts, err := s.repo.DramaCasts(project.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, look := range casts {
-			if look.ParentID != cast.ID || look.ImageStatus != model.DramaMediaFailed {
-				continue
-			}
-			if _, err := s.repo.UpdateDramaCastIf(look.ID, []string{model.DramaMediaFailed}, map[string]any{"image_status": model.DramaMediaQueued}); err != nil {
-				return nil, err
-			}
-		}
-	}
+	defer release()
 	affected := 0
-	if restyleSegments {
-		if affected, err = s.restyleDramaCastSegments(project.ID, cast.ID); err != nil {
-			return nil, err
+	err = s.repo.Transaction(func(tx *repository.Repository) error {
+		p, err := tx.DramaProductionForUpdate(projectID)
+		if err != nil {
+			return err
 		}
+		if p.GuideStep == model.DramaGuideConfiguring {
+			return BadAuthRequest("请先确认制作方案并生成资产文字设定")
+		}
+		if episodeID != "" {
+			if _, err := tx.DramaEpisode(projectID, episodeID); err != nil {
+				return dramaLookupError(err)
+			}
+		}
+		cast, err := tx.DramaCastForUpdate(projectID, castID)
+		if err != nil {
+			return dramaLookupError(err)
+		}
+		if cast.Locked {
+			return BadAuthRequest("设定已锁定，请先解锁")
+		}
+		if !dramaCastHasImageDefinition(*cast) {
+			return BadAuthRequest("请先补充资产描述或图片提示词，再生成参考图")
+		}
+		targets := []model.DramaCast{*cast}
+		if cast.ParentID == "" {
+			casts, err := tx.DramaCasts(projectID)
+			if err != nil {
+				return err
+			}
+			for _, look := range casts {
+				if look.ParentID == cast.ID && look.ImageStatus == model.DramaMediaFailed {
+					targets = append(targets, look)
+				}
+			}
+		}
+		jobs, err := tx.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
+		if err != nil {
+			return err
+		}
+		// 共享图片槽位已有作业时保留原配置来源，不能让新集请求被旧作业去重吞掉。
+		for _, target := range targets {
+			for _, job := range jobs {
+				if job.Kind == model.DramaJobCastImage && job.CastID == target.ID {
+					return dramaGuideConflict("资产图片正在排队或生成，请完成后再重新生成")
+				}
+			}
+		}
+		// queued 是明确请求；失败造型随角色本体一起重新排队，全部更新保持原子性。
+		for _, target := range targets {
+			if err := tx.UpdateDramaCastFields(target.ID, map[string]any{"image_status": model.DramaMediaQueued, "image_episode_id": episodeID}); err != nil {
+				return err
+			}
+		}
+		if restyleSegments {
+			if affected, err = restyleDramaCastWorkspaceSegments(tx, projectID, castID); err != nil {
+				return err
+			}
+		}
+		productionRow = p
+		return nil
+	})
+	if err != nil {
+		return nil, dramaGuideError(err)
 	}
 	if err := s.requestDramaWork(productionRow); err != nil {
 		return nil, err
@@ -1026,6 +1079,7 @@ func (s *Service) GenerateDramaSegments(userID, projectID, episodeID string, req
 	}
 	indexes := []int{}
 	seen := map[int]bool{}
+	settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
 	for _, index := range req.Segments {
 		seg, ok := known[index]
 		if !ok {
@@ -1037,7 +1091,6 @@ func (s *Service) GenerateDramaSegments(userID, projectID, episodeID string, req
 		if mediaBusyStatus(seg.VideoStatus) {
 			return nil, BadAuthRequest("剧情段视频正在生成或排队")
 		}
-		settings := parseDramaSettings(p.SettingsJSON)
 		choice := segmentVideoChoice(seg, settings.Models.Video)
 		if req.VideoModel != nil && !req.VideoModel.Empty() {
 			choice = *req.VideoModel
@@ -1197,7 +1250,11 @@ func (s *Service) checkDramaSegmentDuration(projectID string, p *model.DramaProd
 	if err != nil {
 		return err
 	}
-	choice := parseDramaSettings(p.SettingsJSON).Models.Video
+	episode, err := s.repo.DramaEpisode(projectID, shot.EpisodeID)
+	if err != nil {
+		return err
+	}
+	choice := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode).Models.Video
 	for _, segment := range segments {
 		if segment.SegmentIndex == shot.SegmentIndex {
 			choice = segmentVideoChoice(segment, choice)

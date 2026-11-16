@@ -40,6 +40,7 @@ type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (
 type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => void };
 type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number } };
 type SettingsCall = { projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration } };
+type EpisodeSettingsCall = { projectId: string; episodeId: string; input: { expectedRevision: number; expectedEpisodeRevision: number; settings: DramaSettings } };
 type BatchCall = { projectId: string; input: DramaStudioBatchRequest };
 
 const notices: Array<{ kind: string; text: string }> = [];
@@ -50,6 +51,11 @@ let deferEpisodeReads = false;
 const pendingEpisodeReads: Deferred<DramaEpisodeDetail>[] = [];
 const createCalls: CreateCall[] = [];
 const settingsCalls: SettingsCall[] = [];
+const episodeSettingsCalls: EpisodeSettingsCall[] = [];
+const configurationSummaries = new Map<string, DramaSummary>();
+const configurationOverrides = new Map<string, DramaSettings>();
+const pendingEpisodeSettings: Deferred<unknown>[] = [];
+let configurationError = false;
 const batchChecks: BatchCall[] = [];
 const batchExecutions: BatchCall[] = [];
 let deferBatchChecks = false;
@@ -280,6 +286,17 @@ mock.module("@/services/api/drama", () => ({
         pendingSettings.push(pending);
         return pending.promise;
     },
+    getDramaEpisodeStyle: async (projectId: string, episodeId: string) => {
+        if (configurationError) throw new Error("读取暂时失败");
+        const summary = configurationSummaries.get(projectId)!;
+        return { projectId, episodeId, revision: summary.production.revision, episodeRevision: 2, settings: configurationOverrides.get(episodeId) || summary.production.settings };
+    },
+    updateDramaEpisodeStyle: async (projectId: string, episodeId: string, input: EpisodeSettingsCall["input"]) => {
+        episodeSettingsCalls.push({ projectId, episodeId, input: structuredClone(input) });
+        const pending = deferred<unknown>();
+        pendingEpisodeSettings.push(pending);
+        return pending.promise;
+    },
 }));
 
 const { WorkflowAssets } = await import("@/pages/projects/workflow-assets");
@@ -466,6 +483,11 @@ function resetFixture() {
     extractCalls.length = 0;
     createCalls.length = 0;
     settingsCalls.length = 0;
+    episodeSettingsCalls.length = 0;
+    pendingEpisodeSettings.length = 0;
+    configurationSummaries.clear();
+    configurationOverrides.clear();
+    configurationError = false;
     batchChecks.length = 0;
     batchExecutions.length = 0;
     deferBatchChecks = false;
@@ -494,12 +516,14 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
     const root = createRoot(container);
     const changed: string[] = [];
     const generated: string[] = [];
+    const generatedEpisodes: Array<string | undefined> = [];
     const dirtyStates: Array<[boolean, boolean]> = [];
     const episodeChanges: string[] = [];
     const pickedChapters: string[] = [];
     let current = { summary: initial, cast, loading: options.loading ?? false, busy: options.busy ?? false, variant: options.variant ?? "episode", episodeId: options.episodeId };
-    const render = () =>
-        createElement(
+    const render = () => {
+        configurationSummaries.set(current.summary.project.id, current.summary);
+        return createElement(
             QueryClientProvider,
             { client },
             createElement(WorkflowAssets, {
@@ -511,12 +535,16 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
                         root.render(render());
                     }
                 },
-                onGenerate: (item) => generated.push(`${current.summary.project.id}:${item.id}`),
+                onGenerate: (item, selectedEpisodeId) => {
+                    generated.push(`${current.summary.project.id}:${item.id}`);
+                    generatedEpisodes.push(selectedEpisodeId);
+                },
                 onDirtyChange: (dirty, busy) => dirtyStates.push([dirty, busy]),
                 onEpisodeChange: options.controlled ? (id) => episodeChanges.push(id) : undefined,
                 onPickChapters: options.pickable ? () => pickedChapters.push(current.summary.project.id) : undefined,
             }),
         );
+    };
     const update = async (patch: Partial<typeof current>) => {
         current = { ...current, ...patch };
         await act(async () => {
@@ -532,6 +560,7 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
         container,
         changed,
         generated,
+        generatedEpisodes,
         dirtyStates,
         episodeChanges,
         pickedChapters,
@@ -645,10 +674,10 @@ test("单集三栏分别全选与提交真实类型范围，角色包含造型�
         for (const [index, column] of columns.entries()) {
             await click(field(view.container, `选择本集全部${column.label}`));
             await click(button(view.container, `生成${column.label}图片`));
-            expect(batchChecks[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4 } });
+            expect(batchChecks[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, episodeId: "episode-1" } });
             expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain(`范围：当前列表已选 ${column.ids.length} 项${column.label}及造型`);
             await click(button(view.container, "确认提交本批次"));
-            expect(batchExecutions[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, confirmationToken: "batch-confirmation" } });
+            expect(batchExecutions[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, confirmationToken: "batch-confirmation", episodeId: "episode-1" } });
             await click(button(view.container, "关闭"));
         }
         expect(view.changed).toEqual(["project-a", "project-a", "project-a"]);
@@ -1105,7 +1134,7 @@ test("切换作品、账号或卸载后，迟到的新增和方案保存不能�
     for (const action of ["create", "scheme"] as const) {
         for (const boundary of ["project", "account", "unmount"] as const) {
             resetFixture();
-            const view = await mount(summaryOf("project-a", 4));
+            const view = await mount(summaryOf("project-a", 4), projectCast(), { variant: action === "scheme" ? "library" : "episode" });
             let disposed = false;
             try {
                 if (action === "create") {
@@ -1171,7 +1200,7 @@ test("忙碌时不能新增、批选或保存方案，加载状态可见", async
 test("方案明确保存并保留其它配置，失败保留草稿且不会触发生图", async () => {
     resetFixture();
     const initial = summaryOf("project-a", 4);
-    const view = await mount(initial);
+    const view = await mount(initial, projectCast(), { variant: "library" });
     try {
         await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
         await click(button(view.container, "切换参考图方案"));
@@ -1216,6 +1245,79 @@ test("方案明确保存并保留其它配置，失败保留草稿且不会触�
         await view.dispose();
     }
     expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+});
+
+test("本集参考图方案只保存本集完整配置，失败保留草稿", async () => {
+    resetFixture();
+    const initial = summaryOf("project-a", 4);
+    const ownSettings = { ...settings(), language: "粤语", styleName: "本集水彩", models: { ...settings().models, image: { modelKey: "episode-image" } } };
+    configurationOverrides.set("episode-1", ownSettings);
+    const view = await mount(initial);
+    try {
+        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
+        expect(view.container.textContent).toContain("这是本集后续");
+        await click(button(view.container, "切换参考图方案"));
+        await click(button(view.container, "保存后续参考图方案"));
+        expect(settingsCalls).toHaveLength(0);
+        expect(episodeSettingsCalls).toEqual([
+            { projectId: "project-a", episodeId: "episode-1", input: { expectedRevision: 4, expectedEpisodeRevision: 2, settings: { ...ownSettings, assets: { ...assets(), mode: "closeup_front_no_face", characterPrompt: "改后的角色提示词" } } } },
+        ]);
+        expect(view.generated).toEqual([]);
+        await act(async () => {
+            pendingEpisodeSettings[0].reject(new Error("本集版本冲突"));
+            await settle();
+        });
+        expect(field(view.container, "角色参考图提示词").value).toBe("改后的角色提示词");
+        expect(view.dirtyStates.at(-1)).toEqual([true, false]);
+        expect(initial.production.settings).toEqual(settings());
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("主体管理切集读取对应配置且单图和批量生成携带本集", async () => {
+    resetFixture();
+    configurationOverrides.set("episode-2", { ...settings(), assets: { ...assets(), characterPrompt: "第二集模板" } });
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        await act(async () => {
+            const select = view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')!;
+            select.value = "episode-2";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        await act(async () => {
+            await settle();
+        });
+        await click(button(view.container, "生成林夏"));
+        expect(view.generatedEpisodes).toEqual(["episode-2"]);
+        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
+        expect(field(view.container, "角色参考图提示词").value).toBe("第二集模板");
+        await click(view.container.querySelector('[aria-label="选择本集全部角色"]')!);
+        await click(button(view.container, "生成角色图片"));
+        expect(batchChecks.at(-1)?.input.episodeId).toBe("episode-2");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("本集配置读取失败时暂停生成和方案编辑，重新读取后恢复", async () => {
+    resetFixture();
+    configurationError = true;
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        expect(view.container.textContent).toContain("本集配置读取失败");
+        expect(button(view.container, "生成角色图片").disabled).toBe(true);
+        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
+        expect(view.container.querySelector('[aria-label="参考图方案"]')).toBeNull();
+        expect(episodeSettingsCalls).toHaveLength(0);
+        configurationError = false;
+        await click(button(view.container, "重新读取"));
+        expect(view.container.textContent).not.toContain("本集配置读取失败");
+        expect(view.container.querySelector('[aria-label="参考图方案"]')).not.toBeNull();
+    } finally {
+        await view.dispose();
+    }
 });
 
 test("新增名称参与离开保护，取消还原；旧方案弹层回调不能修改忙碌或新版本页面", async () => {

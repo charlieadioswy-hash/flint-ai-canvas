@@ -366,6 +366,44 @@ test("项目或动作范围变化隔离旧预检，不能把资产请求变成�
     }
 });
 
+test("本集批量参考图的预检与执行都保留所选集，不扩大为作品默认", async () => {
+    const view = await mount({ actions: ["cast_image"], targetIds: ["shared-cast"], episodeId: "episode-a" });
+    try {
+        await click(button(view.host, "批量生成参考图"));
+        expect(checks[0].input).toEqual({ action: "cast_image", targetIds: ["shared-cast"], episodeId: "episode-a", baseRevision: 1 });
+        await resolveCheck();
+        await click(button(view.host, "确认提交本批次"));
+        expect(executions[0].input).toEqual({ action: "cast_image", targetIds: ["shared-cast"], episodeId: "episode-a", baseRevision: 1, confirmationToken: "confirmed-token" });
+    } finally {
+        await view.close();
+    }
+});
+
+test("同主体批量切集丢弃旧集报价与迟到预检，重新确认只提交新集", async () => {
+    const view = await mount({ actions: ["cast_image"], targetIds: ["shared-cast"], episodeId: "episode-a" });
+    try {
+        await click(button(view.host, "批量生成参考图"));
+        await resolveCheck();
+        await view.rerender({ episodeId: "episode-b" });
+        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(executions).toHaveLength(0);
+        await click(button(view.host, "批量生成参考图"));
+        expect(checks[1].input.episodeId).toBe("episode-b");
+        await view.rerender({ episodeId: "episode-c" });
+        await resolveCheck(1);
+        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
+        await click(button(view.host, "批量生成参考图"));
+        expect(checks[2].input.episodeId).toBe("episode-c");
+        await resolveCheck(2);
+        await click(button(view.host, "确认提交本批次"));
+        expect(executions).toHaveLength(1);
+        expect(executions[0].input.episodeId).toBe("episode-c");
+        expect(executions[0].input.targetIds).toEqual(["shared-cast"]);
+    } finally {
+        await view.close();
+    }
+});
+
 test("空范围、重复 ID 与超过 200 项均不产生扩大范围的请求", async () => {
     const view = await mount({ targetIds: [] });
     try {

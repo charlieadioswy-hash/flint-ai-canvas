@@ -97,7 +97,8 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 				return dramaGuideConflict("本集还有文字或段视频任务进行中，请完成后再合成")
 			}
 		}
-		videos, err := dramaEpisodeVideoTimeline(tx, userID, projectID, episodeID, parseDramaSettings(p.SettingsJSON).AspectRatio)
+		settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
+		videos, err := dramaEpisodeVideoTimeline(tx, userID, projectID, episodeID, settings.AspectRatio)
 		if err != nil {
 			return BadAuthRequest(err.Error())
 		}

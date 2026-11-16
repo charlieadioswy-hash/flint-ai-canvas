@@ -60,11 +60,15 @@ func (s *Service) dramaSegmentAudioIDs(projectID, episodeID string, index int, i
 	if err != nil {
 		return nil, err
 	}
+	episode, err := s.repo.DramaEpisode(projectID, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	settings := dramaEpisodeSettings(parseDramaSettings(productionRow.SettingsJSON), *episode)
 	for _, row := range rows {
 		if row.SegmentIndex != index {
 			continue
 		}
-		settings := parseDramaSettings(productionRow.SettingsJSON)
 		profile, err := s.dramaVideoProfile(segmentVideoChoice(row, settings.Models.Video))
 		if err != nil {
 			return nil, err

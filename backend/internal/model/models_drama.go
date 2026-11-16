@@ -71,6 +71,7 @@ type DramaProduction struct {
 	Status              string `json:"status" gorm:"index;size:24"`
 	Stage               string `json:"stage" gorm:"size:24"`
 	SettingsJSON        string `json:"settingsJson" gorm:"type:text"`
+	InitialSettingsJSON string `json:"-" gorm:"type:text;not null;default:''"`
 	GuideStep           string `json:"guideStep,omitempty" gorm:"size:24"`
 	GuideConversationID string `json:"guideConversationId,omitempty" gorm:"size:64"`
 	CreativeBrief       string `json:"creativeBrief,omitempty" gorm:"type:text"`
@@ -129,6 +130,7 @@ type DramaCast struct {
 	LookToChapter   int       `json:"lookToChapter,omitempty"`
 	Importance      int       `json:"importance"`
 	ImageResourceID string    `json:"imageResourceId,omitempty" gorm:"size:36"`
+	ImageEpisodeID  string    `json:"imageEpisodeId,omitempty" gorm:"size:36;not null;default:''"`
 	ImageStatus     string    `json:"imageStatus" gorm:"size:16"`
 	ImageVersion    int       `json:"imageVersion"`
 	Locked          bool      `json:"locked"`
@@ -148,10 +150,12 @@ type DramaEpisode struct {
 	ChapterIDsJSON string `json:"chapterIdsJson" gorm:"type:text"`
 	// SourceFormat 是本集原文的素材类型（novel / script / storyboard），空串按小说处理。
 	SourceFormat string `json:"sourceFormat" gorm:"size:16"`
-	// 空或 inherit 始终读取当前全剧默认；independent 保留本集独立画风。
-	StyleMode   string `json:"styleMode,omitempty" gorm:"size:16;not null;default:''"`
-	StyleName   string `json:"styleName,omitempty" gorm:"size:60;not null;default:''"`
-	StylePrompt string `json:"stylePrompt,omitempty" gorm:"type:text;not null;default:''"`
+	// 首次制作配置的独立快照；后续只修改本集，不跟随作品配置变化。
+	SettingsJSON string `json:"-" gorm:"type:text;not null;default:''"`
+	// Schema 116 的旧字段只供 117 迁移读取，运行时以 SettingsJSON 为准。
+	StyleMode   string `json:"-" gorm:"size:16;not null;default:''"`
+	StyleName   string `json:"-" gorm:"size:60;not null;default:''"`
+	StylePrompt string `json:"-" gorm:"type:text;not null;default:''"`
 	Stage       string `json:"stage" gorm:"index;size:16"`
 	Error       string `json:"error" gorm:"type:text"`
 	ShotCount   int    `json:"shotCount"`

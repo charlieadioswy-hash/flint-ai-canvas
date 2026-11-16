@@ -161,6 +161,7 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 		status = model.DramaStatusRunning
 	}
 	productionRow := model.DramaProduction{ProjectID: project.ID, UserID: userID, Status: status, Stage: model.DramaStageBible, SettingsJSON: encodeDramaSettings(settings), BudgetMicrocredits: req.BudgetMicrocredits, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	productionRow.InitialSettingsJSON = productionRow.SettingsJSON
 	if req.Guided {
 		productionRow.GuideStep, productionRow.CreativeBrief = model.DramaGuideConfiguring, brief
 	}
@@ -172,6 +173,7 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 		if err != nil {
 			return nil, err
 		}
+		initializeDramaEpisodeSettings(episodes, productionRow.InitialSettingsJSON)
 	}
 	draftJSON := ""
 	if !req.Start && req.Draft != nil {

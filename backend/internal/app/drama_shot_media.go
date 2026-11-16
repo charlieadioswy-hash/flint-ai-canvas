@@ -117,11 +117,10 @@ func (s *Service) dramaShotMediaScope(userID, projectID, shotID, kind string) (*
 	return shot, production, err
 }
 
-func defaultDramaShotMediaConfig(shot model.DramaShot, p model.DramaProduction, kind string) DramaShotMediaConfig {
+func defaultDramaShotMediaConfig(shot model.DramaShot, settings DramaSettings, kind string) DramaShotMediaConfig {
 	if kind == "audio" {
 		return DramaShotMediaConfig{Prompt: shot.Dialogue, Operation: "audio", ReferenceResourceIDs: []string{}}
 	}
-	settings := parseDramaSettings(p.SettingsJSON)
 	config := DramaShotMediaConfig{Model: settings.Models.Image, Prompt: shot.ImagePrompt, Operation: "text_to_image", AspectRatio: settings.AspectRatio, Resolution: "1K", ReferenceResourceIDs: []string{}}
 	if kind == "video" {
 		config.Model, config.Prompt, config.Operation = settings.Models.Video, shot.VideoPrompt, "text_to_video"
@@ -134,10 +133,15 @@ func defaultDramaShotMediaConfig(shot model.DramaShot, p model.DramaProduction, 
 func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, kind string) (model.DramaShotMedia, DramaShotMediaConfig, error) {
 	row, err := repo.DramaShotMedia(shot.ProjectID, shot.ID, kind)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		config := defaultDramaShotMediaConfig(shot, p, kind)
+		episode, episodeErr := repo.DramaEpisode(shot.ProjectID, shot.EpisodeID)
+		if episodeErr != nil {
+			return model.DramaShotMedia{}, DramaShotMediaConfig{}, episodeErr
+		}
+		settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
+		config := defaultDramaShotMediaConfig(shot, settings, kind)
 		var configErr error
 		if kind == "video" {
-			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, config)
+			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, settings, config)
 		}
 		return model.DramaShotMedia{ProjectID: shot.ProjectID, EpisodeID: shot.EpisodeID, ShotID: shot.ID, Kind: kind, Status: "idle"}, config, configErr
 	}
@@ -151,8 +155,7 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 	return *row, config, nil
 }
 
-func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
-	settings := parseDramaSettings(p.SettingsJSON)
+func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, settings DramaSettings, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
 	validImage := func(id string) (bool, error) {
 		resource, err := repo.ResourceForUser(p.UserID, id)
 		if errors.Is(err, gorm.ErrRecordNotFound) {

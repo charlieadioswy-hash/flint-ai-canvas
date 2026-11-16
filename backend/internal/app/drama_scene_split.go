@@ -76,7 +76,7 @@ func dramaSceneRange(shots []model.DramaShot, ids []string) ([]model.DramaShot, 
 }
 
 func dramaSceneSourceHash(p model.DramaProduction, episode model.DramaEpisode, shots []model.DramaShot, segments []model.DramaSegment) string {
-	return dramaShotMediaDigest([]any{p.Revision, p.SettingsJSON, episode.Revision, shots, segments})
+	return dramaShotMediaDigest([]any{p.Revision, p.SettingsJSON, episode.Revision, episode.SettingsJSON, shots, segments})
 }
 
 func taskHasDramaSceneSplitOrigin(raw string) bool {

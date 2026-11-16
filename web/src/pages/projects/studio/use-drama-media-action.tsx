@@ -27,7 +27,7 @@ export type DramaMediaActionController = {
     state: DramaMediaActionState;
     requestAction: (request: DramaMediaActionTarget) => void;
     requestVideo: (episode: { id: string; number: number }, segment: DramaSegment, videoModel?: DramaModelChoice) => void;
-    requestCastImage: (cast: { id: string; name?: string }) => void;
+    requestCastImage: (cast: { id: string; name?: string }, episodeId?: string) => void;
     requestMissingAssets: () => void;
     recheckVideo: () => void;
     close: () => void;
@@ -177,7 +177,7 @@ export function useDramaMediaAction({ projectId, onChanged }: { projectId: strin
         },
         [begin],
     );
-    const requestCastImage = useCallback((cast: { id: string; name?: string }) => begin({ action: "cast_image", targetId: cast.id, segmentTitle: cast.name }, null), [begin]);
+    const requestCastImage = useCallback((cast: { id: string; name?: string }, episodeId?: string) => begin({ action: "cast_image", targetId: cast.id, segmentTitle: cast.name, ...(episodeId ? { episodeId } : {}) }, null), [begin]);
 
     const requestMissingAssets = useCallback(() => {
         const operation = active.current;

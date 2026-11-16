@@ -91,7 +91,7 @@ let dirty = false;
 const onDirty = (value: boolean) => {
     dirty = value;
 };
-async function mount(cast = fixture, disabled = false) {
+async function mount(cast = fixture, disabled = false, episodeId?: string) {
     useUserStore.setState({ user: { id: "user-a" } as never });
     spyOn(api, "getDrama").mockResolvedValue(summary);
     changed = 0;
@@ -105,12 +105,13 @@ async function mount(cast = fixture, disabled = false) {
         root!.render(
             <QueryClientProvider client={queries!}>
                 <App>
-                    <CastImageOptions projectId="test" cast={cast} disabled={disabled} onChanged={() => changed++} onDirtyChange={onDirty} />
+                    <CastImageOptions projectId="test" episodeId={episodeId} cast={cast} disabled={disabled} onChanged={() => changed++} onDirtyChange={onDirty} />
                 </App>
             </QueryClientProvider>,
         ),
     );
     await settle();
+    if (episodeId) for (let index = 0; index < 4; index += 1) await settle();
 }
 async function settle() {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -169,6 +170,29 @@ test("保存独立模型和参考组时使用作品与资产两种版本，不�
     expect(save.mock.calls[0]).toEqual(["test", "cast", 9, 3, { model: { channelId: "ch", modelKey: "two" }, ratio: "", resolution: "", subjectReferenceIds: [], styleReferenceIds: ["style"] }]);
     expect(changed).toBe(1);
     expect(dirty).toBe(false);
+});
+
+test("本集资产图片默认使用本集模型，保存带当前集且不改全剧缓存", async () => {
+    const ownSettings = { ...summary.production.settings, models: { image: { channelId: "ch", modelKey: "two" } } };
+    spyOn(api, "getDramaEpisodeStyle").mockResolvedValue({ projectId: "test", episodeId: "episode-two", revision: 9, episodeRevision: 3, settings: ownSettings });
+    const save = spyOn(api, "updateDramaCastImageOptions").mockResolvedValue({ cast: fixture });
+    await mount(fixture, false, "episode-two");
+    expect(document.querySelector<HTMLSelectElement>('[aria-label="资产图片模型"]')?.value).toBe("two");
+    expect(host.textContent).toContain("使用本集模型");
+    await changeModel("one");
+    await click("保存图片配置");
+    expect(save.mock.calls[0]?.[5]).toBe("episode-two");
+    expect(queries?.getQueryData<DramaSummary>(["drama", "test"])?.production.settings.models.image.modelKey).not.toBe("two");
+    expect(summary.production.settings.models.image.modelKey).toBe("one");
+});
+
+test("读取本集图片配置失败不会误用作品模型保存", async () => {
+    spyOn(api, "getDramaEpisodeStyle").mockRejectedValue(new Error("读取失败"));
+    const save = spyOn(api, "updateDramaCastImageOptions").mockResolvedValue({ cast: fixture });
+    await mount(fixture, false, "episode-two");
+    expect(host.textContent).toContain("本集图片配置读取失败");
+    await click("保存图片配置");
+    expect(save).not.toHaveBeenCalled();
 });
 test("素材引用只添加到所选分组，两组不允许重复引用同一资源", async () => {
     await mount();

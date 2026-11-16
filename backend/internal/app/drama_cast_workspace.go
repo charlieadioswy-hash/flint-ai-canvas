@@ -28,6 +28,10 @@ func (s *Service) saveDramaCastWorkspace(userID, projectID, castID string, req U
 		if p.UserID != userID {
 			return BadAuthRequest("作品已变化，请重新打开")
 		}
+		settings, err := dramaCastContextSettings(tx, p, req.EpisodeID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ProjectForUser(userID, projectID); err != nil {
 			return dramaLookupError(err)
 		}
@@ -120,7 +124,7 @@ func (s *Service) saveDramaCastWorkspace(userID, projectID, castID string, req U
 			}
 		}
 		if req.ImageOptions != nil {
-			encoded, err := s.validateDramaCastWorkspaceOptions(tx, userID, p, *cast, *req.ImageOptions)
+			encoded, err := s.validateDramaCastWorkspaceOptions(tx, userID, settings, *cast, *req.ImageOptions)
 			if err != nil {
 				return err
 			}
@@ -164,7 +168,7 @@ func (s *Service) saveDramaCastWorkspace(userID, projectID, castID string, req U
 	return *cast, affected, nil
 }
 
-func (s *Service) validateDramaCastWorkspaceOptions(tx *repository.Repository, userID string, p *model.DramaProduction, cast model.DramaCast, options DramaCastImageOptions) (string, error) {
+func (s *Service) validateDramaCastWorkspaceOptions(tx *repository.Repository, userID string, settings DramaSettings, cast model.DramaCast, options DramaCastImageOptions) (string, error) {
 	if mediaBusyStatus(cast.ImageStatus) {
 		return "", dramaGuideConflict("资产图片正在生成或排队，请完成后再改配置")
 	}
@@ -188,7 +192,7 @@ func (s *Service) validateDramaCastWorkspaceOptions(tx *repository.Repository, u
 		return "", err
 	}
 	cast.ImageOptionsJSON = string(encoded)
-	plan, err := s.dramaCastImagePlanFor(tx, userID, parseDramaSettings(p.SettingsJSON), cast)
+	plan, err := s.dramaCastImagePlanFor(tx, userID, settings, cast)
 	if err != nil {
 		return "", err
 	}

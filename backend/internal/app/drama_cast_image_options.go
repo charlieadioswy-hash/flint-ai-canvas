@@ -20,9 +20,22 @@ type DramaCastImageOptions struct {
 }
 
 type UpdateDramaCastImageOptionsRequest struct {
+	EpisodeID            string                `json:"episodeId,omitempty"`
 	ExpectedRevision     *int64                `json:"expectedRevision"`
 	ExpectedCastRevision *int64                `json:"expectedCastRevision"`
 	Options              DramaCastImageOptions `json:"options"`
+}
+
+func dramaCastContextSettings(repo *repository.Repository, p *model.DramaProduction, episodeID string) (DramaSettings, error) {
+	settings := parseDramaSettings(p.SettingsJSON)
+	if episodeID == "" {
+		return settings, nil
+	}
+	episode, err := repo.DramaEpisode(p.ProjectID, episodeID)
+	if err != nil {
+		return DramaSettings{}, dramaLookupError(err)
+	}
+	return dramaEpisodeSettings(settings, *episode), nil
 }
 
 type dramaCastImagePlan struct {
@@ -157,7 +170,11 @@ func (s *Service) UpdateDramaCastImageOptions(userID, projectID, castID string, 
 			return BadAuthRequest("参考图片已变化或无权使用，请重新选择")
 		}
 		cast.ImageOptionsJSON = string(encoded)
-		plan, err := s.dramaCastImagePlanFor(tx, userID, parseDramaSettings(p.SettingsJSON), *cast)
+		settings, err := dramaCastContextSettings(tx, p, req.EpisodeID)
+		if err != nil {
+			return err
+		}
+		plan, err := s.dramaCastImagePlanFor(tx, userID, settings, *cast)
 		if err != nil {
 			return err
 		}

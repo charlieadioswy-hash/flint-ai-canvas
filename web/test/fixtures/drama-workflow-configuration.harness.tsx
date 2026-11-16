@@ -65,7 +65,7 @@ const baseSettings = {
     models: { video: { logicalModelId: "test-video" } },
     assets: { scenePrompt: "", characterPrompt: "" },
 } as DramaSettings;
-async function mount(settings: DramaSettings, overrides: Partial<DramaModelOption>, styleOnly = false) {
+async function mount(settings: DramaSettings, overrides: Partial<DramaModelOption>, styleOnly = false, scope: "project" | "episode" = "project") {
     option = { choice: { logicalModelId: "test-video" }, videoRatios: ["9:16", "16:9"], videoResolutions: ["720p"], tailFrameChain: true, ...overrides } as DramaModelOption;
     const host = document.createElement("div");
     const sentinel = document.createElement("button");
@@ -75,11 +75,12 @@ async function mount(settings: DramaSettings, overrides: Partial<DramaModelOptio
     const root = createRoot(host);
     const query = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     const ref = createRef<WorkflowConfigurationHandle>();
+    const changes: DramaSettings[] = [];
     await act(async () => {
         root.render(
             <QueryClientProvider client={query}>
                 <button onClick={() => ref.current?.focusIssue()}>定位首项错误</button>
-                <WorkflowConfiguration ref={ref} summary={{ production: { chapterCount: 0 } } as DramaSummary} settings={settings} disabled={false} styleOnly={styleOnly} onChange={() => undefined} />
+                <WorkflowConfiguration ref={ref} summary={{ production: { chapterCount: 0 } } as DramaSummary} settings={settings} disabled={false} styleOnly={styleOnly} scope={scope} onChange={(next) => changes.push(next)} />
             </QueryClientProvider>,
         );
         await settle();
@@ -88,6 +89,7 @@ async function mount(settings: DramaSettings, overrides: Partial<DramaModelOptio
     return {
         host,
         sentinel,
+        changes,
         close: async () => {
             await act(async () => root.unmount());
             query.clear();
@@ -151,11 +153,25 @@ test("分辨率错误只展开外层，错误旁定位到对应分辨率控件",
     }
 });
 
-test("只编辑本集风格不自动展开制作参数，完整长提示词按统一Unicode上限计数", async () => {
+test("本集可直接修改制作参数，完整长提示词按统一Unicode上限计数", async () => {
     const prompt = "🎨".repeat(DRAMA_STYLE_PROMPT_MAX_LENGTH);
-    const view = await mount({ ...baseSettings, stylePrompt: prompt }, { videoRatios: ["16:9"] }, true);
+    const view = await mount({ ...baseSettings, stylePrompt: prompt }, {}, false, "episode");
     try {
         expect(parameterSections(view.host).map((item) => item.open)).toEqual([false, false]);
+        expect(view.host.textContent).toContain("绘图配置（本集）");
+        const language = view.host.querySelector<HTMLSelectElement>('[aria-label="对白语言"]')!;
+        expect(language.disabled).toBe(false);
+        expect(language.closest("fieldset")?.disabled).toBe(false);
+        await act(async () => {
+            language.value = "日语";
+            language.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(view.changes.at(-1)?.language).toBe("日语");
+        const ratio = view.host.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="false"]')!;
+        expect(ratio.disabled).toBe(false);
+        await click(ratio);
+        expect(view.changes.at(-1)?.aspectRatio).toBe("16:9");
         const custom = [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "自定义风格");
         await click(custom!);
         const input = view.host.querySelector<HTMLTextAreaElement>("textarea");

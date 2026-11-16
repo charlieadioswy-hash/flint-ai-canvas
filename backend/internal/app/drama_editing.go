@@ -78,6 +78,7 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 		} else if current.GuideStep != "" && current.GuideStep != model.DramaGuideAssets && current.GuideStep != model.DramaGuideStory && current.GuideStep != model.DramaGuideCompleted {
 			return BadAuthRequest("请先确认制作方案；配置阶段请保存制作范围")
 		}
+		episode.SettingsJSON = dramaInitialEpisodeSettingsJSON(*current)
 		if err := tx.AddDramaEpisodeSource(project.ID, &chapter, &episode, placement); err != nil {
 			return err
 		}
@@ -303,6 +304,7 @@ func (s *Service) ProduceDramaChapters(userID, projectID string, req ProduceDram
 		if err != nil {
 			return err
 		}
+		initializeDramaEpisodeSettings(episodes, dramaInitialEpisodeSettingsJSON(*current))
 		ids := make([]string, 0, len(chosen))
 		for _, unit := range chosen {
 			ids = append(ids, unit.ID)
@@ -450,7 +452,11 @@ func (s *Service) InsertDramaShot(userID, projectID, shotID string, req InsertDr
 	if len(shots) >= production.MaxScriptShots {
 		return model.DramaShot{}, BadAuthRequest(fmt.Sprintf("单集最多 %d 个镜头", production.MaxScriptShots))
 	}
-	settings := parseDramaSettings(productionRow.SettingsJSON)
+	episode, err := s.repo.DramaEpisode(project.ID, anchor.EpisodeID)
+	if err != nil {
+		return model.DramaShot{}, err
+	}
+	settings := dramaEpisodeSettings(parseDramaSettings(productionRow.SettingsJSON), *episode)
 	now := time.Now()
 	shot := model.DramaShot{
 		ID: newID(), ProjectID: project.ID, EpisodeID: anchor.EpisodeID, Position: position, SegmentIndex: anchor.SegmentIndex, SegmentTitle: anchor.SegmentTitle,
