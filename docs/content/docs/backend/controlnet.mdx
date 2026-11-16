@@ -150,6 +150,10 @@ psql -X -v expected_capability_version=<读取的版本> -f scripts/sql/configur
 
 F.1 LoRA 包含海报运营启动页、Pure Flux 情绪插画、Filmfotos 日系胶片写真、极氪白白酱人像 V6MAX、UNIT 曼德拉效应、嘉嘉国潮插画及风月无边插画。目录只登记本次版本 API 返回公开且允许商用的 F.1 版本；岩彩材质绘画的商用标志未开放，未纳入。F.1 完整文生图与图生图模板均支持 `controlNet` 和 `additionalNetwork`；ControlNet Inpaint 的独立区域蒙版不等于顶层图生图局部重绘，后者仍仅对已启用该能力的 SD / SDXL 模型开放。
 
+生产 F.1 目录当前仅开放两款裸眼 3D LoRA：「F.1裸眼3D创意广告设计」（重楼IP视觉，V1.0，`cb8ffe3f3fd54832bbd01885520b23d0`），默认权重 `0.8`，触发词 `Naked eye 3D advertising screen`；「xxxxxwFLUX裸眼3D」（xxxxxw，`8802aa18b81f49718df366ce960508db`），默认权重 `0.5`，触发词 `huimeng3D`，作者建议描述转角屏时加入 `large glowing 3d advert shown on corner building`。两款均已分别使用生产 Liblib 账号，以 F.1-dev-fp8、1280×720、25 步、Euler、CFG 3.5 完成单张文生图及审核，每次供应商返回消耗 13 API 积分；此项不代表本站售价或其他组合的验收结果。
+
+`scripts/sql/configure-liblib-f1-naked-eye3d-lora.sql` 仅追加重楼版本；`scripts/sql/configure-liblib-f1-naked-eye3d-only.sql` 用于保留这两款并停用更早的 7 款。停用通过移出可执行目录实现，原目录保存在操作前的完整备份中，可据此恢复。两个脚本均要求先备份并提供 `channel_model_id`、`expected_capability_version`，默认事务演练，正式写入显式传 `-v dry_run=false`；校验并发版本，保留其他能力、生成参数与价格，相同配置重复执行不写入。提交后递增 Redis 路由目录版本，刷新页面选择 F.1 后使用 LoRA 入口。旧画布若仍选择已停用版本，须更换或移除该 LoRA 后才能新建任务。
+
 配置脚本为 `scripts/sql/configure-liblib-lora.sql`，执行前备份；使用 `-v dry_run=true` 做事务演练，不传该变量才提交。脚本保留已有 Dream Tech XL 的生成设置，新底模开放常用 1K 尺寸；F.1 仅自动升级本脚本旧版留下的关闭配置，已启用的管理员白名单保留，其他自定义关闭配置会中止而非覆盖。脚本可重复执行，不覆盖已有价格冲突，也不修改凭据或其他渠道。执行后递增 Redis 的 `canvas:logical-model-route-catalog:version`，刷新页面重新读取目录。
 
 这批模型的 **1 积分/张仅为开发环境配置**，不是全站默认价格或供应商成本。实际费用以所在部署的模型配置与提交前报价为准。已验收组合及剩余边界见[待测试清单](/docs/progress/pending-test)。
