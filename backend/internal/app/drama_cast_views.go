@@ -56,6 +56,7 @@ type DramaCastViewPreflight struct {
 	AmountMicrocredits int64  `json:"amountMicrocredits"`
 	Priced             bool   `json:"priced"`
 	Estimated          bool   `json:"estimated"`
+	ScopeHash          string `json:"scopeHash"`
 	ConfirmationToken  string `json:"confirmationToken"`
 }
 

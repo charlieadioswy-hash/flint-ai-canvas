@@ -34,9 +34,14 @@ function deferred<T>(): Deferred<T> {
     return { promise, resolve, reject };
 }
 const creations: DramaStoryboardCreate[] = [];
+const draftQuoteInputs: Omit<DramaStoryboardCreate, "clientOperationId">[] = [];
 const executions: { boardId: string; request: DramaShotMediaAction; result: Deferred<{ id: string; status: string }> }[] = [];
 const splitCalls: { expectedRevision: number }[] = [];
 const adoptCalls: { expectedRevision: number; expectedMediaRevision: number; cellId: string }[] = [];
+let quoteAmount = 2_000_000;
+let nextPreflightAmount: number | undefined;
+let quoteFailure = "";
+let draftQuotes = 0;
 let server: DramaStoryboard;
 let closes = 0;
 let readsFail = false;
@@ -72,7 +77,9 @@ mock.module("@/components/assets/asset-library-picker-modal", () => ({ AssetLibr
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 const userScope = await import("@/lib/user-scope");
 mock.module("@/lib/user-scope", () => ({ ...userScope, getActiveUserScope: () => userStore.getState().user.id }));
-mock.module("@/pages/projects/drama-model-picker", () => ({ DramaModelPicker: () => <button>模型选择器</button> }));
+mock.module("@/pages/projects/drama-model-picker", () => ({
+    DramaModelPicker: ({ onChange }: { onChange: (model: { channelId: string; modelKey: string }) => void }) => <button onClick={() => onChange({ channelId: "channel", modelKey: "image-new" })}>模型选择器</button>,
+}));
 mock.module("@/pages/projects/drama-shared", () => ({ MediaThumb: ({ resourceId, alt }: { resourceId: string; alt: string }) => <img data-resource={resourceId} alt={alt} /> }));
 mock.module("@/services/api/drama", () => ({ getDrama: async () => ({ production: { settings: { aspectRatio: "16:9", models: { image: { channelId: "channel", modelKey: "image" } } } } }) }));
 mock.module("@/services/api/drama-storyboard", () => ({
@@ -86,7 +93,16 @@ mock.module("@/services/api/drama-storyboard", () => ({
         if (readsFail) throw new Error("读取失败");
         return structuredClone(server);
     },
-    preflightDramaStoryboard: async () => ({ boardId: server.id, revision: server.revision, baseRevision: 9, ready: true, priced: true, amountMicrocredits: 2_000_000, estimated: false, confirmationToken: "quoted" }),
+    quoteDramaStoryboard: async (_projectId: string, input: Omit<DramaStoryboardCreate, "clientOperationId">) => {
+        draftQuotes++;
+        draftQuoteInputs.push(structuredClone(input));
+        if (quoteFailure) throw new Error(quoteFailure);
+        return { boardId: "", revision: 0, baseRevision: 9, ready: true, priced: true, amountMicrocredits: quoteAmount, estimated: false, confirmationToken: "", scopeHash: "same-scope" };
+    },
+    preflightDramaStoryboard: async () => {
+        quoteAmount = nextPreflightAmount ?? quoteAmount;
+        return { boardId: server.id, revision: server.revision, baseRevision: 9, ready: true, priced: true, amountMicrocredits: quoteAmount, estimated: false, confirmationToken: "quoted", scopeHash: "same-scope" };
+    },
     executeDramaStoryboard: (_projectId: string, boardId: string, request: DramaShotMediaAction) => {
         const result = deferred<{ id: string; status: string }>();
         executions.push({ boardId, request: structuredClone(request), result });
@@ -129,8 +145,13 @@ const { WorkflowStoryboardDialog } = await import("@/pages/projects/workflow-sto
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 async function mount() {
     creations.length = executions.length = splitCalls.length = adoptCalls.length = 0;
+    draftQuoteInputs.length = 0;
     closes = 0;
     readsFail = false;
+    quoteAmount = 2_000_000;
+    nextPreflightAmount = undefined;
+    quoteFailure = "";
+    draftQuotes = 0;
     server = {
         id: "real-board",
         projectId: "project-a",
@@ -164,6 +185,7 @@ async function mount() {
         await settle();
     });
     await act(settle);
+    await waitPrice(host);
     return {
         host,
         client,
@@ -193,6 +215,14 @@ function button(host: HTMLElement, text: string) {
     if (!result) throw new Error(`找不到 ${text}: ${host.textContent}`);
     return result;
 }
+async function waitPrice(host: HTMLElement) {
+    for (let attempt = 0; attempt < 80; attempt++) {
+        const generate = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.startsWith("生成图片 - "));
+        if (generate?.textContent?.includes("积分") && !generate.disabled) return;
+        await act(settle);
+    }
+    throw new Error(`故事板报价未就绪: ${host.textContent}`);
+}
 async function click(host: HTMLElement, text: string) {
     await act(async () => {
         button(host, text).click();
@@ -208,21 +238,24 @@ async function finish(index = executions.length - 1) {
 }
 afterAll(() => browser.happyDOM.abort());
 
-test("预检只创建真实镜头范围草稿，明确确认才单次生成", async () => {
+test("自动报价不创建草稿，点击按真实镜头范围单次生成", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
-        expect(creations).toHaveLength(1);
-        expect(creations[0].shotIds).toEqual(["shot-0", "shot-1", "shot-2", "shot-3"]);
+        await waitPrice(view.host);
+        expect(creations).toHaveLength(0);
+        expect(draftQuotes).toBeGreaterThan(0);
         expect(executions).toHaveLength(0);
-        expect(view.host.textContent).toContain("预计 2 积分");
+        expect(view.host.textContent).toContain("生成图片 - 2积分");
+        expect(view.host.textContent).not.toContain("确认生成");
         await act(async () => {
-            const confirm = button(view.host, "确认生成故事板");
+            const confirm = button(view.host, "生成图片 - 2积分");
             confirm.click();
             confirm.click();
             await settle();
         });
         expect(executions).toHaveLength(1);
+        expect(creations).toHaveLength(1);
+        expect(creations[0].shotIds).toEqual(["shot-0", "shot-1", "shot-2", "shot-3"]);
         expect(executions[0]).toMatchObject({ boardId: "real-board", request: { expectedRevision: 1, baseRevision: 9, confirmationToken: "quoted" } });
         await finish();
         expect(view.host.textContent).toContain("故事板已提交，排队中");
@@ -231,11 +264,47 @@ test("预检只创建真实镜头范围草稿，明确确认才单次生成", as
     }
 });
 
+test("修改故事板模型、画幅和分辨率后直接用于报价与生成，不需另行保存", async () => {
+    const view = await mount();
+    try {
+        await click(view.host, "模型选择器");
+        for (const [label, value] of [
+            ["故事板整图画幅", "4:3"],
+            ["故事板整图分辨率", "2K"],
+            ["故事板补充要求", "保持镜头人物比例与光影一致"],
+        ]) {
+            const input = view.host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!;
+            await act(async () => {
+                input.value = value;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                await settle();
+            });
+        }
+        await waitPrice(view.host);
+        expect(creations).toHaveLength(0);
+        expect(executions).toHaveLength(0);
+        expect(draftQuoteInputs.at(-1)?.config).toMatchObject({
+            model: { channelId: "channel", modelKey: "image-new" },
+            aspectRatio: "4:3",
+            resolution: "2K",
+            prompt: "保持镜头人物比例与光影一致",
+        });
+        expect([...view.host.querySelectorAll("button")].some((item) => item.textContent?.includes("保存配置"))).toBe(false);
+        await click(view.host, "生成图片 - 2积分");
+        expect(creations).toHaveLength(1);
+        expect(creations[0].config).toEqual(draftQuoteInputs.at(-1)!.config);
+        expect(executions).toHaveLength(1);
+        await finish();
+    } finally {
+        await view.close();
+    }
+});
+
 test("未知回执保持同一标识核对并阻止关闭", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
-        await click(view.host, "确认生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
         await act(async () => {
             executions[0].result.reject(new Error("连接中断"));
             await settle();
@@ -253,16 +322,16 @@ test("未知回执保持同一标识核对并阻止关闭", async () => {
 test("明确拒绝不锁住页面，已提交但刷新失败保留入队提示", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
-        await click(view.host, "确认生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
         await act(async () => {
             executions[0].result.reject(new ApiError("报价变化", { status: 409 }));
             await settle();
         });
         expect(view.host.textContent).not.toContain("核对故事板提交");
         expect(button(view.host, "关闭故事板").disabled).toBe(false);
-        await click(view.host, "预检当前故事板");
-        await click(view.host, "确认生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
         readsFail = true;
         await finish();
         expect(view.host.textContent).toContain("任务已提交，状态暂未刷新");
@@ -276,7 +345,9 @@ test("明确拒绝不锁住页面，已提交但刷新失败保留入队提示",
 test("真实原图显式裁切后才展示独立资源，采用传递双版本", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
+        await finish();
         await view.update({ status: "image_ready", resourceId: "real-parent", revision: 3, sourceWidth: 200, sourceHeight: 200 });
         expect(splitCalls).toHaveLength(0);
         expect(adoptCalls).toHaveLength(0);
@@ -294,7 +365,9 @@ test("真实原图显式裁切后才展示独立资源，采用传递双版本",
 test("原稿过期时保留可见分图并禁止继续采用", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
+        await finish();
         await view.update({ status: "image_ready", resourceId: "real-parent", revision: 3 });
         await click(view.host, "裁切为独立图片");
         await view.update({ status: "stale", error: "镜头原稿已变化" });
@@ -310,12 +383,50 @@ test("原稿过期时保留可见分图并禁止继续采用", async () => {
 test("切换作品后旧生成响应不会更新新作品", async () => {
     const view = await mount();
     try {
-        await click(view.host, "预检生成故事板");
-        await click(view.host, "确认生成故事板");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 2积分");
         await view.rerender("project-b");
         await finish();
         expect(view.host.textContent).not.toContain("故事板已提交");
         expect(button(view.host, "关闭故事板").disabled).toBe(false);
+    } finally {
+        await view.close();
+    }
+});
+
+test("故事板变价先更新按钮，重复点击不按未展示新价执行", async () => {
+    const view = await mount();
+    try {
+        nextPreflightAmount = 3_000_000;
+        await click(view.host, "生成图片 - 2积分");
+        expect(creations).toHaveLength(1);
+        expect(executions).toHaveLength(0);
+        expect(view.host.textContent).toContain("费用或生成范围已更新");
+        await waitPrice(view.host);
+        await click(view.host, "生成图片 - 3积分");
+        expect(creations).toHaveLength(1);
+        expect(executions).toHaveLength(1);
+        await finish();
+    } finally {
+        await view.close();
+    }
+});
+
+test("草稿报价失败不给生成入口，也不创建故事板历史", async () => {
+    const view = await mount();
+    try {
+        quoteFailure = "故事板暂无法计价";
+        const input = view.host.querySelector<HTMLTextAreaElement>('[aria-label="故事板补充要求"]')!;
+        await act(async () => {
+            input.value = "待保存的构图要求";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+        });
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+        expect(button(view.host, "生成图片 - 暂无报价").disabled).toBe(true);
+        expect(view.host.textContent).toContain("故事板暂无法计价");
+        expect(creations).toHaveLength(0);
+        expect(executions).toHaveLength(0);
     } finally {
         await view.close();
     }

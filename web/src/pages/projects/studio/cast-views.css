@@ -70,6 +70,17 @@
     width: 100%;
 }
 
+.drama-cast-view-generation {
+    display: inline-grid;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.drama-cast-view-generation small {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
 .drama-cast-view-parameters {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));

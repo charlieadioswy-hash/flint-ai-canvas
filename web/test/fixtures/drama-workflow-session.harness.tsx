@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, StrictMode, useEffect, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaDrawingConfiguration, DramaEpisodeStyle, DramaGuideStep, DramaSettings, DramaSourceFormat, DramaSummary, UpdateDramaEpisodeStyleRequest } from "@/services/api/drama";
+import type { DramaDrawingConfiguration, DramaEpisodeStyle, DramaGuideStep, DramaModelOption, DramaSettings, DramaSourceFormat, DramaSummary, UpdateDramaEpisodeStyleRequest } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/project-a/guide" });
 for (const [key, value] of Object.entries({
@@ -47,16 +47,29 @@ const notices: Array<{ kind: string; text: string }> = [];
 const confirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
 const sourceSaves: Array<{ projectId: string; chapterId: string; pending: Deferred<{ chapter: { id: string; title: string; sourceText: string } }> }> = [];
 const styleSaves: Array<{ projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }; pending: Deferred<DramaSummary> }> = [];
+const configurationSaves: Array<{ projectId: string; input: { expectedRevision?: number; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
 const episodeStyleSaves: Array<{ projectId: string; episodeId: string; input: UpdateDramaEpisodeStyleRequest; pending: Deferred<DramaEpisodeStyle> }> = [];
 const episodeStyles = new Map<string, DramaEpisodeStyle>();
 const episodeStyleReads: string[] = [];
 const castImageRequests: Array<{ castId: string; episodeId?: string }> = [];
+const modeConfigurationWrites: Array<Deferred<boolean>> = [];
 let episodeStyleReader: ((projectId: string, episodeId: string) => Promise<DramaEpisodeStyle>) | undefined;
 let queueJobs: Array<{ id: string; kind: string; status: string; createdAt: string }> = [];
 let chapterReads = 0;
+let videoOptions: DramaModelOption[] = [];
 const userStore = create(() => ({ user: { id: "user-a" } }));
 const noop = () => undefined;
 const message = Object.fromEntries(["success", "error", "info", "warning"].map((kind) => [kind, (text: string) => notices.push({ kind, text })]));
+mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
+    DramaMediaActionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    DramaMediaEpisodeScope: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useDramaMediaContext: () => null,
+    QuotedMediaButton: ({ label, onClick, disabled, title, "aria-label": ariaLabel }: { label: string; onClick?: () => void; disabled?: boolean; title?: string; "aria-label"?: string }) => (
+        <button disabled={disabled} onClick={onClick} title={title} aria-label={ariaLabel}>
+            {label}
+        </button>
+    ),
+}));
 mock.module("antd", () => ({
     App: { useApp: () => ({ message }) },
     Button: ({ children, icon, loading: _loading, type: _type, size: _size, danger: _danger, ...props }: Record<string, unknown>) => createElement("button", props, icon as ReactNode, children as ReactNode),
@@ -168,18 +181,20 @@ mock.module("@/pages/projects/workflow-production", () => ({
     }: {
         summary: DramaSummary;
         busy?: boolean;
-        onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
+        onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
         onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
         onPickChapters?: () => void;
     }) => {
         const [dirty, setDirty] = useState(false);
+        const [automatic, setAutomatic] = useState(false);
+        const [automaticBusy, setAutomaticBusy] = useState(false);
         const location = useLocation();
         const navigate = useNavigate();
         useEffect(() => setDirty(false), [location.pathname, location.search]);
         useEffect(() => {
-            onDirtyChange?.(dirty, false);
+            onDirtyChange?.(dirty, automaticBusy, automatic);
             return () => onDirtyChange?.(false, false);
-        }, [dirty, onDirtyChange]);
+        }, [dirty, automaticBusy, automatic, onDirtyChange]);
         return (
             <div>
                 分镜制作 {summary.project.name}
@@ -189,6 +204,31 @@ mock.module("@/pages/projects/workflow-production", () => ({
                 <output aria-label="分镜页配置忙状态">{String(busy)}</output>
                 <button onClick={() => setDirty(true)}>编辑镜头配置</button>
                 <button onClick={() => setDirty(false)}>还原镜头配置</button>
+                <button
+                    onClick={() => {
+                        setAutomatic(true);
+                        setAutomaticBusy(true);
+                    }}
+                >
+                    修改镜头生成参数
+                </button>
+                <button onClick={() => setAutomaticBusy(false)}>配置自动同步完成</button>
+                <button
+                    onClick={() => {
+                        setAutomatic(false);
+                        setAutomaticBusy(true);
+                    }}
+                >
+                    生成提交回执未确认
+                </button>
+                <button
+                    onClick={() => {
+                        setAutomaticBusy(false);
+                        setDirty(true);
+                    }}
+                >
+                    配置自动同步失败
+                </button>
                 {onPickChapters ? <button onClick={onPickChapters}>继续选章</button> : null}
                 <button
                     onClick={() => {
@@ -245,12 +285,44 @@ mock.module("@/pages/projects/studio/chapter-picker", () => ({
 }));
 mock.module("@/pages/projects/workflow-episodes", () => ({ WorkflowEpisodes: ({ onPickChapters }: { onPickChapters?: () => void }) => <div>分集管理列表{onPickChapters ? <button onClick={onPickChapters}>继续选章</button> : null}</div> }));
 mock.module("@/pages/projects/workflow-mode-dialog", () => ({
-    WorkflowModeDialog: ({ open, summary, onConfirm }: { open: boolean; summary: DramaSummary; onConfirm: (settings: DramaSettings) => Promise<unknown> }) =>
-        open ? (
+    WorkflowModeDialog: ({
+        open,
+        summary,
+        onConfirm,
+        onGenerationStateChange,
+        registerGenerationFlush,
+    }: {
+        open: boolean;
+        summary: DramaSummary;
+        onConfirm: (settings: DramaSettings) => Promise<unknown>;
+        onGenerationStateChange: (pending: boolean) => void;
+        registerGenerationFlush: (flush: (() => Promise<boolean>) | null) => void;
+    }) => {
+        const [pending, setPending] = useState(false);
+        useEffect(() => {
+            onGenerationStateChange(open && pending);
+        }, [open, pending, onGenerationStateChange]);
+        useEffect(() => {
+            if (!open) return;
+            registerGenerationFlush(async () => {
+                const write = deferred<boolean>();
+                modeConfigurationWrites.push(write);
+                const applied = await write.promise;
+                if (applied) setPending(false);
+                return applied;
+            });
+            return () => {
+                registerGenerationFlush(null);
+                onGenerationStateChange(false);
+            };
+        }, [open, registerGenerationFlush, onGenerationStateChange]);
+        return open ? (
             <div role="dialog" aria-label="选择分镜生成默认模式">
+                <button onClick={() => setPending(true)}>修改模式窗口视频配置</button>
                 <button onClick={() => void onConfirm(summary.production.settings).catch(noop)}>确认分镜模式</button>
             </div>
-        ) : null,
+        ) : null;
+    },
 }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => <p>真实风格影响范围</p> }));
 mock.module("@/pages/projects/workflow-configuration", () => ({
@@ -268,7 +340,7 @@ mock.module("@/pages/projects/workflow-configuration", () => ({
         </>
     ),
 }));
-mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: [] } } }) }));
+mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: videoOptions } } }) }));
 mock.module("@/pages/projects/drama-shared", () => ({
     SOURCE_FORMAT_LABEL: {
         novel: { title: "小说", detail: "保留章节标题", placeholder: "小说正文", guide: [] },
@@ -321,6 +393,11 @@ mock.module("@/services/api/drama", () => ({
     updateDramaWorkflowStyle: (projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }) => {
         const pending = deferred<DramaSummary>();
         styleSaves.push({ projectId, input: structuredClone(input), pending });
+        return pending.promise;
+    },
+    updateDramaSettings: (projectId: string, input: { expectedRevision?: number; settings?: DramaSettings }) => {
+        const pending = deferred<DramaSummary>();
+        configurationSaves.push({ projectId, input: structuredClone(input), pending });
         return pending.promise;
     },
     getDramaEpisodeStyle: async (projectId: string, episodeId: string) => {
@@ -384,13 +461,16 @@ async function mount(path = "/projects/project-a/guide?step=review", strict = fa
     confirms.length = 0;
     sourceSaves.length = 0;
     styleSaves.length = 0;
+    configurationSaves.length = 0;
     episodeStyleSaves.length = 0;
     episodeStyleReads.length = 0;
     castImageRequests.length = 0;
+    modeConfigurationWrites.length = 0;
     episodeStyles.clear();
     episodeStyleReader = undefined;
     queueJobs = [];
     chapterReads = 0;
+    videoOptions = [];
     summaries.clear();
     summaries.set("project-a", makeSummary("project-a"));
     summaries.set("project-b", makeSummary("project-b"));
@@ -984,6 +1064,7 @@ test("风格迟到响应不覆盖更新 revision，账号切换后不提示成�
             await settle();
         });
         expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.revision).toBe(10);
+        await click(button(mounted.host, "重新载入配置"));
         await mounted.go("/projects/project-a/guide?step=style");
         await fill(mounted.host, "风格配置", "另一次保存");
         await click(button(mounted.host, "保存并继续"));
@@ -1056,6 +1137,69 @@ test("同一步的媒体查询导航保护草稿，已确认切镜只放行一�
         expect(mounted.host.querySelector('[role="dialog"]')).not.toBeNull();
         expect(mounted.router.state.location.search).toContain("shot=shot-b");
         await click(button(mounted.host, "继续编辑"));
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("单镜生成配置自动同步期间离开不弹确认，同步完成继续原导航", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=story&editor=media&episode=episode-a&shot=shot-a");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        await click(button(mounted.host, "修改镜头生成参数"));
+        await mounted.go("/outside");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(mounted.router.state.location.pathname).not.toBe("/outside");
+        await click(button(mounted.host, "配置自动同步完成"));
+        expect(mounted.router.state.location.pathname).toBe("/outside");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("单镜配置同步失败保留当前页面，允许继续修正而不静默离开", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=story&editor=media&episode=episode-a&shot=shot-a");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        await click(button(mounted.host, "修改镜头生成参数"));
+        await mounted.go("/outside");
+        await click(button(mounted.host, "配置自动同步失败"));
+        expect(mounted.router.state.location.pathname).not.toBe("/outside");
+        await click(button(mounted.host, "继续编辑"));
+        expect(mounted.host.textContent).toContain("分镜制作");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("单镜生成回执未确认时外部导航显示离开确认，保留编辑或明确离开", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=story&editor=media&episode=episode-a&shot=shot-a");
+    try {
+        const completed = makeSummary("project-a", "completed", 7);
+        summaries.set("project-a", completed);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), completed);
+            await settle();
+        });
+        await click(button(mounted.host, "生成提交回执未确认"));
+        await mounted.go("/outside");
+        expect(mounted.host.querySelector('[role="dialog"]')).not.toBeNull();
+        expect(mounted.router.state.location.pathname).not.toBe("/outside");
+        await click(button(mounted.host, "继续编辑"));
+        expect(mounted.host.textContent).toContain("分镜制作");
+        await mounted.go("/outside");
+        await click(button(mounted.host, "放弃修改并离开"));
+        expect(mounted.router.state.location.pathname).toBe("/outside");
     } finally {
         await mounted.close();
     }
@@ -1182,7 +1326,7 @@ test("本集完整配置随双版本一次保存，允许清空画风并修改�
     }
 });
 
-test("本集绘图模板保存只更新本集缓存，作品和其他集配置保持不变", async () => {
+test("本集绘图模板修改后自动同步，作品和其他集配置保持不变", async () => {
     const mounted = await mount("/projects/project-a/e/episode-a?step=style");
     try {
         expect(mounted.host.querySelector<HTMLSelectElement>('[aria-label="角色绘图模板"]')?.disabled).toBe(false);
@@ -1190,7 +1334,10 @@ test("本集绘图模板保存只更新本集缓存，作品和其他集配置�
         const other = makeEpisodeStyle("project-a", "episode-b");
         episodeStyles.set("project-a:episode-b", other);
         await fill(mounted.host, "角色绘图模板", "closeup_fullbody");
-        await click(button(mounted.host, "保存并继续"));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
         expect(episodeStyleSaves).toHaveLength(1);
         const input = episodeStyleSaves[0].input;
         expect(input).toMatchObject({ expectedRevision: 1, expectedEpisodeRevision: 3, settings: { styleName: "原始风格", stylePrompt: "原始提示", assets: { mode: "closeup_fullbody" } } });
@@ -1209,6 +1356,8 @@ test("本集绘图模板保存只更新本集缓存，作品和其他集配置�
         expect(current.production.settings.models.video).toEqual({});
         expect(episodeStyles.get("project-a:episode-b")?.settings).toEqual(other.settings);
         expect(mounted.query.getQueryData<DramaEpisodeStyle>(["drama-episode-style", "user-a", "project-a", "episode-a", 2])?.settings.assets.mode).toBe("closeup_fullbody");
+        expect(mounted.router.state.location.search).toBe("?step=style");
+        await click(button(mounted.host, "继续：角色场景"));
         expect(mounted.router.state.location.search).toBe("?step=assets");
         expect(styleSaves).toHaveLength(0);
         expect(confirms).toHaveLength(0);
@@ -1270,7 +1419,118 @@ test("放弃本集配置修改恢复本集快照，无修改直接继续不提�
     }
 });
 
-test("后续作品风格页保存共享模板，失败保留草稿后可重新保存", async () => {
+test("首次配置的视频参数自动保存，不推进流程或顺便提交文字草稿", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style");
+    try {
+        await fill(mounted.host, "风格配置", "尚未确认的画风");
+        await fill(mounted.host, "视频模型", "video-new");
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
+        expect(configurationSaves).toHaveLength(1);
+        expect(configurationSaves[0].input).toMatchObject({ expectedRevision: 1, settings: { styleName: "原始风格", models: { video: { logicalModelId: "video-new" } } } });
+        const saved = makeSummary("project-a", "configuring", 2);
+        saved.production.settings = configurationSaves[0].input.settings!;
+        summaries.set("project-a", saved);
+        await act(async () => {
+            configurationSaves[0].pending.resolve(saved);
+            await settle();
+        });
+        expect(mounted.router.state.location.search).toBe("?step=style");
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("尚未确认的画风");
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="视频模型"]')?.value).toBe("video-new");
+        expect(confirms).toHaveLength(0);
+        expect(castImageRequests).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("本集生成参数自动保存保留文字草稿，后续文字保存使用同步后的双版本", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    try {
+        await fill(mounted.host, "风格配置", "仍在编辑的风格");
+        await fill(mounted.host, "视频模型", "episode-video-new");
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
+        expect(episodeStyleSaves).toHaveLength(1);
+        expect(episodeStyleSaves[0].input.settings).toMatchObject({ styleName: "原始风格", models: { video: { logicalModelId: "episode-video-new" } } });
+        const saved = { ...makeEpisodeStyle("project-a", "episode-a"), revision: 2, episodeRevision: 4, settings: episodeStyleSaves[0].input.settings };
+        episodeStyles.set("project-a:episode-a", saved);
+        summaries.set("project-a", makeSummary("project-a", "configuring", 2));
+        await act(async () => {
+            episodeStyleSaves[0].pending.resolve(saved);
+            await settle();
+        });
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("仍在编辑的风格");
+        await click(button(mounted.host, "保存并继续"));
+        expect(episodeStyleSaves[1].input).toMatchObject({ expectedRevision: 2, expectedEpisodeRevision: 4, settings: { styleName: "仍在编辑的风格", models: { video: { logicalModelId: "episode-video-new" } } } });
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("只有生成参数变化时离开会先自动同步，不弹出放弃确认", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    try {
+        await fill(mounted.host, "角色绘图模板", "closeup_fullbody");
+        await mounted.go("/outside");
+        await act(settle);
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(episodeStyleSaves).toHaveLength(1);
+        const saved = { ...makeEpisodeStyle("project-a", "episode-a"), revision: 2, episodeRevision: 4, settings: episodeStyleSaves[0].input.settings };
+        episodeStyles.set("project-a:episode-a", saved);
+        summaries.set("project-a", makeSummary("project-a", "configuring", 2));
+        await act(async () => {
+            episodeStyleSaves[0].pending.resolve(saved);
+            await settle();
+        });
+        expect(mounted.router.state.location.pathname).toBe("/outside");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("无效的生成配置不会卡住离开，允许继续编辑或明确放弃", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    try {
+        videoOptions = [{ choice: { logicalModelId: "horizontal-only" }, videoRatios: ["16:9"], tailFrameChain: true } as DramaModelOption];
+        await fill(mounted.host, "视频模型", "horizontal-only");
+        await mounted.go("/outside");
+        await act(settle);
+        expect(mounted.host.querySelector('[role="dialog"]')).not.toBeNull();
+        expect(mounted.host.textContent).not.toContain("正在同步生成配置");
+        expect(episodeStyleSaves).toHaveLength(0);
+        await click(button(mounted.host, "继续编辑"));
+        expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="视频模型"]')?.value).toBe("horizontal-only");
+        await mounted.go("/outside");
+        await click(button(mounted.host, "放弃修改并离开"));
+        expect(mounted.router.state.location.pathname).toBe("/outside");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("尚未修正的风格文字不阻止合法的生成参数自动同步", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    try {
+        await fill(mounted.host, "风格配置", "字".repeat(61));
+        await fill(mounted.host, "视频模型", "episode-video-new");
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
+        expect(episodeStyleSaves).toHaveLength(1);
+        expect(episodeStyleSaves[0].input.settings).toMatchObject({ styleName: "原始风格", models: { video: { logicalModelId: "episode-video-new" } } });
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("后续作品风格页自动同步图片模板，失败保留草稿后可重新同步", async () => {
     const mounted = await mount("/projects/project-a/guide?manage=style");
     try {
         const completed = makeSummary("project-a", "completed", 7);
@@ -1280,7 +1540,10 @@ test("后续作品风格页保存共享模板，失败保留草稿后可重新�
             await settle();
         });
         await fill(mounted.host, "角色绘图模板", "closeup_turnaround");
-        await click(button(mounted.host, "保存并继续"));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
         expect(styleSaves[0].input).toMatchObject({ expectedRevision: 7, styleName: "原始风格", stylePrompt: "原始提示", drawing: { assets: { mode: "closeup_turnaround" } } });
         await act(async () => {
             styleSaves[0].pending.reject(new Error("共享模板暂时保存失败"));
@@ -1288,7 +1551,11 @@ test("后续作品风格页保存共享模板，失败保留草稿后可重新�
         });
         expect(mounted.router.state.location.search).toBe("?manage=style");
         expect(mounted.host.querySelector<HTMLSelectElement>('[aria-label="角色绘图模板"]')?.value).toBe("closeup_turnaround");
-        await click(button(mounted.host, "保存并继续"));
+        await click(button(mounted.host, "重新同步配置"));
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await settle();
+        });
         const next = makeSummary("project-a", "completed", 8);
         next.production.settings.assets = styleSaves[1].input.drawing!.assets;
         summaries.set("project-a", next);
@@ -1296,6 +1563,8 @@ test("后续作品风格页保存共享模板，失败保留草稿后可重新�
             styleSaves[1].pending.resolve(next);
             await settle();
         });
+        expect(mounted.router.state.location.search).toBe("?manage=style");
+        await click(button(mounted.host, "继续：主体资产"));
         expect(mounted.router.state.location.search).toBe("?manage=assets");
         expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.settings.assets.mode).toBe("closeup_turnaround");
         expect(episodeStyleSaves).toHaveLength(0);
@@ -1507,14 +1776,44 @@ test("本集预览风格与剧本页不显示其他集的全剧阻断，阶段�
             });
             await act(settle);
             const footer = mounted.host.querySelector(".drama-workflow-footer");
-            expect(footer).not.toBeNull();
-            expect(footer!.textContent?.includes("第 7 集剧本与分镜尚未就绪")).toBe(blocked);
+            if (step === "preview" || step === "assets") expect(footer).toBeNull();
+            else expect(footer).not.toBeNull();
+            expect(mounted.host.textContent?.includes("第 7 集剧本与分镜尚未就绪")).toBe(blocked);
             if (step === "assets") expect(button(mounted.host, "编排剧本").disabled).toBe(true);
             if (step === "story") expect(button(mounted.host, "完成分镜编排").disabled).toBe(true);
             expect(confirms).toHaveLength(0);
         } finally {
             await mounted.close();
         }
+    }
+});
+
+test("资产页不留已保存状态底栏，未保存保护和编排入口继续可用", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=assets");
+    try {
+        const current = makeSummary("project-a", "assets", 7);
+        summaries.set("project-a", current);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), current);
+            await settle();
+        });
+        await act(settle);
+        expect(mounted.host.querySelector(".drama-workflow-footer")).toBeNull();
+        expect(mounted.host.textContent).not.toContain("当前内容已保存");
+        expect(button(mounted.host, "编排剧本").disabled).toBe(false);
+
+        await click(button(mounted.host, "编辑资产方案"));
+        expect(mounted.host.querySelector(".drama-workflow-footer")?.textContent).toBe("当前内容尚未保存");
+        expect(button(mounted.host, "编排剧本").disabled).toBe(true);
+        await mounted.go("/outside");
+        expect(mounted.host.querySelector('[role="dialog"][aria-label="当前修改尚未保存"]')).not.toBeNull();
+        await click(button(mounted.host, "继续编辑"));
+        await click(button(mounted.host, "还原资产方案"));
+        expect(mounted.host.querySelector(".drama-workflow-footer")).toBeNull();
+        await click(button(mounted.host, "编排剧本"));
+        expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).not.toBeNull();
+    } finally {
+        await mounted.close();
     }
 });
 
@@ -1574,6 +1873,63 @@ test("明确放弃管理风格草稿再切页后，回到风格页展示已保�
         expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("原始风格");
         expect(mounted.host.textContent).not.toContain("放弃修改");
         expect(styleSaves).toHaveLength(0);
+        expect(confirms).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("模式窗口媒体修改后离开会等待同步，不弹保存确认或推进制作", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets");
+    try {
+        const assets = makeSummary("project-a", "assets", 2);
+        summaries.set("project-a", assets);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        await click(button(mounted.host, "编排剧本"));
+        await click(button(mounted.host, "修改模式窗口视频配置"));
+        await mounted.go("/outside");
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+        expect(mounted.host.querySelector('[role="dialog"][aria-label="当前修改尚未保存"]')).toBeNull();
+        expect(modeConfigurationWrites).toHaveLength(1);
+        await act(async () => {
+            modeConfigurationWrites[0].resolve(true);
+            await settle();
+        });
+        expect(mounted.router.state.location.pathname).toBe("/outside");
+        expect(confirms).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("模式窗口媒体同步失败时留在当前页和窗口，再次离开可重试", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets");
+    try {
+        const assets = makeSummary("project-a", "assets", 2);
+        summaries.set("project-a", assets);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        await click(button(mounted.host, "编排剧本"));
+        await click(button(mounted.host, "修改模式窗口视频配置"));
+        await mounted.go("/outside");
+        await act(async () => {
+            modeConfigurationWrites[0].resolve(false);
+            await settle();
+        });
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+        expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).not.toBeNull();
+        await mounted.go("/outside");
+        expect(modeConfigurationWrites).toHaveLength(2);
+        await act(async () => {
+            modeConfigurationWrites[1].resolve(true);
+            await settle();
+        });
+        expect(mounted.router.state.location.pathname).toBe("/outside");
         expect(confirms).toHaveLength(0);
     } finally {
         await mounted.close();

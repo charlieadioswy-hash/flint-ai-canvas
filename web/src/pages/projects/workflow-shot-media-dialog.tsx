@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Select, Switch } from "antd";
-import { ImagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
-import { AssetLibraryPickerModal } from "@/components/assets/asset-library-picker-modal";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { formatDramaCredits } from "@/lib/drama/drama-format";
 import { CAMERA_PRESETS } from "@/lib/drama/director";
 import type { DramaShot } from "@/services/api/drama";
 import {
@@ -14,6 +12,7 @@ import {
     executeDramaShotMedia,
     getDramaShotMedia,
     preflightDramaShotMedia,
+    quoteDramaShotMedia,
     saveDramaShotMedia,
     type DramaShotMedia,
     type DramaShotMediaAction,
@@ -21,7 +20,6 @@ import {
     type DramaShotMediaKind,
     type DramaShotMediaPreflight,
 } from "@/services/api/drama-shot-media";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -29,6 +27,10 @@ import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { MediaThumb, useResourceMediaUrl } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowShotAudioEditor } from "./workflow-shot-audio";
+import { WorkflowShotReferences } from "./workflow-shot-references";
+import { WorkflowShotPromptEditor } from "./workflow-shot-prompt";
+import { preserveShotImageMentions } from "./workflow-shot-reference-bindings";
+import { generationLabel } from "./workflow-generation";
 import "./workflow-shot-media.css";
 
 type Props = {
@@ -43,13 +45,17 @@ type Props = {
     initialKind?: DramaShotMediaKind;
     onSelectShot?: (shot: DramaShot, kind: DramaShotMediaKind) => void;
     onEditText?: () => void;
-    onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
+    onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
 };
 type Quote = { preview: DramaShotMediaPreflight; request: DramaShotMediaAction; uncertain?: boolean };
-type PickerRole = "reference" | "first" | "last";
 type VisualMediaKind = Exclude<DramaShotMediaKind, "audio">;
 
 const STATE: Record<string, string> = { idle: "待生成", ready: "可使用", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消", stale: "已有变更，请核对版本" };
+
+function visibleReferenceConfig(config: DramaShotMediaConfig, kind: VisualMediaKind): DramaShotMediaConfig {
+    if (kind === "video" && config.operation === "image_to_video") return config.referenceResourceIds.length ? { ...config, ...preserveShotImageMentions(config, { referenceResourceIds: [] }, kind) } : config;
+    return config.firstFrameResourceId || config.lastFrameResourceId ? { ...config, firstFrameResourceId: "", lastFrameResourceId: "" } : config;
+}
 
 function MediaPreview({ resourceId, kind }: { resourceId?: string; kind: VisualMediaKind }) {
     const url = useResourceMediaUrl(resourceId || "", kind === "video" ? "playback" : "original");
@@ -69,28 +75,51 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
     const [kind, setKind] = useState<DramaShotMediaKind>(props.initialKind || "image");
     const [dirty, setDirty] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [automaticBusy, setAutomaticBusy] = useState(false);
+    const mediaBusyChanged = useCallback((busy: boolean, automatic = false) => {
+        setBusy(busy);
+        setAutomaticBusy(automatic);
+    }, []);
+    const [syncBlocked, setSyncBlocked] = useState(false);
+    const flushVisualConfig = useRef<(() => Promise<boolean>) | undefined>(undefined);
+    const leaving = useRef(false);
     const editingState = useRef(props.onDirtyChange);
     editingState.current = props.onDirtyChange;
-    useEffect(() => editingState.current?.(dirty, busy), [dirty, busy]);
+    useEffect(() => editingState.current?.(kind === "audio" ? dirty : dirty && syncBlocked, busy || (kind !== "audio" && dirty && !syncBlocked), kind !== "audio" && (!busy || automaticBusy)), [dirty, busy, automaticBusy, kind, syncBlocked]);
     useEffect(() => () => editingState.current?.(false, false), []);
-    const leave = (next: () => void) => {
-        if (busy) return;
+    const leave = async (next: () => void) => {
+        if (busy || leaving.current) return;
         if (!dirty) return next();
+        leaving.current = true;
         const ticket = operation.capture();
+        if (kind !== "audio" && (await flushVisualConfig.current?.())) {
+            if (operation.isCurrent(ticket)) next();
+            leaving.current = false;
+            return;
+        }
+        if (!operation.isCurrent(ticket)) {
+            leaving.current = false;
+            return;
+        }
         modal.confirm({
             title: "放弃未保存的镜头配置？",
             content: "已保存的媒体和任务会保留。",
             okText: "放弃修改",
             cancelText: "继续编辑",
             onOk: () => {
+                leaving.current = false;
                 if (operation.isCurrent(ticket)) next();
+            },
+            onCancel: () => {
+                leaving.current = false;
             },
         });
     };
     const tabs = (
         <nav className="drama-shot-media-tabs" aria-label="镜头媒体类型">
             {(["image", "video", "audio"] as const).map((value) => (
-                <Button
+                <button
+                    type="button"
                     key={value}
                     aria-pressed={kind === value}
                     disabled={busy}
@@ -102,8 +131,8 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                         })
                     }
                 >
-                    {value === "image" ? "镜头图片" : value === "video" ? "镜头视频" : "镜头音频"}
-                </Button>
+                    {value === "image" ? "图片" : value === "video" ? "视频" : "音频"}
+                </button>
             ))}
         </nav>
     );
@@ -154,9 +183,19 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                 </header>
             ) : null}
             {kind === "audio" ? (
-                <WorkflowShotAudioEditor {...props} tabs={tabs} shotStrip={shotStrip} onDirtyChange={setDirty} onBusyChange={setBusy} />
+                <WorkflowShotAudioEditor {...props} tabs={tabs} shotStrip={shotStrip} onDirtyChange={setDirty} onBusyChange={mediaBusyChanged} />
             ) : (
-                <ShotMediaEditor key={kind} {...props} tabs={tabs} shotStrip={shotStrip} kind={kind} onDirtyChange={setDirty} onBusyChange={setBusy} />
+                <ShotMediaEditor
+                    key={kind}
+                    {...props}
+                    tabs={tabs}
+                    shotStrip={shotStrip}
+                    kind={kind}
+                    onDirtyChange={setDirty}
+                    onBusyChange={mediaBusyChanged}
+                    onSyncBlockedChange={setSyncBlocked}
+                    registerFlush={(flush) => (flushVisualConfig.current = flush)}
+                />
             )}
         </div>
     );
@@ -187,9 +226,21 @@ function ShotMediaEditor({
     onChanged,
     onDirtyChange,
     onBusyChange,
+    onSyncBlockedChange,
+    registerFlush,
     tabs,
     shotStrip,
-}: Props & { shot: DramaShot; userId: string; kind: VisualMediaKind; onDirtyChange: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; tabs: ReactNode; shotStrip: ReactNode }) {
+}: Props & {
+    shot: DramaShot;
+    userId: string;
+    kind: VisualMediaKind;
+    onDirtyChange: (dirty: boolean) => void;
+    onBusyChange: (busy: boolean, automatic?: boolean) => void;
+    onSyncBlockedChange: (blocked: boolean) => void;
+    registerFlush: (flush?: () => Promise<boolean>) => void;
+    tabs: ReactNode;
+    shotStrip: ReactNode;
+}) {
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();
@@ -198,40 +249,116 @@ function ShotMediaEditor({
     const [draft, setDraft] = useState<DramaShotMediaConfig>();
     const [baseline, setBaseline] = useState<{ config: string; revision: number }>();
     const [busy, setBusy] = useState("");
+    const [saving, setSaving] = useState(false);
+    const [syncFailed, setSyncFailed] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [quote, setQuote] = useState<Quote>();
-    const [picker, setPicker] = useState<PickerRole>();
+    const [price, setPrice] = useState<{ key: string; version: number; preview: DramaShotMediaPreflight }>();
+    const [priceError, setPriceError] = useState<{ key: string; message: string }>();
+    const [pricing, setPricing] = useState("");
+    const [priceVersion, setPriceVersion] = useState(0);
+    const [referenceBusy, setReferenceBusy] = useState(false);
     const [previewTakeId, setPreviewTakeId] = useState("");
     const locked = useRef(false);
     const current = query.data;
+    const editor = useRef({ draft, baseline, current });
+    editor.current = { draft, baseline, current };
+    const savingRequest = useRef<Promise<DramaShotMedia> | undefined>(undefined);
+    const failedDraft = useRef("");
     const dirty = Boolean(draft && baseline && JSON.stringify(draft) !== baseline.config);
     const stale = Boolean(current && baseline && current.revision !== baseline.revision);
     const active = ["queued", "running"].includes(current?.status || "");
-    const controlsDisabled = Boolean(busy || quote?.uncertain || active);
+    const configLocked = Boolean(busy || quote?.uncertain || active);
+    const controlsDisabled = configLocked || referenceBusy;
+    const priceKey = (config: DramaShotMediaConfig, revision: number) => JSON.stringify([config, revision, shot]);
+    const draftKey = draft && baseline ? priceKey(draft, baseline.revision) : "";
+    const displayedPrice = price?.key === draftKey && !stale ? price.preview : undefined;
+    const acceptPreviewConfig = (preview: DramaShotMediaPreflight, config: DramaShotMediaConfig, revision: number) => {
+        const snapshot = editor.current;
+        const key = JSON.stringify(config);
+        if (savingRequest.current || preview.revision !== revision || snapshot.baseline?.revision !== revision || snapshot.current?.revision !== revision || JSON.stringify(snapshot.draft) !== key) return;
+        const canonical = JSON.stringify(preview.config);
+        if (canonical !== key) {
+            // A read-only quote may refresh automatic text without making a clean
+            // editor dirty. Existing local edits must still reach autosave.
+            const clean = snapshot.baseline.config === key;
+            const nextBaseline = clean ? { config: canonical, revision } : snapshot.baseline;
+            const nextCurrent = clean ? { ...snapshot.current, config: preview.config } : snapshot.current;
+            editor.current = { draft: preview.config, baseline: nextBaseline, current: nextCurrent };
+            setDraft(preview.config);
+            if (clean) {
+                setBaseline(nextBaseline);
+                client.setQueryData(queryKey, nextCurrent);
+            }
+        }
+        return preview.config;
+    };
+
+    useEffect(() => {
+        if (!draft || !baseline || stale || active || busy || saving || quote?.uncertain || (price?.key === draftKey && price.version === priceVersion)) return;
+        let cancelled = false;
+        const controller = new AbortController();
+        const ticket = operation.capture();
+        setPricing(draftKey);
+        const timer = window.setTimeout(() => {
+            void quoteDramaShotMedia(projectId, shot.id, kind, { expectedRevision: baseline.revision, config: draft }, controller.signal)
+                .then((preview) => {
+                    if (!cancelled && operation.isCurrent(ticket)) {
+                        const config = acceptPreviewConfig(preview, draft, baseline.revision);
+                        if (!config) return;
+                        setPrice({ key: priceKey(config, baseline.revision), version: priceVersion, preview });
+                        setPriceError(undefined);
+                    }
+                })
+                .catch((reason) => {
+                    if (!cancelled && operation.isCurrent(ticket)) {
+                        setPrice(undefined);
+                        setPriceError({ key: draftKey, message: reason instanceof Error ? reason.message : "暂无法取得报价" });
+                    }
+                })
+                .finally(() => {
+                    if (!cancelled && operation.isCurrent(ticket)) setPricing("");
+                });
+        }, 300);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [draftKey, stale, active, busy, saving, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
         onDirtyChange(dirty);
     }, [dirty, onDirtyChange]);
     useEffect(() => {
-        onBusyChange(Boolean(busy || quote?.uncertain));
-    }, [busy, quote?.uncertain, onBusyChange]);
+        onBusyChange(Boolean(busy || saving || quote?.uncertain || referenceBusy), Boolean(saving && !busy && !quote?.uncertain && !referenceBusy));
+    }, [busy, saving, quote?.uncertain, referenceBusy, onBusyChange]);
+    useEffect(() => onSyncBlockedChange(syncFailed || stale), [syncFailed, stale, onSyncBlockedChange]);
     useEffect(() => {
         if (current && !draft) {
-            setDraft(current.config);
+            setDraft(visibleReferenceConfig(current.config, kind));
             setBaseline({ config: JSON.stringify(current.config), revision: current.revision });
         }
-    }, [current, draft]);
+    }, [current, draft, kind]);
 
     const patch = (value: Partial<DramaShotMediaConfig>) => {
-        if (controlsDisabled) return;
-        setDraft((previous) => (previous ? { ...previous, ...value } : previous));
+        if (configLocked) return;
+        const current = editor.current.draft;
+        const next = current ? { ...current, ...preserveShotImageMentions(current, value, kind) } : undefined;
+        editor.current.draft = next;
+        setDraft(next);
+        failedDraft.current = "";
+        setSyncFailed(false);
+        setError("");
         setQuote(undefined);
         setNotice("");
     };
     const accept = (value: DramaShotMedia) => {
+        const config = visibleReferenceConfig(value.config, kind);
+        editor.current = { draft: config, baseline: { config: JSON.stringify(value.config), revision: value.revision }, current: value };
         client.setQueryData(queryKey, value);
-        setDraft(value.config);
+        setDraft(config);
         setBaseline({ config: JSON.stringify(value.config), revision: value.revision });
     };
     const run = async (name: string, action: (ticket: ReturnType<typeof operation.capture>) => Promise<void>) => {
@@ -249,31 +376,99 @@ function ShotMediaEditor({
             if (operation.isCurrent(ticket)) setBusy("");
         }
     };
-    const save = async (ticket: ReturnType<typeof operation.capture>) => {
-        if (!draft || !baseline || stale) throw new Error("镜头媒体配置已有更新，请先重新载入");
-        const saved = await saveDramaShotMedia(projectId, shot.id, kind, { expectedRevision: baseline.revision, config: draft });
-        if (operation.isCurrent(ticket)) accept(saved);
-        return saved;
+    const save = (ticket: ReturnType<typeof operation.capture>, create = false): Promise<DramaShotMedia> => {
+        if (savingRequest.current) return savingRequest.current.then(() => save(ticket, create));
+        const request = (async () => {
+            while (operation.isCurrent(ticket)) {
+                const snapshot = editor.current;
+                if (!snapshot.draft || !snapshot.baseline || !snapshot.current || snapshot.current.revision !== snapshot.baseline.revision) throw new Error("镜头媒体配置已有更新，请先重新载入");
+                const key = JSON.stringify(snapshot.draft);
+                if (key === snapshot.baseline.config && (snapshot.current.id || !create)) return snapshot.current;
+                const saved = await saveDramaShotMedia(projectId, shot.id, kind, { expectedRevision: snapshot.baseline.revision, config: snapshot.draft });
+                if (!operation.isCurrent(ticket)) return saved;
+                const latest = editor.current.draft;
+                const stillSame = JSON.stringify(latest) === key;
+                const nextBaseline = { config: JSON.stringify(saved.config), revision: saved.revision };
+                editor.current = { draft: stillSame ? saved.config : latest, baseline: nextBaseline, current: saved };
+                client.setQueryData(queryKey, saved);
+                setBaseline(nextBaseline);
+                if (stillSame) setDraft(saved.config);
+                failedDraft.current = "";
+                setSyncFailed(false);
+            }
+            throw new Error("当前镜头已切换");
+        })();
+        setError("");
+        setSaving(true);
+        const pending = request
+            .catch((reason) => {
+                if (operation.isCurrent(ticket)) {
+                    failedDraft.current = JSON.stringify(editor.current.draft);
+                    setSyncFailed(true);
+                    setError(`配置未同步：${reason instanceof Error ? reason.message : "请重试"}`);
+                }
+                throw reason;
+            })
+            .finally(() => {
+                if (savingRequest.current === pending) savingRequest.current = undefined;
+                if (operation.isCurrent(ticket)) setSaving(false);
+            });
+        savingRequest.current = pending;
+        return pending;
     };
-    const check = () =>
-        run("preflight", async (ticket) => {
-            if (!current || !draft || !baseline || stale) throw new Error("请先载入最新镜头配置");
-            const value = dirty || !current.id ? await save(ticket) : current;
-            if (!operation.isCurrent(ticket)) return;
-            const preview = await preflightDramaShotMedia(projectId, shot.id, kind, { expectedRevision: value.revision });
-            if (operation.isCurrent(ticket)) setQuote({ preview, request: { expectedRevision: preview.revision, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, clientOperationId: `shot-media:${crypto.randomUUID()}` } });
+    const saveLatest = useRef(save);
+    saveLatest.current = save;
+    useEffect(() => {
+        registerFlush(async () => {
+            try {
+                await saveLatest.current(operation.capture());
+                return true;
+            } catch {
+                return false;
+            }
         });
+        return () => registerFlush(undefined);
+    }, [registerFlush, operation.capture]);
+    useEffect(() => {
+        if (!dirty || stale || active || busy || quote?.uncertain || failedDraft.current === JSON.stringify(draft)) return;
+        const timer = window.setTimeout(() => void saveLatest.current(operation.capture()).catch(() => undefined), 300);
+        return () => window.clearTimeout(timer);
+    }, [draft, baseline?.revision, dirty, stale, active, busy, quote?.uncertain, operation.capture]);
     const execute = () =>
         run("execute", async (ticket) => {
-            if (!quote?.preview.ready || !quote.preview.priced || !quote.preview.confirmationToken) return;
+            let submission = quote?.uncertain ? quote : undefined;
+            if (!submission) {
+                if (!current || !draft || !baseline || stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
+                const value = await save(ticket, true);
+                if (!operation.isCurrent(ticket)) return;
+                const preview = await preflightDramaShotMedia(projectId, shot.id, kind, { expectedRevision: value.revision });
+                if (!operation.isCurrent(ticket)) return;
+                const config = acceptPreviewConfig(preview, value.config, value.revision);
+                if (!config) return;
+                setPrice({ key: priceKey(config, value.revision), version: priceVersion, preview });
+                if (!preview.ready || !preview.priced || !preview.confirmationToken || preview.scopeHash !== displayedPrice.scopeHash || preview.amountMicrocredits !== displayedPrice.amountMicrocredits) {
+                    setNotice("费用或生成范围已更新，请查看生成按钮后再操作。当前配置已保存。");
+                    return;
+                }
+                submission = { preview, request: { expectedRevision: preview.revision, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, clientOperationId: `shot-media:${crypto.randomUUID()}` } };
+                setQuote(submission);
+            }
             try {
-                const task = await executeDramaShotMedia(projectId, shot.id, kind, quote.request);
+                const task = await executeDramaShotMedia(projectId, shot.id, kind, submission.request);
                 if (!operation.isCurrent(ticket)) return;
                 setNotice(`已提交镜头${kind === "image" ? "图片" : "视频"}，${STATE[task.status] || task.stage || "请查看任务进度"}`);
                 setQuote(undefined);
+                setPrice(undefined);
+                client.setQueryData(queryKey, { ...editor.current.current, status: task.status, taskId: task.id });
             } catch (reason) {
                 const rejected = reason instanceof ApiError && [reason.status, reason.code].some((value) => value !== undefined && value >= 400 && value < 500 && value !== 408);
-                if (operation.isCurrent(ticket)) setQuote((previous) => (rejected ? undefined : previous ? { ...previous, uncertain: true } : previous));
+                if (operation.isCurrent(ticket)) {
+                    setQuote(rejected ? undefined : { ...submission, uncertain: true });
+                    if (rejected) {
+                        setPrice(undefined);
+                        setPriceVersion((value) => value + 1);
+                    }
+                }
                 throw reason;
             }
             try {
@@ -324,7 +519,20 @@ function ShotMediaEditor({
                                   { value: "image_to_image", label: "参考生图" },
                               ] as const)
                         ).map((option) => (
-                            <button key={option.value} type="button" disabled={controlsDisabled} aria-pressed={draft.operation === option.value} onClick={() => patch({ operation: option.value })}>
+                            <button
+                                key={option.value}
+                                type="button"
+                                disabled={controlsDisabled}
+                                aria-pressed={draft.operation === option.value}
+                                onClick={() => {
+                                    if (draft.operation === option.value) return;
+                                    patch({
+                                        operation: option.value,
+                                        ...(option.value === "image_to_video" ? { referenceResourceIds: [] } : { firstFrameResourceId: "", lastFrameResourceId: "" }),
+                                        ...(["text_to_image", "text_to_video"].includes(option.value) ? { referenceResourceIds: [] } : {}),
+                                    });
+                                }}
+                            >
                                 {option.label}
                             </button>
                         ))}
@@ -332,7 +540,7 @@ function ShotMediaEditor({
                     <label>
                         <span>模型</span>
                         <fieldset disabled={controlsDisabled} className="drama-shot-media-model" inert={controlsDisabled}>
-                            <DramaModelPicker capability={kind} value={draft.model} aspectRatio={draft.aspectRatio} onChange={(value) => patch({ model: value })} />
+                            <DramaModelPicker capability={kind} showPrice={false} value={draft.model} aspectRatio={draft.aspectRatio} onChange={(value) => patch({ model: value })} />
                         </fieldset>
                     </label>
                     <div className="drama-shot-media-parameters">
@@ -381,83 +589,49 @@ function ShotMediaEditor({
                             <Switch disabled={controlsDisabled} checked={draft.generateAudio} onChange={(value) => patch({ generateAudio: value })} />
                         </label>
                     ) : null}
-                    <div className="drama-shot-media-references">
-                        <strong>参考图{isVideo ? "与首尾帧" : ""}</strong>
-                        <div className="drama-shot-media-reference-row">
-                            {draft.referenceResourceIds.map((id) => (
-                                <ReferenceImage key={id} id={id} label="参考图" disabled={controlsDisabled} onRemove={() => patch({ referenceResourceIds: draft.referenceResourceIds.filter((value) => value !== id) })} />
-                            ))}
-                            <Button disabled={controlsDisabled} icon={<ImagePlus className="size-4" />} onClick={() => setPicker("reference")}>
-                                添加参考图
-                            </Button>
-                        </div>
-                        {isVideo ? (
-                            <div className="drama-shot-media-reference-row">
-                                {(["first", "last"] as const).map((role) => {
-                                    const key = role === "first" ? "firstFrameResourceId" : "lastFrameResourceId";
-                                    const label = role === "first" ? "首帧" : "尾帧";
-                                    return draft[key] ? (
-                                        <ReferenceImage key={role} id={draft[key]} label={label} disabled={controlsDisabled} onRemove={() => patch({ [key]: "" })} />
-                                    ) : (
-                                        <Button key={role} disabled={controlsDisabled} onClick={() => setPicker(role)}>
-                                            选择{label}
-                                        </Button>
-                                    );
-                                })}
-                            </div>
-                        ) : null}
-                    </div>
-                    <label className="drama-shot-media-prompt">
-                        <span>提示词</span>
-                        <Input.TextArea aria-label="镜头媒体提示词" disabled={controlsDisabled} value={draft.prompt} autoSize={{ minRows: 4, maxRows: 7 }} onChange={(event) => patch({ prompt: event.target.value })} />
-                    </label>
+                    <WorkflowShotReferences projectId={projectId} userId={userId} kind={kind} config={draft} disabled={configLocked} onChange={patch} onBusyChange={setReferenceBusy} />
+                    <WorkflowShotPromptEditor projectId={projectId} userId={userId} shot={shot} kind={kind} config={draft} disabled={controlsDisabled} onChange={patch} />
                     {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新载入后再操作。</p> : null}
                     {error ? <p role="alert">{error}</p> : null}
                     {notice ? <p role="status">{notice}</p> : null}
                     <div className="drama-shot-media-actions">
-                        <Button
-                            disabled={controlsDisabled || stale || (!dirty && Boolean(current?.id))}
-                            loading={busy === "save"}
-                            onClick={() =>
-                                void run("save", async (ticket) => {
-                                    await save(ticket);
-                                    if (operation.isCurrent(ticket)) setNotice("镜头配置已保存");
-                                })
-                            }
-                        >
-                            保存配置
-                        </Button>
+                        {syncFailed && !stale ? (
+                            <Button disabled={controlsDisabled || saving} onClick={() => void save(operation.capture()).catch(() => undefined)}>
+                                重新同步配置
+                            </Button>
+                        ) : null}
                         <Button
                             icon={<RefreshCw className="size-3.5" />}
-                            disabled={Boolean(busy) || quote?.uncertain}
+                            disabled={Boolean(busy) || saving || quote?.uncertain || referenceBusy}
                             onClick={() =>
                                 void run("reload", async (ticket) => {
-                                    if (dirty) throw new Error("请先保存配置，或关闭后放弃修改再载入");
+                                    if (dirty && !stale) await save(ticket);
+                                    if (dirty && stale) throw new Error("镜头媒体已有新版本，请关闭后放弃本地修改再重新进入");
                                     const value = await getDramaShotMedia(projectId, shot.id, kind);
                                     if (operation.isCurrent(ticket)) {
                                         accept(value);
                                         setQuote(undefined);
+                                        setPriceVersion((version) => version + 1);
                                     }
                                 })
                             }
                         >
                             重新载入
                         </Button>
-                        <Button className="drama-shot-media-generate" type="primary" disabled={controlsDisabled || stale || active} loading={busy === "preflight"} onClick={() => void check()}>
-                            预检生成
+                        <Button
+                            className="drama-shot-media-generate"
+                            type="primary"
+                            disabled={Boolean(busy) || saving || referenceBusy || (!quote?.uncertain && (stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))}
+                            loading={busy === "execute"}
+                            onClick={() => void execute()}
+                        >
+                            {quote?.uncertain ? "核对提交结果" : generationLabel(isVideo ? "生成视频" : "生成图片", displayedPrice, !active && pricing === draftKey)}
                         </Button>
                     </div>
-                    {quote ? (
-                        <div className="drama-shot-media-quote" aria-live="polite">
-                            <p>
-                                {quote.preview.reason || `仅生成当前镜头${isVideo ? "视频" : "图片"}`} · {quote.preview.priced ? `${quote.preview.estimated ? "预估" : "预计"} ${formatDramaCredits(quote.preview.amountMicrocredits)} 积分` : "暂无法报价"}
-                            </p>
-                            {quote.uncertain ? <p>提交回执未确认，核对会复用同一次提交标识。</p> : null}
-                            <Button type="primary" disabled={Boolean(busy) || !quote.preview.ready || !quote.preview.priced || (stale && !quote.uncertain)} loading={busy === "execute"} onClick={() => void execute()}>
-                                {quote.uncertain ? "核对提交结果" : "确认生成当前镜头"}
-                            </Button>
-                        </div>
-                    ) : null}
+                    {saving ? <p role="status">正在同步配置…</p> : null}
+                    {quote?.uncertain ? <p role="status">提交回执未确认，核对会复用同一次提交标识。</p> : null}
+                    {!active && displayedPrice && (!displayedPrice.ready || !displayedPrice.priced) ? <p role="status">{displayedPrice.reason || "当前参数暂无法取得报价，请调整配置。"}</p> : null}
+                    {priceError?.key === draftKey ? <p role="alert">{priceError.message}</p> : null}
                 </section>
                 <section className="drama-shot-media-stage" aria-label="镜头媒体预览">
                     <header>
@@ -501,7 +675,7 @@ function ShotMediaEditor({
                                 {!take.current && take.resourceId ? (
                                     <Button
                                         size="small"
-                                        disabled={Boolean(busy) || dirty || stale || quote?.uncertain}
+                                        disabled={Boolean(busy) || saving || referenceBusy || dirty || stale || quote?.uncertain}
                                         onClick={() =>
                                             void run("adopt", async (ticket) => {
                                                 if (!current) return;
@@ -525,39 +699,6 @@ function ShotMediaEditor({
                     )}
                 </aside>
             </div>
-            <AssetLibraryPickerModal
-                open={Boolean(picker)}
-                remoteLibrary
-                acceptRemoteItems
-                remoteKind="image"
-                mediaKinds={["image"]}
-                multiple={false}
-                items={[]}
-                categoryLabels={{ all: "全部素材" }}
-                title={picker === "first" ? "选择首帧" : picker === "last" ? "选择尾帧" : "选择参考图"}
-                onClose={() => setPicker(undefined)}
-                remoteItemDisabledReason={(asset) => (asset.kind === "image" && resourceIdFromStorageKey(asset.data.storageKey) ? undefined : "请选择已保存的图片")}
-                onConfirm={(_ids, items) => {
-                    const asset = items?.[0]?.asset;
-                    const id = asset?.kind === "image" ? resourceIdFromStorageKey(asset.data.storageKey) : "";
-                    if (!id) throw new Error("图片还没有保存到服务器");
-                    if (picker === "first") patch({ firstFrameResourceId: id, operation: "image_to_video" });
-                    else if (picker === "last") patch({ lastFrameResourceId: id, operation: "image_to_video" });
-                    else
-                        patch({ referenceResourceIds: [...new Set([...draft.referenceResourceIds, id])], operation: kind === "image" ? "image_to_image" : draft.firstFrameResourceId || draft.lastFrameResourceId ? "image_to_video" : "reference_to_video" });
-                    setPicker(undefined);
-                }}
-            />
         </>
-    );
-}
-
-function ReferenceImage({ id, label, disabled, onRemove }: { id: string; label: string; disabled: boolean; onRemove: () => void }) {
-    return (
-        <div className="drama-shot-media-reference">
-            <MediaThumb resourceId={id} alt={label} />
-            <span>{label}</span>
-            <Button size="small" aria-label={`移除${label}`} disabled={disabled} icon={<Trash2 className="size-3" />} onClick={onRemove} />
-        </div>
     );
 }

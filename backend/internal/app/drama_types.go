@@ -441,9 +441,28 @@ type DramaDialogueCheck struct {
 type UpdateDramaSettingsRequest struct {
 	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
 	// Retained only to reject writes from retired short-drama Agent clients.
-	GuideConversationID *string        `json:"guideConversationId,omitempty"`
-	Settings            *DramaSettings `json:"settings"`
-	BudgetMicrocredits  *int64         `json:"budgetMicrocredits"`
+	GuideConversationID *string                  `json:"guideConversationId,omitempty"`
+	Settings            *DramaSettings           `json:"settings"`
+	Generation          *DramaGenerationSettings `json:"generation,omitempty"`
+	BudgetMicrocredits  *int64                   `json:"budgetMicrocredits"`
+}
+
+// 模式窗口只负责媒体参数，不能借自动保存覆盖文字、分镜规则或推进引导。
+type DramaGenerationSettings struct {
+	Models          *DramaGenerationModels    `json:"models,omitempty"`
+	Assets          *production.AssetSettings `json:"assets,omitempty"`
+	AspectRatio     *string                   `json:"aspectRatio,omitempty"`
+	VideoResolution *string                   `json:"videoResolution,omitempty"`
+	VideoContinuity *string                   `json:"videoContinuity,omitempty"`
+	ReferenceLimit  *int                      `json:"referenceLimit,omitempty"`
+}
+
+type DramaGenerationModels struct {
+	Image          *DramaModelChoice `json:"image,omitempty"`
+	Video          *DramaModelChoice `json:"video,omitempty"`
+	CharacterImage *DramaModelChoice `json:"characterImage,omitempty"`
+	PropImage      *DramaModelChoice `json:"propImage,omitempty"`
+	SceneImage     *DramaModelChoice `json:"sceneImage,omitempty"`
 }
 
 type DramaProductionView struct {
@@ -520,6 +539,7 @@ type DramaInboxItem struct {
 	// 以下字段供前端把同类问题折叠成组：角色/道具/场景、所在集、段号与失败环节（prompt 提示词 / video 视频）。
 	CastKind      string `json:"castKind,omitempty"`
 	EpisodeNumber int    `json:"episodeNumber,omitempty"`
+	SegmentID     string `json:"segmentId,omitempty"`
 	SegmentIndex  int    `json:"segmentIndex"`
 	Media         string `json:"media,omitempty"`
 }

@@ -7052,47 +7052,59 @@
     font-size: var(--fs-micro);
 }
 
-/* ===== 制作步骤：文字步骤（文本模型 + 技能）与参考图（图片模型 + 分辨率），一类一行 ===== */
+/* 制作步骤按卡片自身宽度排列，桌面窄侧栏也使用纵向字段。 */
 .drama-steps {
+    container: drama-steps / inline-size;
     display: grid;
+    min-width: 0;
+    gap: var(--space-3);
+}
+.drama-step-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-3);
+    padding: var(--space-3);
     border: 1px solid var(--drama-line);
     border-radius: var(--radius-lg);
     background: var(--drama-panel);
 }
-.drama-step-row {
-    display: grid;
-    grid-template-columns: 132px repeat(3, minmax(0, 1fr));
-    align-items: start;
-    gap: 8px 16px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--drama-line);
-}
-.drama-step-row.is-image {
-    grid-template-columns: 132px repeat(2, minmax(0, 1fr));
-}
-.drama-step-row:first-child {
-    border-top: 0;
-}
 .drama-step-label {
     display: grid;
-    gap: 2px;
+    grid-column: 1 / -1;
+    gap: var(--space-1);
     min-width: 0;
-    padding-top: 20px;
 }
 .drama-step-label strong {
-    font-size: var(--fs-tiny);
+    font-size: var(--fs-ui);
     font-weight: 600;
 }
 .drama-step-label small,
 .drama-step-note {
-    color: var(--drama-faint);
+    color: var(--drama-muted);
     font-size: var(--fs-micro);
     line-height: 1.5;
+    overflow-wrap: anywhere;
 }
 .drama-step-field {
     display: grid;
-    gap: 4px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
     min-width: 0;
+}
+.drama-step-row > .drama-step-field {
+    grid-template-columns: 64px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-2);
+}
+.drama-step-field > .ant-select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+.drama-step-row > .drama-step-field > .drama-step-warn {
+    grid-column: 1 / -1;
 }
 .drama-step-caption {
     color: var(--drama-muted);
@@ -7100,12 +7112,13 @@
 }
 .drama-step-model {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 0;
 }
 .drama-step-model > :first-child {
-    flex: 1 1 auto;
+    flex: 1 1 160px;
     min-width: 0;
 }
 .drama-step-model > .ant-btn {
@@ -7129,8 +7142,18 @@
     font-variant-numeric: tabular-nums;
 }
 .drama-pskill.is-compact .drama-pskill-current {
+    min-width: 0;
     min-height: 32px;
-    padding: 4px 4px 4px 10px;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+}
+.drama-pskill.is-compact .drama-pskill-current > div {
+    flex: 1 1 96px;
+    min-width: 0;
+}
+.drama-pskill.is-compact .drama-pskill-current.is-empty > span {
+    flex: 1 1 64px;
 }
 .drama-pskill-edit {
     display: inline-grid;
@@ -7149,13 +7172,21 @@
     outline: 2px solid var(--control-focus-ring);
     outline-offset: 1px;
 }
-@media (max-width: 960px) {
-    .drama-step-row,
-    .drama-step-row.is-image {
+@container drama-steps (max-width: 320px) {
+    .drama-step-row > .drama-step-field {
         grid-template-columns: minmax(0, 1fr);
     }
-    .drama-step-label {
-        padding-top: 0;
+}
+@container drama-steps (min-width: 640px) {
+    .drama-step-row {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .drama-step-row.is-image {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .drama-step-row > .drama-step-field {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
     }
 }
 

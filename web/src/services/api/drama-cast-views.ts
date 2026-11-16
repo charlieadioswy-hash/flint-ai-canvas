@@ -19,12 +19,14 @@ export type CastView = {
     takes: (DramaTake & { status: string; error?: string; current: boolean })[];
 };
 export type CastViewAction = { episodeId?: string; expectedRevision?: number; viewRevision?: number; confirmationToken?: string; clientOperationId?: string };
-export type CastViewPreflight = { revision: number; viewRevision: number; ready: boolean; reason?: string; priced: boolean; estimated: boolean; amountMicrocredits: number; confirmationToken: string };
+export type CastViewPreflight = { revision: number; viewRevision: number; ready: boolean; reason?: string; priced: boolean; estimated: boolean; amountMicrocredits: number; scopeHash: string; confirmationToken: string };
+export type CastViewSaveRequest = { episodeId?: string; expectedRevision: number; expectedCastRevision: number; viewRevision: number; config: CastViewConfig };
 
 const path = (projectId: string, castId: string) => `/dramas/${encodeURIComponent(projectId)}/cast/${encodeURIComponent(castId)}/views`;
 export const listDramaCastViews = (projectId: string, castId: string, signal?: AbortSignal) => http.get<{ views: CastView[] }>(path(projectId, castId), { signal });
-export const saveDramaCastView = (projectId: string, castId: string, viewId: string | undefined, input: { episodeId?: string; expectedRevision: number; expectedCastRevision: number; viewRevision: number; config: CastViewConfig }) =>
+export const saveDramaCastView = (projectId: string, castId: string, viewId: string | undefined, input: CastViewSaveRequest) =>
     viewId ? http.put<CastView>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}`, input) : http.post<CastView>(path(projectId, castId), input);
+export const quoteDramaCastViewDraft = (projectId: string, castId: string, viewId: string | undefined, input: CastViewSaveRequest) => http.post<CastViewPreflight>(`${path(projectId, castId)}${viewId ? `/${encodeURIComponent(viewId)}` : ""}/quote`, input);
 export const deleteDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.deleteWithBody<{ deleted: boolean }>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}`, input);
 export const preflightDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.post<CastViewPreflight>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}/preflight`, input);
 export const executeDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.post<GenerationTask>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}/execute`, input);

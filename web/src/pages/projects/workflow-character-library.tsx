@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { App, Button, Input } from "antd";
-import { BookUser } from "lucide-react";
+import { VenetianMask } from "lucide-react";
 
+import { IconButton } from "@/components/ui/base/buttons";
+import { Tooltip } from "@/components/ui/base/tooltip/tooltip";
 import { AppModal } from "@/components/ui/product/app-modal/app-modal";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { getDramaCharacterUsage, importDramaCharacterLibrary, saveDramaCharacterLibrary, updateDramaCharacterDefinition } from "@/services/api/drama-character-library";
@@ -10,10 +12,16 @@ import type { DramaCast, DramaSummary } from "@/services/api/drama";
 import { listCharacters, type CharacterRepresentation, type ProjectCharacterDetail } from "@/services/api/projects";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { useResourceMediaUrl } from "./drama-shared";
+import { CAST_KIND_LABEL, useResourceMediaUrl } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { CHARACTER_FIELDS, changedCharacterFields, characterFieldValues, parseCharacterDefinition } from "./workflow-character-definition";
 import "./workflow-character-library.css";
+
+export type WorkflowCharacterLibraryControls = {
+    importTrigger: ReactNode;
+    saveToLibrary: (cast: DramaCast) => void;
+    showInfo: (cast: DramaCast) => void;
+};
 
 type Props = {
     summary: DramaSummary;
@@ -21,6 +29,7 @@ type Props = {
     busy?: boolean;
     onChanged: () => void;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+    children?: (controls: WorkflowCharacterLibraryControls) => ReactNode;
 };
 type Dialog = { mode: "import" | "info" | "save"; revision: number; target?: DramaCast };
 const ROLE_LABELS: Record<string, string> = { primary: "主形象", front: "正面", side: "侧面", back: "背面", turnaround_sheet: "三视图", expression_sheet: "表情图" };
@@ -40,27 +49,32 @@ export function WorkflowCharacterLibrary(props: Props) {
     return <CharacterLibrarySession key={JSON.stringify([userId, getActiveUserScope(), props.summary.project.id])} {...props} userId={userId} />;
 }
 
-function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDirtyChange, userId }: Props & { userId: string }) {
+function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDirtyChange, children, userId }: Props & { userId: string }) {
     const { modal } = App.useApp();
     const operation = useDramaOperationScope(summary.project.id);
-    const [selectedId, setSelectedId] = useState("");
     const [dialog, setDialog] = useState<Dialog>();
     const [dialogState, setDialogState] = useState({ dirty: false, busy: false });
     const dialogStateRef = useRef(dialogState);
-    const latest = useRef({ onChanged, onDirtyChange });
-    latest.current = { onChanged, onDirtyChange };
-    const characters = cast.filter((item) => item.projectId === summary.project.id && item.kind === "character" && !item.parentId);
-    const selected = characters.find((item) => item.id === selectedId);
+    const latest = useRef({ onChanged, onDirtyChange, summary, cast, busy });
+    latest.current = { onChanged, onDirtyChange, summary, cast, busy };
+    const assets = cast.filter((item) => item.projectId === summary.project.id && !item.parentId);
 
     useEffect(() => {
         latest.current.onDirtyChange?.(dialogState.dirty, dialogState.busy);
     }, [dialogState]);
     useEffect(() => () => latest.current.onDirtyChange?.(false, false), []);
 
-    const open = (mode: Dialog["mode"]) => {
+    const open = (mode: Dialog["mode"], target?: DramaCast) => {
         const ticket = operation.capture();
-        if (busy || !userId || !operation.isCurrent(ticket) || getActiveUserScope() !== userId) return;
-        setDialog({ mode, revision: summary.production.revision, target: selected });
+        const current = latest.current;
+        if (current.busy || dialog || dialogStateRef.current.busy || !userId || !operation.isCurrent(ticket) || getActiveUserScope() !== userId) return;
+        if (mode !== "import" && !target) return;
+        let currentTarget = target;
+        if (target) {
+            currentTarget = current.cast.find((item) => item.id === target.id && item.projectId === current.summary.project.id && !item.parentId);
+            if (target.projectId !== current.summary.project.id || target.parentId || !currentTarget || currentTarget.kind !== target.kind || currentTarget.revision !== target.revision || (mode !== "info" && target.kind !== "character")) return;
+        }
+        setDialog({ mode, revision: current.summary.production.revision, target: currentTarget });
     };
     const close = () => {
         if (dialogStateRef.current.busy) return;
@@ -76,35 +90,20 @@ function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDir
         } else dismiss();
     };
 
+    const importTrigger = (
+        <Tooltip title="角色库">
+            <IconButton size="sm" icon={VenetianMask} aria-label="从角色库导入" disabled={busy || dialogState.busy} onClick={() => open("import")} />
+        </Tooltip>
+    );
     return (
-        <section className="drama-character-library-tools" aria-label="人物信息与角色库">
-            <BookUser className="size-4" aria-hidden="true" />
-            <label>
-                <span className="sr-only">选择要查看的人物</span>
-                <select aria-label="选择要查看的人物" value={selected ? selectedId : ""} disabled={busy || dialogState.busy} onChange={(event) => setSelectedId(event.target.value)}>
-                    <option value="">选择人物</option>
-                    {characters.map((item) => (
-                        <option key={item.id} value={item.id}>
-                            {item.name}
-                        </option>
-                    ))}
-                </select>
-            </label>
-            <Button disabled={busy || dialogState.busy || !selected} onClick={() => open("info")}>
-                人物信息与出镜
-            </Button>
-            <Button disabled={busy || dialogState.busy || !selected} onClick={() => open("save")}>
-                另存到角色库
-            </Button>
-            <Button disabled={busy || dialogState.busy} onClick={() => open("import")}>
-                从角色库导入
-            </Button>
+        <>
+            {children ? children({ importTrigger, saveToLibrary: (target) => open("save", target), showInfo: (target) => open("info", target) }) : importTrigger}
             {dialog ? (
                 <AppModal flush open title={null} footer={null} closable={false} width={920} onCancel={close} maskClosable={!dialogState.busy} keyboard={!dialogState.busy}>
                     <CharacterDialog
                         key={`${dialog.mode}:${dialog.target?.id || "new"}:${dialog.revision}`}
                         summary={summary}
-                        cast={characters}
+                        cast={assets}
                         draft={dialog}
                         busy={busy}
                         userId={userId}
@@ -122,7 +121,7 @@ function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDir
                     />
                 </AppModal>
             ) : null}
-        </section>
+        </>
     );
 }
 
@@ -149,6 +148,10 @@ function CharacterDialog({
     const projectId = summary.project.id;
     const operation = useDramaOperationScope(projectId);
     const [target, setTarget] = useState(draft.target);
+    const characterTarget = draft.target?.kind === "character";
+    const readOnlyInfo = draft.mode === "info" && !characterTarget;
+    const targetLabel = characterTarget ? "人物" : draft.target ? CAST_KIND_LABEL[draft.target.kind] : "资产";
+    const characters = cast.filter((item) => item.kind === "character");
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState("");
     const [query, setQuery] = useState("");
@@ -167,12 +170,12 @@ function CharacterDialog({
     try {
         definition = parseCharacterDefinition(draft.target?.definitionJson);
     } catch (error) {
-        definitionError = error instanceof Error ? error.message : "人物定义读取失败";
+        if (characterTarget) definitionError = error instanceof Error ? error.message : "人物定义读取失败";
     }
     const baseline = characterFieldValues(definition, draft.target?.role || "");
     const [fields, setFields] = useState<Record<string, string>>(baseline);
     const changes = changedCharacterFields(baseline, fields);
-    const dirty = draft.mode === "info" ? Object.keys(changes).length > 0 : draft.mode === "save" ? name !== target?.name : Boolean(library);
+    const dirty = draft.mode === "info" ? characterTarget && Object.keys(changes).length > 0 : draft.mode === "save" ? name !== target?.name : Boolean(library);
     const currentTarget = target ? cast.find((item) => item.id === target.id) : undefined;
     const stale = draft.revision !== summary.production.revision || Boolean(target && (!currentTarget || currentTarget.revision !== target.revision));
     const ownerIsActive = Boolean(userId && userId === getActiveUserScope());
@@ -201,7 +204,7 @@ function CharacterDialog({
         setFailure("");
     };
     const write = async () => {
-        if (disabled || lock.current || definitionError || !operation.isCurrent(renderTicket)) return;
+        if (readOnlyInfo || disabled || lock.current || definitionError || (target && target.kind !== "character") || !operation.isCurrent(renderTicket)) return;
         const ticket = operation.capture();
         const current = latest.current;
         if (current.busy || current.summary.production.revision !== draft.revision || (target && current.cast.find((row) => row.id === target.id)?.revision !== target.revision)) return;
@@ -263,7 +266,7 @@ function CharacterDialog({
         return (
             <div className="drama-character-dialog">
                 <header>
-                    <h2>人物信息</h2>
+                    <h2>{targetLabel}信息</h2>
                     <Button onClick={onClose}>关闭</Button>
                 </header>
                 <div className="drama-character-dialog-body">
@@ -274,11 +277,11 @@ function CharacterDialog({
     }
 
     return (
-        <div className="drama-character-dialog" aria-label={draft.mode === "import" ? "导入个人角色" : draft.mode === "save" ? "另存新角色" : "人物信息与出镜"}>
+        <div className="drama-character-dialog" aria-label={draft.mode === "import" ? "导入个人角色" : draft.mode === "save" ? "另存新角色" : `${targetLabel}信息与出镜`}>
             <header>
                 <div>
-                    <h2>{draft.mode === "import" ? "从个人角色库导入" : draft.mode === "save" ? "另存到个人角色库" : `${draft.target?.name} · 人物信息`}</h2>
-                    <p>复用已保存的设定和媒体，后续修改各自独立。</p>
+                    <h2>{draft.mode === "import" ? "从个人角色库导入" : draft.mode === "save" ? "另存到个人角色库" : `${draft.target?.name} · ${targetLabel}信息`}</h2>
+                    <p>{draft.mode === "info" ? "查看资产设定与实际出镜。简介和图片提示词在资产编辑工作区调整。" : "复用已保存的设定和媒体，后续修改各自独立。"}</p>
                 </div>
                 <Button disabled={pending} onClick={onClose}>
                     关闭
@@ -286,7 +289,7 @@ function CharacterDialog({
             </header>
             <div className="drama-character-dialog-body">
                 {!ownerIsActive ? <p role="alert">登录状态已变化，请关闭后重新打开。</p> : null}
-                {stale ? <p role="alert">作品或人物已有更新，当前选择和修改已保留。请关闭并重新打开后再提交。</p> : null}
+                {stale ? <p role="alert">{readOnlyInfo ? "作品或资产已有更新，请关闭并重新打开查看最新信息。" : "作品或人物已有更新，当前选择和修改已保留。请关闭并重新打开后再提交。"}</p> : null}
                 {failure ? <p role="alert">{failure}</p> : null}
                 {draft.mode === "import" ? (
                     <>
@@ -297,12 +300,14 @@ function CharacterDialog({
                                 disabled={disabled}
                                 value={target?.id || ""}
                                 onChange={(event) => {
-                                    setTarget(cast.find((item) => item.id === event.target.value));
+                                    const next = characters.find((item) => item.id === event.target.value);
+                                    if (event.target.value && !next) return;
+                                    setTarget(next);
                                     setReplaceText(false);
                                 }}
                             >
                                 <option value="">新增为本作品角色</option>
-                                {cast.map((item) => (
+                                {characters.map((item) => (
                                     <option key={item.id} value={item.id}>
                                         {item.name}
                                     </option>
@@ -332,7 +337,7 @@ function CharacterDialog({
                         ) : list.isError ? (
                             <p role="alert">角色库读取失败，请刷新重试。</p>
                         ) : !list.data?.characters.length ? (
-                            <p>个人角色库中没有匹配的人物。可先将作品中的人物另存到角色库。</p>
+                            <p>个人角色库中没有匹配的人物。可通过角色卡片上的“加入角色库”图标保存人物。</p>
                         ) : null}
                         <div className="drama-character-library-grid" role="group" aria-label="个人角色列表">
                             {list.data?.characters.map((card) => {
@@ -428,37 +433,6 @@ function CharacterDialog({
                     </>
                 ) : (
                     <>
-                        {definitionError ? <p role="alert">{definitionError}</p> : null}
-                        <section aria-label="当前人物说明">
-                            <h3>当前人物说明</h3>
-                            <p>{draft.target?.description || "暂无说明"}</p>
-                            <p>外观：{draft.target?.appearance || "未填写"}</p>
-                            <p>声线：{draft.target?.voiceInstructions || "未填写"}</p>
-                            <p>简介、外观和声线仍可从资产卡片的设定编辑入口调整。</p>
-                        </section>
-                        <section className="drama-character-structured" aria-label="结构化人物信息">
-                            {CHARACTER_FIELDS.map(([key, label]) => (
-                                <label className="drama-character-field" key={key}>
-                                    {label}
-                                    <Input.TextArea
-                                        aria-label={label}
-                                        rows={key === "background" || key.endsWith("Prompt") ? 3 : 1}
-                                        disabled={disabled || Boolean(definitionError)}
-                                        value={fields[key]}
-                                        onChange={(event) => setFields((previous) => ({ ...previous, [key]: event.target.value }))}
-                                    />
-                                </label>
-                            ))}
-                        </section>
-                        <section aria-label="人物原文定义">
-                            <h3>原文定义</h3>
-                            <pre>{typeof definition.sourceDefinition === "string" && definition.sourceDefinition ? definition.sourceDefinition : "未保存独立的原文定义。现有说明仍保留在资产设定中。"}</pre>
-                            <p>原文保持完整，不随结构化信息编辑而改写。</p>
-                        </section>
-                        <details>
-                            <summary>其他已保存信息</summary>
-                            <pre>{JSON.stringify(definition, null, 2)}</pre>
-                        </details>
                         <section aria-label="真实出镜与引用">
                             <h3>出镜与引用</h3>
                             {usage.isPending ? (
@@ -476,7 +450,7 @@ function CharacterDialog({
                                             实际出镜 {usage.data.appearances.length} 镜；显式参考图引用 {usage.data.imageReferences.length} 段；显式音频引用 {usage.data.audioReferences.length} 段。
                                         </p>
                                     )}
-                                    <ul>
+                                    <ul className="drama-character-usage-shots thin-scrollbar">
                                         {usage.data.appearances.map((item) => (
                                             <li key={item.shotId}>
                                                 第 {item.episodeNumber} 集 · 第 {item.segmentIndex + 1} 段 · 镜头 {item.position + 1}
@@ -487,18 +461,70 @@ function CharacterDialog({
                                 </>
                             ) : null}
                         </section>
+                        {characterTarget ? (
+                            <>
+                                {definitionError ? <p role="alert">{definitionError}</p> : null}
+                                <section aria-label="当前人物说明">
+                                    <h3>当前人物说明</h3>
+                                    <p>{draft.target?.description || "暂无说明"}</p>
+                                    <p>外观：{draft.target?.appearance || "未填写"}</p>
+                                    <p>声线：{draft.target?.voiceInstructions || "未填写"}</p>
+                                    <p>简介、外观和声线在资产编辑工作区调整。</p>
+                                </section>
+                                <section className="drama-character-structured" aria-label="结构化人物信息">
+                                    {CHARACTER_FIELDS.map(([key, label]) => (
+                                        <label className="drama-character-field" key={key}>
+                                            {label}
+                                            <Input.TextArea
+                                                aria-label={label}
+                                                rows={key === "background" || key.endsWith("Prompt") ? 3 : 1}
+                                                disabled={disabled || Boolean(definitionError)}
+                                                value={fields[key]}
+                                                onChange={(event) => setFields((previous) => ({ ...previous, [key]: event.target.value }))}
+                                            />
+                                        </label>
+                                    ))}
+                                </section>
+                            </>
+                        ) : (
+                            <>
+                                <section aria-label={`当前${targetLabel}说明`}>
+                                    <h3>{targetLabel}说明</h3>
+                                    <p>名称：{draft.target?.name}</p>
+                                    <p>{draft.target?.description || "暂无说明"}</p>
+                                    <p>
+                                        {draft.target?.kind === "scene" ? "环境" : "外观"}：{draft.target?.appearance || "未填写"}
+                                    </p>
+                                </section>
+                                <section aria-label={`${targetLabel}图片提示词`}>
+                                    <h3>图片提示词</h3>
+                                    <pre>{draft.target?.imagePrompt || "未填写"}</pre>
+                                </section>
+                            </>
+                        )}
+                        <section aria-label={`${targetLabel}原文定义`}>
+                            <h3>原文定义</h3>
+                            <pre>{typeof definition.sourceDefinition === "string" && definition.sourceDefinition ? definition.sourceDefinition : draft.target?.definitionJson || "未保存独立的原文定义。现有说明仍保留在资产设定中。"}</pre>
+                            {characterTarget ? <p>原文保持完整，不随结构化信息编辑而改写。</p> : null}
+                        </section>
+                        <details>
+                            <summary>其他已保存信息</summary>
+                            <pre>{JSON.stringify(definition, null, 2)}</pre>
+                        </details>
                     </>
                 )}
             </div>
-            <footer>
-                <p>保存仅影响设定，不自动重写分镜或重新生成媒体。</p>
-                <Button disabled={pending} onClick={onClose}>
-                    取消
-                </Button>
-                <Button type="primary" loading={pending} disabled={disabled || Boolean(definitionError) || (draft.mode === "import" ? !library : draft.mode === "save" ? !name.trim() : !Object.keys(changes).length)} onClick={submit}>
-                    {draft.mode === "import" ? "确认导入" : draft.mode === "save" ? "另存新角色" : "保存人物信息"}
-                </Button>
-            </footer>
+            {!readOnlyInfo ? (
+                <footer>
+                    <p>保存仅影响设定，不自动重写分镜或重新生成媒体。</p>
+                    <Button disabled={pending} onClick={onClose}>
+                        取消
+                    </Button>
+                    <Button type="primary" loading={pending} disabled={disabled || Boolean(definitionError) || (draft.mode === "import" ? !library : draft.mode === "save" ? !name.trim() : !Object.keys(changes).length)} onClick={submit}>
+                        {draft.mode === "import" ? "确认导入" : draft.mode === "save" ? "另存新角色" : "保存人物信息"}
+                    </Button>
+                </footer>
+            ) : null}
         </div>
     );
 }

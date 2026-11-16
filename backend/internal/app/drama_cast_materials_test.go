@@ -129,7 +129,7 @@ func TestDramaManualCastSharesRevisionWithAgent(t *testing.T) {
 	}
 }
 
-func TestDramaCastImportRejectsActiveGuideAndInvalidatesOldSuggestions(t *testing.T) {
+func TestDramaCastImportRejectsUnconfiguredGuideAndInvalidatesOldSuggestions(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	svc.coordinator = platform.NewCoordinatorWithRedis(nil, t.Name())
 	source := newDramaMaterialProject(t, svc, "来源作品")
@@ -137,11 +137,11 @@ func TestDramaCastImportRejectsActiveGuideAndInvalidatesOldSuggestions(t *testin
 	base := createDramaMaterial(t, svc, source, "character", "角色")
 	before, _ := svc.repo.DramaProduction(target)
 	req := ImportDramaCastRequest{SourceProjectID: source, CastIDs: []string{base.ID}}
-	if err := fake.db.Model(before).Update("guide_step", model.DramaGuideStory).Error; err != nil {
+	if err := fake.db.Model(before).Update("guide_step", model.DramaGuideConfiguring).Error; err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ImportDramaCast("usr-drama", target, req); err == nil {
-		t.Fatal("active guide import bypassed confirmation")
+		t.Fatal("unconfigured guide import bypassed configuration")
 	}
 	unchanged, _ := svc.repo.DramaProduction(target)
 	casts, _ := svc.repo.DramaCasts(target)

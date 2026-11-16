@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { App, Button, Select } from "antd";
+import { Button, Select } from "antd";
 import { Plus, X } from "lucide-react";
 
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
@@ -60,7 +60,6 @@ export function CastImageOptions({
 }
 
 function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDisabled, onChanged, onDirtyChange, userId, value, onChange }: Parameters<typeof CastImageOptions>[0] & { userId: string }) {
-    const { message } = App.useApp();
     const [localCorrupt, setLocalCorrupt] = useState(false);
     const [localOptions, setLocalOptions] = useState<DramaCastImageOptions>(() => {
         try {
@@ -79,6 +78,9 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
     };
     const initial = useRef(JSON.stringify(options));
     const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+    const attempted = useRef("");
+    const castRevision = useRef(cast.revision);
     const savingRef = useRef(false);
     const mounted = useRef(true);
     const [picker, setPicker] = useState<"subject" | "style">();
@@ -112,6 +114,15 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
     const inheritedModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
     const effectiveModel = dramaChoiceKey(options.model) ? options.model : inheritedModel && dramaChoiceKey(inheritedModel) ? inheritedModel : settings?.models.image;
     const model = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(effectiveModel));
+    // 与服务端资产生成使用相同回退；场景和道具不使用视频画幅。
+    const inheritedRatio = settings ? (cast.kind === "character" ? settings.assets?.characterRatio : "16:9") : undefined;
+    const inheritedResolution = cast.kind === "character" ? settings?.assets?.resolution : cast.kind === "scene" ? settings?.assets?.sceneResolution : settings?.assets?.propResolution;
+    const defaultResolution = inheritedResolution || model?.defaultImageResolution;
+    const configurationStatus = summary.isError || episodeSettings.isError ? "配置读取失败" : "正在读取…";
+    const defaultRatioLabel = inheritedRatio || (settings ? "未配置画幅" : configurationStatus);
+    const defaultResolutionLabel = defaultResolution?.toUpperCase() || (!settings ? configurationStatus : catalog.isError ? "模型读取失败" : catalog.isPending ? "正在读取…" : "未提供分辨率");
+    const ratioLabel = options.ratio || defaultRatioLabel;
+    const resolutionLabel = options.resolution?.toUpperCase() || defaultResolutionLabel;
     const ratios = [...new Set([...(model?.imageRatios || []), options.ratio].filter(Boolean))];
     const resolutions = [...new Set([...(model?.imageResolutions || []), options.resolution].filter(Boolean))];
     const referenceCount = options.subjectReferenceIds.length + options.styleReferenceIds.length;
@@ -120,20 +131,31 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
         savingRef.current = true;
         setSaving(true);
         try {
-            if (episodeId) await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, cast.revision, options, episodeId);
-            else await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, cast.revision, options);
+            const result = await updateDramaCastImageOptions(projectId, cast.id, summary.data.production.revision, castRevision.current!, options, episodeId);
             if (!current()) return;
+            castRevision.current = result.cast.revision;
             initial.current = JSON.stringify(options);
+            setError("");
             onDirtyChange?.(false);
-            message.success("图片生成配置已保存，下次生成时生效");
             onChanged();
+            await summary.refetch();
         } catch (error) {
-            if (current()) message.error(error instanceof Error ? error.message : "图片配置保存失败");
+            if (current()) setError(error instanceof Error ? error.message : "图片配置自动保存失败");
         } finally {
             savingRef.current = false;
             if (current()) setSaving(false);
         }
     };
+    const optionsKey = JSON.stringify(options);
+    useEffect(() => {
+        if (value || disabled || saving || !dirty || corrupt || !summary.data || attempted.current === optionsKey) return;
+        const timer = setTimeout(() => {
+            attempted.current = optionsKey;
+            setError("");
+            void save();
+        }, 350);
+        return () => clearTimeout(timer);
+    }, [value, disabled, saving, dirty, corrupt, summary.data, optionsKey]);
     return (
         <section className="drama-cast-image-options" aria-label="图片生成配置">
             <div className="drama-cast-image-options-body">
@@ -157,6 +179,7 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                     <fieldset disabled={disabled || saving}>
                         <DramaModelPicker
                             capability="image"
+                            showPrice={false}
                             value={effectiveModel}
                             onChange={(model) => {
                                 if (!disabled && !savingRef.current) setOptions({ ...options, model, ratio: "", resolution: "" });
@@ -173,7 +196,8 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                             aria-label="资产图片画幅"
                             disabled={disabled || saving}
                             value={options.ratio}
-                            options={[{ value: "", label: `使用${configurationScope}画幅` }, ...ratios.map((value) => ({ value, label: value }))]}
+                            labelRender={() => ratioLabel}
+                            options={[{ value: "", label: inheritedRatio ? `${inheritedRatio}（${cast.kind === "character" ? `${configurationScope}配置` : "默认画幅"}）` : defaultRatioLabel }, ...ratios.map((value) => ({ value, label: value }))]}
                             onChange={(ratio) => setOptions({ ...options, ratio })}
                         />
                     </Field>
@@ -182,7 +206,11 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                             aria-label="资产图片分辨率"
                             disabled={disabled || saving}
                             value={options.resolution}
-                            options={[{ value: "", label: `使用${configurationScope}分辨率` }, ...resolutions.map((value) => ({ value, label: value.toUpperCase() }))]}
+                            labelRender={() => resolutionLabel}
+                            options={[
+                                { value: "", label: defaultResolution ? `${defaultResolution.toUpperCase()}（${inheritedResolution ? `${configurationScope}配置` : "模型默认"}）` : defaultResolutionLabel },
+                                ...resolutions.map((value) => ({ value, label: value.toUpperCase() })),
+                            ]}
                             onChange={(resolution) => setOptions({ ...options, resolution })}
                         />
                     </Field>
@@ -221,12 +249,9 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                         </Button>
                     </p>
                 ) : null}
-                <p>保存后仅影响下次生成，已有图片和提示词保留。主体与风格参考合计最多 8 张，实际数量以模型能力为准。</p>
-                {!value ? (
-                    <Button disabled={disabled || !dirty || corrupt || !summary.data || typeof cast.revision !== "number"} loading={saving} onClick={() => void save()}>
-                        保存图片配置
-                    </Button>
-                ) : null}
+                <p>修改后自动生效，已有图片保留。主体与风格参考合计最多 8 张，实际数量以模型能力为准。</p>
+                {!value && saving ? <p role="status">正在自动保存图片配置…</p> : null}
+                {!value && error ? <p role="alert">自动保存失败：{error}。修改仍保留，调整配置后会再次保存。</p> : null}
             </div>
             {picker ? (
                 <CastLibraryPicker

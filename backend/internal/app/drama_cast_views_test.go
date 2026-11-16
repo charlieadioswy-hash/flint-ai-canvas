@@ -47,6 +47,67 @@ func confirmedCastView(t *testing.T, s *Service, viewID, operationID string) Dra
 	return DramaCastViewActionRequest{ExpectedRevision: &v.Revision, ViewRevision: &v.ViewRevision, ConfirmationToken: v.ConfirmationToken, ClientOperationID: operationID}
 }
 
+func TestDramaCastViewDraftQuotesDoNotPersistAndMatchSavedScope(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "new", true: "existing"}[existing], func(t *testing.T) {
+			s, db, view := castViewsFixture(t)
+			p, _ := s.repo.DramaProduction("view-project")
+			cast, _ := s.repo.DramaCast("view-project", "view-cast")
+			wallet, _ := s.repo.CreditAccount("user")
+			config := view.Config
+			config.Prompt = "仅展示服装背面的刺绣细节"
+			viewID, viewRevision := "", int64(0)
+			if existing {
+				viewID, viewRevision = view.ID, view.Revision
+			}
+			req := DramaCastViewSaveRequest{ExpectedRevision: &p.Revision, ExpectedCastRevision: &cast.Revision, ViewRevision: &viewRevision, Config: config}
+			quote, err := s.QuoteDramaCastViewDraft("user", "view-project", "view-cast", viewID, req)
+			if err != nil || !quote.Ready || !quote.Priced || quote.ScopeHash == "" || quote.ConfirmationToken != "" || quote.AmountMicrocredits != 2 {
+				t.Fatalf("draft quote %+v %v", quote, err)
+			}
+			fresh, _ := s.repo.DramaProduction("view-project")
+			stored, _ := s.repo.DramaCastView("view-project", "view-cast", view.ID)
+			views, _ := s.repo.DramaCastViews("view-project", "view-cast")
+			freshWallet, _ := s.repo.CreditAccount("user")
+			var tasks int64
+			db.Model(&model.Task{}).Count(&tasks)
+			if fresh.Revision != p.Revision || stored.ConfigJSON != view.ConfigJSON || len(views) != 1 || tasks != 0 || *freshWallet != *wallet {
+				t.Fatal("draft quote saved configuration, created a view/task or changed billing")
+			}
+			saved, err := s.SaveDramaCastView("user", "view-project", "view-cast", viewID, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ready, err := s.PreflightDramaCastView("user", "view-project", "view-cast", saved.ID, DramaCastViewActionRequest{})
+			if err != nil || !ready.Ready || ready.ConfirmationToken == "" || ready.ScopeHash != quote.ScopeHash || ready.AmountMicrocredits != quote.AmountMicrocredits {
+				t.Fatalf("saved quote changed equivalent scope: draft=%+v saved=%+v err=%v", quote, ready, err)
+			}
+			fresh, _ = s.repo.DramaProduction("view-project")
+			req.ExpectedRevision, req.ViewRevision = &fresh.Revision, &saved.Revision
+			req.Config.Prompt = "仅展示鞋底细节"
+			changed, err := s.QuoteDramaCastViewDraft("user", "view-project", "view-cast", saved.ID, req)
+			if err != nil || !changed.Ready || changed.ScopeHash == ready.ScopeHash {
+				t.Fatalf("changed draft must change scope: %+v %v", changed, err)
+			}
+		})
+	}
+}
+
+func TestDramaCastViewDraftQuoteChecksScopeAndBaseline(t *testing.T) {
+	s, _, view := castViewsFixture(t)
+	p, _ := s.repo.DramaProduction("view-project")
+	cast, _ := s.repo.DramaCast("view-project", "view-cast")
+	req := DramaCastViewSaveRequest{ExpectedRevision: &p.Revision, ExpectedCastRevision: &cast.Revision, ViewRevision: &view.Revision, Config: view.Config}
+	if _, err := s.QuoteDramaCastViewDraft("someone-else", "view-project", "view-cast", view.ID, req); err == nil {
+		t.Fatal("draft quote bypassed project ownership")
+	}
+	old := cast.Revision - 1
+	req.ExpectedCastRevision = &old
+	if _, err := s.QuoteDramaCastViewDraft("user", "view-project", "view-cast", view.ID, req); !isAppErrorStatus(err, 409) {
+		t.Fatalf("stale cast baseline accepted: %v", err)
+	}
+}
+
 func completeCastView(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID string) {
 	t.Helper()
 	if err := db.Create(&model.Resource{ID: resourceID, UserID: "user", Kind: "image", MimeType: "image/png", Status: model.ResourceStatusReady}).Error; err != nil {

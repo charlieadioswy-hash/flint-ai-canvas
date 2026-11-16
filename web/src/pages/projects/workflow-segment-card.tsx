@@ -5,6 +5,7 @@ import type { DramaSegment, DramaShot } from "@/services/api/drama";
 
 import { MediaThumb, mediaBusy, useResourceMediaUrl } from "./drama-shared";
 import { SegmentStatus, secondsLabel } from "./studio/segment-parts";
+import { QuotedMediaButton } from "./studio/drama-media-action-context";
 
 function VideoCover({ resourceId }: { resourceId: string }) {
     const url = useResourceMediaUrl(resourceId, "playback");
@@ -89,9 +90,16 @@ export function WorkflowSegmentCard({
                 <Button size="small" icon={<RefreshCw className="size-3" />} disabled={writing || generating} aria-label={`重新撰写${label}提示词`} onClick={onWritePrompt}>
                     {writing ? "撰写中" : prompt ? "重新撰写" : "撰写提示词"}
                 </Button>
-                <Button size="small" icon={<Play className="size-3" />} disabled={generating || writing || !textConfirmed} title={videoTitle} aria-label={`${videoLabel}${label}`} onClick={onGenerate}>
-                    {videoLabel}
-                </Button>
+                <QuotedMediaButton
+                    size="small"
+                    icon={<Play className="size-3" />}
+                    disabled={generating || writing || !textConfirmed}
+                    title={videoTitle}
+                    aria-label={`${videoLabel}${label}`}
+                    request={{ action: segment.videoReprocessable ? "segment_reprocess" : "segment_video", targetId: segment.id, episodeId: shots[0]?.episodeId, targetRevision: segment.revision }}
+                    label={videoLabel}
+                    onClick={onGenerate}
+                />
             </footer>
         </article>
     );

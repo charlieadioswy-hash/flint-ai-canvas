@@ -11,7 +11,9 @@ import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import { aspectRatioValue, formatClock, mediaBusy, MediaThumb, useResourceMediaUrl } from "../drama-shared";
 import { promptReady, secondsLabel, SegmentInputs, SegmentStatus, segmentState } from "./segment-parts";
 import { dramaVideoOptionFor } from "./segment-quote";
-import { isTypingTarget } from "./use-studio";
+import { isTypingTarget, useDramaInvalidate } from "./use-studio";
+import { QuotedMediaButton, useDramaMediaContext } from "./drama-media-action-context";
+import { WorkflowBatch } from "../workflow-batch";
 import { progressFillStyle } from "@/lib/progress-fill";
 
 type Props = {
@@ -91,6 +93,7 @@ type CardProps = {
  * 低配电脑上打开弹窗或轮询时不再整页重绘全部卡片。回调经 actions 引用读取，props 保持稳定。
  */
 const SegmentCard = memo(function SegmentCard({ segment, segmentShots, aspectRatio, castById, isSelected, focused, busy, reprocessing, defaultModelLabel, actions }: CardProps) {
+    const context = useDramaMediaContext();
     const state = segmentState(segment);
     const error = segment.promptStatus === "failed" ? segment.promptError : segment.videoStatus === "failed" ? segment.videoError : "";
     const act = () => actions.current;
@@ -201,19 +204,19 @@ const SegmentCard = memo(function SegmentCard({ segment, segmentShots, aspectRat
                 <span className="drama-sg-actions">
                     {segment.videoReprocessable ? (
                         <Button size="small" type="primary" icon={<RotateCcw className="size-3" />} disabled={busy} loading={reprocessing} title="只重新处理已生成的视频，不重新生成、不扣费" onClick={() => act().onReprocess(segment.index)}>
-                            重新处理
+                            重新处理 - 0积分
                         </Button>
                     ) : null}
-                    <Button
+                    <QuotedMediaButton
                         size="small"
                         type={generatable(segment) && !hasVideo(segment) ? "primary" : "default"}
                         icon={<Play className="size-3" />}
                         disabled={busy || !generatable(segment)}
                         title={!promptReady(segment) ? "先撰写或确认本段视频提示词" : hasVideo(segment) ? "重新调用视频模型生成本段，会产生新的费用" : undefined}
+                        request={{ action: "segment_video", targetId: segment.id, episodeId: context?.episodeId || segmentShots[0]?.episodeId, targetRevision: segment.revision }}
+                        label={mediaBusy(segment.videoStatus) ? (segment.videoStatus === "queued" && segment.videoWait ? "等待中" : segment.request.firstFramePending ? "等上一段" : "生成中") : hasVideo(segment) ? "重新生成视频" : "生成视频"}
                         onClick={() => act().onGenerate([segment.index])}
-                    >
-                        {mediaBusy(segment.videoStatus) ? (segment.videoStatus === "queued" && segment.videoWait ? "等待中" : segment.request.firstFramePending ? "等上一段" : "生成中") : hasVideo(segment) ? "重新生成" : "生成"}
-                    </Button>
+                    />
                 </span>
             </footer>
         </article>
@@ -226,6 +229,8 @@ const SegmentCard = memo(function SegmentCard({ segment, segmentShots, aspectRat
  * 选择：单击聚焦，⌘/Ctrl 单击切换选择，Shift 单击连选；快捷键见底部提示。
  */
 export function Storyboard({ shots, segments, aspectRatio, castById, defaultVideoModel, videoResolution, busy, keyboardEnabled, onOpen, onGenerate, onReprocess, reprocessing, onWritePrompts, empty }: Props) {
+    const context = useDramaMediaContext();
+    const invalidate = useDramaInvalidate(context?.projectId || "");
     const [selected, setSelected] = useState<Set<number>>(new Set());
     const [focused, setFocused] = useState<number>();
     const [anchor, setAnchor] = useState<number>();
@@ -376,18 +381,22 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                             </span>
                         ) : null}
                         <Tooltip title={toGenerate.length < selected.size ? `${selected.size - toGenerate.length} 段提示词未就绪或正在生成，会跳过` : undefined}>
-                            <Button
-                                size="small"
-                                type="primary"
-                                icon={<Play className="size-3.5" />}
-                                disabled={busy || !toGenerate.length}
-                                onClick={() => {
-                                    onGenerate(toGenerate, batchModel);
-                                    setSelected(new Set());
-                                }}
-                            >
-                                生成视频 · {toGenerate.length} 段
-                            </Button>
+                            <span>
+                                {context?.projectId ? (
+                                    <WorkflowBatch
+                                        compact
+                                        projectId={context.projectId}
+                                        episodeId={context.episodeId}
+                                        revision={context.revision || 0}
+                                        targetIds={segments.filter((segment) => toGenerate.includes(segment.index)).map((segment) => segment.id)}
+                                        actions={["segment_video"]}
+                                        videoModel={batchModel}
+                                        disabled={busy || !toGenerate.length}
+                                        onChanged={() => invalidate(context.episodeId)}
+                                        onClearSelection={() => setSelected(new Set())}
+                                    />
+                                ) : null}
+                            </span>
                         </Tooltip>
                         <Button
                             size="small"

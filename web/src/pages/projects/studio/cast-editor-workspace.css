@@ -108,13 +108,54 @@
 
 .drama-editor.is-workspace > .drama-editor-actions {
     grid-area: actions;
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
-    align-items: center;
-    justify-content: center;
+    align-content: start;
+    min-width: 0;
     padding: var(--space-3);
     background: var(--surface-hover);
+}
+
+.drama-editor-status {
+    display: grid;
+    grid-column: 1 / -1;
+    min-width: 0;
+    gap: var(--space-2);
+    font-size: var(--fs-label);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.drama-editor-status:empty {
+    display: none;
+}
+
+.drama-editor-status p {
+    margin: 0;
+}
+
+.drama-editor-status [role="alert"] {
+    color: var(--status-error);
+}
+
+.drama-editor-status .ant-btn {
+    justify-self: start;
+}
+
+.drama-editor-action-buttons {
+    display: flex;
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+    gap: var(--space-2);
+}
+
+.drama-editor-action-buttons > .ant-btn {
+    flex: 0 0 auto;
+    min-height: var(--button-height);
 }
 
 .drama-editor.is-workspace .drama-editor-wide {

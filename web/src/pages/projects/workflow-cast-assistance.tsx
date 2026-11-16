@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Select } from "antd";
 import { ImagePlus, Mic, Sparkles } from "lucide-react";
@@ -34,7 +34,7 @@ import "./workflow-cast-assistance.css";
 
 const TITLE: Record<DramaCastAssistancePurpose, string> = { voice_sample: "生成音色试听", fill_description: "AI 补写外观", image_prompt: "图片反推提示词" };
 const STATUS: Record<string, string> = { queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
-type Props = { summary: DramaSummary; cast: DramaCast; onChanged: () => void };
+type Props = { summary: DramaSummary; cast: DramaCast; onChanged: () => void; disabled?: boolean; children?: ReactNode };
 type Quote = { view: DramaCastAssistancePreflight; request: DramaCastAssistanceRequest };
 
 export function WorkflowCastAssistance(props: Props) {
@@ -43,17 +43,18 @@ export function WorkflowCastAssistance(props: Props) {
     return (
         <section className="drama-cast-assistance" aria-label="资产 AI 辅助">
             <div className="drama-cast-assistance-actions">
-                <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={() => setPurpose("fill_description")}>
+                <Button size="small" icon={<Sparkles className="size-3.5" />} disabled={props.disabled} onClick={() => setPurpose("fill_description")}>
                     AI 补写外观
                 </Button>
-                <Button size="small" icon={<ImagePlus className="size-3.5" />} onClick={() => setPurpose("image_prompt")}>
+                <Button size="small" icon={<ImagePlus className="size-3.5" />} disabled={props.disabled} onClick={() => setPurpose("image_prompt")}>
                     图片反推提示词
                 </Button>
                 {props.cast.kind === "character" && !props.cast.parentId ? (
-                    <Button size="small" icon={<Mic className="size-3.5" />} onClick={() => setPurpose("voice_sample")}>
+                    <Button size="small" icon={<Mic className="size-3.5" />} disabled={props.disabled} onClick={() => setPurpose("voice_sample")}>
                         生成音色试听
                     </Button>
                 ) : null}
+                {props.children}
             </div>
             {purpose ? <AssistanceSession key={`${userId}:${props.summary.project.id}:${props.cast.id}:${purpose}`} {...props} purpose={purpose} userId={userId} onClose={() => setPurpose(undefined)} /> : null}
         </section>

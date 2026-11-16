@@ -20,18 +20,21 @@ import (
 )
 
 type DramaShotMediaConfig struct {
-	Model                DramaModelChoice `json:"model"`
-	Prompt               string           `json:"prompt"`
-	Operation            string           `json:"operation"`
-	AspectRatio          string           `json:"aspectRatio"`
-	Resolution           string           `json:"resolution"`
-	Seconds              int              `json:"seconds,omitempty"`
-	GenerateAudio        bool             `json:"generateAudio"`
-	ReferenceResourceIDs []string         `json:"referenceResourceIds"`
-	FirstFrameResourceID string           `json:"firstFrameResourceId,omitempty"`
-	LastFrameResourceID  string           `json:"lastFrameResourceId,omitempty"`
-	AudioVoice           string           `json:"audioVoice,omitempty"`
-	AudioInstructions    string           `json:"audioInstructions,omitempty"`
+	Model                DramaModelChoice  `json:"model"`
+	Prompt               string            `json:"prompt"`
+	PromptSourceHash     *string           `json:"promptSourceHash,omitempty"`
+	Operation            string            `json:"operation"`
+	AspectRatio          string            `json:"aspectRatio"`
+	Resolution           string            `json:"resolution"`
+	Seconds              int               `json:"seconds,omitempty"`
+	GenerateAudio        bool              `json:"generateAudio"`
+	ReferenceResourceIDs []string          `json:"referenceResourceIds"`
+	ReferenceNames       map[string]string `json:"referenceNames,omitempty"`
+	ReferenceSubjects    map[string]string `json:"referenceSubjects,omitempty"`
+	FirstFrameResourceID string            `json:"firstFrameResourceId,omitempty"`
+	LastFrameResourceID  string            `json:"lastFrameResourceId,omitempty"`
+	AudioVoice           string            `json:"audioVoice,omitempty"`
+	AudioInstructions    string            `json:"audioInstructions,omitempty"`
 }
 
 type DramaShotMediaSaveRequest struct {
@@ -76,6 +79,7 @@ type DramaShotMediaPreflight struct {
 	Priced             bool                 `json:"priced"`
 	Estimated          bool                 `json:"estimated"`
 	ConfirmationToken  string               `json:"confirmationToken"`
+	ScopeHash          string               `json:"scopeHash"`
 	Config             DramaShotMediaConfig `json:"config"`
 }
 
@@ -143,6 +147,9 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 		if kind == "video" {
 			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, settings, config)
 		}
+		if configErr == nil {
+			config, configErr = s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+		}
 		return model.DramaShotMedia{ProjectID: shot.ProjectID, EpisodeID: shot.EpisodeID, ShotID: shot.ID, Kind: kind, Status: "idle"}, config, configErr
 	}
 	if err != nil {
@@ -152,7 +159,8 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 	if err := json.Unmarshal([]byte(row.ConfigJSON), &config); err != nil {
 		return *row, config, errors.New("镜头媒体配置损坏，请重新保存")
 	}
-	return *row, config, nil
+	config, err = s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+	return *row, config, err
 }
 
 func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, settings DramaSettings, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
@@ -204,6 +212,10 @@ func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, s
 			if valid {
 				seen[id] = true
 				config.ReferenceResourceIDs = append(config.ReferenceResourceIDs, id)
+				if config.ReferenceSubjects == nil {
+					config.ReferenceSubjects = map[string]string{}
+				}
+				config.ReferenceSubjects[id] = cast.ID
 			}
 		}
 	case "grid_image", "storyboard":
@@ -239,7 +251,7 @@ func (s *Service) SaveDramaShotMedia(userID, projectID, shotID, kind string, req
 	if req.ExpectedRevision == nil || *req.ExpectedRevision < 0 {
 		return DramaShotMediaView{}, BadAuthRequest("请提供镜头媒体版本")
 	}
-	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, kind, req.Config)
+	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, projectID, kind, req.Config)
 	if err != nil {
 		return DramaShotMediaView{}, err
 	}
@@ -255,7 +267,11 @@ func (s *Service) SaveDramaShotMedia(userID, projectID, shotID, kind string, req
 		if err := repo.LockDramaCastImageReferences(userID, dramaShotMediaReferenceIDs(config)); err != nil {
 			return BadAuthRequest("参考图或首尾帧已变化，请重新选择")
 		}
-		config, err = s.normalizeDramaShotMediaConfig(repo, userID, kind, config)
+		config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, kind, config)
+		if err != nil {
+			return err
+		}
+		config, err = s.enrichDramaShotVideoPrompt(repo, *shot, *p, kind, config)
 		if err != nil {
 			return err
 		}
@@ -302,8 +318,10 @@ func dramaShotMediaReferenceIDs(config DramaShotMediaConfig) []string {
 	return ids
 }
 
-func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, userID, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, userID, projectID, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
 	if kind == "audio" {
+		config.ReferenceNames = nil
+		config.ReferenceSubjects = nil
 		return normalizeDramaShotAudioConfig(config)
 	}
 	if config.AudioVoice != "" || config.AudioInstructions != "" {
@@ -339,11 +357,51 @@ func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, use
 		refs = append(refs, id)
 	}
 	config.ReferenceResourceIDs = refs
-	if kind == "image" && config.Operation == "image_to_image" && len(refs) == 0 {
-		return config, BadAuthRequest("参考图生图需要至少一张参考图片")
+	boundIDs := make(map[string]bool, len(refs)+2)
+	for _, id := range dramaShotMediaReferenceIDs(config) {
+		boundIDs[id] = true
 	}
-	if kind == "video" && config.Operation != "text_to_video" && len(refs) == 0 && config.FirstFrameResourceID == "" && config.LastFrameResourceID == "" {
-		return config, BadAuthRequest("所选视频模式需要参考图片或首尾帧")
+	names := make(map[string]string, len(boundIDs))
+	for id, name := range config.ReferenceNames {
+		id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+		if !boundIDs[id] || name == "" {
+			continue
+		}
+		if utf8.RuneCountInString(name) > 120 {
+			return config, BadAuthRequest("参考图片名称不超过 120 字")
+		}
+		if previous, exists := names[id]; exists && previous != name {
+			return config, BadAuthRequest("同一参考图片只能设置一个名称")
+		}
+		names[id] = name
+	}
+	config.ReferenceNames = nil
+	if len(names) > 0 {
+		config.ReferenceNames = names
+	}
+	subjects := make(map[string]string, len(config.ReferenceSubjects))
+	for resourceID, castID := range config.ReferenceSubjects {
+		resourceID, castID = strings.TrimSpace(resourceID), strings.TrimSpace(castID)
+		if !boundIDs[resourceID] {
+			continue
+		}
+		if previous, exists := subjects[resourceID]; exists && previous != castID {
+			return config, BadAuthRequest("同一参考图片只能关联一个主体")
+		}
+		if castID == "" {
+			return config, BadAuthRequest("请选择参考图片对应的主体")
+		}
+		if _, err := repo.DramaCast(projectID, castID); err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return config, err
+			}
+			return config, BadAuthRequest("参考图片关联的主体不存在或不属于当前作品")
+		}
+		subjects[resourceID] = castID
+	}
+	config.ReferenceSubjects = nil
+	if len(subjects) > 0 {
+		config.ReferenceSubjects = subjects
 	}
 	for _, id := range append(append([]string{}, refs...), config.FirstFrameResourceID, config.LastFrameResourceID) {
 		if id == "" {
@@ -377,6 +435,26 @@ func (s *Service) PreflightDramaShotMedia(userID, projectID, shotID, kind string
 }
 
 func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, projectID, shotID, kind string, req DramaShotMediaActionRequest) (dramaShotMediaPlan, error) {
+	return s.prepareDramaShotMediaDraft(repo, userID, projectID, shotID, kind, req, nil)
+}
+
+// QuoteDramaShotMedia checks an unsaved visual draft without saving configuration or reserving credits.
+func (s *Service) QuoteDramaShotMedia(userID, projectID, shotID, kind string, req DramaShotMediaSaveRequest) (DramaShotMediaPreflight, error) {
+	if kind != "image" && kind != "video" {
+		return DramaShotMediaPreflight{}, BadAuthRequest("草稿报价只用于镜头图片或视频")
+	}
+	if _, _, err := s.dramaShotMediaScope(userID, projectID, shotID, kind); err != nil {
+		return DramaShotMediaPreflight{}, err
+	}
+	if req.ExpectedRevision == nil {
+		return DramaShotMediaPreflight{}, BadAuthRequest("请提供镜头媒体版本")
+	}
+	plan, err := s.prepareDramaShotMediaDraft(s.repo, userID, projectID, shotID, kind, DramaShotMediaActionRequest{ExpectedRevision: req.ExpectedRevision}, &req.Config)
+	plan.view.ConfirmationToken = ""
+	return plan.view, dramaShotMediaError(err)
+}
+
+func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID, projectID, shotID, kind string, req DramaShotMediaActionRequest, draft *DramaShotMediaConfig) (dramaShotMediaPlan, error) {
 	plan := dramaShotMediaPlan{view: DramaShotMediaPreflight{ShotID: shotID, Kind: kind}}
 	shot, err := repo.DramaShot(projectID, shotID)
 	if err != nil {
@@ -396,7 +474,11 @@ func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, pro
 		return plan, repository.ErrDramaShotMediaChanged
 	}
 	blocked := func(reason string) (dramaShotMediaPlan, error) { plan.view.Reason = reason; return plan, nil }
-	if row.ID == "" {
+	if draft != nil {
+		config = *draft
+		plan.view.Config = config
+	}
+	if row.ID == "" && draft == nil {
 		return blocked("请先保存本镜头的生成配置")
 	}
 	if dramaGuideActive(p) && p.GuideStep != model.DramaGuideStory {
@@ -411,9 +493,22 @@ func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, pro
 			return blocked("本镜头媒体正在排队或生成")
 		}
 	}
-	config, err = s.normalizeDramaShotMediaConfig(repo, userID, kind, config)
+	config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, kind, config)
+	plan.view.Config = config
 	if err != nil {
 		return blocked(err.Error())
+	}
+	// 切换模式或清空参考图时允许先保存草稿，缺图只阻止生成准入。
+	if kind == "image" && config.Operation == "image_to_image" && len(config.ReferenceResourceIDs) == 0 {
+		return blocked("参考图生图需要至少一张参考图片")
+	}
+	if kind == "video" && config.Operation != "text_to_video" && len(config.ReferenceResourceIDs) == 0 && config.FirstFrameResourceID == "" && config.LastFrameResourceID == "" {
+		return blocked("所选视频模式需要参考图片或首尾帧")
+	}
+	config, err = s.enrichDramaShotVideoPrompt(repo, *shot, *p, kind, config)
+	plan.view.Config = config
+	if err != nil {
+		return plan, err
 	}
 	if config.Model.Empty() || config.Prompt == "" {
 		return blocked("请填写镜头提示词并选择模型")
@@ -464,9 +559,11 @@ func (s *Service) prepareDramaShotMedia(repo *repository.Repository, userID, pro
 		}
 	}
 	plan.view.Ready = true
+	effectivePrompt := stringValue(requestInput["prompt"])
+	plan.view.ScopeHash = dramaShotMediaDigest([]any{projectID, shot, kind, config, effectivePrompt, p.Revision, p.GuideStep, intent})
 	// The digest never contains credentials or signed URLs. Resource identities
 	// and normalized parameters are immutable inputs; the real request is private.
-	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{projectID, shot, row, config, p.Revision, p.GuideStep, quote, intent})
+	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{projectID, shot, row, config, effectivePrompt, p.Revision, p.GuideStep, quote, intent})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_" + kind, Operation: config.Operation, Prompt: stringValue(requestInput["prompt"]), LogicalModelID: config.Model.LogicalModelID, Model: config.Model.ModelKey, Input: requestInput}
 	return plan, nil
 }
@@ -511,7 +608,19 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 			metadata[frame.key] = frame.id
 		}
 	}
-	prompt := config.Prompt
+	prompt, err := compileDramaShotReferencePrompt(config)
+	if err != nil {
+		return nil, err
+	}
+	if kind == "image" || config.PromptSourceHash == nil || *config.PromptSourceHash == "" {
+		instructions, err := dramaShotReferenceSubjectInstructions(repo, shot.ProjectID, config)
+		if err != nil {
+			return nil, err
+		}
+		if instructions != "" {
+			prompt = instructions + "\n\n" + prompt
+		}
+	}
 	if kind == "video" {
 		if rule := production.CameraPresetRule(shot.Camera); rule != "" {
 			prompt += "\n运镜要求：" + rule

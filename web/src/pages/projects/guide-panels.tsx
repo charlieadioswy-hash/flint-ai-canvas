@@ -1,8 +1,11 @@
-import { Button } from "antd";
-import { ImagePlus, ImageIcon, Pencil, Shirt, UsersRound } from "lucide-react";
+import { ImagePlus, Shirt, UsersRound, VenetianMask, X } from "lucide-react";
 
+import { IconButton } from "@/components/ui/base/buttons";
+import { Tooltip } from "@/components/ui/base/tooltip/tooltip";
 import type { DramaCast } from "@/services/api/drama";
 import { CAST_KIND_LABEL, mediaBusy, MediaThumb } from "./drama-shared";
+import { QuotedMediaButton, useDramaMediaContext } from "./studio/drama-media-action-context";
+import { dramaCastImageAction } from "./studio/drama-media-action-request";
 
 export function GuideAssets({
     cast,
@@ -10,18 +13,24 @@ export function GuideAssets({
     loading,
     onEdit,
     onGenerate,
+    onDelete,
+    onSaveToLibrary,
     selectedIds,
     onSelect,
     sharedLookIds,
+    compact = false,
 }: {
     cast: DramaCast[];
     busy: boolean;
     loading: boolean;
     onEdit: (cast: DramaCast) => void;
     onGenerate: (cast: DramaCast) => void;
+    onDelete?: (cast: DramaCast) => void;
+    onSaveToLibrary?: (cast: DramaCast) => void;
     selectedIds?: Set<string>;
     onSelect?: (cast: DramaCast, checked: boolean) => void;
     sharedLookIds?: Set<string>;
+    compact?: boolean;
 }) {
     const assets = cast.filter((item) => !item.parentId);
     const looks = cast.filter((item) => item.parentId);
@@ -45,30 +54,66 @@ export function GuideAssets({
             ) : (
                 <div className="drama-guide-cast-grid">
                     {assets.map((item) => (
-                        <article className="drama-guide-card drama-guide-cast" key={item.id} data-selected={selectedIds?.has(item.id) || undefined}>
-                            {onSelect ? (
+                        <article
+                            className={`drama-guide-card drama-guide-cast has-edit${compact ? " is-compact" : ""}`}
+                            key={item.id}
+                            data-selected={selectedIds?.has(item.id) || undefined}
+                            onClick={(event) => {
+                                if (busy || !(event.target instanceof Element)) return;
+                                const control = event.target.closest("button, input, a, select, textarea, details, .drama-guide-asset-toolbar");
+                                if (control && event.currentTarget.contains(control)) return;
+                                onEdit(item);
+                            }}
+                        >
+                            {compact ? (
+                                <div className="drama-guide-asset-toolbar" role="group" aria-label={`${item.name}的快捷操作`}>
+                                    {onSelect ? (
+                                        <input
+                                            className="drama-workflow-asset-checkbox"
+                                            type="checkbox"
+                                            aria-label={`选择${item.name}`}
+                                            checked={selectedIds?.has(item.id) || false}
+                                            disabled={busy}
+                                            onChange={(event) => onSelect(item, event.target.checked)}
+                                        />
+                                    ) : null}
+                                    <div className="drama-guide-asset-shortcuts">
+                                        {onDelete ? (
+                                            <Tooltip title="删除" placement="top" delay={200}>
+                                                <IconButton size="xs" icon={X} aria-label={`删除${item.name}`} disabled={busy || mediaBusy(item.imageStatus)} onClick={() => onDelete(item)} />
+                                            </Tooltip>
+                                        ) : null}
+                                        <GuideAssetGenerateButton cast={item} compact busy={busy} onGenerate={onGenerate} />
+                                        {item.kind === "character" && onSaveToLibrary ? (
+                                            <Tooltip title="加入角色库" placement="top" delay={200}>
+                                                <IconButton size="xs" icon={VenetianMask} aria-label={`将${item.name}加入角色库`} disabled={busy || mediaBusy(item.imageStatus)} onClick={() => onSaveToLibrary(item)} />
+                                            </Tooltip>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            ) : onSelect ? (
                                 <input className="drama-workflow-asset-checkbox" type="checkbox" aria-label={`选择${item.name}`} checked={selectedIds?.has(item.id) || false} disabled={busy} onChange={(event) => onSelect(item, event.target.checked)} />
                             ) : null}
                             <header>
                                 <div className="drama-guide-asset-thumb">{item.imageResourceId ? <MediaThumb resourceId={item.imageResourceId} alt={item.name} /> : <UsersRound className="size-5" />}</div>
                                 <div>
-                                    <span className="drama-eyebrow">
-                                        {CAST_KIND_LABEL[item.kind]}
-                                        {item.role ? ` · ${item.role}` : ""}
-                                    </span>
-                                    <h3 title={item.name}>{item.name}</h3>
+                                    {!compact || item.role ? <span className="drama-eyebrow">{compact ? item.role : `${CAST_KIND_LABEL[item.kind]}${item.role ? ` · ${item.role}` : ""}`}</span> : null}
+                                    <h3 title={item.name}>
+                                        <button type="button" className="drama-guide-asset-edit-trigger" aria-label={`编辑${item.name}`} disabled={busy} onClick={() => onEdit(item)}>
+                                            {item.name}
+                                        </button>
+                                    </h3>
                                 </div>
-                                <Button type="text" icon={<Pencil className="size-4" />} aria-label={`编辑${item.name}`} disabled={busy} onClick={() => onEdit(item)} />
                             </header>
-                            <div className="drama-guide-cast-body thin-scrollbar" role="region" aria-label={`${item.name}的资产设定`} tabIndex={0}>
-                                <p>{item.description || "尚无描述"}</p>
-                                {item.appearance ? (
+                            <div className={`drama-guide-cast-body${compact ? "" : " thin-scrollbar"}`} role="region" aria-label={`${item.name}的资产设定`} tabIndex={compact ? undefined : 0}>
+                                <p title={compact ? item.description : undefined}>{item.description || "尚无描述"}</p>
+                                {!compact && item.appearance ? (
                                     <div className="drama-guide-cast-detail">
                                         <strong>{item.kind === "scene" ? "环境" : "外观"}</strong>
                                         <p>{item.appearance}</p>
                                     </div>
                                 ) : null}
-                                {item.voiceInstructions ? (
+                                {!compact && item.voiceInstructions ? (
                                     <div className="drama-guide-cast-detail">
                                         <strong>声线</strong>
                                         <p>{item.voiceInstructions}</p>
@@ -78,7 +123,7 @@ export function GuideAssets({
                                     <GuideAssetLooks character={item} looks={looks.filter((look) => look.parentId === item.id)} busy={busy} onGenerate={onGenerate} selectedIds={selectedIds} onSelect={onSelect} sharedLookIds={sharedLookIds} />
                                 ) : null}
                             </div>
-                            <GuideAssetImageActions cast={item} busy={busy} onGenerate={onGenerate} />
+                            <GuideAssetImageActions cast={item} compact={compact} busy={busy} onGenerate={onGenerate} />
                         </article>
                     ))}
                 </div>
@@ -87,17 +132,38 @@ export function GuideAssets({
     );
 }
 
-function GuideAssetImageActions({ cast, busy, onGenerate }: { cast: DramaCast; busy: boolean; onGenerate: (cast: DramaCast) => void }) {
-    const label = cast.imageResourceId ? "重新生成图片" : "生成参考图";
+function GuideAssetGenerateButton({ cast, compact = false, busy, onGenerate }: { cast: DramaCast; compact?: boolean; busy: boolean; onGenerate: (cast: DramaCast) => void }) {
+    const context = useDramaMediaContext();
+    const label = cast.imageResourceId ? "重新生成图片" : "生成图片";
     const name = cast.parentId ? `${cast.name} · ${cast.lookName || "未命名造型"}` : cast.name;
     return (
+        <QuotedMediaButton
+            tooltip
+            iconOnly={compact}
+            size="small"
+            type={compact ? "text" : undefined}
+            icon={<ImagePlus className="size-3.5" />}
+            aria-label={`${name}：${label}`}
+            request={dramaCastImageAction(cast, context?.episodeId)}
+            label={label}
+            disabled={busy || mediaBusy(cast.imageStatus)}
+            loading={mediaBusy(cast.imageStatus)}
+            onClick={() => onGenerate(cast)}
+        />
+    );
+}
+
+function GuideAssetImageActions({ cast, compact = false, busy, onGenerate }: { cast: DramaCast; compact?: boolean; busy: boolean; onGenerate: (cast: DramaCast) => void }) {
+    const showStatus = !compact || cast.imageStatus === "failed" || cast.imageStatus === "stale" || mediaBusy(cast.imageStatus);
+    if (compact && !showStatus) return null;
+    return (
         <footer>
-            <span className="drama-guide-note" role="status">
-                {cast.imageStatus === "failed" ? "参考图生成失败，可重试" : cast.imageStatus === "stale" ? "设定已调整，参考图已过期" : mediaBusy(cast.imageStatus) ? "参考图正在生成" : cast.imageResourceId ? "已有参考图" : "尚未生成参考图"}
-            </span>
-            <Button size="small" icon={<ImagePlus className="size-3.5" />} aria-label={`${name}：${label}`} disabled={busy || mediaBusy(cast.imageStatus)} loading={mediaBusy(cast.imageStatus)} onClick={() => onGenerate(cast)}>
-                {label}
-            </Button>
+            {showStatus ? (
+                <span className="drama-guide-note" role="status">
+                    {cast.imageStatus === "failed" ? "参考图生成失败，可重试" : cast.imageStatus === "stale" ? "设定已调整，参考图已过期" : mediaBusy(cast.imageStatus) ? "参考图正在生成" : cast.imageResourceId ? "已有参考图" : "尚未生成参考图"}
+                </span>
+            ) : null}
+            {!compact ? <GuideAssetGenerateButton cast={cast} busy={busy} onGenerate={onGenerate} /> : null}
         </footer>
     );
 }

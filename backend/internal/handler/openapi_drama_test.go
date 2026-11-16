@@ -121,3 +121,36 @@ func TestOpenAPIDramaStyleDrawingContracts(t *testing.T) {
 		t.Fatal("drawing updates must expose only the three supported image model choices")
 	}
 }
+
+func TestOpenAPIDramaGenerationSettingsContract(t *testing.T) {
+	var spec struct {
+		Paths map[string]struct {
+			Patch struct {
+				RequestBody dramaOpenAPIContractBody `yaml:"requestBody"`
+			} `yaml:"patch"`
+		} `yaml:"paths"`
+		Components struct {
+			Schemas map[string]dramaOpenAPIContractSchema `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(openAPISpec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	body := spec.Paths["/dramas/{id}/settings"].Patch.RequestBody
+	if !body.Required || body.Content["application/json"].Schema.Ref != "#/components/schemas/UpdateDramaSettingsRequest" {
+		t.Fatal("settings route must document the generation update request")
+	}
+	request := spec.Components.Schemas["UpdateDramaSettingsRequest"]
+	if request.Properties["generation"].Ref != "#/components/schemas/DramaGenerationSettings" || request.Properties["expectedRevision"].Minimum == nil || *request.Properties["expectedRevision"].Minimum != 0 {
+		t.Fatal("generation settings must document the current production revision including zero")
+	}
+	configuration := spec.Components.Schemas["DramaGenerationSettings"]
+	if len(configuration.Properties) != 6 || len(configuration.Properties["models"].Properties) != 5 || configuration.Properties["assets"].Ref == "" {
+		t.Fatal("generation update must expose only the shared media configuration fields")
+	}
+	for _, key := range []string{"text", "bibleText", "scriptText", "promptText"} {
+		if _, exists := configuration.Properties["models"].Properties[key]; exists {
+			t.Fatalf("generation updates cannot include the %s text model", key)
+		}
+	}
+}

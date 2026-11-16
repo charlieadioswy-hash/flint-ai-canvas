@@ -7,12 +7,15 @@ export type DramaShotMediaKind = "image" | "video" | "audio";
 export type DramaShotMediaConfig = {
     model: DramaModelChoice;
     prompt: string;
+    promptSourceHash?: string;
     operation: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "reference_to_video" | "audio";
     aspectRatio: string;
     resolution: string;
     seconds?: number;
     generateAudio: boolean;
     referenceResourceIds: string[];
+    referenceNames?: Record<string, string>;
+    referenceSubjects?: Record<string, string>;
     firstFrameResourceId?: string;
     lastFrameResourceId?: string;
     audioVoice?: string;
@@ -63,6 +66,7 @@ export type DramaShotMediaPreflight = {
     priced: boolean;
     estimated: boolean;
     confirmationToken: string;
+    scopeHash: string;
     config: DramaShotMediaConfig;
 };
 
@@ -87,6 +91,10 @@ export function saveDramaShotMedia(projectId: string, shotId: string, kind: Dram
 
 export function preflightDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, input: DramaShotMediaAction) {
     return http.post<DramaShotMediaPreflight>(`${mediaPath(projectId, shotId, kind)}/preflight`, input);
+}
+
+export function quoteDramaShotMedia(projectId: string, shotId: string, kind: "image" | "video", input: { expectedRevision: number; config: DramaShotMediaConfig }, signal?: AbortSignal) {
+    return http.post<DramaShotMediaPreflight>(`${mediaPath(projectId, shotId, kind)}/quote`, input, { signal });
 }
 
 export function executeDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, input: DramaShotMediaAction) {

@@ -13,9 +13,7 @@ import { dramaChoiceKey, dramaVideoResolutionValue } from "@/lib/drama/model-cho
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
-import { useEffectiveConfig } from "@/stores/use-config-store";
-import { useUserStore } from "@/stores/use-user-store";
-import { dramaSegmentQuoteMissing, dramaSegmentVideoRequirements, dramaVideoOptionFor, SEGMENT_NO_QUOTE_HINT } from "./segment-quote";
+import { dramaSegmentVideoRequirements, dramaVideoOptionFor } from "./segment-quote";
 
 import { CAST_KIND_LABEL, formatCredits, mediaBusy, MediaThumb } from "../drama-shared";
 import { promptReady, secondsLabel, SegmentStatus, SegmentVideo, videoWaitLabel } from "./segment-parts";
@@ -23,6 +21,7 @@ import { DramaTakeList } from "./take-list";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { WorkflowShotMediaDialog } from "../workflow-shot-media-dialog";
+import { QuotedMediaButton } from "./drama-media-action-context";
 import { WorkflowStoryboardDialog } from "../workflow-storyboard-dialog";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
@@ -158,6 +157,7 @@ export function SegmentDialog({
                             <SegmentToolbar
                                 key={segment.id}
                                 segment={segment}
+                                episodeId={detail!.episode.id}
                                 aspectRatio={aspectRatio}
                                 busy={busy}
                                 writing={writing}
@@ -209,7 +209,7 @@ export function SegmentDialog({
                                             <span>重新处理只针对这条已生成的视频，不会重新生成或扣费。</span>
                                             <div className="drama-sd-error-actions">
                                                 <Button size="small" icon={<RotateCcw className="size-3.5" />} loading={reprocessing} disabled={busy} onClick={() => onReprocess(segment)}>
-                                                    重新处理视频
+                                                    重新处理视频 - 0积分
                                                 </Button>
                                             </div>
                                         </>
@@ -251,6 +251,7 @@ export function SegmentDialog({
 /** 生成控制条：本段视频模型（只对本段生效）、时长与画幅，以及撰写提示词、复制全文与生成视频。 */
 function SegmentToolbar({
     segment,
+    episodeId,
     aspectRatio,
     busy,
     writing,
@@ -260,6 +261,7 @@ function SegmentToolbar({
     onWritePrompt,
 }: {
     segment: DramaSegment;
+    episodeId: string;
     aspectRatio: string;
     busy: boolean;
     writing: boolean;
@@ -272,8 +274,6 @@ function SegmentToolbar({
     const baseline = segment.videoModel?.logicalModelId || segment.videoModel?.modelKey ? segment.videoModel : defaultVideoModel;
     const [choice, setChoice] = useState<DramaModelChoice>(baseline);
     const changed = dramaChoiceKey(choice) !== dramaChoiceKey(baseline);
-    const config = useEffectiveConfig();
-    const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const catalogQuery = useDramaModelCatalog();
     const chosenOption = dramaVideoOptionFor(catalogQuery.data?.options.video, choice);
     const chosenAudioLimit = changed ? chosenOption?.maxAudios : segment.request.modelMaxAudios;
@@ -282,7 +282,6 @@ function SegmentToolbar({
     const effectiveResolution = changed ? supportedResolution || chosenOption?.defaultVideoResolution || "" : segment.request.resolution || supportedResolution || chosenOption?.defaultVideoResolution || "";
     const resolutionFallback = Boolean(changed && videoResolution && chosenOption && !supportedResolution);
     const requirements = dramaSegmentVideoRequirements(segment.request, chosenOption, changed, videoResolution);
-    const quoteMissing = creditsEnabled && dramaSegmentQuoteMissing(config, choice, requirements);
     const running = mediaBusy(segment.videoStatus);
     const writingNow = segment.promptStatus === "queued" || segment.promptStatus === "running";
     const sent = [segment.request.header, segment.videoPrompt.trim()].filter(Boolean).join("\n\n");
@@ -330,15 +329,15 @@ function SegmentToolbar({
                     复制发送全文
                 </Button>
                 <span className="drama-sdx-spacer" />
-                <Button
+                <QuotedMediaButton
                     type="primary"
                     size="small"
                     icon={running ? <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Play className="size-3.5" />}
-                    disabled={busy || !promptReady(segment) || running || Boolean(segment.request.unknownReferences?.length) || quoteMissing}
+                    disabled={busy || !promptReady(segment) || running || Boolean(segment.request.unknownReferences?.length)}
+                    request={{ action: "segment_video", targetId: segment.id, episodeId, targetRevision: segment.revision, ...(changed ? { videoModel: choice } : {}) }}
+                    label={generateLabel}
                     onClick={() => onGenerate(changed ? choice : undefined)}
-                >
-                    {generateLabel}
-                </Button>
+                />
             </div>
             {!promptReady(segment) && !running ? <p className="drama-sdx-hint">提示词就绪后才能生成视频</p> : null}
             {changed && chosenAudioLimit !== undefined ? <p className="drama-sdx-hint">所选模型{chosenAudioLimit ? `最多支持 ${chosenAudioLimit} 个参考音色` : "不支持参考音色"}；参考面板的发送状态在模型应用后更新。</p> : null}
@@ -347,7 +346,6 @@ function SegmentToolbar({
                     新模型不支持 {videoResolution ? formatVideoResolutionLabel(videoResolution) : ""}，本段按模型默认{chosenOption?.defaultVideoResolution ? ` ${formatVideoResolutionLabel(chosenOption.defaultVideoResolution)}` : ""}出片。
                 </p>
             ) : null}
-            {quoteMissing && !running ? <p className="drama-sdx-hint is-error">{SEGMENT_NO_QUOTE_HINT}</p> : null}
             {segment.request.unknownReferences?.length ? <p className="drama-sdx-hint is-error">提示词里的 {segment.request.unknownReferences.join("、")} 不是本段的参考图，改正编号后才能生成视频</p> : null}
         </section>
     );

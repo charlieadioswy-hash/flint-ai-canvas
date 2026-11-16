@@ -33,7 +33,7 @@ export type SimpleStudioSegmentEditorProps = {
     busy?: boolean;
     onClose: () => void;
     onNavigate: (segmentIndex: number, shotId?: string) => void;
-    /** 只进入父页面的 Agent 预检与确认，不在编辑器内放行媒体。 */
+    /** 使用父页面已展示的报价执行，不额外弹出费用确认。 */
     onGenerate: (segment: DramaSegment, model?: DramaModelChoice) => void;
     onOpenCast: (castId: string) => void;
 };

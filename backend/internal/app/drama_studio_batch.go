@@ -16,12 +16,15 @@ import (
 )
 
 type DramaStudioBatchRequest struct {
-	Action            string            `json:"action"`
-	TargetIDs         []string          `json:"targetIds"`
-	EpisodeID         string            `json:"episodeId,omitempty"`
-	VideoModel        *DramaModelChoice `json:"videoModel,omitempty"`
-	BaseRevision      *int64            `json:"baseRevision,omitempty"`
-	ConfirmationToken string            `json:"confirmationToken,omitempty"`
+	Action            string                          `json:"action"`
+	TargetIDs         []string                        `json:"targetIds"`
+	EpisodeID         string                          `json:"episodeId,omitempty"`
+	VideoModel        *DramaModelChoice               `json:"videoModel,omitempty"`
+	BaseRevision      *int64                          `json:"baseRevision,omitempty"`
+	ConfirmationToken string                          `json:"confirmationToken,omitempty"`
+	Regenerate        bool                            `json:"regenerate,omitempty"`
+	RestyleSegments   bool                            `json:"restyleSegments,omitempty"`
+	CastDrafts        map[string]DramaStudioCastDraft `json:"castDrafts,omitempty"`
 }
 
 type DramaStudioBatchItem struct {
@@ -31,6 +34,8 @@ type DramaStudioBatchItem struct {
 	EpisodeID          string                   `json:"episodeId,omitempty"`
 	SegmentIndex       *int                     `json:"segmentIndex,omitempty"`
 	TargetRevision     int64                    `json:"targetRevision"`
+	ResultVersion      *int                     `json:"resultVersion,omitempty"`
+	ResultResourceID   string                   `json:"resultResourceId,omitempty"`
 	SourceTargetIDs    []string                 `json:"sourceTargetIds,omitempty"`
 	Status             string                   `json:"status"`
 	Reason             string                   `json:"reason,omitempty"`
@@ -47,6 +52,7 @@ type DramaStudioBatchView struct {
 	Ready              bool                   `json:"ready"`
 	Reason             string                 `json:"reason,omitempty"`
 	ConfirmationToken  string                 `json:"confirmationToken"`
+	ScopeHash          string                 `json:"scopeHash,omitempty"`
 	AmountMicrocredits int64                  `json:"amountMicrocredits"`
 	Priced             bool                   `json:"priced"`
 	Items              []DramaStudioBatchItem `json:"items"`
@@ -86,6 +92,14 @@ func normalizeDramaStudioBatch(req DramaStudioBatchRequest) (DramaStudioBatchReq
 	if req.VideoModel != nil && req.Action != "segment_video" {
 		return req, BadAuthRequest("只有批量视频生成支持指定视频模型")
 	}
+	if req.Action != "cast_image" && (req.Regenerate || req.RestyleSegments || len(req.CastDrafts) > 0) {
+		return req, BadAuthRequest("重新生成、视频影响与图片草稿只用于批量资产图片")
+	}
+	for id := range req.CastDrafts {
+		if !ids[id] {
+			return req, BadAuthRequest("图片草稿必须属于本次明确选择的资产")
+		}
+	}
 	return req, nil
 }
 
@@ -124,7 +138,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 	conflictingEpisodes := map[string]bool{}
 	targets := map[string]bool{}
 	pendingParents := map[string]bool{}
-	snapshots := []any{req.Action, projectID, req.TargetIDs, req.EpisodeID, req.VideoModel, p.Revision, p.SettingsJSON, p.BibleJSON, p.GuideStep, p.SampleApproved, p.MediaRequestsOnly, p.AssetsReleased, p.BudgetMicrocredits}
+	snapshots := []any{req.Action, projectID, req.TargetIDs, req.EpisodeID, req.VideoModel, req.Regenerate, req.RestyleSegments, p.Revision, p.SettingsJSON, p.BibleJSON, p.GuideStep, p.SampleApproved, p.MediaRequestsOnly, p.AssetsReleased, p.BudgetMicrocredits}
 	if req.Action == "segment_assets" {
 		for _, id := range req.TargetIDs {
 			source, err := s.prepareDramaStudioAction(repo, userID, projectID, DramaStudioActionRequest{Action: req.Action, TargetID: id, EpisodeID: req.EpisodeID})
@@ -181,7 +195,11 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 				}
 			}
 		}
-		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, EpisodeID: episodeID, VideoModel: req.VideoModel}, dramaStudioActionOptions{pendingParents: pendingParents, allowPendingPrompt: true})
+		var castDraft *DramaStudioCastDraft
+		if draft, ok := req.CastDrafts[id]; ok {
+			castDraft = &draft
+		}
+		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, EpisodeID: episodeID, VideoModel: req.VideoModel, CastDraft: castDraft}, dramaStudioActionOptions{pendingParents: pendingParents, allowPendingPrompt: true})
 		if err != nil {
 			kind := "segment"
 			if action == "cast_image" {
@@ -196,7 +214,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 			continue
 		}
 		plan.plans[id] = target
-		item := dramaStudioBatchItem(action, target, busy)
+		item := dramaStudioBatchItem(action, target, busy, req.Regenerate)
 		item.SourceTargetIDs = sources[id]
 		plan.view.Items = append(plan.view.Items, item)
 		snapshots = append(snapshots, target.view)
@@ -219,6 +237,15 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 				plan.blockReady("本批次剩余制作预算不足，请调整预算后重新预检")
 			}
 		}
+	}
+	if req.Action == "cast_image" {
+		scopes := []any{projectID, req.EpisodeID, req.Action}
+		for _, item := range plan.view.Items {
+			scopes = append(scopes, []string{item.TargetID, item.Status, plan.plans[item.TargetID].view.ScopeHash})
+		}
+		encoded, _ := json.Marshal(scopes)
+		digest := sha256.Sum256(encoded)
+		plan.view.ScopeHash = hex.EncodeToString(digest[:])
 	}
 	snapshots = append(snapshots, plan.view)
 	encoded, err := json.Marshal(snapshots)
@@ -248,12 +275,14 @@ func dramaStudioBatchReadFailure(id, kind string, err error) (DramaStudioBatchIt
 	return item, nil
 }
 
-func dramaStudioBatchItem(action string, plan dramaStudioActionPlan, busy map[string]bool) DramaStudioBatchItem {
+func dramaStudioBatchItem(action string, plan dramaStudioActionPlan, busy map[string]bool, regenerate bool) DramaStudioBatchItem {
 	v := plan.view
 	item := DramaStudioBatchItem{TargetID: v.TargetID, TargetKind: "segment", EpisodeID: v.EpisodeID, SegmentIndex: v.SegmentIndex, TargetRevision: v.TargetRevision, Status: "ready", AmountMicrocredits: v.AmountMicrocredits, Priced: v.Priced, MissingCasts: v.MissingCasts, Warnings: v.Warnings}
 	ready, queued := false, false
 	if plan.cast != nil {
 		item.TargetKind, item.Name = "cast", plan.cast.Name
+		version := plan.cast.ImageVersion
+		item.ResultVersion, item.ResultResourceID = &version, plan.cast.ImageResourceID
 		ready = plan.cast.ImageStatus == model.DramaMediaReady && plan.cast.ImageResourceID != ""
 		queued = mediaBusyStatus(plan.cast.ImageStatus) || busy[dramaJobKey(model.DramaJobCastImage, "", "", plan.cast.ID)]
 	} else if plan.segment != nil {
@@ -268,7 +297,7 @@ func dramaStudioBatchItem(action string, plan dramaStudioActionPlan, busy map[st
 	switch {
 	case queued:
 		item.Status, item.Reason = "already_queued", "已在生成或排队，本次跳过"
-	case ready:
+	case ready && !(action == "cast_image" && regenerate):
 		item.Status, item.Reason = "skipped_ready", "已有成功结果，本次跳过"
 	case action == "segment_video" && v.Reprocessable:
 		item.Status, item.Reason = "blocked", "已有成功视频结果待处理，请先重新处理，避免重复生成"
@@ -371,6 +400,9 @@ func (s *Service) ExecuteDramaStudioBatch(userID, projectID string, req DramaStu
 	if err != nil {
 		return DramaStudioBatchView{}, err
 	}
+	if len(req.CastDrafts) > 0 {
+		return DramaStudioBatchView{}, BadAuthRequest("请先保存资产图片配置，再提交生成")
+	}
 	if req.BaseRevision == nil || req.ConfirmationToken == "" {
 		return DramaStudioBatchView{}, BadAuthRequest("请先预检并确认本批次操作")
 	}
@@ -422,6 +454,11 @@ func (s *Service) ExecuteDramaStudioBatch(userID, projectID string, req DramaStu
 			}
 			if err := applyDramaStudioAction(tx, action, plan.plans[item.TargetID]); err != nil {
 				return err
+			}
+			if req.RestyleSegments && action == "cast_image" {
+				if _, err := restyleDramaCastWorkspaceSegments(tx, projectID, item.TargetID); err != nil {
+					return err
+				}
 			}
 			item.Status, item.Reason = "queued", "已加入生成队列"
 		}

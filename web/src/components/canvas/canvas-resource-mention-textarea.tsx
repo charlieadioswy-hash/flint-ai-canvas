@@ -141,7 +141,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const assetReferences = useResolvedCanvasResourceReferences(rawAssetReferences);
     const activeCanvasReferences = useMemo(() => canvasReferences.filter((item) => item.active), [canvasReferences]);
     // 工具标签只能经九宫格等面板入口插入，@ 引用菜单不再重复展示。
-    const mentionCanvasReferences = useMemo(() => canvasReferences.filter((item) => item.kind !== "tool"), [canvasReferences]);
+    const mentionCanvasReferences = useMemo(() => canvasReferences.filter((item) => item.kind !== "tool" && !item.mentionMenuHidden), [canvasReferences]);
     const activeMentionCanvasReferences = useMemo(() => mentionCanvasReferences.filter((item) => item.active), [mentionCanvasReferences]);
     const availableReferences = useMemo(() => [...(onSelectReference ? mentionCanvasReferences : activeMentionCanvasReferences), ...assetReferences], [onSelectReference, mentionCanvasReferences, activeMentionCanvasReferences, assetReferences]);
     // 只在有查询词时使用；空查询时菜单按连线节点、技能和素材库分类分组展示。
@@ -162,7 +162,14 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     }, [useRichEditor]);
     const hoverPreview = useMentionHoverPreview(activeReferences);
     const autoLinkMatch = useMemo<CanvasResourceAutoLinkMatch | null>(
-        () => (autoLinkEnabled && autoLinkCursor !== null ? findCanvasResourceAutoLinkMatch(value, autoLinkCursor, activeCanvasReferences) : null),
+        () =>
+            autoLinkEnabled && autoLinkCursor !== null
+                ? findCanvasResourceAutoLinkMatch(
+                      value,
+                      autoLinkCursor,
+                      activeCanvasReferences.filter((item) => !item.mentionMenuHidden),
+                  )
+                : null,
         [activeCanvasReferences, autoLinkCursor, autoLinkEnabled, value],
     );
     const reportContentSize = useCallback(

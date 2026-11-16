@@ -40,6 +40,16 @@ let episodeOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | unde
 let readinessOverride: (() => Promise<DramaWorkflowReadiness>) | undefined;
 const userStore = create(() => ({ user: { id: "user" } }));
 const subject = { id: "cast-1", projectId: "project", kind: "character", name: "林夏" } as DramaCast;
+mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
+    DramaMediaActionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    DramaMediaEpisodeScope: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useDramaMediaContext: () => null,
+    QuotedMediaButton: ({ label, onClick, disabled, title, "aria-label": ariaLabel }: { label: string; onClick?: () => void; disabled?: boolean; title?: string; "aria-label"?: string }) => (
+        <button disabled={disabled} onClick={onClick} title={title} aria-label={ariaLabel}>
+            {label}
+        </button>
+    ),
+}));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
 mock.module("@/pages/projects/workflow-scene-splits", () => ({ WorkflowSceneSplits: () => null }));

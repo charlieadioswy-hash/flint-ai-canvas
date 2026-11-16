@@ -35,6 +35,9 @@ func (s *Service) ExecuteDramaShotMedia(userID, projectID, shotID, kind string, 
 	metadata := plan.request.Input["metadata"].(map[string]any)
 	metadata["dramaShotMediaId"], metadata["dramaShotMediaRevision"] = plan.row.ID, plan.row.Revision+1
 	metadata["dramaShotScriptHash"], metadata["dramaShotMediaRequestHash"] = dramaShotScriptHash(plan.shot), submission.Hash
+	if kind == "video" {
+		metadata["dramaShotPromptHash"] = dramaShotMediaDigest(stringValue(plan.request.Input["prompt"]))
+	}
 	prepare := &creationTaskPreparation{}
 	plan.request.creationPrepare = prepare
 	plan.request.admission = &taskAdmission{ID: submission.ID, MaxCharge: plan.view.AmountMicrocredits}

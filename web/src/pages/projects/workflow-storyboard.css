@@ -95,15 +95,6 @@
     aspect-ratio: 1;
     object-fit: contain;
 }
-.drama-storyboard-quote {
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 12px;
-}
-.drama-storyboard-quote button {
-    margin-top: 8px;
-}
 @media (max-width: 720px) {
     .drama-storyboard-columns {
         grid-template-columns: minmax(0, 1fr);

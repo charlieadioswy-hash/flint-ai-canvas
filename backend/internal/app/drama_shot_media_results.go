@@ -84,6 +84,7 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 			MediaID       string `json:"dramaShotMediaId"`
 			MediaRevision int64  `json:"dramaShotMediaRevision"`
 			ScriptHash    string `json:"dramaShotScriptHash"`
+			PromptHash    string `json:"dramaShotPromptHash"`
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil || input.Metadata.Source != "drama_shot_media" {
@@ -110,7 +111,8 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 	}
 	take.ResourceID, take.DurationMs = resource.ID, resource.DurationMs
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
-		if _, err := repo.DramaProductionForUpdate(task.ProjectID); err != nil {
+		p, err := repo.DramaProductionForUpdate(task.ProjectID)
+		if err != nil {
 			return err
 		}
 		if err := repo.LockDramaCastImageReferences(task.UserID, []string{take.ResourceID}); err != nil {
@@ -132,6 +134,17 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 			return shotErr
 		}
 		activate := shot != nil && row.ID == input.Metadata.MediaID && row.Revision == input.Metadata.MediaRevision && dramaShotScriptHash(*shot) == input.Metadata.ScriptHash
+		if activate && kind == "video" && input.Metadata.PromptHash != "" {
+			_, config, err := s.loadDramaShotMedia(repo, *shot, *p, kind)
+			if err != nil {
+				return err
+			}
+			currentInput, err := s.dramaShotMediaInput(repo, task.UserID, *shot, kind, config)
+			if err != nil {
+				return err
+			}
+			activate = dramaShotMediaDigest(stringValue(currentInput["prompt"])) == input.Metadata.PromptHash
+		}
 		if shot == nil {
 			shot = &model.DramaShot{}
 		}

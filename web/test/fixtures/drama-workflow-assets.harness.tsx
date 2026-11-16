@@ -1,8 +1,8 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaDrawingConfiguration, DramaEpisodeDetail, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
+import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
@@ -39,8 +39,7 @@ environmentManager.setIsServer(() => false);
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => void };
 type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number } };
-type SettingsCall = { projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration } };
-type EpisodeSettingsCall = { projectId: string; episodeId: string; input: { expectedRevision: number; expectedEpisodeRevision: number; settings: DramaSettings } };
+type DeleteCall = { projectId: string; castId: string; expectedRevision: number };
 type BatchCall = { projectId: string; input: DramaStudioBatchRequest };
 
 const notices: Array<{ kind: string; text: string }> = [];
@@ -50,11 +49,12 @@ const episodeDetails = new Map<string, DramaEpisodeDetail>();
 let deferEpisodeReads = false;
 const pendingEpisodeReads: Deferred<DramaEpisodeDetail>[] = [];
 const createCalls: CreateCall[] = [];
-const settingsCalls: SettingsCall[] = [];
-const episodeSettingsCalls: EpisodeSettingsCall[] = [];
+const deleteCalls: DeleteCall[] = [];
+const savedToLibrary: DramaCast[] = [];
+const pendingDeletes: Deferred<{ deleted: boolean; castId: string }>[] = [];
+const configurationReads: string[] = [];
 const configurationSummaries = new Map<string, DramaSummary>();
 const configurationOverrides = new Map<string, DramaSettings>();
-const pendingEpisodeSettings: Deferred<unknown>[] = [];
 let configurationError = false;
 const batchChecks: BatchCall[] = [];
 const batchExecutions: BatchCall[] = [];
@@ -64,8 +64,6 @@ const pendingBatchChecks: Deferred<DramaStudioBatchView>[] = [];
 const pendingBatchExecutions: Deferred<DramaStudioBatchView>[] = [];
 const chapterReads: string[] = [];
 const pendingCreates: Deferred<{ cast: DramaCast }>[] = [];
-const pendingSettings: Deferred<DramaSummary>[] = [];
-const schemeCallbacks: Array<(value: DramaAssetSettings) => void> = [];
 
 function deferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
@@ -82,6 +80,16 @@ const userStore = create<UserState>((set) => ({
     setUser: (user) => set({ user }),
 }));
 
+mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
+    DramaMediaActionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    DramaMediaEpisodeScope: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useDramaMediaContext: () => null,
+    QuotedMediaButton: ({ label, onClick, disabled, title, "aria-label": ariaLabel }: { label: string; onClick?: () => void; disabled?: boolean; title?: string; "aria-label"?: string }) => (
+        <button disabled={disabled} onClick={onClick} title={title} aria-label={ariaLabel}>
+            {label}
+        </button>
+    ),
+}));
 mock.module("antd", () => ({
     App: {
         useApp: () => ({
@@ -126,10 +134,113 @@ mock.module("@/pages/projects/drama-shared", () => ({
     MediaThumb: ({ alt }: { alt: string }) => createElement("span", null, alt),
 }));
 mock.module("@/components/ui/product/app-modal", () => ({
-    AppModal: ({ open, title, children, footer }: { open: boolean; title: string; children?: ReactNode; footer?: ReactNode }) => (open ? createElement("section", { role: "dialog", "aria-label": title }, children, footer) : null),
+    AppModal: ({
+        open,
+        title,
+        children,
+        footer,
+        onOk,
+        onCancel,
+        okText,
+        cancelText,
+        confirmLoading,
+        okButtonProps,
+        cancelButtonProps,
+    }: {
+        open: boolean;
+        title: string;
+        children?: ReactNode;
+        footer?: ReactNode;
+        onOk?: () => void;
+        onCancel?: () => void;
+        okText?: string;
+        cancelText?: string;
+        confirmLoading?: boolean;
+        okButtonProps?: { disabled?: boolean };
+        cancelButtonProps?: { disabled?: boolean };
+    }) =>
+        open
+            ? createElement(
+                  "section",
+                  { role: "dialog", "aria-label": title },
+                  children,
+                  footer === undefined && onOk
+                      ? createElement(
+                            "footer",
+                            null,
+                            createElement("button", { type: "button", disabled: cancelButtonProps?.disabled, onClick: onCancel }, cancelText || "取消"),
+                            createElement("button", { type: "button", disabled: okButtonProps?.disabled || confirmLoading, onClick: onOk }, okText || "确定"),
+                        )
+                      : footer,
+              )
+            : null,
 }));
 mock.module("@/pages/projects/workflow-impact", () => ({ WorkflowImpact: () => null }));
-mock.module("@/pages/projects/workflow-character-library", () => ({ WorkflowCharacterLibrary: () => null }));
+mock.module("@/components/ui/base/tooltip/tooltip", () => ({ Tooltip: ({ children }: { children: ReactNode }) => children }));
+mock.module("@/pages/projects/workflow-character-library", () => ({
+    WorkflowCharacterLibrary: ({
+        summary,
+        cast,
+        busy,
+        children,
+        onDirtyChange,
+    }: {
+        summary: DramaSummary;
+        cast: DramaCast[];
+        busy?: boolean;
+        children?: (controls: { importTrigger: ReactNode; saveToLibrary: (item: DramaCast) => void }) => ReactNode;
+        onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+    }) => {
+        const [open, setOpen] = useState(false);
+        const [saved, setSaved] = useState<DramaCast>();
+        const importTrigger = createElement("button", { type: "button", "aria-label": "从角色库导入", disabled: busy, onClick: () => setOpen(true) });
+        return (
+            <>
+                <span data-asset-library-controller data-project={summary.project.id} data-cast={cast.map((item) => item.id).join(",")} />
+                {children
+                    ? children({
+                          importTrigger,
+                          saveToLibrary: (item) => {
+                              savedToLibrary.push(item);
+                              setSaved(item);
+                          },
+                      })
+                    : importTrigger}
+                {saved ? (
+                    <section role="dialog" aria-label="角色另存库" data-cast={saved.id}>
+                        <button onClick={() => setSaved(undefined)}>关闭角色另存库</button>
+                    </section>
+                ) : null}
+                {open ? (
+                    <section role="dialog" aria-label="角色库导入">
+                        <button onClick={() => onDirtyChange?.(true, false)}>修改角色导入</button>
+                        <button onClick={() => onDirtyChange?.(false, true)}>开始角色导入</button>
+                        <button
+                            onClick={() => {
+                                onDirtyChange?.(false, false);
+                                setOpen(false);
+                            }}
+                        >
+                            关闭角色库
+                        </button>
+                    </section>
+                ) : null}
+            </>
+        );
+    },
+}));
+mock.module("@/pages/projects/studio/cast-project-import", () => ({
+    CastProjectImport: ({ projectId, kind, currentCast, onClose, onStateChange }: { projectId: string; kind: "scene" | "prop"; currentCast: DramaCast[]; onClose: () => void; onStateChange: (dirty: boolean, busy: boolean) => void }) => {
+        const label = kind === "scene" ? "场景" : "道具";
+        return (
+            <section role="dialog" aria-label={`${label}库导入`} data-project={projectId} data-kind={kind} data-cast={currentCast.map((item) => item.id).join(",")}>
+                <button onClick={() => onStateChange(true, false)}>修改{label}导入</button>
+                <button onClick={() => onStateChange(false, true)}>开始{label}导入</button>
+                <button onClick={onClose}>关闭{label}库</button>
+            </section>
+        );
+    },
+}));
 mock.module("@/pages/projects/studio/use-studio", () => ({ dramaKeys: { summary: (id: string) => ["drama", id], cast: (id: string) => ["drama", id, "cast"], chapters: (id: string) => ["drama", id, "chapters"] } }));
 mock.module("@/pages/projects/guide-panels", () => ({
     GuideAssets: ({
@@ -138,6 +249,8 @@ mock.module("@/pages/projects/guide-panels", () => ({
         loading,
         onEdit,
         onGenerate,
+        onDelete,
+        onSaveToLibrary,
         selectedIds,
         onSelect,
     }: {
@@ -146,6 +259,8 @@ mock.module("@/pages/projects/guide-panels", () => ({
         loading: boolean;
         onEdit: (cast: DramaCast) => void;
         onGenerate: (cast: DramaCast) => void;
+        onDelete?: (cast: DramaCast) => void;
+        onSaveToLibrary?: (cast: DramaCast) => void;
         selectedIds?: Set<string>;
         onSelect?: (cast: DramaCast, checked: boolean) => void;
     }) =>
@@ -168,9 +283,10 @@ mock.module("@/pages/projects/guide-panels", () => ({
                                   onChange: (event: Event) => onSelect(item, (event.target as HTMLInputElement).checked),
                               })
                             : null,
-                        createElement("h3", null, item.name),
-                        createElement("button", { type: "button", disabled: busy, onClick: () => onEdit(item) }, `编辑${item.name}`),
+                        createElement("h3", null, createElement("button", { type: "button", "aria-label": `编辑${item.name}`, disabled: busy, onClick: () => onEdit(item) }, item.name)),
                         createElement("button", { type: "button", disabled: busy, onClick: () => onGenerate(item) }, `生成${item.name}`),
+                        onDelete ? createElement("button", { type: "button", disabled: busy, onClick: () => onDelete(item) }, `删除${item.name}`) : null,
+                        item.kind === "character" && onSaveToLibrary ? createElement("button", { type: "button", disabled: busy, onClick: () => onSaveToLibrary(item) }, `将${item.name}加入角色库`) : null,
                         cast
                             .filter((look) => look.parentId === item.id)
                             .map((look) =>
@@ -195,40 +311,29 @@ mock.module("@/pages/projects/guide-panels", () => ({
         ),
 }));
 mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
-    CastEditorDialog: ({ summary, cast, castId, onClose }: { summary: DramaSummary; cast: DramaCast[]; castId?: string; onClose: () => void }) => {
+    CastEditorDialog: ({ summary, episodeId, cast, castId, onClose, onDirtyChange }: { summary: DramaSummary; episodeId?: string; cast: DramaCast[]; castId?: string; onClose: () => void; onDirtyChange?: (dirty: boolean, busy: boolean) => void }) => {
         if (!castId) return null;
         const current = cast.find((item) => item.id === castId && item.projectId === summary.project.id);
         return createElement(
             "section",
-            { "aria-label": "资产设定编辑器", "data-project": summary.project.id },
+            { "aria-label": "资产设定编辑器", "data-project": summary.project.id, "data-episode": episodeId, "data-cast": current?.id, "data-kind": current?.kind, "data-character-prompt": summary.production.settings.assets.characterPrompt },
             current ? createElement("h2", null, `${current.name} · 资产设定`) : createElement("p", null, "此资产已不存在"),
-            createElement("button", { type: "button", onClick: onClose }, "关闭资产设定"),
-        );
-    },
-}));
-mock.module("@/pages/projects/asset-scheme", () => ({
-    AssetSchemePicker: ({ value, onChange }: { value?: DramaAssetSettings; onChange: (value: DramaAssetSettings) => void }) => {
-        schemeCallbacks.push(onChange);
-        return createElement(
-            "section",
-            { "aria-label": "参考图方案" },
-            createElement("p", null, `方案 ${value?.mode || "未选择"}`),
+            createElement("button", { type: "button", onClick: () => onDirtyChange?.(true, false) }, "修改资产设定"),
+            createElement("button", { type: "button", onClick: () => onDirtyChange?.(false, true) }, "开始保存资产设定"),
+            createElement("button", { type: "button", onClick: () => onDirtyChange?.(false, false) }, "完成保存资产设定"),
             createElement(
                 "button",
                 {
                     type: "button",
-                    onClick: () => value && onChange({ ...value, mode: value.mode === "closeup_turnaround" ? "closeup_front_no_face" : "closeup_turnaround", characterPrompt: "改后的角色提示词" }),
+                    onClick: () => {
+                        onDirtyChange?.(false, false);
+                        onClose();
+                    },
                 },
-                "切换参考图方案",
+                "关闭资产设定",
             ),
-            createElement("textarea", {
-                "aria-label": "角色参考图提示词",
-                value: value?.characterPrompt || "",
-                onChange: (event: Event) => value && onChange({ ...value, characterPrompt: (event.target as HTMLTextAreaElement).value }),
-            }),
         );
     },
-    useAssetSchemes: () => ({ data: undefined, isLoading: false, isError: false, refetch: async () => ({ data: undefined }) }),
 }));
 mock.module("@/services/api/drama", () => ({
     getDramaEpisode: async (projectId: string, episodeId: string) => {
@@ -280,22 +385,17 @@ mock.module("@/services/api/drama", () => ({
         pendingCreates.push(pending);
         return pending.promise;
     },
-    updateDramaWorkflowStyle: async (projectId: string, input: SettingsCall["input"]) => {
-        settingsCalls.push({ projectId, input: structuredClone(input) });
-        const pending = deferred<DramaSummary>();
-        pendingSettings.push(pending);
+    deleteDramaCast: async (projectId: string, castId: string, expectedRevision: number) => {
+        deleteCalls.push({ projectId, castId, expectedRevision });
+        const pending = deferred<{ deleted: boolean; castId: string }>();
+        pendingDeletes.push(pending);
         return pending.promise;
     },
     getDramaEpisodeStyle: async (projectId: string, episodeId: string) => {
+        configurationReads.push(`${projectId}:${episodeId}`);
         if (configurationError) throw new Error("读取暂时失败");
         const summary = configurationSummaries.get(projectId)!;
         return { projectId, episodeId, revision: summary.production.revision, episodeRevision: 2, settings: configurationOverrides.get(episodeId) || summary.production.settings };
-    },
-    updateDramaEpisodeStyle: async (projectId: string, episodeId: string, input: EpisodeSettingsCall["input"]) => {
-        episodeSettingsCalls.push({ projectId, episodeId, input: structuredClone(input) });
-        const pending = deferred<unknown>();
-        pendingEpisodeSettings.push(pending);
-        return pending.promise;
     },
 }));
 
@@ -482,9 +582,10 @@ function resetFixture() {
     notices.length = 0;
     extractCalls.length = 0;
     createCalls.length = 0;
-    settingsCalls.length = 0;
-    episodeSettingsCalls.length = 0;
-    pendingEpisodeSettings.length = 0;
+    deleteCalls.length = 0;
+    pendingDeletes.length = 0;
+    savedToLibrary.length = 0;
+    configurationReads.length = 0;
     configurationSummaries.clear();
     configurationOverrides.clear();
     configurationError = false;
@@ -500,8 +601,6 @@ function resetFixture() {
     deferEpisodeReads = false;
     pendingEpisodeReads.length = 0;
     pendingCreates.length = 0;
-    pendingSettings.length = 0;
-    schemeCallbacks.length = 0;
     userStore.setState({ user: { id: "user-a", username: "a", displayName: "账号A", role: "user", status: "active" } });
 }
 
@@ -576,7 +675,7 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
 }
 
 function button(container: HTMLElement, label: string) {
-    const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes(label));
+    const found = Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === label || item.textContent?.includes(label));
     expect(found, `未找到按钮 ${label}`).toBeDefined();
     return found!;
 }
@@ -598,7 +697,15 @@ async function edit(node: HTMLInputElement | HTMLTextAreaElement, value: string)
     });
 }
 
+async function waitForQuote() {
+    await act(async () => {
+        await Bun.sleep(220);
+        await settle();
+    });
+}
+
 async function click(node: HTMLElement) {
+    if (node instanceof HTMLButtonElement && node.disabled && node.textContent?.includes("计价中")) await waitForQuote();
     await act(async () => {
         node.click();
         await settle();
@@ -632,6 +739,209 @@ test("三列同时展示类型和角色造型，不展示其他作品资产", as
     }
 });
 
+test("单集与资产库保留唯一库控制器，卡片直接编辑且无独立信息或顶部人物工具", async () => {
+    for (const variant of ["episode", "library"] as const) {
+        resetFixture();
+        const view = await mount(summaryOf("project-a", 4), projectCast(), { variant });
+        try {
+            const controllers = view.container.querySelectorAll("[data-asset-library-controller]");
+            expect(controllers).toHaveLength(1);
+            expect(controllers[0].getAttribute("data-project")).toBe("project-a");
+            expect(controllers[0].getAttribute("data-cast")).toBe("hero,hero-look,room,key");
+            expect(view.container.querySelector('[aria-label="人物信息与角色库"]')).toBeNull();
+            expect(view.container.querySelector('button[aria-label="人物信息与出镜"]')).toBeNull();
+            expect(view.container.textContent).not.toContain("选择人物");
+            expect(view.container.textContent).not.toContain("人物信息与出镜");
+            expect(button(view.container, "编辑林夏").disabled).toBe(false);
+            expect(view.container.querySelector('button[aria-label^="查看"][aria-label$="的资产信息与出镜"]')).toBeNull();
+            expect(view.container.querySelector(".drama-workflow-assets-scheme")).toBeNull();
+            expect(view.container.textContent).not.toContain("后续参考图方案");
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("单集三类卡片和资产库各分类都直接打开对应资产编辑，保留本集配置", async () => {
+    for (const variant of ["episode", "library"] as const) {
+        resetFixture();
+        const cast = projectCast();
+        const view = await mount(summaryOf("project-a", 4), cast, { variant });
+        try {
+            const controller = view.container.querySelector("[data-asset-library-controller]");
+            for (const [label, item] of [
+                ["角色", cast[0]],
+                ["场景", cast[2]],
+                ["道具", cast[3]],
+            ] as const) {
+                if (variant === "library") await click(button(view.container.querySelector<HTMLElement>('[aria-label="主体资产分类"]')!, label));
+                await click(button(view.container, `编辑${item.name}`));
+                const editor = view.container.querySelector<HTMLElement>('[aria-label="资产设定编辑器"]')!;
+                expect(editor?.getAttribute("data-cast")).toBe(item.id);
+                expect(editor?.getAttribute("data-kind")).toBe(item.kind);
+                expect(editor?.getAttribute("data-project")).toBe("project-a");
+                expect(editor?.getAttribute("data-episode")).toBe(variant === "episode" ? "episode-1" : null);
+                expect(editor?.textContent).toContain(`${item.name} · 资产设定`);
+                expect(view.container.querySelectorAll('[aria-label="资产设定编辑器"]')).toHaveLength(1);
+                expect(view.container.querySelectorAll("[data-asset-library-controller]")).toHaveLength(1);
+                expect(view.container.querySelector("[data-asset-library-controller]")).toBe(controller);
+                expect(view.container.querySelector('[aria-label="资产信息与出镜"]')).toBeNull();
+                await click(button(editor, "关闭资产设定"));
+                expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
+            }
+            expect(savedToLibrary).toEqual([]);
+            expect(deleteCalls).toEqual([]);
+            expect(view.generated).toEqual([]);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("卡片直接打开的编辑器在修改和保存中冻结选集并阻止删除，关闭后恢复", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4), projectCast(), { controlled: true });
+    try {
+        await click(button(view.container, "编辑旧宅"));
+        const editor = view.container.querySelector<HTMLElement>('[aria-label="资产设定编辑器"]')!;
+        for (const [action, state] of [
+            ["修改资产设定", [true, false]],
+            ["开始保存资产设定", [false, true]],
+        ] as const) {
+            await click(button(editor, action));
+            expect(view.dirtyStates.at(-1)).toEqual([...state]);
+            const next = button(view.container, "下一集主体资产");
+            expect(next.disabled).toBe(true);
+            const select = view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')!;
+            expect(select.disabled).toBe(true);
+            await click(next);
+            await act(async () => {
+                select.value = "episode-2";
+                select.dispatchEvent(new Event("change", { bubbles: true }));
+                await settle();
+            });
+            await click(button(view.container, "删除林夏"));
+            expect(view.episodeChanges).toEqual([]);
+            expect(deleteCalls).toEqual([]);
+            expect(view.container.querySelector('[role="dialog"][aria-label="删除「林夏」？"]')).toBeNull();
+            expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBe(editor);
+        }
+        await click(button(editor, "完成保存资产设定"));
+        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+        expect(button(view.container, "下一集主体资产").disabled).toBe(true);
+        await click(button(editor, "关闭资产设定"));
+        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+        expect(button(view.container, "下一集主体资产").disabled).toBe(false);
+        await click(button(view.container, "下一集主体资产"));
+        expect(view.episodeChanges).toEqual(["episode-2"]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("切换作品账号或外部指定剧集会卸载旧资产编辑器，忙碌页面不能打开新编辑器", async () => {
+    for (const boundary of ["project", "account", "episode"] as const) {
+        resetFixture();
+        const view = await mount(summaryOf("project-a", 4));
+        try {
+            await click(button(view.container, "编辑铜钥匙"));
+            const oldEditor = view.container.querySelector('[aria-label="资产设定编辑器"]');
+            const oldController = view.container.querySelector("[data-asset-library-controller]");
+            await click(button(view.container, "修改资产设定"));
+            if (boundary === "project") await view.update({ summary: summaryOf("project-b", 1), cast: [castOf("project-b", "other-prop", "prop", "其他作品道具")] });
+            if (boundary === "account")
+                await act(async () => {
+                    userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
+                    await settle();
+                });
+            if (boundary === "episode") await view.update({ episodeId: "episode-2" });
+            expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
+            expect(oldEditor?.isConnected).toBe(false);
+            expect(view.container.querySelector("[data-asset-library-controller]")).not.toBe(oldController);
+            expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+            await view.update({ busy: true });
+            const name = boundary === "project" ? "其他作品道具" : "铜钥匙";
+            const editButton = button(view.container, `编辑${name}`);
+            expect(editButton.disabled).toBe(true);
+            await click(editButton);
+            expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
+            await view.update({ busy: false });
+            await click(button(view.container, `编辑${name}`));
+            const editor = view.container.querySelector('[aria-label="资产设定编辑器"]');
+            expect(editor?.getAttribute("data-cast")).toBe(boundary === "project" ? "other-prop" : "key");
+            expect(editor?.getAttribute("data-project")).toBe(boundary === "project" ? "project-b" : "project-a");
+            expect(editor?.getAttribute("data-episode")).toBe(boundary === "project" ? "episode-other" : boundary === "episode" ? "episode-2" : "episode-1");
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("三栏列头各自提供唯一库导入入口，并打开对应类型的库", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        for (const [label, kind] of [
+            ["角色", "character"],
+            ["场景", "scene"],
+            ["道具", "prop"],
+        ] as const) {
+            const column = view.container.querySelector<HTMLElement>(`[aria-label="${label}资产"]`)!;
+            const entries = view.container.querySelectorAll<HTMLButtonElement>(`button[aria-label="从${label}库导入"]`);
+            expect(entries).toHaveLength(1);
+            expect(column.querySelector(".drama-workflow-assets-column-head")?.contains(entries[0])).toBe(true);
+            expect(entries[0].textContent).toBe("");
+            await click(entries[0]);
+            const dialog = view.container.querySelector<HTMLElement>(`[role="dialog"][aria-label="${label}库导入"]`)!;
+            expect(dialog).not.toBeNull();
+            expect(view.container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+            if (kind !== "character") {
+                expect(dialog.getAttribute("data-kind")).toBe(kind);
+                expect(dialog.getAttribute("data-project")).toBe("project-a");
+                expect(dialog.getAttribute("data-cast")).toContain(kind === "scene" ? "room" : "key");
+                expect(dialog.getAttribute("data-cast")).not.toContain("other-hero");
+            }
+            await click(button(dialog, `关闭${label}库`));
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        }
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("任一类型库的草稿和在途导入都冻结选集，关闭后恢复", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4), projectCast(), { controlled: true });
+    try {
+        for (const label of ["角色", "场景", "道具"]) {
+            await click(button(view.container, `从${label}库导入`));
+            for (const [action, expectedState] of [
+                ["修改", [true, false]],
+                ["开始", [false, true]],
+            ] as const) {
+                await click(button(view.container, `${action}${label}导入`));
+                expect(view.dirtyStates.at(-1)).toEqual(expectedState);
+                const next = view.container.querySelector<HTMLButtonElement>('[aria-label="下一集主体资产"]')!;
+                const select = view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')!;
+                expect(next.disabled).toBe(true);
+                expect(select.disabled).toBe(true);
+                await click(next);
+                await act(async () => {
+                    select.value = "episode-2";
+                    select.dispatchEvent(new Event("change", { bubbles: true }));
+                    await settle();
+                });
+                expect(view.episodeChanges).toEqual([]);
+            }
+            await click(button(view.container, `关闭${label}库`));
+            expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+            expect(view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')?.disabled).toBe(false);
+        }
+    } finally {
+        await view.dispose();
+    }
+});
+
 test("主体资产库批量选择只显示当前分类，选择当前范围后按真实 ID 预检并提交", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), projectCast(), { variant: "library" });
@@ -647,13 +957,12 @@ test("主体资产库批量选择只显示当前分类，选择当前范围后�
             await click(button(tabs, category.label));
             expect(Array.from(view.container.querySelectorAll('.drama-workflow-asset-selection input[type="checkbox"]'), (item) => item.getAttribute("aria-label"))).toEqual(category.names);
             await click(button(view.container, "选择当前范围"));
-            await click(button(view.container, "批量生成参考图"));
+            await click(button(view.container, "批量生成图片"));
             expect(batchChecks).toHaveLength(index + 1);
             expect(batchChecks[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: category.ids, baseRevision: 4 } });
-            await click(button(view.container, "确认提交本批次"));
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
             expect(batchExecutions).toHaveLength(index + 1);
             expect(batchExecutions[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: category.ids, baseRevision: 4, confirmationToken: "batch-confirmation" } });
-            await click(button(view.container, "关闭"));
             await click(button(view.container, "清空选择（"));
         }
         expect(view.changed).toEqual(["project-a", "project-a", "project-a"]);
@@ -674,11 +983,9 @@ test("单集三栏分别全选与提交真实类型范围，角色包含造型�
         for (const [index, column] of columns.entries()) {
             await click(field(view.container, `选择本集全部${column.label}`));
             await click(button(view.container, `生成${column.label}图片`));
-            expect(batchChecks[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, episodeId: "episode-1" } });
-            expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain(`范围：当前列表已选 ${column.ids.length} 项${column.label}及造型`);
-            await click(button(view.container, "确认提交本批次"));
+            expect(batchChecks).toContainEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, episodeId: "episode-1" } });
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
             expect(batchExecutions[index]).toEqual({ projectId: "project-a", input: { action: "cast_image", targetIds: column.ids, baseRevision: 4, confirmationToken: "batch-confirmation", episodeId: "episode-1" } });
-            await click(button(view.container, "关闭"));
         }
         expect(view.changed).toEqual(["project-a", "project-a", "project-a"]);
         await click(field(view.container, "选择林夏 · 雨夜"));
@@ -686,7 +993,7 @@ test("单集三栏分别全选与提交真实类型范围，角色包含造型�
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部场景"]')?.checked).toBe(true);
         await click(button(view.container, "生成角色图片"));
         expect(batchChecks.at(-1)?.input.targetIds).toEqual(["hero"]);
-        await click(button(view.container, "取消"));
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
         await click(view.container.querySelector<HTMLButtonElement>('[aria-label="下一集主体资产"]')!);
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.checked).toBe(false);
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部场景"]')?.checked).toBe(false);
@@ -744,7 +1051,6 @@ test("主体管理默认第一集，左右和下拉切换同一集范围且不�
         expect(extractCalls).toHaveLength(0);
         expect(chapterReads).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
-        expect(settingsCalls).toHaveLength(0);
     } finally {
         await view.dispose();
     }
@@ -778,7 +1084,7 @@ test("主体管理区分原文章节与制作集，继续选章只通知父层�
     }
 });
 
-test("图片批次预检与提交未返回时冻结选集并回报忙状态，收到回执后恢复", async () => {
+test("图片自动报价不冻结选集，点击直接提交时冻结且回执后恢复", async () => {
     resetFixture();
     deferBatchChecks = true;
     deferBatchExecutions = true;
@@ -790,28 +1096,18 @@ test("图片批次预检与提交未返回时冻结选集并回报忙状态，�
     const select = () => view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')!;
     try {
         await click(next());
-        expect(select().value).toBe("episode-2");
-        expect(previous().disabled).toBe(false);
-        expect(next().disabled).toBe(false);
         await click(field(view.container, "选择本集全部角色"));
-        await click(button(view.container, "生成角色图片"));
+        await waitForQuote();
         expect(pendingBatchChecks).toHaveLength(1);
-        expect(view.dirtyStates.at(-1)).toEqual([false, true]);
-        expect(previous().disabled).toBe(true);
-        expect(next().disabled).toBe(true);
-        expect(select().disabled).toBe(true);
-        await click(previous());
-        await click(next());
-        expect(select().value).toBe("episode-2");
-        await act(async () => {
-            pendingBatchChecks[0]!.resolve(batchResponse(batchChecks[0]!.input, "ready"));
-            await settle();
-        });
         expect(view.dirtyStates.at(-1)).toEqual([false, false]);
         expect(previous().disabled).toBe(false);
         expect(next().disabled).toBe(false);
         expect(select().disabled).toBe(false);
-        await click(button(view.container, "确认提交本批次"));
+        await act(async () => {
+            pendingBatchChecks[0]!.resolve(batchResponse(batchChecks[0]!.input, "ready"));
+            await settle();
+        });
+        await click(button(view.container, "生成角色图片"));
         expect(pendingBatchExecutions).toHaveLength(1);
         expect(view.dirtyStates.at(-1)).toEqual([false, true]);
         expect(previous().disabled).toBe(true);
@@ -827,7 +1123,7 @@ test("图片批次预检与提交未返回时冻结选集并回报忙状态，�
         expect(previous().disabled).toBe(false);
         expect(next().disabled).toBe(false);
         expect(select().disabled).toBe(false);
-        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("已加入队列 2 项");
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
         expect(batchChecks).toHaveLength(1);
         expect(batchExecutions).toHaveLength(1);
         expect(view.changed).toEqual(["project-a"]);
@@ -836,19 +1132,18 @@ test("图片批次预检与提交未返回时冻结选集并回报忙状态，�
     }
 });
 
-test("批次成功推进版本后刷新同集引用，保留已提交弹窗与原列并禁止旧范围继续生成", async () => {
+test("批次直接提交后刷新同集引用，保留原列并禁止旧范围继续生成", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), projectCast(), { advanceRevisionOnChange: true });
     try {
         await click(field(view.container, "选择本集全部角色"));
-        await click(button(view.container, "生成角色图片"));
         const column = view.container.querySelector('[aria-label="角色资产"]')!;
         deferEpisodeReads = true;
-        await click(button(view.container, "确认提交本批次"));
+        await click(button(view.container, "生成角色图片"));
         expect(view.changed).toEqual(["project-a"]);
         expect(pendingEpisodeReads).toHaveLength(1);
         expect(view.container.querySelector('[aria-label="角色资产"]')).toBe(column);
-        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("已加入队列 2 项");
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.disabled).toBe(true);
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择林夏"]')?.disabled).toBe(true);
         expect(button(view.container, "生成角色图片").disabled).toBe(true);
@@ -858,7 +1153,7 @@ test("批次成功推进版本后刷新同集引用，保留已提交弹窗与�
         });
         expect(view.container.textContent).toContain("本集引用资产刷新失败，已保留列表");
         expect(view.container.querySelector('[aria-label="角色资产"]')).toBe(column);
-        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("已加入队列 2 项");
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
         expect(button(view.container, "生成角色图片").disabled).toBe(true);
         await click(button(view.container, "重试"));
         expect(pendingEpisodeReads).toHaveLength(2);
@@ -867,12 +1162,12 @@ test("批次成功推进版本后刷新同集引用，保留已提交弹窗与�
             await settle();
         });
         expect(view.container.querySelector('[aria-label="角色资产"]')).toBe(column);
-        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("已加入队列 2 项");
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.disabled).toBe(false);
+        await waitForQuote();
         expect(button(view.container, "生成角色图片").disabled).toBe(false);
-        expect(batchChecks).toHaveLength(1);
+        expect(batchChecks.length).toBeGreaterThanOrEqual(1);
         expect(batchExecutions).toHaveLength(1);
-        await click(button(view.container, "关闭"));
         expect(view.container.querySelector('[role="dialog"]')).toBeNull();
     } finally {
         await view.dispose();
@@ -1016,7 +1311,7 @@ for (const [kind, label] of [
             const shared = column.querySelector<HTMLDetailsElement>(".drama-workflow-assets-shared")!;
             expect(shared.open).toBe(true);
             expect(shared.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
-            expect(column.querySelector(`:scope > [aria-label="资产卡片"] [aria-label="${kind}:${created.name}"]`)).toBeNull();
+            expect(column.querySelector(`:scope > .drama-workflow-assets-column-content > [aria-label="资产卡片"] [aria-label="${kind}:${created.name}"]`)).toBeNull();
             await click(button(shared, `编辑${created.name}`));
             expect(view.container.querySelector('[aria-label="资产设定编辑器"]')?.textContent).toContain(created.name);
             await click(button(view.container, "关闭资产设定"));
@@ -1028,8 +1323,8 @@ for (const [kind, label] of [
             expect(field(shared, `选择${created.name}`)).toHaveProperty("checked", true);
             await click(button(column, `生成${label}图片`));
             expect(batchChecks.at(-1)?.input.targetIds).toEqual([created.id]);
-            expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("当前列表已选 1 项");
-            await click(button(view.container, "取消"));
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+            expect(batchExecutions.at(-1)?.input.targetIds).toEqual([created.id]);
 
             await view.dispose();
             view = await mount(summaryOf("project-a", 5), [...projectCast(), created]);
@@ -1060,9 +1355,13 @@ test("风格配置阶段禁止新增、编辑与生成，资产库分类仍可�
         expect(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')?.disabled).toBe(true);
         expect(button(view.container, "编辑林夏").disabled).toBe(true);
         expect(button(view.container, "生成林夏").disabled).toBe(true);
+        expect(button(view.container, "删除林夏").disabled).toBe(true);
+        expect(button(view.container, "将林夏加入角色库").disabled).toBe(true);
         await click(button(view.container, "新增角色"));
         await click(button(view.container, "编辑林夏"));
         await click(button(view.container, "生成林夏"));
+        await click(button(view.container, "删除林夏"));
+        await click(button(view.container, "将林夏加入角色库"));
         expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
         expect(view.container.querySelector('[aria-label="资产名称"]')).toBeNull();
         const sceneCategory = button(view.container, "场景");
@@ -1072,8 +1371,9 @@ test("风格配置阶段禁止新增、编辑与生成，资产库分类仍可�
         expect(button(view.container, "新增场景").disabled).toBe(true);
         expect(extractCalls).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
-        expect(settingsCalls).toHaveLength(0);
         expect(view.generated).toEqual([]);
+        expect(deleteCalls).toHaveLength(0);
+        expect(savedToLibrary).toHaveLength(0);
     } finally {
         await view.dispose();
     }
@@ -1106,78 +1406,44 @@ test("新增重名资产的 409 保留后端原文与名称草稿，不误报版
     }
 });
 
-test("参考图方案草稿遇到新版本时阻止保存并保留字段", async () => {
-    resetFixture();
-    const view = await mount(summaryOf("project-a", 4));
-    try {
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        await click(button(view.container, "切换参考图方案"));
-        await edit(field(view.container, "角色参考图提示词"), "用户改过的角色提示词");
-        await view.update({ summary: summaryOf("project-a", 9, { ...assets(), characterPrompt: "服务器新提示词" }) });
-        expect(view.container.textContent).toContain("参考图方案已有更新");
-        expect(view.container.textContent).toContain("当前修改已保留");
-        expect(view.container.querySelector('[aria-label="参考图方案"]')).toBeNull();
-        expect(settingsCalls).toHaveLength(0);
-        expect(view.container.textContent).toContain("本地修改未保存");
-        await view.update({ summary: summaryOf("project-a", 4) });
-        expect(field(view.container, "角色参考图提示词").value).toBe("用户改过的角色提示词");
-        await view.update({ summary: summaryOf("project-a", 9, { ...assets(), characterPrompt: "服务器新提示词" }) });
-        await click(button(view.container, "重新载入"));
-        expect(field(view.container, "角色参考图提示词").value).toBe("服务器新提示词");
-        expect(settingsCalls).toHaveLength(0);
-    } finally {
-        await view.dispose();
-    }
-});
-
-test("切换作品、账号或卸载后，迟到的新增和方案保存不能刷新当前页或打开旧编辑器", async () => {
-    for (const action of ["create", "scheme"] as const) {
-        for (const boundary of ["project", "account", "unmount"] as const) {
-            resetFixture();
-            const view = await mount(summaryOf("project-a", 4), projectCast(), { variant: action === "scheme" ? "library" : "episode" });
-            let disposed = false;
-            try {
-                if (action === "create") {
-                    await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
-                    await edit(field(view.container, "资产名称"), "旧账号资产");
-                    await click(button(view.container, "保存资产"));
-                }
-                if (action === "scheme") {
-                    await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-                    await click(button(view.container, "切换参考图方案"));
-                    await click(button(view.container, "保存后续参考图方案"));
-                }
-                expect(action === "create" ? pendingCreates.length : pendingSettings.length).toBe(1);
-                if (boundary === "project") await view.update({ summary: summaryOf("project-b", 1), cast: [castOf("project-b", "other-hero", "character", "其他作品角色")] });
-                if (boundary === "account")
-                    await act(async () => {
-                        userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
-                        await settle();
-                    });
-                if (boundary === "unmount") {
-                    await view.dispose();
-                    disposed = true;
-                }
-                const changedBefore = view.changed.length;
-                const noticesBefore = notices.length;
+test("切换作品、账号或卸载后，迟到的新增不能刷新当前页或打开旧编辑器", async () => {
+    for (const boundary of ["project", "account", "unmount"] as const) {
+        resetFixture();
+        const view = await mount(summaryOf("project-a", 4));
+        let disposed = false;
+        try {
+            await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
+            await edit(field(view.container, "资产名称"), "旧账号资产");
+            await click(button(view.container, "保存资产"));
+            expect(pendingCreates).toHaveLength(1);
+            if (boundary === "project") await view.update({ summary: summaryOf("project-b", 1), cast: [castOf("project-b", "other-hero", "character", "其他作品角色")] });
+            if (boundary === "account")
                 await act(async () => {
-                    if (action === "create") pendingCreates[0].resolve({ cast: castOf("project-a", "late-created", "character", "迟到的旧资产") });
-                    if (action === "scheme") pendingSettings[0].resolve(summaryOf("project-a", 5));
+                    userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
                     await settle();
                 });
-                expect(view.changed.length).toBe(changedBefore);
-                expect(notices.slice(noticesBefore)).toEqual([]);
-                expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
-                expect(view.container.textContent).not.toContain("迟到的旧资产");
-                if (boundary === "project") expect(view.container.textContent).toContain("其他作品角色");
-            } finally {
-                if (!disposed) await view.dispose();
+            if (boundary === "unmount") {
+                await view.dispose();
+                disposed = true;
             }
+            const changedBefore = view.changed.length;
+            const noticesBefore = notices.length;
+            await act(async () => {
+                pendingCreates[0].resolve({ cast: castOf("project-a", "late-created", "character", "迟到的旧资产") });
+                await settle();
+            });
+            expect(view.changed.length).toBe(changedBefore);
+            expect(notices.slice(noticesBefore)).toEqual([]);
+            expect(view.container.querySelector('[aria-label="资产设定编辑器"]')).toBeNull();
+            expect(view.container.textContent).not.toContain("迟到的旧资产");
+            if (boundary === "project") expect(view.container.textContent).toContain("其他作品角色");
+        } finally {
+            if (!disposed) await view.dispose();
         }
     }
 }, 20_000);
 
-test("忙碌时不能新增、批选或保存方案，加载状态可见", async () => {
+test("忙碌时不能新增、批选或操作角色库，加载状态可见", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), [], { loading: true, busy: true });
     try {
@@ -1186,90 +1452,10 @@ test("忙碌时不能新增、批选或保存方案，加载状态可见", async
         expect(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')?.disabled).toBe(true);
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.disabled).toBe(true);
         expect(button(view.container, "生成角色图片").disabled).toBe(true);
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        expect(view.container.querySelector('[aria-label="参考图方案"]')).toBeNull();
-        expect(view.container.querySelector('[aria-label="参考图方案只读预览"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="人物信息与角色库"]')).toBeNull();
+        expect(button(view.container, "从角色库导入").disabled).toBe(true);
         expect(extractCalls).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
-        expect(settingsCalls).toHaveLength(0);
-    } finally {
-        await view.dispose();
-    }
-});
-
-test("方案明确保存并保留其它配置，失败保留草稿且不会触发生图", async () => {
-    resetFixture();
-    const initial = summaryOf("project-a", 4);
-    const view = await mount(initial, projectCast(), { variant: "library" });
-    try {
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        await click(button(view.container, "切换参考图方案"));
-        expect(settingsCalls).toHaveLength(0);
-        expect(view.dirtyStates.at(-1)).toEqual([true, false]);
-        await click(button(view.container, "保存后续参考图方案"));
-        expect(settingsCalls).toEqual([
-            {
-                projectId: "project-a",
-                input: {
-                    expectedRevision: 4,
-                    styleName: initial.production.settings.styleName,
-                    stylePrompt: initial.production.settings.stylePrompt,
-                    drawing: {
-                        assets: { ...assets(), mode: "closeup_front_no_face", characterPrompt: "改后的角色提示词" },
-                        models: { image: { modelKey: "image" }, characterImage: {}, sceneImage: {} },
-                    },
-                },
-            },
-        ]);
-        expect(settingsCalls[0].input).not.toHaveProperty("settings");
-        expect(view.generated).toEqual([]);
-        expect(extractCalls).toHaveLength(0);
-        await act(async () => {
-            pendingSettings[0].reject(new Error("保存暂时失败"));
-            await settle();
-        });
-        expect(field(view.container, "角色参考图提示词").value).toBe("改后的角色提示词");
-        expect(view.dirtyStates.at(-1)).toEqual([true, false]);
-        expect(view.changed).toEqual([]);
-        await click(button(view.container, "保存后续参考图方案"));
-        const saved = summaryOf("project-a", 5, settingsCalls[1].input.drawing!.assets);
-        await act(async () => {
-            pendingSettings[1].resolve(saved);
-            await settle();
-        });
-        await view.update({ summary: saved });
-        expect(view.changed).toEqual(["project-a"]);
-        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
-        expect(field(view.container, "角色参考图提示词").value).toBe("改后的角色提示词");
-    } finally {
-        await view.dispose();
-    }
-    expect(view.dirtyStates.at(-1)).toEqual([false, false]);
-});
-
-test("本集参考图方案只保存本集完整配置，失败保留草稿", async () => {
-    resetFixture();
-    const initial = summaryOf("project-a", 4);
-    const ownSettings = { ...settings(), language: "粤语", styleName: "本集水彩", models: { ...settings().models, image: { modelKey: "episode-image" } } };
-    configurationOverrides.set("episode-1", ownSettings);
-    const view = await mount(initial);
-    try {
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        expect(view.container.textContent).toContain("这是本集后续");
-        await click(button(view.container, "切换参考图方案"));
-        await click(button(view.container, "保存后续参考图方案"));
-        expect(settingsCalls).toHaveLength(0);
-        expect(episodeSettingsCalls).toEqual([
-            { projectId: "project-a", episodeId: "episode-1", input: { expectedRevision: 4, expectedEpisodeRevision: 2, settings: { ...ownSettings, assets: { ...assets(), mode: "closeup_front_no_face", characterPrompt: "改后的角色提示词" } } } },
-        ]);
-        expect(view.generated).toEqual([]);
-        await act(async () => {
-            pendingEpisodeSettings[0].reject(new Error("本集版本冲突"));
-            await settle();
-        });
-        expect(field(view.container, "角色参考图提示词").value).toBe("改后的角色提示词");
-        expect(view.dirtyStates.at(-1)).toEqual([true, false]);
-        expect(initial.production.settings).toEqual(settings());
     } finally {
         await view.dispose();
     }
@@ -1291,8 +1477,12 @@ test("主体管理切集读取对应配置且单图和批量生成携带本集",
         });
         await click(button(view.container, "生成林夏"));
         expect(view.generatedEpisodes).toEqual(["episode-2"]);
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        expect(field(view.container, "角色参考图提示词").value).toBe("第二集模板");
+        expect(configurationReads).toContain("project-a:episode-2");
+        await click(button(view.container, "编辑林夏"));
+        const editor = view.container.querySelector('[aria-label="资产设定编辑器"]');
+        expect(editor?.getAttribute("data-episode")).toBe("episode-2");
+        expect(editor?.getAttribute("data-character-prompt")).toBe("第二集模板");
+        await click(button(view.container, "关闭资产设定"));
         await click(view.container.querySelector('[aria-label="选择本集全部角色"]')!);
         await click(button(view.container, "生成角色图片"));
         expect(batchChecks.at(-1)?.input.episodeId).toBe("episode-2");
@@ -1301,26 +1491,33 @@ test("主体管理切集读取对应配置且单图和批量生成携带本集",
     }
 });
 
-test("本集配置读取失败时暂停生成和方案编辑，重新读取后恢复", async () => {
+test("本集配置读取失败时暂停单图、批量生成和编辑，重新读取后恢复", async () => {
     resetFixture();
     configurationError = true;
     const view = await mount(summaryOf("project-a", 4));
     try {
         expect(view.container.textContent).toContain("本集配置读取失败");
         expect(button(view.container, "生成角色图片").disabled).toBe(true);
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        expect(view.container.querySelector('[aria-label="参考图方案"]')).toBeNull();
-        expect(episodeSettingsCalls).toHaveLength(0);
+        expect(field(view.container, "选择本集全部角色")).toHaveProperty("disabled", true);
+        expect(button(view.container, "生成林夏").disabled).toBe(true);
+        expect(button(view.container, "编辑林夏").disabled).toBe(true);
+        await click(button(view.container, "生成林夏"));
+        expect(view.generated).toEqual([]);
         configurationError = false;
         await click(button(view.container, "重新读取"));
         expect(view.container.textContent).not.toContain("本集配置读取失败");
-        expect(view.container.querySelector('[aria-label="参考图方案"]')).not.toBeNull();
+        expect(field(view.container, "选择本集全部角色")).toHaveProperty("disabled", false);
+        await click(field(view.container, "选择本集全部角色"));
+        await waitForQuote();
+        expect(button(view.container, "生成角色图片").disabled).toBe(false);
+        expect(button(view.container, "生成林夏").disabled).toBe(false);
+        expect(button(view.container, "编辑林夏").disabled).toBe(false);
     } finally {
         await view.dispose();
     }
 });
 
-test("新增名称参与离开保护，取消还原；旧方案弹层回调不能修改忙碌或新版本页面", async () => {
+test("新增名称参与离开保护，取消后恢复干净状态", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), []);
     try {
@@ -1331,24 +1528,199 @@ test("新增名称参与离开保护，取消还原；旧方案弹层回调不�
         expect(view.dirtyStates.at(-1)).toEqual([true, false]);
         await click(button(view.container, "取消"));
         expect(view.dirtyStates.at(-1)).toEqual([false, false]);
-        await click(view.container.querySelector(".drama-workflow-assets-scheme > summary")!);
-        const delayedChange = schemeCallbacks.at(-1)!;
-        await view.update({ busy: true });
-        await act(async () => {
-            delayedChange({ ...assets(), characterPrompt: "不该应用的旧弹层" });
-            await settle();
-        });
-        await view.update({ busy: false });
-        expect(field(view.container, "角色参考图提示词").value).toBe("角色提示");
-        await view.update({ summary: summaryOf("project-a", 5, { ...assets(), characterPrompt: "新版本角色提示" }) });
-        await act(async () => {
-            delayedChange({ ...assets(), characterPrompt: "更旧的弹层" });
-            await settle();
-        });
-        expect(field(view.container, "角色参考图提示词").value).toBe("新版本角色提示");
-        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
-        expect(settingsCalls).toHaveLength(0);
     } finally {
         await view.dispose();
     }
 });
+
+test("单集与资产库的角色快捷存库共用唯一控制器并传递真实角色", async () => {
+    for (const variant of ["episode", "library"] as const) {
+        resetFixture();
+        const cast = projectCast();
+        const view = await mount(summaryOf("project-a", 4), cast, { variant });
+        try {
+            await click(button(view.container, "将林夏加入角色库"));
+            expect(savedToLibrary).toHaveLength(1);
+            expect(savedToLibrary[0]).toBe(cast[0]);
+            const dialog = view.container.querySelector('[role="dialog"][aria-label="角色另存库"]');
+            expect(dialog?.getAttribute("data-cast")).toBe("hero");
+            expect(view.container.querySelectorAll("[data-asset-library-controller]")).toHaveLength(1);
+            expect(view.container.textContent).not.toContain("将旧宅加入角色库");
+            expect(view.container.textContent).not.toContain("将铜钥匙加入角色库");
+            expect(deleteCalls).toHaveLength(0);
+            expect(view.generated).toEqual([]);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("删除先确认且可取消，确认只提交目标ID与当前作品版本，在途冻结并防止重复提交", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 7));
+    try {
+        await click(button(view.container, "删除旧宅"));
+        let dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(dialog).not.toBeNull();
+        expect(dialog.textContent).toContain("从整个作品中移除此资产");
+        expect(deleteCalls).toHaveLength(0);
+        expect(view.dirtyStates.at(-1)).toEqual([false, true]);
+        expect(view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')?.disabled).toBe(true);
+        await click(button(dialog, "取消"));
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        expect(deleteCalls).toHaveLength(0);
+        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+        await click(button(view.container, "删除旧宅"));
+        dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 7 }]);
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        expect(button(dialog, "取消").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toHaveLength(1);
+        expect(view.changed).toEqual([]);
+        expect(notices.some((notice) => notice.kind === "success")).toBe(false);
+        await act(async () => {
+            pendingDeletes[0].resolve({ deleted: true, castId: "room" });
+            await settle();
+        });
+        expect(view.changed).toEqual(["project-a"]);
+        expect(notices.at(-1)).toEqual({ kind: "success", text: "已删除场景「旧宅」" });
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        expect(view.dirtyStates.at(-1)).toEqual([false, false]);
+        expect(view.generated).toEqual([]);
+        expect(createCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("删除引用冲突保留真实后端信息和原卡片，不误报成功或将业务冲突改写成版本提示", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    const conflict = "该资产仍被分镜引用，请先调整分镜";
+    try {
+        await click(button(view.container, "删除旧宅"));
+        const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        await click(button(dialog, "确认删除"));
+        await act(async () => {
+            pendingDeletes[0].reject(new ApiError(conflict, { status: 409, reason: "conflict" }));
+            await settle();
+        });
+        expect(notices.at(-1)).toEqual({ kind: "error", text: conflict });
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toBe(conflict);
+        expect(view.container.querySelector('[aria-label="scene:旧宅"]')).not.toBeNull();
+        expect(view.changed).toEqual([]);
+        expect(notices.some((notice) => notice.kind === "success" || notice.text.includes("作品已有更新"))).toBe(false);
+        expect(button(dialog, "确认删除").disabled).toBe(false);
+        expect(button(dialog, "取消").disabled).toBe(false);
+        await click(button(dialog, "取消"));
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        expect(deleteCalls).toHaveLength(1);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("删除确认中的作品版本或目标改变后禁用提交，不能用旧确认删除更新后的资产", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        await click(button(view.container, "删除旧宅"));
+        await view.update({ summary: summaryOf("project-a", 5) });
+        let dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("作品内容已更新");
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toHaveLength(0);
+        await click(button(dialog, "取消"));
+        await click(button(view.container, "删除旧宅"));
+        dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(button(dialog, "确认删除").disabled).toBe(false);
+        await view.update({ cast: projectCast().filter((item) => item.id !== "room") });
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toHaveLength(0);
+        expect(view.changed).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("新增草稿、打开编辑器、库草稿或页面忙碌时不能删除，取消修改后恢复", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        await click(button(view.container, "编辑林夏"));
+        await click(button(view.container, "删除旧宅"));
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        expect(notices.at(-1)).toEqual({ kind: "info", text: "请先保存或取消当前修改，再删除资产" });
+        await click(button(view.container, "关闭资产设定"));
+        await click(button(view.container, "新增角色"));
+        await edit(field(view.container, "资产名称"), "尚未保存的角色");
+        await click(button(view.container, "删除旧宅"));
+        expect(view.container.querySelector('[role="dialog"][aria-label="删除「旧宅」？"]')).toBeNull();
+        expect(field(view.container, "资产名称").value).toBe("尚未保存的角色");
+        await click(button(view.container, "取消"));
+        await click(button(view.container, "从角色库导入"));
+        await click(button(view.container, "修改角色导入"));
+        await click(button(view.container, "删除旧宅"));
+        expect(view.container.querySelector('[role="dialog"][aria-label="删除「旧宅」？"]')).toBeNull();
+        await click(button(view.container, "关闭角色库"));
+        await view.update({ busy: true });
+        expect(button(view.container, "删除旧宅").disabled).toBe(true);
+        await click(button(view.container, "删除旧宅"));
+        expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        await view.update({ busy: false });
+        await click(button(view.container, "删除旧宅"));
+        const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(dialog).not.toBeNull();
+        await view.update({ busy: true });
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toHaveLength(0);
+        expect(view.changed).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("跨作品、账号、集或卸载后隔离迟到的删除成功及失败，不能刷新新范围或弹旧消息", async () => {
+    for (const boundary of ["project", "account", "episode", "unmount"] as const) {
+        for (const outcome of ["success", "failure"] as const) {
+            resetFixture();
+            const view = await mount(summaryOf("project-a", 4));
+            let disposed = false;
+            try {
+                await click(button(view.container, "删除旧宅"));
+                const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+                await click(button(dialog, "确认删除"));
+                expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 4 }]);
+                if (boundary === "project") await view.update({ summary: summaryOf("project-b", 1), cast: [castOf("project-b", "other-room", "scene", "其他作品场景")] });
+                if (boundary === "account")
+                    await act(async () => {
+                        userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
+                        await settle();
+                    });
+                if (boundary === "episode") await view.update({ episodeId: "episode-2" });
+                if (boundary === "unmount") {
+                    await view.dispose();
+                    disposed = true;
+                }
+                const changedBefore = view.changed.length;
+                const noticesBefore = notices.length;
+                await act(async () => {
+                    if (outcome === "success") pendingDeletes[0].resolve({ deleted: true, castId: "room" });
+                    else pendingDeletes[0].reject(new ApiError("旧范围的删除冲突", { status: 409, reason: "conflict" }));
+                    await settle();
+                });
+                expect(view.changed.length).toBe(changedBefore);
+                expect(notices.slice(noticesBefore)).toEqual([]);
+                expect(view.container.querySelector('[role="dialog"][aria-label="删除「旧宅」？"]')).toBeNull();
+                expect(deleteCalls).toHaveLength(1);
+            } finally {
+                if (!disposed) await view.dispose();
+            }
+        }
+    }
+}, 20_000);

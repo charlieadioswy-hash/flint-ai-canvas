@@ -74,8 +74,17 @@ func (s *Service) ImportDramaCast(userID, projectID string, req ImportDramaCastR
 				return gorm.ErrRecordNotFound
 			}
 			if id == projectID {
-				if err := requireDramaGuideComplete(row); err != nil {
-					return err
+				if dramaGuideActive(row) {
+					if err := requireDramaGuideAssetEdit(row); err != nil {
+						return err
+					}
+					active, err := repo.DramaTextJobsActive(projectID)
+					if err != nil {
+						return err
+					}
+					if active {
+						return dramaGuideConflict("文字任务正在进行，请完成后再导入资产")
+					}
 				}
 				targetProduction = row
 			}

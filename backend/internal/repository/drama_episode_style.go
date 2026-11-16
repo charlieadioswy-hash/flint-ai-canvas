@@ -20,10 +20,26 @@ func (r *Repository) UpdateDramaEpisodeSettings(projectID, episodeID string, rev
 }
 
 func (r *Repository) DramaEpisodeSettingsBusy(projectID, episodeID string) (bool, error) {
+	return r.dramaSettingsBusy(projectID, episodeID)
+}
+
+func (r *Repository) DramaGenerationSettingsBusy(projectID string) (bool, error) {
+	return r.dramaSettingsBusy(projectID, "")
+}
+
+func (r *Repository) dramaSettingsBusy(projectID, episodeID string) (bool, error) {
 	statuses := []string{model.DramaMediaQueued, model.DramaMediaRunning}
-	for _, row := range []any{&model.DramaJob{}, &model.DramaShotMedia{}, &model.DramaStoryboardBoard{}} {
+	rows := []any{&model.DramaJob{}, &model.DramaShotMedia{}, &model.DramaStoryboardBoard{}}
+	if episodeID == "" {
+		rows = append(rows, &model.DramaCastView{})
+	}
+	for _, row := range rows {
 		var count int64
-		if err := r.db.Model(row).Where("project_id = ? AND episode_id = ? AND status IN ?", projectID, episodeID, statuses).Count(&count).Error; err != nil {
+		query := r.db.Model(row).Where("project_id = ? AND status IN ?", projectID, statuses)
+		if episodeID != "" {
+			query = query.Where("episode_id = ?", episodeID)
+		}
+		if err := query.Count(&count).Error; err != nil {
 			return false, err
 		}
 		if count > 0 {
@@ -31,11 +47,16 @@ func (r *Repository) DramaEpisodeSettingsBusy(projectID, episodeID string) (bool
 		}
 	}
 	for _, item := range []struct {
-		row   any
-		where string
-	}{{&model.DramaSegment{}, "episode_id = ? AND video_status IN ?"}, {&model.DramaCast{}, "image_episode_id = ? AND image_status IN ?"}} {
+		row          any
+		field        string
+		episodeField string
+	}{{&model.DramaSegment{}, "video_status", "episode_id"}, {&model.DramaCast{}, "image_status", "image_episode_id"}} {
 		var count int64
-		if err := r.db.Model(item.row).Where("project_id = ?", projectID).Where(item.where, episodeID, statuses).Count(&count).Error; err != nil {
+		query := r.db.Model(item.row).Where("project_id = ?", projectID).Where(item.field+" IN ?", statuses)
+		if episodeID != "" {
+			query = query.Where(item.episodeField+" = ?", episodeID)
+		}
+		if err := query.Count(&count).Error; err != nil {
 			return false, err
 		}
 		if count > 0 {

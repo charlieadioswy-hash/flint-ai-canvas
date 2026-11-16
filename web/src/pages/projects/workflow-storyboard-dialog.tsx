@@ -4,7 +4,6 @@ import { Button, Checkbox, Input, Select } from "antd";
 
 import { AssetLibraryPickerModal } from "@/components/assets/asset-library-picker-modal";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { formatDramaCredits } from "@/lib/drama/drama-format";
 import { getDrama, type DramaShot } from "@/services/api/drama";
 import type { DramaShotMediaAction, DramaShotMediaConfig } from "@/services/api/drama-shot-media";
 import {
@@ -14,10 +13,12 @@ import {
     getDramaStoryboard,
     listDramaStoryboards,
     preflightDramaStoryboard,
+    quoteDramaStoryboard,
     splitDramaStoryboard,
     type DramaStoryboard,
     type DramaStoryboardCell,
     type DramaStoryboardPreflight,
+    type DramaStoryboardCreate,
 } from "@/services/api/drama-storyboard";
 import { ApiError } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
@@ -25,11 +26,12 @@ import { useUserStore } from "@/stores/use-user-store";
 import { DramaModelPicker } from "./drama-model-picker";
 import { MediaThumb } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
+import { generationLabel } from "./workflow-generation";
 import "./workflow-storyboard.css";
 
 type Props = { open: boolean; projectId: string; shots: DramaShot[]; referenceResourceIds?: string[]; title?: string; onClose: () => void };
 type Quote = { boardId: string; preview: DramaStoryboardPreflight; request: DramaShotMediaAction; uncertain?: boolean };
-const STATUS: Record<string, string> = { draft: "待确认生成", queued: "排队中", running: "生成中", image_ready: "原图已就绪", split: "已裁切分图", failed: "生成失败", cancelled: "已取消", stale: "原稿已变化" };
+const STATUS: Record<string, string> = { draft: "待生成", queued: "排队中", running: "生成中", image_ready: "原图已就绪", split: "已裁切分图", failed: "生成失败", cancelled: "已取消", stale: "原稿已变化" };
 
 export function WorkflowStoryboardDialog(props: Props) {
     const userId = useUserStore((state) => state.user?.id || "");
@@ -58,13 +60,54 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [quote, setQuote] = useState<Quote>();
+    const [price, setPrice] = useState<{ key: string; preview: DramaStoryboardPreflight }>();
+    const [priceError, setPriceError] = useState<{ key: string; message: string }>();
+    const [pricing, setPricing] = useState("");
+    const [priceVersion, setPriceVersion] = useState(0);
     const [picker, setPicker] = useState(false);
     const locked = useRef(false);
+    const creation = useRef<{ key: string; request: DramaStoryboardCreate } | undefined>(undefined);
     const current = board.data;
     const disabled = Boolean(busy || quote?.uncertain);
     const [rows, columns] = grid.split("x").map(Number);
     const slots = rows * columns;
     const visibleHistory = (history.data || []).filter((item) => item.shotIds.every((id) => shots.some((shot) => shot.id === id)));
+    const savedPriceKey = (value: DramaStoryboard) => JSON.stringify([value.id, value.revision, shots]);
+    const draftKey = boardId && current ? savedPriceKey(current) : JSON.stringify([selected, rows, columns, config, shots]);
+    const displayedPrice = price?.key === draftKey ? price.preview : undefined;
+    const canGenerate = !boardId ? Boolean(config && selected.length && selected.length <= slots) : current?.status === "draft";
+
+    useEffect(() => {
+        if (!canGenerate || busy || quote?.uncertain) return;
+        let cancelled = false;
+        const controller = new AbortController();
+        const ticket = scope.capture();
+        setPricing(draftKey);
+        const timer = window.setTimeout(() => {
+            const request = boardId && current ? preflightDramaStoryboard(projectId, boardId, { expectedRevision: current.revision }) : quoteDramaStoryboard(projectId, { shotIds: selected, rows, columns, config: config! }, controller.signal);
+            void request
+                .then((preview) => {
+                    if (!cancelled && scope.isCurrent(ticket)) {
+                        setPrice({ key: draftKey, preview });
+                        setPriceError(undefined);
+                    }
+                })
+                .catch((reason) => {
+                    if (!cancelled && scope.isCurrent(ticket)) {
+                        setPrice(undefined);
+                        setPriceError({ key: draftKey, message: reason instanceof Error ? reason.message : "暂无法取得报价" });
+                    }
+                })
+                .finally(() => {
+                    if (!cancelled && scope.isCurrent(ticket)) setPricing("");
+                });
+        }, 300);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+            controller.abort();
+        };
+    }, [draftKey, canGenerate, busy, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
         if (summary.data && !config) {
@@ -101,31 +144,50 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
             if (scope.isCurrent(ticket)) setBusy("");
         }
     };
-    const preflight = () =>
-        run("preflight", async (ticket) => {
-            if (!config || selected.length === 0 || selected.length > slots) throw new Error("请选择宫格范围内的真实镜头");
-            const created = boardId ? current || (await getDramaStoryboard(projectId, boardId)) : await createDramaStoryboard(projectId, { clientOperationId: `storyboard-create:${crypto.randomUUID()}`, shotIds: selected, rows, columns, config });
-            if (!scope.isCurrent(ticket)) return;
-            accept(created);
-            const preview = await preflightDramaStoryboard(projectId, created.id, { expectedRevision: created.revision });
-            if (scope.isCurrent(ticket))
-                setQuote({ boardId: created.id, preview, request: { expectedRevision: preview.revision, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, clientOperationId: `storyboard-image:${crypto.randomUUID()}` } });
-        });
     const execute = () =>
         run("execute", async (ticket) => {
-            if (!quote?.preview.ready || !quote.preview.priced) return;
+            let submission = quote?.uncertain ? quote : undefined;
+            if (!submission) {
+                if (!canGenerate || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
+                let created = current;
+                if (!boardId) {
+                    if (!config) return;
+                    if (creation.current?.key !== draftKey) creation.current = { key: draftKey, request: { clientOperationId: `storyboard-create:${crypto.randomUUID()}`, shotIds: selected, rows, columns, config } };
+                    created = await createDramaStoryboard(projectId, creation.current.request);
+                    if (!scope.isCurrent(ticket)) return;
+                    accept(created);
+                }
+                if (!created) return;
+                const preview = await preflightDramaStoryboard(projectId, created.id, { expectedRevision: created.revision });
+                if (!scope.isCurrent(ticket)) return;
+                setPrice({ key: savedPriceKey(created), preview });
+                if (!preview.ready || !preview.priced || !preview.confirmationToken || preview.scopeHash !== displayedPrice.scopeHash || preview.amountMicrocredits !== displayedPrice.amountMicrocredits) {
+                    setNotice("费用或生成范围已更新，请查看生成按钮后再操作。故事板草稿已保存。");
+                    return;
+                }
+                submission = { boardId: created.id, preview, request: { expectedRevision: preview.revision, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, clientOperationId: `storyboard-image:${crypto.randomUUID()}` } };
+                setQuote(submission);
+            }
             try {
-                const task = await executeDramaStoryboard(projectId, quote.boardId, quote.request);
+                const task = await executeDramaStoryboard(projectId, submission.boardId, submission.request);
                 if (!scope.isCurrent(ticket)) return;
                 setNotice(`故事板已提交，${STATUS[task.status] || "请查看任务状态"}`);
                 setQuote(undefined);
+                setPrice(undefined);
+                client.setQueryData<DramaStoryboard>(["drama-storyboard", userId, projectId, submission.boardId], (previous) => (previous ? { ...previous, status: task.status, taskId: task.id } : previous));
             } catch (reason) {
                 const rejected = reason instanceof ApiError && [reason.status, reason.code].some((value) => value !== undefined && value >= 400 && value < 500 && value !== 408);
-                if (scope.isCurrent(ticket)) setQuote((previous) => (rejected ? undefined : previous ? { ...previous, uncertain: true } : previous));
+                if (scope.isCurrent(ticket)) {
+                    setQuote(rejected ? undefined : { ...submission, uncertain: true });
+                    if (rejected) {
+                        setPrice(undefined);
+                        setPriceVersion((value) => value + 1);
+                    }
+                }
                 throw reason;
             }
             try {
-                const latest = await getDramaStoryboard(projectId, quote.boardId);
+                const latest = await getDramaStoryboard(projectId, submission.boardId);
                 if (scope.isCurrent(ticket)) accept(latest);
             } catch {
                 if (scope.isCurrent(ticket)) setError("任务已提交，状态暂未刷新，请稍后刷新查看");
@@ -250,6 +312,7 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                                             <span>图片模型</span>
                                             <fieldset disabled={disabled} inert={disabled}>
                                                 <DramaModelPicker
+                                                    showPrice={false}
                                                     capability="image"
                                                     value={config.model}
                                                     aspectRatio={config.aspectRatio}
@@ -293,9 +356,6 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                                         <Button disabled={disabled || config.referenceResourceIds.length >= 20} onClick={() => setPicker(true)}>
                                             从资产库添加参考图
                                         </Button>
-                                        <Button type="primary" disabled={disabled || !selected.length} loading={busy === "preflight"} onClick={() => void preflight()}>
-                                            预检生成故事板
-                                        </Button>
                                     </>
                                 )}
                             </>
@@ -309,11 +369,6 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                                 </p>
                                 <pre className="drama-storyboard-prompt">{current.config.prompt}</pre>
                                 {current.error ? <p role="alert">{current.error}</p> : null}
-                                {current.status === "draft" && !quote ? (
-                                    <Button disabled={disabled} onClick={() => void preflight()}>
-                                        预检当前故事板
-                                    </Button>
-                                ) : null}
                                 {current.status === "image_ready" ? (
                                     <Button
                                         disabled={disabled}
@@ -334,17 +389,20 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                         ) : (
                             <p role="status">正在读取故事板…</p>
                         )}
-                        {quote ? (
-                            <div className="drama-storyboard-quote">
-                                <p>
-                                    {quote.preview.reason || "仅生成这张故事板原图"} · {quote.preview.priced ? `${quote.preview.estimated ? "预估" : "预计"} ${formatDramaCredits(quote.preview.amountMicrocredits)} 积分` : "暂无法报价"}
-                                </p>
-                                {quote.uncertain ? <p>回执未确认，核对会复用本次提交标识。</p> : null}
-                                <Button type="primary" disabled={Boolean(busy) || !quote.preview.ready || !quote.preview.priced} onClick={() => void execute()}>
-                                    {quote.uncertain ? "核对故事板提交" : "确认生成故事板"}
-                                </Button>
-                            </div>
+                        {!boardId || current?.status === "draft" || quote?.uncertain ? (
+                            <Button
+                                type="primary"
+                                disabled={Boolean(busy) || (!quote?.uncertain && (!canGenerate || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))}
+                                loading={busy === "execute"}
+                                onClick={() => void execute()}
+                            >
+                                {quote?.uncertain ? "核对故事板提交" : generationLabel("生成图片", displayedPrice, canGenerate && pricing === draftKey)}
+                            </Button>
                         ) : null}
+                        {!boardId && !selected.length ? <p role="status">请选择至少一个镜头。</p> : null}
+                        {quote?.uncertain ? <p role="status">回执未确认，核对会复用本次提交标识。</p> : null}
+                        {displayedPrice && (!displayedPrice.ready || !displayedPrice.priced) ? <p role="status">{displayedPrice.reason || "当前参数暂无法取得报价，请调整配置。"}</p> : null}
+                        {priceError?.key === draftKey ? <p role="alert">{priceError.message}</p> : null}
                     </section>
                     <section className="drama-storyboard-output" aria-label="故事板原图与真实裁片">
                         {current?.resourceId ? (
@@ -353,7 +411,7 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                                 <MediaThumb resourceId={current.resourceId} alt="故事板原图" />
                             </>
                         ) : (
-                            <p className="text-muted-foreground">确认生成后在这里查看原图和独立分图</p>
+                            <p className="text-muted-foreground">生成后在这里查看原图和独立分图</p>
                         )}
                         {current?.cells.length ? (
                             <div className="drama-storyboard-grid" style={{ gridTemplateColumns: `repeat(${current.columns}, minmax(0, 1fr))` }}>

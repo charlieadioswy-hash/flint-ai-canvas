@@ -25,7 +25,7 @@ type DramaCharacterUsage struct {
 	ImageReferences []DramaCharacterSegmentReference `json:"imageReferences"`
 }
 
-// 出镜只依据镜头的角色/造型 ID；段参考图及音频引用独立列出，不按正文提及推断出镜。
+// 出镜只依据镜头中相应类型的资产 ID；段参考图及音频引用独立列出，不按正文提及推断出镜。
 func (s *Service) DramaCharacterUsage(userID, projectID, castID string) (DramaCharacterUsage, error) {
 	result := DramaCharacterUsage{Appearances: []DramaCharacterAppearance{}, AudioReferences: []DramaCharacterSegmentReference{}, ImageReferences: []DramaCharacterSegmentReference{}}
 	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
@@ -35,8 +35,8 @@ func (s *Service) DramaCharacterUsage(userID, projectID, castID string) (DramaCh
 	if err != nil {
 		return result, dramaLookupError(err)
 	}
-	if err := requireDramaCharacterBase(cast, nil); err != nil {
-		return result, err
+	if cast.ParentID != "" || !validDramaCastKind(cast.Kind) {
+		return result, BadAuthRequest("此操作只支持基础角色、场景或道具，请从所属基础资产进入")
 	}
 	casts, err := s.repo.DramaCasts(projectID)
 	if err != nil {
@@ -44,7 +44,7 @@ func (s *Service) DramaCharacterUsage(userID, projectID, castID string) (DramaCh
 	}
 	ids := []string{cast.ID}
 	for _, row := range casts {
-		if row.ParentID == cast.ID && row.Kind == "character" {
+		if cast.Kind == "character" && row.ParentID == cast.ID && row.Kind == "character" {
 			ids = append(ids, row.ID)
 		}
 	}
@@ -67,7 +67,16 @@ func (s *Service) DramaCharacterUsage(userID, projectID, castID string) (DramaCh
 	}
 	for _, episode := range episodes {
 		for _, shot := range shots {
-			if shot.EpisodeID == episode.ID && (contains(shot.CastIDsJSON) || contains(shot.LookCastIDsJSON)) {
+			visible := false
+			switch cast.Kind {
+			case "character":
+				visible = contains(shot.CastIDsJSON) || contains(shot.LookCastIDsJSON)
+			case "scene":
+				visible = shot.SceneCastID == cast.ID
+			case "prop":
+				visible = contains(shot.PropIDsJSON)
+			}
+			if shot.EpisodeID == episode.ID && visible {
 				result.Appearances = append(result.Appearances, DramaCharacterAppearance{EpisodeID: episode.ID, EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, ShotID: shot.ID, Position: shot.Position, SegmentIndex: shot.SegmentIndex})
 			}
 		}

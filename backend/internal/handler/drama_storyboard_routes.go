@@ -16,6 +16,13 @@ func registerDramaStoryboardRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.CreateDramaStoryboard(userID, c.Param("id"), req)
 	}))
+	r.POST("/dramas/:id/storyboards/quote", dramaRoute(svc, 256<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaStoryboardCreateRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.QuoteDramaStoryboard(userID, c.Param("id"), req)
+	}))
 	const path = "/dramas/:id/storyboards/:boardId"
 	r.GET(path, dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.DramaStoryboard(userID, c.Param("id"), c.Param("boardId"))

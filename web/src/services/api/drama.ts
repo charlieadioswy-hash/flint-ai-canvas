@@ -11,6 +11,7 @@ export type DramaStudioActionRequest = {
     targetRevision?: number;
     baseRevision?: number;
     videoModel?: DramaModelChoice;
+    castDraft?: { name?: string; appearance?: string; imagePrompt?: string; imageStyleId?: string; imageStyleName?: string; imageStylePrompt?: string; imageOptions?: DramaCastImageOptions; unlock?: boolean };
     confirmationToken?: string;
 };
 
@@ -25,6 +26,7 @@ export type DramaStudioActionPreflight = {
     reason?: string;
     message: string;
     confirmationToken: string;
+    scopeHash?: string;
     missingCasts: { id: string; name: string }[];
     warnings: string[];
     canUseText: boolean;
@@ -48,6 +50,9 @@ export type DramaStudioBatchRequest = {
     videoModel?: DramaModelChoice;
     baseRevision?: number;
     confirmationToken?: string;
+    regenerate?: boolean;
+    restyleSegments?: boolean;
+    castDrafts?: Record<string, NonNullable<DramaStudioActionRequest["castDraft"]>>;
 };
 export type DramaStudioBatchItem = {
     targetId: string;
@@ -56,6 +61,8 @@ export type DramaStudioBatchItem = {
     episodeId?: string;
     segmentIndex?: number;
     targetRevision: number;
+    resultVersion?: number;
+    resultResourceId?: string;
     sourceTargetIds?: string[];
     status: DramaStudioBatchStatus;
     reason?: string;
@@ -71,6 +78,7 @@ export type DramaStudioBatchView = {
     ready: boolean;
     reason?: string;
     confirmationToken: string;
+    scopeHash?: string;
     amountMicrocredits: number;
     priced: boolean;
     items: DramaStudioBatchItem[];
@@ -150,12 +158,33 @@ export type UpdateDramaEpisodeStyleRequest = {
     settings: DramaSettings;
 };
 
-export function getDramaEpisodeStyle(projectId: string, episodeId: string, signal?: AbortSignal) {
-    return http.get<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, { signal });
+function requireDramaEpisodeStyle(view: DramaEpisodeStyle) {
+    const settings = view?.settings;
+    const isRecord = (value: unknown) => value !== null && typeof value === "object" && !Array.isArray(value);
+    if (
+        !isRecord(settings) ||
+        typeof settings.styleName !== "string" ||
+        typeof settings.stylePrompt !== "string" ||
+        !isRecord(settings.models) ||
+        !isRecord(settings.models.text) ||
+        !isRecord(settings.models.image) ||
+        !isRecord(settings.models.video) ||
+        !isRecord(settings.assets) ||
+        typeof settings.assets.characterPrompt !== "string" ||
+        typeof settings.assets.scenePrompt !== "string" ||
+        !isRecord(settings.storyboard)
+    ) {
+        throw new Error("本集配置读取不完整，请更新服务后刷新页面。");
+    }
+    return view;
 }
 
-export function updateDramaEpisodeStyle(projectId: string, episodeId: string, input: UpdateDramaEpisodeStyleRequest) {
-    return http.patch<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, input);
+export async function getDramaEpisodeStyle(projectId: string, episodeId: string, signal?: AbortSignal) {
+    return requireDramaEpisodeStyle(await http.get<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, { signal }));
+}
+
+export async function updateDramaEpisodeStyle(projectId: string, episodeId: string, input: UpdateDramaEpisodeStyleRequest) {
+    return requireDramaEpisodeStyle(await http.patch<DramaEpisodeStyle>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/style`, input));
 }
 
 export function getDramaSettingsImpact(projectId: string, signal?: AbortSignal) {
@@ -387,6 +416,7 @@ export type DramaInboxItem = {
     title: string;
     detail: string;
     episodeId?: string;
+    segmentId?: string;
     castId?: string;
     castKind?: DramaCastKind;
     episodeNumber?: number;
@@ -781,7 +811,16 @@ export function getDrama(projectId: string, signal?: AbortSignal) {
     return http.get<DramaSummary>(base(projectId), { signal });
 }
 
-export function updateDramaSettings(projectId: string, input: { settings?: DramaSettings; budgetMicrocredits?: number; guideConversationId?: string; expectedRevision?: number }) {
+export type DramaGenerationConfigurationPatch = {
+    assets?: DramaAssetSettings;
+    models?: Partial<Pick<DramaModels, "image" | "video" | "characterImage" | "propImage" | "sceneImage">>;
+    aspectRatio?: string;
+    videoResolution?: string;
+    videoContinuity?: DramaVideoContinuity;
+    referenceLimit?: number;
+};
+
+export function updateDramaSettings(projectId: string, input: { settings?: DramaSettings; generation?: DramaGenerationConfigurationPatch; budgetMicrocredits?: number; guideConversationId?: string; expectedRevision?: number }) {
     return http.patch<DramaSummary>(`${base(projectId)}/settings`, input);
 }
 

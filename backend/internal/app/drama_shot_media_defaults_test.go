@@ -2,7 +2,6 @@ package app
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -57,7 +56,7 @@ func TestDramaShotMediaDefaultsUseSelectedLookAndOwnedReadyReferences(t *testing
 			if err != nil || view.ID != "" || view.Config.Operation != "reference_to_video" || !slices.Equal(view.Config.ReferenceResourceIDs, []string{"ref-two", "prop-image", "scene-image"}) || view.Config.FirstFrameResourceID != "" {
 				t.Fatalf("mode defaults = %+v, %v", view, err)
 			}
-			if _, err := s.normalizeDramaShotMediaConfig(s.repo, "user", "video", view.Config); err != nil {
+			if _, err := s.normalizeDramaShotMediaConfig(s.repo, "user", "drama-project", "video", view.Config); err != nil {
 				t.Fatalf("default references must be saveable: %v", err)
 			}
 			p, _ := s.repo.DramaProduction("drama-project")
@@ -117,10 +116,7 @@ func TestDramaShotMediaDefaultsUseCurrentShotImageForStoryboardModes(t *testing.
 					if view.Config.Operation != "image_to_video" || view.Config.FirstFrameResourceID != "" {
 						t.Fatalf("invalid image must not change selected mode: %+v", view.Config)
 					}
-					zero := int64(0)
-					if _, err := s.SaveDramaShotMedia("user", shot.ProjectID, shot.ID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &zero, Config: view.Config}); err == nil || !strings.Contains(err.Error(), "需要参考图片或首尾帧") {
-						t.Fatalf("image modes without adopted image must require explicit correction: %v", err)
-					}
+					assertIncompleteShotMediaDefaultsSaveAndBlock(t, s, db, shot.ProjectID, shot.ID, view.Config)
 				}
 			})
 		}
@@ -146,8 +142,32 @@ func TestDramaShotMediaDefaultsDoNotReplaceSavedConfigOrSilentlyDropMode(t *test
 	if err != nil || view.Config.Operation != "reference_to_video" || len(view.Config.ReferenceResourceIDs) != 0 {
 		t.Fatalf("missing references must retain selected mode: %+v, %v", view.Config, err)
 	}
+	assertIncompleteShotMediaDefaultsSaveAndBlock(t, s, db, "drama-project", "real-shot", view.Config)
+}
+
+func assertIncompleteShotMediaDefaultsSaveAndBlock(t *testing.T, s *Service, db *gorm.DB, projectID, shotID string, config DramaShotMediaConfig) {
+	t.Helper()
 	zero := int64(0)
-	if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &zero, Config: view.Config}); err == nil || !strings.Contains(err.Error(), "需要参考图片") {
-		t.Fatalf("reference mode without images must require explicit correction: %v", err)
+	saved, err := s.SaveDramaShotMedia("user", projectID, shotID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &zero, Config: config})
+	if err != nil || saved.Config.Operation != config.Operation || len(dramaShotMediaReferenceIDs(saved.Config)) != 0 {
+		t.Fatalf("missing images must preserve a saveable incomplete mode: %+v, %v", saved.Config, err)
+	}
+	quote, err := s.QuoteDramaShotMedia("user", projectID, shotID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: saved.Config})
+	if err != nil || quote.Ready || quote.Priced || quote.ConfirmationToken != "" || quote.Reason != "所选视频模式需要参考图片或首尾帧" {
+		t.Fatalf("missing images must block draft quote: %+v, %v", quote, err)
+	}
+	preflight, err := s.PreflightDramaShotMedia("user", projectID, shotID, "video", DramaShotMediaActionRequest{ExpectedRevision: &saved.Revision})
+	if err != nil || preflight.Ready || preflight.Priced || preflight.ConfirmationToken != "" || preflight.Reason != quote.Reason {
+		t.Fatalf("missing images must block saved preflight: %+v, %v", preflight, err)
+	}
+	for _, entity := range []any{&model.Task{}, &model.BillingOrder{}, &model.DramaTake{}} {
+		var count int64
+		if err := db.Model(entity).Count(&count).Error; err != nil || count != 0 {
+			t.Fatalf("incomplete mode created %T: %d, %v", entity, count, err)
+		}
+	}
+	var wallet model.CreditAccount
+	if err := db.First(&wallet, "user_id = ?", "user").Error; err != nil || wallet.AvailableMicrocredits != 10000 || wallet.ReservedMicrocredits != 0 {
+		t.Fatalf("incomplete mode charged credits: %+v, %v", wallet, err)
 	}
 }

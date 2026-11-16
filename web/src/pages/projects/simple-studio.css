@@ -1,33 +1,70 @@
 .drama-project-topbar {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    flex-direction: column;
+    gap: var(--space-1);
     min-width: 0;
     width: 100%;
     color: var(--foreground);
 }
-.drama-project-topbar h1 {
-    flex: 0 1 auto;
+.drama-project-topbar-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     min-width: 0;
+    min-height: var(--space-8);
+}
+.drama-project-topbar h1 {
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-label);
+    font-size: var(--fs-ui);
     font-weight: 600;
 }
 .drama-project-mode {
     flex: none;
     color: var(--muted-foreground);
     font-size: var(--fs-tiny);
+    white-space: nowrap;
 }
 .drama-project-topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
     margin-left: auto;
     flex: none;
 }
-.drama-project-topbar.has-controls h1 {
-    max-width: clamp(120px, 18vw, 280px);
+.drama-project-back,
+.drama-project-topbar-actions .ant-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    gap: var(--space-2);
+    height: var(--space-8);
+    padding-inline: var(--space-2);
+    border-radius: var(--button-radius);
+    color: var(--button-ghost-fg);
+    font-size: var(--fs-ui);
+    font-weight: var(--button-font-weight);
 }
-.drama-project-topbar.has-controls > a {
+.drama-project-back {
+    width: var(--space-8);
+}
+.drama-project-back:hover {
+    background: var(--button-ghost-hover-bg);
+    color: var(--button-ghost-hover-fg);
+}
+.drama-project-back:focus-visible {
+    outline: var(--focus-ring-width) solid var(--ring);
+    outline-offset: 2px;
+}
+.drama-project-back > svg,
+.drama-project-topbar-actions .ant-btn .lucide {
+    width: var(--button-icon-size);
+    height: var(--button-icon-size);
     flex: none;
 }
 .drama-project-topbar-controls {
@@ -35,7 +72,8 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-    flex: 0 0 auto;
+    width: 100%;
+    overflow: hidden;
 }
 .drama-project-topbar-controls h2 {
     flex: none;
@@ -90,36 +128,6 @@
 }
 .drama-simple-filters > button {
     flex: none;
-}
-@container drama-project-header (max-width: 760px) {
-    .drama-project-topbar.has-controls {
-        flex-wrap: wrap;
-    }
-    .drama-project-topbar.has-controls h1 {
-        flex: 1 1 0;
-    }
-    .drama-project-topbar-controls {
-        order: 1;
-        flex: 1 0 100%;
-    }
-    .drama-simple-filters {
-        flex: 1;
-    }
-    .drama-simple-filters .drama-simple-episode-filter {
-        flex: 0 1 160px;
-        min-width: 0;
-    }
-    .drama-simple-filters .drama-simple-status-filter {
-        flex: 0 0 112px;
-    }
-}
-@container drama-project-header (max-width: 280px) {
-    .drama-project-topbar-controls {
-        flex-wrap: wrap;
-    }
-    .drama-simple-filters {
-        flex-basis: 100%;
-    }
 }
 .drama-simple-episode {
     margin-bottom: var(--space-7);

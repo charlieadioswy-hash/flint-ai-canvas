@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaEpisodeDetail, DramaModelChoice, DramaModelOption, DramaSettings, DramaShot, DramaSummary } from "@/services/api/drama";
+import type { DramaEpisodeDetail, DramaGenerationConfigurationPatch, DramaModelChoice, DramaModelOption, DramaSettings, DramaShot, DramaSummary } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/p?step=story" });
 for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, HTMLElement: browser.HTMLElement, Element: browser.Element, Node: browser.Node, Event: browser.Event, IS_REACT_ACT_ENVIRONMENT: true }))
@@ -11,6 +11,16 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const userStore = create(() => ({ user: { id: "user" } }));
+mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
+    DramaMediaActionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    DramaMediaEpisodeScope: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    useDramaMediaContext: () => null,
+    QuotedMediaButton: ({ label, onClick, disabled, title, "aria-label": ariaLabel }: { label: string; onClick?: () => void; disabled?: boolean; title?: string; "aria-label"?: string }) => (
+        <button disabled={disabled} onClick={onClick} title={title} aria-label={ariaLabel}>
+            {label}
+        </button>
+    ),
+}));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("antd", () => ({
     App: { useApp: () => ({ message: { error: () => undefined } }) },
@@ -71,14 +81,37 @@ mock.module("@/pages/projects/drama-model-picker", () => ({
                 ))}
             </select>
         ) : (
-            <button>模型选择</button>
+            <button aria-label={`选择分镜${capability === "image" ? "图片" : "视频"}模型`} onClick={() => onChange({ modelKey: `${capability}-new` })}>
+                模型选择
+            </button>
         ),
 }));
 const inserted: string[] = [];
+const generationWrites: Array<{ expectedRevision?: number; generation?: DramaGenerationConfigurationPatch }> = [];
+let generationFailure = false;
+let generationHold: Promise<void> | undefined;
+let generationBase: DramaSummary | undefined;
 mock.module("@/services/api/drama", () => ({
     insertDramaShot: async (_projectId: string, shotId: string) => {
         inserted.push(shotId);
         return { shot: { ...shots[0], id: "inserted", position: 3 } };
+    },
+    updateDramaSettings: async (_projectId: string, input: { expectedRevision?: number; generation?: DramaGenerationConfigurationPatch }) => {
+        generationWrites.push(structuredClone(input));
+        await generationHold;
+        if (generationFailure) throw new Error("生成配置写入失败");
+        const current = generationBase || summary;
+        const { models, ...patch } = input.generation!;
+        const saved = {
+            ...current,
+            production: {
+                ...current.production,
+                revision: input.expectedRevision! + 1,
+                settings: { ...current.production.settings, ...patch, videoResolution: patch.videoResolution || undefined, models: { ...current.production.settings.models, ...models } },
+            },
+        };
+        generationBase = saved;
+        return saved;
     },
 }));
 const mediaStates = new Map<string, { status: string; resourceId?: string }>();
@@ -124,6 +157,7 @@ async function mount(content: ReactNode) {
     await act(settle);
     return {
         host,
+        client,
         render: async (content: ReactNode) => {
             await act(async () => {
                 root.render(<QueryClientProvider client={client}>{content}</QueryClientProvider>);
@@ -145,6 +179,15 @@ async function click(host: HTMLElement, label: string) {
         await settle();
     });
 }
+async function choose(host: HTMLElement, label: string, value: string) {
+    await act(async () => {
+        const select = host.querySelector<HTMLSelectElement>(`[aria-label='${label}']`)!;
+        select.value = value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        await settle();
+    });
+}
+const waitGeneration = () => act(async () => new Promise((resolve) => setTimeout(resolve, 400)));
 
 test("按真实段导航，段内跨场景仍显示完整镜头，新增定位本段最后镜头", async () => {
     const opened: Array<[string, string | undefined]> = [];
@@ -520,6 +563,7 @@ test("分镜模式更换视频模型协调分辨率与衔接，保留比例并�
         expect(view.host.textContent).toContain("不支持 16:9 画幅");
         expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!.disabled).toBe(true);
         await choose("分镜视频与生图比例", "9:16");
+        await waitGeneration();
         await click(view.host, "确认并进入漫剧分镜");
         expect(saved).toHaveLength(1);
         expect(saved[0]).toMatchObject({ aspectRatio: "9:16", videoContinuity: "parallel", models: { video: { logicalModelId: "new" } } });
@@ -527,5 +571,126 @@ test("分镜模式更换视频模型协调分辨率与衔接，保留比例并�
     } finally {
         await view.close();
         catalogVideoOptions = [];
+    }
+});
+
+test("模式窗口的图片与视频配置自动生效，模式与镜头数量仍待确认", async () => {
+    generationWrites.length = 0;
+    const saved: DramaSettings[] = [];
+    const view = await mount(
+        <WorkflowModeDialog
+            open
+            summary={summary}
+            onCancel={() => undefined}
+            onConfirm={(value) => {
+                saved.push(value);
+            }}
+        />,
+    );
+    try {
+        await act(async () => {
+            view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label='分镜生成默认模式'] button")[3].click();
+            await settle();
+        });
+        await choose(view.host, "分镜数量方式", "custom");
+        await click(view.host, "选择分镜图片模型");
+        await choose(view.host, "分镜视频与生图比例", "9:16");
+        await choose(view.host, "分镜视频衔接", "parallel");
+        await waitGeneration();
+        expect(generationWrites).toHaveLength(1);
+        expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: { modelKey: "image-new" }, video: settings.models.video }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
+        expect(saved).toHaveLength(0);
+        expect(view.host.textContent).not.toContain("作品设置已有更新");
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(saved).toHaveLength(1);
+        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "storyboard", directorTemplate: "storyboard_detail", targetShotCount: 24 }, models: { image: { modelKey: "image-new" } }, aspectRatio: "9:16" });
+    } finally {
+        await view.close();
+    }
+});
+
+test("取消模式选择会先同步已改媒体配置，不确认模式或生成", async () => {
+    generationWrites.length = 0;
+    let cancels = 0;
+    const saved: DramaSettings[] = [];
+    const view = await mount(
+        <WorkflowModeDialog
+            open
+            summary={summary}
+            onCancel={() => {
+                cancels++;
+            }}
+            onConfirm={(value) => {
+                saved.push(value);
+            }}
+        />,
+    );
+    try {
+        await choose(view.host, "分镜视频与生图比例", "9:16");
+        await click(view.host, "取消");
+        expect(generationWrites).toHaveLength(1);
+        expect(generationWrites[0].generation?.aspectRatio).toBe("9:16");
+        expect(cancels).toBe(1);
+        expect(saved).toHaveLength(0);
+    } finally {
+        await view.close();
+    }
+});
+
+test("模式窗口自动同步失败保留配置，可原位重试", async () => {
+    generationWrites.length = 0;
+    generationFailure = true;
+    const view = await mount(<WorkflowModeDialog open summary={summary} onCancel={() => undefined} onConfirm={() => undefined} />);
+    try {
+        await choose(view.host, "分镜视频衔接", "parallel");
+        await waitGeneration();
+        expect(view.host.textContent).toContain("生成配置写入失败");
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频衔接']")!.value).toBe("parallel");
+        await waitGeneration();
+        expect(generationWrites).toHaveLength(1);
+        generationFailure = false;
+        await click(view.host, "重新应用生成配置");
+        expect(generationWrites).toHaveLength(2);
+        expect(view.host.textContent).not.toContain("生成配置写入失败");
+    } finally {
+        generationFailure = false;
+        await view.close();
+    }
+});
+
+test("模式窗口配置回执晚于其他更新时不覆盖更新，关闭后可重进", async () => {
+    generationWrites.length = 0;
+    let finish!: () => void;
+    generationHold = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    let cancels = 0;
+    const content = (value: DramaSummary) => (
+        <WorkflowModeDialog
+            open
+            summary={value}
+            onCancel={() => {
+                cancels++;
+            }}
+            onConfirm={() => undefined}
+        />
+    );
+    const view = await mount(content(summary));
+    try {
+        await choose(view.host, "分镜视频衔接", "parallel");
+        await waitGeneration();
+        const newer = { ...summary, production: { ...summary.production, revision: 4 } };
+        await view.render(content(newer));
+        await act(async () => {
+            finish();
+            await settle();
+        });
+        expect(view.host.textContent).toContain("作品设置已有更新");
+        await click(view.host, "取消");
+        expect(cancels).toBe(1);
+    } finally {
+        finish();
+        generationHold = undefined;
+        await view.close();
     }
 });

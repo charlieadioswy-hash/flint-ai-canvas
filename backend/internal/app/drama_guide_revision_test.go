@@ -105,7 +105,7 @@ func TestDramaGuideShotNoopUsesSharedRevision(t *testing.T) {
 	}
 }
 
-func TestDramaGuideCompletedRejectsVersionedTextEdits(t *testing.T) {
+func TestDramaGuideCompletedRejectsStaleVersionedTextEdits(t *testing.T) {
 	fixture := newDramaGuideRevisionFixture(t, model.DramaGuideCompleted)
 	projectID := fixture.summary.Project.ID
 	revision := fixture.summary.Production.Revision
@@ -137,7 +137,7 @@ func TestDramaGuideCompletedRejectsVersionedTextEdits(t *testing.T) {
 			return err
 		}},
 		{name: "setup", edit: func() error {
-			_, err := fixture.svc.UpdateDramaSettings("usr-drama", projectID, UpdateDramaSettingsRequest{ExpectedRevision: &revision, Settings: &settings})
+			_, err := fixture.svc.UpdateDramaSettings("usr-drama", projectID, UpdateDramaSettingsRequest{ExpectedRevision: &staleRevision, Settings: &settings})
 			return err
 		}},
 	} {

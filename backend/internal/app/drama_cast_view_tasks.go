@@ -20,12 +20,42 @@ func (s *Service) PreflightDramaCastView(userID, projectID, castID, viewID strin
 	return plan.view, dramaCastViewError(err)
 }
 
+func (s *Service) QuoteDramaCastViewDraft(userID, projectID, castID, viewID string, req DramaCastViewSaveRequest) (DramaCastViewPreflight, error) {
+	if err := s.dramaCastViewScope(userID, projectID, castID); err != nil {
+		return DramaCastViewPreflight{}, err
+	}
+	if req.ExpectedRevision == nil || req.ExpectedCastRevision == nil || req.ViewRevision == nil {
+		return DramaCastViewPreflight{}, BadAuthRequest("请提供作品、资产和视图版本")
+	}
+	plan, err := s.prepareDramaCastViewWithDraft(s.repo, userID, projectID, castID, viewID, DramaCastViewActionRequest{EpisodeID: req.EpisodeID, ExpectedRevision: req.ExpectedRevision, ViewRevision: req.ViewRevision}, &req.Config, req.ExpectedCastRevision)
+	plan.view.ConfirmationToken = ""
+	return plan.view, dramaCastViewError(err)
+}
+
 func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, projectID, castID, viewID string, req DramaCastViewActionRequest) (dramaCastViewPlan, error) {
+	return s.prepareDramaCastViewWithDraft(repo, userID, projectID, castID, viewID, req, nil, nil)
+}
+
+func (s *Service) prepareDramaCastViewWithDraft(repo *repository.Repository, userID, projectID, castID, viewID string, req DramaCastViewActionRequest, draft *DramaCastViewConfig, expectedCastRevision *int64) (dramaCastViewPlan, error) {
 	req.EpisodeID = strings.TrimSpace(req.EpisodeID)
 	plan := dramaCastViewPlan{}
-	row, err := repo.DramaCastView(projectID, castID, viewID)
-	if err != nil {
-		return plan, err
+	row := &model.DramaCastView{ProjectID: projectID, CastID: castID}
+	if viewID != "" {
+		stored, err := repo.DramaCastView(projectID, castID, viewID)
+		if err != nil {
+			return plan, err
+		}
+		row = stored
+	} else if draft == nil {
+		return plan, BadAuthRequest("请先保存视图配置")
+	}
+	if draft != nil {
+		config, err := normalizeDramaCastViewConfig(*draft)
+		if err != nil {
+			return plan, err
+		}
+		encoded, _ := json.Marshal(config)
+		row.ConfigJSON = string(encoded)
 	}
 	cast, err := repo.DramaCast(projectID, castID)
 	if err != nil {
@@ -40,10 +70,19 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 	if err != nil {
 		return plan, err
 	}
-	if req.ExpectedRevision != nil && *req.ExpectedRevision != p.Revision || req.ViewRevision != nil && *req.ViewRevision != row.Revision {
+	if req.ExpectedRevision != nil && *req.ExpectedRevision != p.Revision || req.ViewRevision != nil && *req.ViewRevision != row.Revision || expectedCastRevision != nil && *expectedCastRevision != cast.Revision {
 		return plan, repository.ErrDramaCastViewChanged
 	}
 	block := func(reason string) (dramaCastViewPlan, error) { plan.view.Reason = reason; return plan, nil }
+	if viewID == "" {
+		rows, err := repo.DramaCastViews(projectID, castID)
+		if err != nil {
+			return plan, err
+		}
+		if len(rows) >= 24 {
+			return block("每项资产最多 24 个独立视图")
+		}
+	}
 	if dramaGuideActive(p) && p.GuideStep != model.DramaGuideAssets && p.GuideStep != model.DramaGuideStory {
 		return block("请先确认基础配置并提取资产文字")
 	}
@@ -163,6 +202,7 @@ func (s *Service) prepareDramaCastView(repo *repository.Repository, userID, proj
 		}
 	}
 	plan.view.Ready = true
+	plan.view.ScopeHash = dramaCastViewDigest([]any{projectID, castID, req.EpisodeID, plan.sourceHash, image.Choice, image.Options, prompt, plan.resourceIDs, intent})
 	plan.view.ConfirmationToken = dramaCastViewDigest([]any{projectID, cast, row, p.Revision, p.GuideStep, req.EpisodeID, plan.sourceHash, image.Options, prompt, plan.resourceIDs, intent, quote})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_image", Operation: image.Intent.Operation, Prompt: prompt, LogicalModelID: image.Choice.LogicalModelID, Model: image.Choice.ModelKey, Input: requestInput}
 	return plan, nil

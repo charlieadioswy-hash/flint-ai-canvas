@@ -23,6 +23,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 	if req.GuideConversationID != nil {
 		return DramaSummary{}, dramaAgentRetired()
 	}
+	if req.Generation != nil {
+		return s.updateDramaGenerationSettings(userID, projectID, req)
+	}
 	_, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return DramaSummary{}, err
@@ -112,7 +115,7 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			if err != nil {
 				return err
 			}
-			if req.Settings != nil && req.ExpectedRevision != nil && current.GuideStep != "" && current.GuideStep != model.DramaGuideConfiguring {
+			if req.Settings != nil && req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision {
 				return repository.ErrDramaGuideChanged
 			}
 			if dramaGuideActive(current) {
@@ -136,6 +139,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			if req.Settings != nil {
 				if err := finalizeDramaInitialSettings(tx, current, parseDramaSettings(fields["settings_json"].(string)), fields); err != nil {
 					return err
+				}
+				if req.ExpectedRevision != nil {
+					return tx.UpdateDramaGuideIf(projectID, current.Revision, current.GuideStep, fields)
 				}
 			}
 			return tx.UpdateDramaProduction(projectID, fields)

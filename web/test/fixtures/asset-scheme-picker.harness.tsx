@@ -168,16 +168,15 @@ test("选择模板传递对应全文与画幅，竖板9比16，其余16比9且�
     }
 });
 
-test("已修改的提示词切模板先确认，确认前保留草稿，自定义入口保留全文与画幅", async () => {
+test("已修改的提示词选模板立即应用，无需确认，自定义入口保留全文与画幅", async () => {
     const initial = { ...defaultAssetSettings(catalog)!, characterPrompt: "人工修改的角色约束", sourceSkillId: "old-skill", sourceSkillName: "旧约束" };
     const view = await mount(initial);
     try {
         await choose(view.container, "closeup_fullbody");
-        expect(view.changes).toHaveLength(0);
-        expect(view.value()).toEqual(initial);
-        expect(confirmations).toHaveLength(1);
-        await call(() => confirmations[0].onOk());
-        expect(view.value().mode).toBe("closeup_fullbody");
+        expect(view.changes).toHaveLength(1);
+        expect(confirmations).toHaveLength(0);
+        const selected = catalog.schemes.find((scheme) => scheme.mode === "closeup_fullbody")!;
+        expect(view.value()).toMatchObject({ mode: selected.mode, characterPrompt: selected.characterPrompt, characterRatio: selected.ratio, scenePrompt: initial.scenePrompt });
         expect(view.value().sourceSkillId).toBeUndefined();
         const before = view.value();
         const custom = Array.from(view.container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "自定义提示词")!;

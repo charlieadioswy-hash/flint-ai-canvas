@@ -113,116 +113,170 @@ func TestDramaGuidedNameOnlyCastRemainsInactiveDraft(t *testing.T) {
 }
 
 func TestDramaCastDeleteRetainsGeneratedMediaAndHistory(t *testing.T) {
-	for _, hasTake := range []bool{false, true} {
-		t.Run(map[bool]string{false: "legacy-image", true: "existing-take"}[hasTake], func(t *testing.T) {
-			svc, fake, projectID, revision := newDramaCastGuide(t)
-			cast := model.DramaCast{ID: "cast-delete", ProjectID: projectID, Kind: "character", Name: "待删角色", ImageResourceID: "keep-image", ImageStatus: model.DramaMediaReady}
-			for _, record := range []any{
-				&cast,
-				&model.Resource{ID: "keep-image", UserID: "usr-drama", Kind: "image"},
-				&model.Asset{ID: "keep-asset", UserID: "usr-drama", Kind: "image", PayloadJSON: `{"resourceId":"keep-image"}`},
-				&model.Task{ID: "keep-task", UserID: "usr-drama", ProjectID: projectID, Status: model.TaskStatusSucceeded},
-				&model.DramaJob{ID: "keep-job", ProjectID: projectID, CastID: cast.ID, Kind: model.DramaJobCastImage, Status: model.DramaJobSucceeded, TaskID: "keep-task", AttemptsJSON: `[{"taskId":"keep-task"}]`},
-				&model.DramaJob{ID: "cancel-queued", ProjectID: projectID, CastID: cast.ID, Kind: model.DramaJobCastImage, Status: model.DramaJobQueued},
-			} {
-				if err := fake.db.Create(record).Error; err != nil {
+	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideCompleted, ""} {
+		for _, hasTake := range []bool{false, true} {
+			t.Run(step+"/"+map[bool]string{false: "legacy-image", true: "existing-take"}[hasTake], func(t *testing.T) {
+				svc, fake, projectID, revision := newDramaCastGuide(t)
+				if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
 					t.Fatal(err)
 				}
-			}
-			if hasTake {
-				if err := fake.db.Create(&model.DramaTake{ID: "keep-take", ProjectID: projectID, OwnerID: cast.ID, Kind: "cast", ResourceID: cast.ImageResourceID, TaskID: "keep-task", Version: 1}).Error; err != nil {
+				cast := model.DramaCast{ID: "cast-delete", ProjectID: projectID, Kind: "character", Name: "待删角色", ImageResourceID: "keep-image", ImageStatus: model.DramaMediaReady}
+				for _, record := range []any{
+					&cast,
+					&model.Resource{ID: "keep-image", UserID: "usr-drama", Kind: "image"},
+					&model.Asset{ID: "keep-asset", UserID: "usr-drama", Kind: "image", PayloadJSON: `{"resourceId":"keep-image"}`},
+					&model.Task{ID: "keep-task", UserID: "usr-drama", ProjectID: projectID, Status: model.TaskStatusSucceeded},
+					&model.DramaJob{ID: "keep-job", ProjectID: projectID, CastID: cast.ID, Kind: model.DramaJobCastImage, Status: model.DramaJobSucceeded, TaskID: "keep-task", AttemptsJSON: `[{"taskId":"keep-task"}]`},
+					&model.DramaJob{ID: "cancel-queued", ProjectID: projectID, CastID: cast.ID, Kind: model.DramaJobCastImage, Status: model.DramaJobQueued},
+				} {
+					if err := fake.db.Create(record).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				if hasTake {
+					if err := fake.db.Create(&model.DramaTake{ID: "keep-take", ProjectID: projectID, OwnerID: cast.ID, Kind: "cast", ResourceID: cast.ImageResourceID, TaskID: "keep-task", Version: 1}).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := svc.repo.DramaCast(projectID, cast.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
-				t.Fatalf("catalog row remains: %v", err)
-			}
-			for _, record := range []any{&model.Resource{}, &model.Asset{}, &model.Task{}, &model.DramaJob{}} {
-				var count int64
-				if err := fake.db.Model(record).Where("id LIKE ?", "keep-%").Count(&count).Error; err != nil || count != 1 {
-					t.Fatalf("history/media removed: %T count=%d err=%v", record, count, err)
+				if _, err := svc.repo.DramaCast(projectID, cast.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+					t.Fatalf("catalog row remains: %v", err)
 				}
-			}
-			takes, err := svc.repo.DramaTakes(projectID, cast.ID, "cast", 10)
-			if err != nil || len(takes) != 1 || takes[0].ResourceID != "keep-image" {
-				t.Fatalf("image must remain protected by history: %+v %v", takes, err)
-			}
-			var queued model.DramaJob
-			if err := fake.db.First(&queued, "id = ?", "cancel-queued").Error; err != nil || queued.Status != model.DramaJobCanceled {
-				t.Fatalf("unsubmitted job must be canceled: %+v %v", queued, err)
-			}
-			queued.Status, queued.TaskID = model.DramaJobRunning, "late-task"
-			if err := svc.repo.BindDramaJobTask(&queued, model.DramaJobQueued, ""); !errors.Is(err, repository.ErrDramaJobChanged) {
-				t.Fatalf("stale dispatcher must lose binding CAS: %v", err)
-			}
-			p, _ := svc.repo.DramaProduction(projectID)
-			if p.Revision != revision+1 {
-				t.Fatal("delete must advance revision once")
-			}
-		})
+				for _, record := range []any{&model.Resource{}, &model.Asset{}, &model.Task{}, &model.DramaJob{}} {
+					var count int64
+					if err := fake.db.Model(record).Where("id LIKE ?", "keep-%").Count(&count).Error; err != nil || count != 1 {
+						t.Fatalf("history/media removed: %T count=%d err=%v", record, count, err)
+					}
+				}
+				takes, err := svc.repo.DramaTakes(projectID, cast.ID, "cast", 10)
+				if err != nil || len(takes) != 1 || takes[0].ResourceID != "keep-image" {
+					t.Fatalf("image must remain protected by history: %+v %v", takes, err)
+				}
+				var queued model.DramaJob
+				if err := fake.db.First(&queued, "id = ?", "cancel-queued").Error; err != nil || queued.Status != model.DramaJobCanceled {
+					t.Fatalf("unsubmitted job must be canceled: %+v %v", queued, err)
+				}
+				queued.Status, queued.TaskID = model.DramaJobRunning, "late-task"
+				if err := svc.repo.BindDramaJobTask(&queued, model.DramaJobQueued, ""); !errors.Is(err, repository.ErrDramaJobChanged) {
+					t.Fatalf("stale dispatcher must lose binding CAS: %v", err)
+				}
+				p, _ := svc.repo.DramaProduction(projectID)
+				if p.Revision != revision+1 || p.GuideStep != step || p.Stage != model.DramaStageProduce {
+					t.Fatalf("delete must advance revision once without reopening the workflow: %+v", p)
+				}
+			})
+		}
 	}
 }
 
 func TestDramaCastDeleteRejectsLiveReferencesAndInflightTasks(t *testing.T) {
-	for _, reference := range []string{"look", "shot-scene", "shot-character", "shot-prop", "shot-look", "segment", "canvas", "running-job", "bound-queued-job", "historical-active-task", "running-image"} {
-		t.Run(reference, func(t *testing.T) {
+	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideCompleted, ""} {
+		for _, reference := range []string{"independent-view", "look", "shot-scene", "shot-character", "shot-prop", "shot-look", "segment", "segment-audio", "canvas", "running-job", "bound-queued-job", "historical-active-task", "running-image", "queued-text", "running-text"} {
+			t.Run(step+"/"+reference, func(t *testing.T) {
+				svc, fake, projectID, revision := newDramaCastGuide(t)
+				if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
+					t.Fatal(err)
+				}
+				cast := model.DramaCast{ID: "protected-cast", ProjectID: projectID, Kind: "character", Name: "被引用角色"}
+				if reference == "running-image" {
+					cast.ImageStatus = model.DramaMediaRunning
+				}
+				if err := fake.db.Create(&cast).Error; err != nil {
+					t.Fatal(err)
+				}
+				var record any
+				switch reference {
+				case "independent-view":
+					record = &model.DramaCastView{ID: "independent-view", ProjectID: projectID, CastID: cast.ID, ConfigJSON: `{}`, Status: model.DramaMediaDraft}
+				case "look":
+					record = &model.DramaCast{ID: "look", ProjectID: projectID, Kind: "character", ParentID: cast.ID}
+				case "shot-scene":
+					record = &model.DramaShot{ID: "shot", ProjectID: projectID, SceneCastID: cast.ID}
+				case "shot-character":
+					record = &model.DramaShot{ID: "shot", ProjectID: projectID, CastIDsJSON: `["protected-cast"]`}
+				case "shot-prop":
+					record = &model.DramaShot{ID: "shot", ProjectID: projectID, PropIDsJSON: `["protected-cast"]`}
+				case "shot-look":
+					record = &model.DramaShot{ID: "shot", ProjectID: projectID, LookCastIDsJSON: `["protected-cast"]`}
+				case "segment":
+					record = &model.DramaSegment{ID: "segment", ProjectID: projectID, ReferenceCastIDsJSON: `["protected-cast"]`}
+				case "segment-audio":
+					record = &model.DramaSegment{ID: "segment", ProjectID: projectID, AudioCastIDsJSON: `["protected-cast"]`}
+				case "canvas":
+					payload, _ := json.Marshal(map[string]any{"nodes": []any{map[string]any{"metadata": map[string]any{"dramaRef": map[string]any{"projectId": projectID, "kind": "cast", "id": cast.ID}}}}})
+					record = &model.CanvasProject{ID: "canvas", UserID: "usr-drama", PayloadJSON: string(payload)}
+				case "running-job":
+					record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobRunning}
+				case "bound-queued-job":
+					record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobQueued, TaskID: "submitted-task"}
+				case "historical-active-task":
+					if err := fake.db.Create(&model.Task{ID: "active-task", UserID: "usr-drama", ProjectID: projectID, Status: model.TaskStatusRunning}).Error; err != nil {
+						t.Fatal(err)
+					}
+					record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobFailed, AttemptsJSON: `[{"taskId":"active-task"}]`}
+				case "queued-text":
+					record = &model.DramaJob{ID: "text-job", ProjectID: projectID, Kind: model.DramaJobBible, Status: model.DramaJobQueued}
+				case "running-text":
+					record = &model.DramaJob{ID: "text-job", ProjectID: projectID, Kind: model.DramaJobScript, Status: model.DramaJobRunning}
+				}
+				if record != nil {
+					if err := fake.db.Create(record).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision})
+				requireGuideConflict(t, err)
+				if _, err := svc.repo.DramaCast(projectID, cast.ID); err != nil {
+					t.Fatalf("rejected deletion must preserve asset: %v", err)
+				}
+				p, _ := svc.repo.DramaProduction(projectID)
+				if p.Revision != revision || p.GuideStep != step {
+					t.Fatal("rejected deletion must not change the workflow revision or step")
+				}
+			})
+		}
+	}
+}
+
+func TestDramaCastDeleteProductionRequiresCurrentRevision(t *testing.T) {
+	for _, step := range []string{model.DramaGuideCompleted, ""} {
+		t.Run("step-"+step, func(t *testing.T) {
 			svc, fake, projectID, revision := newDramaCastGuide(t)
-			cast := model.DramaCast{ID: "protected-cast", ProjectID: projectID, Kind: "character", Name: "被引用角色"}
-			if reference == "running-image" {
-				cast.ImageStatus = model.DramaMediaRunning
-			}
-			if err := fake.db.Create(&cast).Error; err != nil {
+			if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
 				t.Fatal(err)
 			}
-			var record any
-			switch reference {
-			case "look":
-				record = &model.DramaCast{ID: "look", ProjectID: projectID, Kind: "character", ParentID: cast.ID}
-			case "shot-scene":
-				record = &model.DramaShot{ID: "shot", ProjectID: projectID, SceneCastID: cast.ID}
-			case "shot-character":
-				record = &model.DramaShot{ID: "shot", ProjectID: projectID, CastIDsJSON: `["protected-cast"]`}
-			case "shot-prop":
-				record = &model.DramaShot{ID: "shot", ProjectID: projectID, PropIDsJSON: `["protected-cast"]`}
-			case "shot-look":
-				record = &model.DramaShot{ID: "shot", ProjectID: projectID, LookCastIDsJSON: `["protected-cast"]`}
-			case "segment":
-				record = &model.DramaSegment{ID: "segment", ProjectID: projectID, ReferenceCastIDsJSON: `["protected-cast"]`}
-			case "canvas":
-				payload, _ := json.Marshal(map[string]any{"nodes": []any{map[string]any{"metadata": map[string]any{"dramaRef": map[string]any{"projectId": projectID, "kind": "cast", "id": cast.ID}}}}})
-				record = &model.CanvasProject{ID: "canvas", UserID: "usr-drama", PayloadJSON: string(payload)}
-			case "running-job":
-				record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobRunning}
-			case "bound-queued-job":
-				record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobQueued, TaskID: "submitted-task"}
-			case "historical-active-task":
-				if err := fake.db.Create(&model.Task{ID: "active-task", UserID: "usr-drama", ProjectID: projectID, Status: model.TaskStatusRunning}).Error; err != nil {
-					t.Fatal(err)
-				}
-				record = &model.DramaJob{ID: "job", ProjectID: projectID, CastID: cast.ID, Status: model.DramaJobFailed, AttemptsJSON: `[{"taskId":"active-task"}]`}
-			}
-			if record != nil {
-				if err := fake.db.Create(record).Error; err != nil {
+			for _, id := range []string{"first", "second"} {
+				if err := fake.db.Create(&model.DramaCast{ID: id, ProjectID: projectID, Kind: "prop", Name: id, Revision: 99}).Error; err != nil {
 					t.Fatal(err)
 				}
 			}
-			err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision})
-			requireGuideConflict(t, err)
-			if _, err := svc.repo.DramaCast(projectID, cast.ID); err != nil {
-				t.Fatalf("rejected deletion must preserve asset: %v", err)
+			requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, "first", DeleteDramaCastRequest{}))
+			stale := revision - 1
+			requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, "first", DeleteDramaCastRequest{ExpectedRevision: &stale}))
+			if err := svc.DeleteDramaCast("other-user", projectID, "first", DeleteDramaCastRequest{ExpectedRevision: &revision}); err == nil {
+				t.Fatal("another account must not delete production assets")
 			}
-			p, _ := svc.repo.DramaProduction(projectID)
-			if p.Revision != revision {
-				t.Fatal("rejected deletion must not advance revision")
+			if err := svc.DeleteDramaCast("usr-drama", projectID, "first", DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
+				t.Fatal(err)
+			}
+			requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, "second", DeleteDramaCastRequest{ExpectedRevision: &revision}))
+			if _, err := svc.repo.DramaCast(projectID, "second"); err != nil {
+				t.Fatalf("stale deletion must retain the second asset: %v", err)
+			}
+			current, err := svc.repo.DramaProduction(projectID)
+			if err != nil || current.Revision != revision+1 || current.GuideStep != step {
+				t.Fatalf("rejected or stale requests changed workflow state: %+v %v", current, err)
+			}
+			if err := svc.DeleteDramaCast("usr-drama", projectID, "second", DeleteDramaCastRequest{ExpectedRevision: &current.Revision}); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestDramaCastDeleteRequiresCurrentGuideAndExactReferences(t *testing.T) {
+func TestDramaCastDeleteRequiresCurrentRevisionAndExactReferences(t *testing.T) {
 	svc, fake, projectID, revision := newDramaCastGuide(t)
 	cast := model.DramaCast{ID: "cast-id", ProjectID: projectID, Kind: "scene", Name: "旧仓库"}
 	for _, record := range []any{
@@ -241,7 +295,7 @@ func TestDramaCastDeleteRequiresCurrentGuideAndExactReferences(t *testing.T) {
 	requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{}))
 	stale := revision - 1
 	requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &stale}))
-	for _, step := range []string{"", model.DramaGuideConfiguring, model.DramaGuideCompleted} {
+	for _, step := range []string{model.DramaGuideConfiguring} {
 		if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
 			t.Fatal(err)
 		}

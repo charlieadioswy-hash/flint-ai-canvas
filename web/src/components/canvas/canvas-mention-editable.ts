@@ -24,7 +24,12 @@ export function hasMentionTokenBoundary(token: string, value: string, end: numbe
 export function splitMentionText(value: string, references: CanvasResourceReference[]): MentionTextPart[] {
     if (!value) return [];
     if (!references.length) return [{ type: "text", text: value }];
-    const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string }>();
+    const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string; plainText?: boolean }>();
+    references.forEach((reference) => {
+        reference.textAliases?.forEach((alias) => {
+            if (alias.length > 1) referenceByToken.set(alias, { reference, serializedToken: alias, plainText: true });
+        });
+    });
     // 别名（@名称、@[node:ID]）先登记、规范令牌后登记：同名时别的引用不能抢走已有的规范令牌。
     references.forEach((reference) => {
         const serializedToken = canvasResourceMentionToken(reference);
@@ -33,7 +38,7 @@ export function splitMentionText(value: string, references: CanvasResourceRefere
     });
     references.forEach((reference) => {
         const serializedToken = canvasResourceMentionToken(reference);
-        referenceByToken.set(serializedToken, { reference, serializedToken });
+        if (!referenceByToken.has(serializedToken) || !reference.textAliases?.includes(serializedToken)) referenceByToken.set(serializedToken, { reference, serializedToken });
     });
     const tokens = [...referenceByToken.keys()].filter((token) => token.length > 1).sort((a, b) => b.length - a.length);
     const leadingCharacters = new Set(tokens.map((token) => token[0]));
@@ -41,7 +46,15 @@ export function splitMentionText(value: string, references: CanvasResourceRefere
     let textStart = 0;
     let index = 0;
     while (index < value.length) {
-        const token = leadingCharacters.has(value[index]) ? tokens.find((item) => value.startsWith(item, index) && hasMentionTokenBoundary(item, value, index + item.length)) : undefined;
+        const token = leadingCharacters.has(value[index])
+            ? tokens.find((item) => {
+                  if (!value.startsWith(item, index)) return false;
+                  if (!referenceByToken.get(item)?.plainText) return hasMentionTokenBoundary(item, value, index + item.length);
+                  // 英文名称不能吞掉更长单词；中文名称允许紧接动作、台词等正文。
+                  const end = index + item.length;
+                  return !(/[A-Za-z0-9_]$/.test(item) && /[A-Za-z0-9_]/.test(value[end] || "")) && !(/^[A-Za-z0-9_]/.test(item) && /[A-Za-z0-9_]/.test(value[index - 1] || ""));
+              })
+            : undefined;
         if (!token) {
             index += 1;
             continue;
@@ -146,7 +159,7 @@ export function staleEditableMentionParts(editor: HTMLElement, value: string, re
 export function repairEditableMentionBoundaries(root: HTMLElement) {
     const leaves = editableLeaves(root);
     const glued = leaves.filter((leaf, index) => {
-        if (leaf.token === undefined) return false;
+        if (leaf.token === undefined || (leaf.node as HTMLElement).dataset.mentionPlainText === "true") return false;
         const following = leaves.slice(index + 1).find((item) => item.text.length > 0);
         return Boolean(following && !hasMentionTokenBoundary(leaf.token, following.text, 0));
     });
@@ -164,7 +177,7 @@ export function repairEditableMentionBoundaries(root: HTMLElement) {
 
 /** offset 正好落在某个胶囊右侧时返回该胶囊的令牌。 */
 export function editableMentionTokenEndingAt(root: HTMLElement, offset: number) {
-    return editableLeaves(root).find((leaf) => leaf.token !== undefined && leaf.offset + leaf.token.length === offset)?.token ?? null;
+    return editableLeaves(root).find((leaf) => leaf.token !== undefined && (leaf.node as HTMLElement).dataset.mentionPlainText !== "true" && leaf.offset + leaf.token.length === offset)?.token ?? null;
 }
 
 export function serializeEditableValue(root: HTMLElement) {

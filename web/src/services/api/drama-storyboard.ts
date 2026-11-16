@@ -40,7 +40,7 @@ export type DramaStoryboard = {
 };
 
 export type DramaStoryboardCreate = { clientOperationId: string; shotIds: string[]; rows: number; columns: number; config: DramaShotMediaConfig };
-export type DramaStoryboardPreflight = { boardId: string; revision: number; baseRevision: number; ready: boolean; reason?: string; priced: boolean; amountMicrocredits: number; estimated: boolean; confirmationToken: string };
+export type DramaStoryboardPreflight = { boardId: string; revision: number; baseRevision: number; ready: boolean; reason?: string; priced: boolean; amountMicrocredits: number; estimated: boolean; confirmationToken: string; scopeHash: string };
 
 const boardsPath = (projectId: string) => `/dramas/${encodeURIComponent(projectId)}/storyboards`;
 const boardPath = (projectId: string, boardId: string) => `${boardsPath(projectId)}/${encodeURIComponent(boardId)}`;
@@ -50,6 +50,9 @@ export function listDramaStoryboards(projectId: string, episodeId: string, signa
 }
 export function createDramaStoryboard(projectId: string, input: DramaStoryboardCreate) {
     return http.post<DramaStoryboard>(boardsPath(projectId), input);
+}
+export function quoteDramaStoryboard(projectId: string, input: Omit<DramaStoryboardCreate, "clientOperationId">, signal?: AbortSignal) {
+    return http.post<DramaStoryboardPreflight>(`${boardsPath(projectId)}/quote`, input, { signal });
 }
 export function getDramaStoryboard(projectId: string, boardId: string, signal?: AbortSignal) {
     return http.get<DramaStoryboard>(boardPath(projectId, boardId), { signal });

@@ -1,6 +1,7 @@
 package production
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,56 @@ func TestCharacterAssetSchemesMatchCompositeLayouts(t *testing.T) {
 			}
 			if strings.Contains(prompt, "{{") || strings.Count(prompt, AssetImageOutputContract) != 1 || !strings.Contains(settings.FrameHint(), "参考图") {
 				t.Fatalf("invalid rendered contract or reference hint:\n%s", prompt)
+			}
+		})
+	}
+}
+
+func TestCompositeCharacterAssetSchemesPrioritizeEveryRequiredRegion(t *testing.T) {
+	regionCounts := map[string]int{
+		AssetModeCloseupTurnaround:           4,
+		AssetModeCloseupFrontNoFace:          2,
+		AssetModeCloseupTurnaroundNoHead:     4,
+		AssetModeCloseupFullbody:             2,
+		AssetModeDualCloseupFrontBackNoHead:  4,
+		AssetModeTripleCloseupFrontNoFace:    5,
+		AssetModeTurnaroundTripleCloseup:     6,
+		AssetModeTurnaroundFiveAngleHalfbody: 8,
+		AssetModeHeadshotFullbody:            2,
+	}
+	for _, scheme := range AssetSchemes() {
+		count, composite := regionCounts[scheme.Mode]
+		if !composite {
+			continue
+		}
+		t.Run(scheme.Mode, func(t *testing.T) {
+			prompt := scheme.CharacterPrompt
+			contentAt := strings.Index(prompt, "【各分区共用的角色内容】")
+			if !strings.HasPrefix(prompt, "【必须先满足的版式、数量与取景】\n"+scheme.Ratio) || contentAt < 0 {
+				t.Fatalf("composition must precede character content:\n%s", prompt)
+			}
+			layout := prompt[:contentAt]
+			if !strings.Contains(layout, "总共恰好 "+strconv.Itoa(count)+" 个独立分区") || strings.Count(layout, "\n分区") != count {
+				t.Fatalf("expected exactly %d independently specified regions:\n%s", count, layout)
+			}
+			previousAt := 0
+			for region := 1; region <= count; region++ {
+				at := strings.Index(layout, "\n分区"+strconv.Itoa(region)+"：")
+				if at <= previousAt {
+					t.Fatalf("region %d is missing, duplicated or out of order:\n%s", region, layout)
+				}
+				previousAt = at
+			}
+			for _, variable := range CharacterAssetVariables {
+				if strings.Index(prompt, variable) < contentAt {
+					t.Fatalf("%s can override or precede mandatory layout:\n%s", variable, prompt)
+				}
+			}
+			if !strings.Contains(layout, AssetImageOutputContract) || !strings.Contains(layout, "同一角色的重复视角，不是不同人物") || !strings.Contains(layout, "不得因角色身份只有一个而省略重复视角") || strings.Contains(layout, "单人") {
+				t.Fatalf("one identity must retain all views in one image:\n%s", layout)
+			}
+			if len([]rune(prompt)) > assetPromptLimit {
+				t.Fatalf("layout would be truncated on save: %d runes", len([]rune(prompt)))
 			}
 		})
 	}

@@ -103,6 +103,24 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/settings:
+    patch:
+      tags: [dramas]
+      summary: 更新作品设置或自动同步媒体生成配置
+      description: generation 为只接收媒体参数的窄更新，必须提交当前 expectedRevision，不能同时提交 settings 或 budgetMicrocredits；未列出的文字、流程和分镜规则字段不会写入。支持 configuring/assets/story、已完成引导和普通制作，校验归属、模型能力、事务内版本及排队或运行任务。assets 保存不推进引导，只更新尚未单独修改的分集初值；已生成内容保留，不启动生成。开工后沿用画幅限制，assets 初次确认前可调整。普通 settings 保留完整设置合同，活动引导仅 configuring 可用。请求体最多 64 KiB。
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDramaSettingsRequest" }
+      responses:
+        "200": { description: 成功信封，data 为保存后的短剧概览和当前作品版本 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/workflow/style:
     patch:
       tags: [dramas]
@@ -4710,6 +4728,274 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/actions/preflight:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 自动读取精确目标的就绪状态与报价
+      description: 只读，不入队、不生成。castDraft 仅允许 cast_image，在内存中模拟未保存文字、图片配置及解锁意图，执行时必须移除草稿并使用保存后新令牌。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaStudioActionRequest" }
+      responses:
+        "200":
+          description: 成功信封，data 为目标、版本、依赖、报价与快照令牌
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaStudioActionPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/actions/execute:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 点击生成后提交精确目标
+      description: 在作品锁内重检版本、依赖、报价与权限；只排指定目标，不隐式放行整集。拒绝 castDraft。令牌是快照校验值，不代替权限或预算校验。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/DramaStudioActionRequest" }
+                - type: object
+                  required: [targetRevision, baseRevision, confirmationToken]
+      responses:
+        "200": { description: 成功信封，data 为已持久化的入队结果；恢复调度失败通过 warnings 表达，不伪装成未提交 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/actions/batch/preflight:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 自动读取明确批量范围的逐项报价
+      description: 只读，去重后校验1至200个明确目标。regenerate/restyleSegments/castDrafts仅用于cast_image，草稿key必须属于targetIds；不保存、不生成、不扣费。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaStudioBatchRequest" }
+      responses:
+        "200":
+          description: 成功信封，data 为逐项就绪状态、可执行目标合计报价与令牌
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaStudioBatchView" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/actions/batch/execute:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 点击生成后原子提交精确批次
+      description: 拒绝castDrafts；锁内重检全部目标，任一快照变化使整批不写。regenerate纳入已有成功图但仍保护锁定和活跃任务；restyleSegments仅对实际入队资产的引用视频标记过期，并与图片入队同事务回滚。不会额外加入未选择的失败造型。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/DramaStudioBatchRequest" }
+                - type: object
+                  required: [baseRevision, confirmationToken]
+      responses:
+        "200": { description: 成功信封，data为DramaStudioBatchView；实际入队项status=queued }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/shots/{shotId}/media/{kind}/quote:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: shotId, required: true, schema: { type: string } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [image, video] } }
+    post:
+      tags: [dramas]
+      summary: 只读报价未保存的镜头图片或视频配置
+      description: 请求体最多256KiB。复用真实模型能力、资源、阶段、版本与预算校验；不保存配置、不建任务或账单。confirmationToken为空，不能用于执行。scopeHash排除保存引起的记录ID和版本变化。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaShotMediaSaveRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为就绪状态、双版本、实际配置、报价与scopeHash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaShotMediaPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/shots/{shotId}/media/{kind}/preflight:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: shotId, required: true, schema: { type: string } }
+      - { in: path, name: kind, required: true, schema: { type: string, enum: [image, video, audio] } }
+    post:
+      tags: [dramas]
+      summary: 读取已保存镜头媒体的执行快照
+      description: 图片视频保存后新报价的金额及scopeHash与已显示草稿报价相同才继续执行；变化时更新按钮并停止。音频保留原有交互。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaShotMediaActionRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为已保存配置的报价和执行令牌
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaShotMediaPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/storyboards/quote:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 只读报价尚未创建的宫格故事板
+      description: 请求体最多256KiB；镜头必须同集且不重复，支持2×2、2×3或3×3。将真实镜头内容编排成一张图片的提示词进行报价，不创建故事板历史、任务或账单；confirmationToken为空。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaStoryboardQuoteRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为就绪状态、报价与scopeHash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaStoryboardPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/storyboards/{boardId}/preflight:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: boardId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 读取已创建宫格故事板的执行报价
+      description: scopeHash包含真实镜头、生成配置与最终提示词，排除保存产生的记录ID和版本变化；与已显示草稿报价金额及scopeHash相同时才继续执行。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaShotMediaActionRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为报价与执行令牌
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaStoryboardPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/quote:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 只读报价新增独立视图草稿
+      description: 请求体最多128KiB，viewRevision必须为0。校验主体、剧集、版本、模型、参考图、余额和预算；不创建视图、不改版本、不建任务、不扣费，confirmationToken为空。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaCastViewSaveRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为草稿报价与scopeHash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaCastViewPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/{viewId}/quote:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+      - { in: path, name: viewId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 只读报价已有独立视图的未保存修改
+      description: 请求体最多128KiB，校验已有视图版本；不保存、不改版本、不建任务、不扣费，confirmationToken为空。保存后重新预检，金额及scopeHash与已显示报价一致才继续执行。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DramaCastViewSaveRequest" }
+      responses:
+        "200":
+          description: 成功信封，data为草稿报价与scopeHash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaCastViewPreflight" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/cast/{castId}/views:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -4771,7 +5057,16 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/DramaCastViewActionRequest" }
       responses:
-        "200": { description: 成功信封，data 为就绪状态、双版本、报价和 confirmationToken }
+        "200":
+          description: 成功信封，data 为就绪状态、双版本、报价、scopeHash和confirmationToken
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/DramaCastViewPreflight" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
@@ -5420,6 +5715,31 @@ components:
         styleName: { type: string, minLength: 1, maxLength: 60 }
         stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: 最多 10000 个 Unicode 字符，完整保存并用于后续显式创作，不截短系统预设 }
         drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
+    UpdateDramaSettingsRequest:
+      type: object
+      description: generation 必须与当前 expectedRevision 一起提交，且与 settings、budgetMicrocredits 互斥；settings 的版本校验和引导门禁保持原规则。
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        settings: { $ref: "#/components/schemas/DramaSettings" }
+        generation: { $ref: "#/components/schemas/DramaGenerationSettings" }
+        budgetMicrocredits: { type: integer, format: int64, minimum: 0 }
+    DramaGenerationSettings:
+      type: object
+      description: 只更新提供的媒体配置字段；videoResolution 空串使用模型默认，分类图片模型空对象沿用默认图片模型。文字、流程与 storyboard 草稿不在此更新范围。
+      properties:
+        models:
+          type: object
+          properties:
+            image: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            video: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            characterImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            propImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+            sceneImage: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+        assets: { $ref: "#/components/schemas/DramaDrawingConfiguration/properties/assets" }
+        aspectRatio: { type: string, enum: ["9:16", "16:9", "1:1", "3:4", "4:3"] }
+        videoResolution: { type: string }
+        videoContinuity: { type: string, enum: [tail_frame, parallel] }
+        referenceLimit: { type: integer, minimum: 0, maximum: 20 }
     DramaSettings:
       type: object
       description: 完整制作配置。单集保存画风、模型、模板及制作参数；dramaType、concurrency、reviewMode、mediaMode、episodeMode 和 chaptersPerEpisode 仍由作品控制，单集提交不会覆盖这些作品控制字段。
@@ -5562,6 +5882,203 @@ components:
             fromChapter: { type: integer, description: 原著章节号，从 1 起；0 或空表示不限，负数归零，起止颠倒会交换 }
             toChapter: { type: integer }
             restyleSegments: { type: boolean, default: false }
+    DramaStudioCastDraft:
+      type: object
+      description: 仅供cast_image只读报价的未保存草稿；执行请求禁止携带。
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60, description: 基础主体名称；造型时只模拟lookName，不修改角色本体名称 }
+        appearance: { type: string, maxLength: 1000 }
+        imagePrompt: { type: string, maxLength: 12000 }
+        imageStyleId: { type: string, maxLength: 64 }
+        imageStyleName: { type: string, maxLength: 120 }
+        imageStylePrompt: { type: string, maxLength: 4000 }
+        imageOptions: { $ref: "#/components/schemas/DramaCastImageOptions" }
+        unlock: { type: boolean, default: false, description: 仅在报价副本模拟解锁，不保存 }
+    DramaStudioActionRequest:
+      type: object
+      required: [action, targetId]
+      properties:
+        action: { type: string, enum: [cast_image, segment_video, segment_prompt, segment_assets, segment_reprocess] }
+        targetId: { type: string, minLength: 1 }
+        episodeId: { type: string, description: 可选本集配置上下文，必须属于当前作品并与段目标匹配 }
+        targetRevision: { type: integer, minimum: 0 }
+        baseRevision: { type: integer, minimum: 0 }
+        videoModel: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+        confirmationToken: { type: string }
+        castDraft: { $ref: "#/components/schemas/DramaStudioCastDraft" }
+    DramaStudioActionPreflight:
+      type: object
+      required: [action, targetId, targetRevision, baseRevision, ready, message, confirmationToken, missingCasts, warnings, canUseText, reprocessable, amountMicrocredits, priced]
+      properties:
+        action: { type: string }
+        targetId: { type: string }
+        episodeId: { type: string }
+        segmentIndex: { type: integer }
+        targetRevision: { type: integer }
+        baseRevision: { type: integer }
+        ready: { type: boolean }
+        reason: { type: string }
+        message: { type: string }
+        confirmationToken: { type: string }
+        scopeHash: { type: string, description: 仅cast_image；实际模型、有效参数、最终提示词与有序参考图的稳定摘要，排除保存导致的版本递增 }
+        missingCasts:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+        warnings: { type: array, items: { type: string } }
+        canUseText: { type: boolean }
+        reprocessable: { type: boolean }
+        amountMicrocredits: { type: integer, format: int64 }
+        priced: { type: boolean }
+        request: { type: object, description: 实际段视频请求预演 }
+    DramaStudioBatchRequest:
+      type: object
+      required: [action, targetIds]
+      properties:
+        action: { type: string, enum: [cast_image, segment_video, segment_prompt, segment_assets] }
+        targetIds:
+          type: array
+          minItems: 1
+          maxItems: 200
+          description: 明确选择的当前作品资产或剧情段ID；空范围不表示全部，重复ID去重
+          items: { type: string, minLength: 1 }
+        episodeId: { type: string, description: 可选本集配置上下文 }
+        videoModel: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+        baseRevision: { type: integer, minimum: 0 }
+        confirmationToken: { type: string }
+        regenerate: { type: boolean, default: false, description: 仅cast_image；将已有成功图片纳入报价和入队，仍保护锁定与活跃任务 }
+        restyleSegments: { type: boolean, default: false, description: 仅cast_image；对实际入队资产的引用视频原子标记过期，保留旧资源 }
+        castDrafts:
+          type: object
+          description: 仅cast_image预检，key必须属于targetIds；执行时禁止携带非空映射
+          additionalProperties: { $ref: "#/components/schemas/DramaStudioCastDraft" }
+    DramaStudioBatchView:
+      type: object
+      required: [action, targetIds, baseRevision, ready, confirmationToken, amountMicrocredits, priced, items, counts]
+      properties:
+        action: { type: string }
+        targetIds: { type: array, items: { type: string } }
+        baseRevision: { type: integer }
+        ready: { type: boolean }
+        reason: { type: string }
+        confirmationToken: { type: string }
+        scopeHash: { type: string, description: 仅cast_image；组合每个明确目标的ID、可执行状态和稳定图片生成摘要，保存同一草稿不改变，不能代替执行令牌 }
+        amountMicrocredits: { type: integer, format: int64 }
+        priced: { type: boolean }
+        items:
+          type: array
+          items:
+            type: object
+            required: [targetId, targetKind, targetRevision, status, amountMicrocredits, priced]
+            properties:
+              targetId: { type: string }
+              targetKind: { type: string, enum: [cast, segment] }
+              targetRevision: { type: integer }
+              resultVersion: { type: integer, minimum: 0, description: cast目标当前图片版本；包含0，未知回执恢复时须比原报价版本更高才证明出现新结果 }
+              resultResourceId: { type: string, description: cast目标当前采用图片资源；已有旧图本身不能证明本次重新生成完成 }
+              name: { type: string }
+              episodeId: { type: string }
+              segmentIndex: { type: integer }
+              sourceTargetIds: { type: array, items: { type: string } }
+              status: { type: string, enum: [ready, already_queued, skipped_ready, blocked, conflict, failed, queued] }
+              reason: { type: string }
+              amountMicrocredits: { type: integer, format: int64 }
+              priced: { type: boolean }
+              warnings: { type: array, items: { type: string } }
+        counts: { type: object, additionalProperties: { type: integer } }
+        warnings: { type: array, items: { type: string } }
+        dispatchPending: { type: boolean }
+    DramaShotMediaConfig:
+      type: object
+      properties:
+        model: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
+        prompt: { type: string, description: "普通参考图可用 @[shot-image:资源ID] 稳定引用；提交模型前按实际附件编译为参考图N。草稿允许保留已移除图片引用，报价和生成时拒绝缺失或越界引用。" }
+        promptSourceHash: { type: string, description: "单镜视频自动稿来源标记；非空时正文未改可按当前段与镜头重组，空串表示手工稿，省略表示尚未识别的旧配置。非授权凭据。" }
+        operation: { type: string }
+        aspectRatio: { type: string }
+        resolution: { type: string }
+        seconds: { type: integer }
+        generateAudio: { type: boolean }
+        referenceResourceIds: { type: array, items: { type: string } }
+        referenceNames:
+          type: object
+          maxProperties: 22
+          additionalProperties: { type: string, maxLength: 120 }
+          description: "图片资源ID到展示名称的映射；名称会去除首尾空白，仅保留本次普通参考图及首尾帧实际绑定的资源，最多22项，不改变生成内容或报价。"
+        referenceSubjects:
+          type: object
+          maxProperties: 22
+          additionalProperties: { type: string }
+          description: "本次绑定的图片资源ID到本作品主体ID的映射；用于历史图、独立视图或裁剪图的身份关联，资源与主体均校验归属，音频清空。"
+        firstFrameResourceId: { type: string }
+        lastFrameResourceId: { type: string }
+        audioVoice: { type: string }
+        audioInstructions: { type: string }
+    DramaShotMediaSaveRequest:
+      type: object
+      required: [expectedRevision, config]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, description: 镜头媒体配置版本；尚未保存时为0 }
+        config: { $ref: "#/components/schemas/DramaShotMediaConfig" }
+    DramaShotMediaActionRequest:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        baseRevision: { type: integer, minimum: 0 }
+        confirmationToken: { type: string }
+        clientOperationId: { type: string, description: 执行时必填；未知回执使用相同标识和相同请求核对 }
+    DramaGenerationQuote:
+      type: object
+      required: [ready, amountMicrocredits, priced, estimated, confirmationToken, scopeHash]
+      properties:
+        ready: { type: boolean }
+        reason: { type: string }
+        amountMicrocredits: { type: integer, format: int64 }
+        priced: { type: boolean }
+        estimated: { type: boolean }
+        confirmationToken: { type: string, description: 草稿quote为空，保存后preflight返回当前执行快照令牌 }
+        scopeHash: { type: string, description: 实际生成范围摘要，排除保存引起的记录ID和版本变化；不代替执行令牌或权限校验 }
+    DramaShotMediaPreflight:
+      allOf:
+        - { $ref: "#/components/schemas/DramaGenerationQuote" }
+        - type: object
+          required: [shotId, kind, revision, baseRevision, config]
+          properties:
+            shotId: { type: string }
+            kind: { type: string, enum: [image, video, audio] }
+            revision: { type: integer }
+            baseRevision: { type: integer }
+            config: { $ref: "#/components/schemas/DramaShotMediaConfig" }
+    DramaStoryboardQuoteRequest:
+      type: object
+      required: [shotIds, rows, columns, config]
+      properties:
+        shotIds: { type: array, minItems: 1, maxItems: 9, uniqueItems: true, items: { type: string }, description: 同一集真实镜头，数量不超过宫格数 }
+        rows: { type: integer, enum: [2, 3] }
+        columns: { type: integer, enum: [2, 3], description: 只允许2×2、2×3或3×3 }
+        config: { $ref: "#/components/schemas/DramaShotMediaConfig" }
+    DramaStoryboardPreflight:
+      allOf:
+        - { $ref: "#/components/schemas/DramaGenerationQuote" }
+        - type: object
+          required: [boardId, revision, baseRevision]
+          properties:
+            boardId: { type: string, description: 尚未创建的草稿报价为空 }
+            revision: { type: integer }
+            baseRevision: { type: integer }
+    DramaCastViewPreflight:
+      allOf:
+        - { $ref: "#/components/schemas/DramaGenerationQuote" }
+        - type: object
+          required: [revision, viewRevision]
+          properties:
+            revision: { type: integer }
+            viewRevision: { type: integer }
     DramaCastViewSaveRequest:
       type: object
       required: [expectedRevision, expectedCastRevision, viewRevision, config]

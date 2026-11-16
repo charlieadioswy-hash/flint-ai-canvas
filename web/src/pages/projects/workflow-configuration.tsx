@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ImageIcon, Maximize2, SlidersHorizontal } from "lucide-react";
-import { App, Button, Input, Select } from "antd";
+import { Button, Input, Select } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { CanvasStylePickerModal, canvasStylePresets, userStylePreset, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
@@ -50,7 +50,6 @@ export function WorkflowConfiguration({
     scope?: "project" | "episode";
     ref?: Ref<WorkflowConfigurationHandle>;
 }) {
-    const { modal } = App.useApp();
     const catalog = useDramaModelCatalog();
     const schemes = useAssetSchemes();
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -121,18 +120,12 @@ export function WorkflowConfiguration({
         const next = kind === "character" ? schemes.data?.schemes.find((item) => item.mode === value) : schemes.data?.sceneSchemes?.find((item) => item.id === value);
         if (!next) return;
         const prompt = "characterPrompt" in next ? next.characterPrompt : next.prompt;
-        const existing = kind === "character" ? current.characterPrompt : current.scenePrompt;
-        const defaults = kind === "character" ? schemes.data?.schemes.map((item) => item.characterPrompt) : [...(schemes.data?.sceneSchemes?.map((item) => item.prompt) || []), schemes.data?.scenePrompt];
-        const apply = () =>
-            patch({
-                assets:
-                    kind === "character" && "mode" in next
-                        ? { ...current, mode: next.mode, characterPrompt: prompt, characterRatio: next.ratio, sourceSkillId: undefined, sourceSkillName: undefined, sourcePath: undefined }
-                        : { ...current, scenePrompt: prompt },
-            });
-        if (existing.trim() && !defaults?.some((item) => item?.trim() === existing.trim()))
-            modal.confirm({ title: "替换当前绘图模板？", content: "当前提示词有手动修改，选择模板会替换这份草稿。已有图片会保留。", okText: "使用模板", cancelText: "继续编辑", onOk: apply });
-        else apply();
+        patch({
+            assets:
+                kind === "character" && "mode" in next
+                    ? { ...current, mode: next.mode, characterPrompt: prompt, characterRatio: next.ratio, sourceSkillId: undefined, sourceSkillName: undefined, sourcePath: undefined }
+                    : { ...current, scenePrompt: prompt },
+        });
     };
 
     return (
@@ -246,7 +239,7 @@ export function WorkflowConfiguration({
                                 onChange={(language) => patch({ language })}
                             />
                         </label>
-                        <div ref={ratioField}>
+                        <div ref={ratioField} className="drama-workflow-config-field">
                             <span>画幅</span>
                             <div className="drama-tabs" role="radiogroup" aria-label="画幅">
                                 {RATIOS.map((ratio) => (
@@ -264,7 +257,7 @@ export function WorkflowConfiguration({
                                 </small>
                             ) : null}
                         </div>
-                        <div ref={resolutionField}>
+                        <div ref={resolutionField} className="drama-workflow-config-field">
                             <span>视频分辨率</span>
                             <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
                             {resolutionIssue ? (

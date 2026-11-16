@@ -17,6 +17,8 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
     const [detailJob, setDetailJob] = useState<DramaJob>();
     const { jobCounts, production } = summary;
     const failedItems = summary.inbox.filter((item) => item.kind === "segment_failed" || item.kind === "cast_failed" || item.kind === "episode_error").length;
+    const failedText = summary.inbox.some((item) => item.kind === "episode_error" || (item.kind === "segment_failed" && item.media === "prompt"));
+    const failedMedia = summary.inbox.some((item) => item.kind === "cast_failed" || (item.kind === "segment_failed" && item.media !== "prompt"));
     const jobsQuery = useQuery({ queryKey: dramaKeys.jobs(projectId), queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal), enabled: open, refetchInterval: open ? 3_000 : false });
     const jobs = useMemo(
         () => (jobsQuery.data?.jobs || []).filter((job) => filter === "all" || (filter === "failed" ? job.status === "failed" || Boolean(job.error && job.status === "queued") : job.status === "running" || job.status === "queued")),
@@ -45,9 +47,21 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
                         待重试 <b>{failedItems}</b>
                     </span>
                 ) : null}
-                {failedItems && onRetry ? (
+                {failedText && onRetry ? (
                     <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} loading={retrying} onClick={onRetry}>
-                        全部重试
+                        重试失败文字
+                    </Button>
+                ) : null}
+                {failedMedia ? (
+                    <Button
+                        size="small"
+                        type="text"
+                        onClick={() => {
+                            setOpen(true);
+                            setFilter("failed");
+                        }}
+                    >
+                        查看失败图片与视频
                     </Button>
                 ) : null}
                 <span className="drama-queue-budget">
@@ -79,7 +93,7 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
                                 {label}
                             </button>
                         ))}
-                        <span className="ml-auto drama-queue-hint">点击任一行查看请求详情</span>
+                        <span className="ml-auto drama-queue-hint">失败图片与视频可直接返回生成位置</span>
                     </div>
                     {jobsQuery.isError ? (
                         <p className="drama-sg-note is-warn" role="status">
@@ -88,7 +102,13 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
                     ) : null}
                     <div className="drama-queue-list thin-scrollbar" role="list">
                         {jobs.map((job) => (
-                            <button key={job.id} type="button" role="listitem" className={`drama-job is-${job.status}`} onClick={() => setDetailJob(job)}>
+                            <button
+                                key={job.id}
+                                type="button"
+                                role="listitem"
+                                className={`drama-job is-${job.status}`}
+                                onClick={() => (job.status === "failed" && (job.kind === "cast_image" || job.kind === "segment_video") ? onJump(job) : setDetailJob(job))}
+                            >
                                 <JobStatusIcon status={job.status} />
                                 <span className="drama-job-kind">{JOB_KIND_LABEL[job.kind]}</span>
                                 <span className="drama-job-label" title={job.providerStage ? `${job.label} · ${job.providerStage}` : job.label}>

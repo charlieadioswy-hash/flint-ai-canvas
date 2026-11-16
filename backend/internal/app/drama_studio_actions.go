@@ -15,13 +15,26 @@ import (
 
 // DramaStudioActionRequest is an exact target, never an episode-wide media release.
 type DramaStudioActionRequest struct {
-	Action            string            `json:"action"`
-	TargetID          string            `json:"targetId"`
-	EpisodeID         string            `json:"episodeId,omitempty"`
-	TargetRevision    *int64            `json:"targetRevision,omitempty"`
-	BaseRevision      *int64            `json:"baseRevision,omitempty"`
-	VideoModel        *DramaModelChoice `json:"videoModel,omitempty"`
-	ConfirmationToken string            `json:"confirmationToken,omitempty"`
+	Action            string                `json:"action"`
+	TargetID          string                `json:"targetId"`
+	EpisodeID         string                `json:"episodeId,omitempty"`
+	TargetRevision    *int64                `json:"targetRevision,omitempty"`
+	BaseRevision      *int64                `json:"baseRevision,omitempty"`
+	VideoModel        *DramaModelChoice     `json:"videoModel,omitempty"`
+	ConfirmationToken string                `json:"confirmationToken,omitempty"`
+	CastDraft         *DramaStudioCastDraft `json:"castDraft,omitempty"`
+}
+
+// 草稿仅用于读取实际生图规格与费用，不保存，也不能用于执行任务。
+type DramaStudioCastDraft struct {
+	Name             *string                `json:"name,omitempty"`
+	Appearance       *string                `json:"appearance,omitempty"`
+	ImagePrompt      *string                `json:"imagePrompt,omitempty"`
+	ImageStyleID     *string                `json:"imageStyleId,omitempty"`
+	ImageStyleName   *string                `json:"imageStyleName,omitempty"`
+	ImageStylePrompt *string                `json:"imageStylePrompt,omitempty"`
+	ImageOptions     *DramaCastImageOptions `json:"imageOptions,omitempty"`
+	Unlock           bool                   `json:"unlock,omitempty"`
 }
 
 type DramaStudioMissingCast struct {
@@ -40,6 +53,7 @@ type DramaStudioActionPreflight struct {
 	Reason             string                   `json:"reason,omitempty"`
 	Message            string                   `json:"message"`
 	ConfirmationToken  string                   `json:"confirmationToken"`
+	ScopeHash          string                   `json:"scopeHash,omitempty"`
 	MissingCasts       []DramaStudioMissingCast `json:"missingCasts"`
 	Warnings           []string                 `json:"warnings"`
 	CanUseText         bool                     `json:"canUseText"`
@@ -86,6 +100,9 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 	if strings.TrimSpace(req.TargetID) == "" {
 		return plan, BadAuthRequest("请选择具体的资产或剧情段")
 	}
+	if req.CastDraft != nil && req.Action != "cast_image" {
+		return plan, BadAuthRequest("图片草稿只能用于资产图片计价")
+	}
 	p, err := repo.DramaProduction(projectID)
 	if err != nil {
 		return plan, err
@@ -112,12 +129,13 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		return s.prepareDramaStudioSegmentAssets(repo, userID, req, plan, settings, snapshot)
 	}
 	if req.Action == "cast_image" {
+		meta := parseDramaBibleMeta(p.BibleJSON)
 		if req.EpisodeID != "" {
 			episode, err := repo.DramaEpisode(projectID, req.EpisodeID)
 			if err != nil {
 				return plan, err
 			}
-			settings = dramaEpisodeSettings(settings, *episode)
+			settings, meta = dramaEpisodeStyleSettings(settings, meta, *episode)
 			v.EpisodeID = episode.ID
 			snapshot = append(snapshot, episode.ID, episode.Revision, episode.SettingsJSON)
 		}
@@ -125,7 +143,39 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		if err != nil {
 			return plan, err
 		}
+		if req.CastDraft != nil {
+			copy := *cast
+			cast = &copy
+			if req.CastDraft.Name != nil {
+				name := strings.TrimSpace(*req.CastDraft.Name)
+				if err := validateDramaCastText(name, "名称", 60, true); err != nil {
+					return plan, err
+				}
+				if cast.ParentID != "" {
+					cast.LookName = name
+				} else {
+					cast.Name = name
+				}
+			}
+			if req.CastDraft.Appearance != nil {
+				if err := validateDramaCastText(*req.CastDraft.Appearance, "外观描述", 1000, false); err != nil {
+					return plan, err
+				}
+				cast.Appearance = strings.TrimSpace(*req.CastDraft.Appearance)
+			}
+			if _, err := applyDramaCastImageFields(cast, req.CastDraft.ImagePrompt, req.CastDraft.ImageStyleID, req.CastDraft.ImageStyleName, req.CastDraft.ImageStylePrompt); err != nil {
+				return plan, err
+			}
+			if req.CastDraft.ImageOptions != nil {
+				encoded, _ := json.Marshal(req.CastDraft.ImageOptions)
+				cast.ImageOptionsJSON = string(encoded)
+			}
+			if req.CastDraft.Unlock {
+				cast.Locked = false
+			}
+		}
 		plan.cast, v.TargetRevision = cast, cast.Revision
+		parentImageID := ""
 		snapshot = append(snapshot, cast)
 		v.Message = "仅生成「" + cast.Name + "」参考图"
 		if !dramaCastHasImageDefinition(*cast) {
@@ -147,6 +197,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 				blocked("请先生成角色本体「" + base.Name + "」参考图")
 				v.MissingCasts = append(v.MissingCasts, DramaStudioMissingCast{ID: base.ID, Name: base.Name})
 			} else if base.ImageStatus == model.DramaMediaReady && base.ImageResourceID != "" {
+				parentImageID = base.ImageResourceID
 				if _, err := repo.ResourceForUser(userID, base.ImageResourceID); err != nil {
 					return plan, err
 				}
@@ -157,6 +208,14 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 			blocked(err.Error())
 		}
 		choice, intent = imagePlan.Choice, imagePlan.Intent
+		// 保存会递增记录版本，但不会改变已向用户展示的真实生成内容与参考顺序。
+		modelScope := []string{imagePlan.Choice.LogicalModelID, imagePlan.Choice.ChannelID, imagePlan.Choice.ModelKey}
+		// 编辑器把缺省参考组展开为空数组，两种表示具有相同的生成输入。
+		subjectReferences := append([]string{}, imagePlan.Options.SubjectReferenceIDs...)
+		styleReferences := append([]string{}, imagePlan.Options.StyleReferenceIDs...)
+		scope, _ := json.Marshal([]any{projectID, v.EpisodeID, cast.ID, cast.Kind, cast.Name, cast.LookName, cast.Appearance, cast.ImagePrompt, cast.ImageStyleID, cast.ImageStyleName, cast.ImageStylePrompt, modelScope, imagePlan.Ratio, imagePlan.Request, imagePlan.Intent, subjectReferences, styleReferences, parentImageID, buildDramaCastImagePrompt(settings, meta, *cast)})
+		digest := sha256.Sum256(scope)
+		v.ScopeHash = hex.EncodeToString(digest[:])
 		snapshot = append(snapshot, imagePlan)
 	} else {
 		if req.Action != "segment_video" && req.Action != "segment_prompt" && req.Action != "segment_reprocess" {
@@ -397,6 +456,9 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 func (s *Service) ExecuteDramaStudioAction(userID, projectID string, req DramaStudioActionRequest) (map[string]any, error) {
 	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
 		return nil, err
+	}
+	if req.CastDraft != nil {
+		return nil, BadAuthRequest("请先保存资产图片配置，再提交生成")
 	}
 	if req.ConfirmationToken == "" || req.TargetRevision == nil || req.BaseRevision == nil {
 		return nil, BadAuthRequest("请先预检并确认本次操作")

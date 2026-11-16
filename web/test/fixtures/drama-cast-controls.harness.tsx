@@ -35,11 +35,12 @@ const { CanvasDramaAdoptModal } = await import("../../src/components/canvas/canv
 const { buildDramaCastNode, defaultDramaAdoptTarget } = await import("../../src/lib/canvas/drama-canvas-projection");
 const { CanvasNodeType } = await import("../../src/types/canvas");
 const api = await import("../../src/services/api/drama");
+const { ApiError } = await import("../../src/services/api/request");
 const resources = await import("../../src/services/api/resources");
 const imageStorage = await import("../../src/services/image-storage");
 const imageLoader = await import("../../src/services/canvas-image-loader");
 const character = { id: "hero", name: "主角", kind: "character", imageStatus: "ready", imageResourceId: "base" } as DramaCast;
-const look = { id: "look", name: "主角", parentId: "hero", kind: "character", lookName: "晚宴", appearance: "黑色礼服", imagePrompt: "银色耳饰，柔和侧光", imageStatus: "draft" } as DramaCast;
+const look = { id: "look", projectId: "project", name: "主角", parentId: "hero", kind: "character", revision: 1, lookName: "晚宴", appearance: "黑色礼服", imagePrompt: "银色耳饰，柔和侧光", imageStatus: "draft" } as DramaCast;
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let client: InstanceType<typeof QueryClient>;
@@ -50,6 +51,8 @@ beforeEach(() => {
     root = createRoot(host);
     client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     spyOn(api, "getDramaCastImpact").mockImplementation(async (_projectId, castId) => ({ kind: "cast", castId, revision: 1, segments: 0, episodes: 0, affectedSegments: 0, assetIds: [castId], directSegments: [], continuitySegments: [], message: "" }));
+    spyOn(api, "preflightDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input));
+    spyOn(api, "getDrama").mockResolvedValue({ project: { id: "project" }, production: { revision: 1 } } as DramaSummary);
 });
 afterEach(async () => {
     await act(async () => root.unmount());
@@ -65,23 +68,48 @@ afterAll(() => {
     }
 });
 
-async function renderLooks(looks = [look]) {
+async function renderLooks(looks = [look], onChanged = () => {}) {
     await act(async () =>
         root.render(
             <QueryClientProvider client={client}>
                 <App>
-                    <CastLooks projectId="project" character={character} looks={looks} restyle={false} onChanged={() => {}} />
+                    <CastLooks projectId="project" character={character} looks={looks} restyle={false} onChanged={onChanged} />
                 </App>
             </QueryClientProvider>,
         ),
     );
 }
 async function click(label: string, scope: ParentNode = host) {
+    if (label.startsWith("生成图片-")) {
+        for (let attempt = 0; attempt < 80 && ![...scope.querySelectorAll<HTMLButtonElement>("button")].some((item) => item.textContent?.replace(/\s/g, "") === label && !item.disabled); attempt++) {
+            await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 5)));
+        }
+    }
     const button = [...scope.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.getAttribute("aria-label") === label || item.textContent?.replace(/\s/g, "") === label);
     expect(button).toBeDefined();
     await act(async () => {
         button!.click();
     });
+}
+
+function lookQuote(input: Parameters<typeof api.preflightDramaStudioBatch>[1], amountMicrocredits = 2_000_000, queued = false) {
+    return {
+        action: input.action,
+        targetIds: input.targetIds,
+        baseRevision: 1,
+        ready: true,
+        priced: true,
+        amountMicrocredits,
+        confirmationToken: "quote-token",
+        scopeHash: "same-scope",
+        items: input.targetIds.map((targetId) => ({ targetId, targetKind: "cast" as const, targetRevision: 1, status: queued ? ("queued" as const) : ("ready" as const), amountMicrocredits, priced: true })),
+        counts: { ready: queued ? 0 : input.targetIds.length, queued: queued ? input.targetIds.length : 0, already_queued: 0, skipped_ready: 0, blocked: 0, conflict: 0, failed: 0 },
+        warnings: [],
+    };
+}
+async function settleUntil(predicate: () => boolean) {
+    for (let attempt = 0; attempt < 80 && !predicate(); attempt++) await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 5)));
+    expect(predicate()).toBe(true);
 }
 
 test("a character starts with its base image and no automatically added look", async () => {
@@ -96,14 +124,15 @@ test("a character starts with its base image and no automatically added look", a
     expect(add).not.toHaveBeenCalled();
 });
 
-test("confirming a look saves its editable prompt without requesting generation", async () => {
+test("已有造型不再显示确认保存，未修改时关闭不写入也不生成", async () => {
     const update = spyOn(api, "updateDramaCastLook").mockResolvedValue({ look, affectedSegments: 0 });
     const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
     await renderLooks();
     await click("编辑造型 晚宴");
     expect(host.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("银色耳饰，柔和侧光");
-    await click("确认保存");
-    expect(update).toHaveBeenCalledWith("project", "look", expect.objectContaining({ imagePrompt: "银色耳饰，柔和侧光", appearance: "黑色礼服" }));
+    expect(host.textContent).not.toContain("确认保存");
+    await click("关闭编辑");
+    expect(update).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
 });
 
@@ -147,9 +176,133 @@ test("editing an appearance submits the newly typed prompt and keeps generation 
     await click("编辑造型 晚宴");
     await fillLookField("参考图生成提示词", "珍珠耳饰，暖色逆光，保留人物面部特征");
     expect(update).not.toHaveBeenCalled();
-    await click("确认保存");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
     expect(update).toHaveBeenCalledWith("project", "look", expect.objectContaining({ imagePrompt: "珍珠耳饰，暖色逆光，保留人物面部特征" }));
     expect(generate).not.toHaveBeenCalled();
+});
+
+test("造型文字章节与图片自动串行保存，在途输入不会被旧回执覆盖", async () => {
+    let finish!: (value: { look: DramaCast; affectedSegments: number }) => void;
+    const update = spyOn(api, "updateDramaCastLook")
+        .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+        .mockImplementation(async (_project, _id, patch) => ({ look: { ...look, ...patch, revision: 3 }, affectedSegments: 0 }));
+    await renderLooks();
+    await click("编辑造型 晚宴");
+    await fillLookField("造型名", "舞台妆");
+    await fillLookField("造型外观", "红色长裙");
+    await fillLookField("起始章", "2");
+    await fillLookField("结束章", "5");
+    await fillLookField("参考图生成提示词", "暖色侧光");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][2]).toEqual(expect.objectContaining({ lookName: "舞台妆", appearance: "红色长裙", fromChapter: 2, toChapter: 5, imagePrompt: "暖色侧光", expectedRevision: 1, expectedCastRevision: 1 }));
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.disabled).toBe(false);
+    await fillLookField("造型外观", "红色长裙与珍珠耳饰");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+    expect(update).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ look: { ...look, revision: 2 }, affectedSegments: 0 }));
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="造型外观"]')?.value).toBe("红色长裙与珍珠耳饰");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 400)));
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[1][2]).toEqual(expect.objectContaining({ appearance: "红色长裙与珍珠耳饰", expectedCastRevision: 2 }));
+});
+
+test("造型自动保存失败不循环重发，保留草稿并允许显式重试", async () => {
+    const update = spyOn(api, "updateDramaCastLook")
+        .mockRejectedValueOnce(new Error("暂时断网"))
+        .mockResolvedValue({ look: { ...look, revision: 2 }, affectedSegments: 0 });
+    await renderLooks();
+    await click("编辑造型 晚宴");
+    await fillLookField("造型外观", "保留这套白色风衣");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("修改仍保留");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="造型外观"]')?.value).toBe("保留这套白色风衣");
+    await click("重试保存");
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[1][2]).toEqual(expect.objectContaining({ appearance: "保留这套白色风衣" }));
+    await click("关闭编辑");
+    expect(host.querySelector(".drama-look-form")).toBeNull();
+});
+
+test("造型版本冲突只在确认版本变化后按当前草稿重试一次", async () => {
+    spyOn(api, "getDrama")
+        .mockResolvedValueOnce({ project: { id: "project" }, production: { revision: 1 } } as DramaSummary)
+        .mockResolvedValue({ project: { id: "project" }, production: { revision: 4 } } as DramaSummary);
+    spyOn(api, "listDramaCast").mockResolvedValue({ cast: [{ ...look, revision: 3, appearance: "其他页面的黑色风衣" }] });
+    const update = spyOn(api, "updateDramaCastLook")
+        .mockRejectedValueOnce(new ApiError("版本已变化", { status: 409, reason: "conflict" }))
+        .mockResolvedValue({ look: { ...look, revision: 4 }, affectedSegments: 0 });
+    await renderLooks();
+    await click("编辑造型 晚宴");
+    await fillLookField("造型外观", "当前页面的红色长裙");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[0][2]).toEqual(expect.objectContaining({ expectedRevision: 1, expectedCastRevision: 1 }));
+    expect(update.mock.calls[1][2]).toEqual(expect.objectContaining({ expectedRevision: 4, expectedCastRevision: 3, appearance: "当前页面的红色长裙" }));
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="造型外观"]')?.value).toBe("当前页面的红色长裙");
+});
+
+test("造型冲突仅覆盖本地改动字段，后续保存继续保留远端名称", async () => {
+    spyOn(api, "getDrama")
+        .mockResolvedValueOnce({ project: { id: "project" }, production: { revision: 1 } } as DramaSummary)
+        .mockResolvedValue({ project: { id: "project" }, production: { revision: 4 } } as DramaSummary);
+    const remote = { ...look, lookName: "远端更新的舞台妆", revision: 3 };
+    spyOn(api, "listDramaCast").mockResolvedValue({ cast: [remote] });
+    const update = spyOn(api, "updateDramaCastLook")
+        .mockRejectedValueOnce(new ApiError("版本已变化", { status: 409, reason: "conflict" }))
+        .mockImplementation(async (_project, _id, patch) => ({ look: { ...remote, ...patch, revision: update.mock.calls.length + 2 }, affectedSegments: 0 }));
+    await renderLooks();
+    await click("编辑造型 晚宴");
+    await fillLookField("造型外观", "本地更新的红色长裙");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[1][2]).toEqual(expect.objectContaining({ lookName: remote.lookName, appearance: "本地更新的红色长裙", expectedCastRevision: 3 }));
+    await fillLookField("参考图生成提示词", "第二次编辑的暖色侧光");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(update.mock.calls[2][2]).toEqual(expect.objectContaining({ lookName: remote.lookName, appearance: "本地更新的红色长裙", imagePrompt: "第二次编辑的暖色侧光", expectedCastRevision: 4 }));
+});
+
+test("造型校验失败不覆盖或重发，离开编辑后迟到回执不触发刷新", async () => {
+    let finish!: (value: { look: DramaCast; affectedSegments: number }) => void;
+    const update = spyOn(api, "updateDramaCastLook")
+        .mockRejectedValueOnce(new ApiError("校验失败", { status: 400 }))
+        .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const readCast = spyOn(api, "listDramaCast").mockResolvedValue({ cast: [look] });
+    const changed = mock();
+    await renderLooks([look], changed);
+    await click("编辑造型 晚宴");
+    await fillLookField("造型外观", "保留白色风衣");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(readCast).not.toHaveBeenCalled();
+    await click("重试保存");
+    expect(update).toHaveBeenCalledTimes(2);
+    await renderLooks([], changed);
+    await act(async () => finish({ look: { ...look, revision: 2 }, affectedSegments: 0 }));
+    expect(changed).not.toHaveBeenCalled();
+    expect(host.querySelector(".drama-look-form")).toBeNull();
+});
+
+test("造型版本读取失败保留输入并可刷新恢复自动保存", async () => {
+    const read = spyOn(api, "getDrama").mockRejectedValue(new Error("暂时断线"));
+    spyOn(api, "listDramaCast").mockResolvedValue({ cast: [look] });
+    const update = spyOn(api, "updateDramaCastLook").mockResolvedValue({ look: { ...look, revision: 2 }, affectedSegments: 0 });
+    await renderLooks();
+    await click("编辑造型 晚宴");
+    await fillLookField("造型外观", "读取失败期间继续编辑的红色长裙");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("版本读取失败");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("放弃修改并关闭"))?.disabled).toBe(false);
+    read.mockResolvedValue({ project: { id: "project" }, production: { revision: 1 } } as DramaSummary);
+    await click("刷新状态");
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 450)));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][2]).toEqual(expect.objectContaining({ appearance: "读取失败期间继续编辑的红色长裙" }));
 });
 
 test("custom appearance image is uploaded and assigned only after confirmation", async () => {
@@ -171,17 +324,17 @@ test("custom appearance image is uploaded and assigned only after confirmation",
     expect(generate).not.toHaveBeenCalled();
 });
 
-test("saved draft generates only through its separate generation button", async () => {
-    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+test("saved draft quotes automatically and generates through one click", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, 2_000_000, true));
     await renderLooks();
     expect(host.textContent).toContain("已保存，待生成或上传");
     expect(generate).not.toHaveBeenCalled();
-    await click("生成造型图");
-    expect(generate).toHaveBeenCalledWith("project", "look", false);
+    await click("生成图片-2积分");
+    expect(generate).toHaveBeenCalledWith("project", expect.objectContaining({ action: "cast_image", targetIds: ["look"], regenerate: true, baseRevision: 1, confirmationToken: "quote-token" }));
 });
 
-test("重新生成造型在已有依赖视频时提示，取消不生成，确认后才提交", async () => {
-    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+test("已有依赖视频的造型生成直接提交，不重复弹窗确认", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, 2_000_000, true));
     spyOn(api, "getDramaCastImpact").mockResolvedValue({
         kind: "cast",
         castId: "look",
@@ -190,30 +343,72 @@ test("重新生成造型在已有依赖视频时提示，取消不生成，确�
         continuitySegments: [],
     } as unknown as DramaWorkflowImpact);
     await renderLooks([{ ...look, imageResourceId: "old-look" }]);
-    await click("重新生成");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("第 2 集 · 第 4 段");
-    expect(generate).not.toHaveBeenCalled();
-    await click("取消", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
-    expect(generate).not.toHaveBeenCalled();
-    await click("重新生成");
-    await click("继续生成", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
-    expect(generate).toHaveBeenCalledWith("project", "look", false);
+    await click("生成图片-2积分");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(generate).toHaveBeenCalledWith("project", expect.objectContaining({ targetIds: ["look"], regenerate: true, confirmationToken: "quote-token" }));
 });
 
-test("锁定造型的取消不解锁，确认后才解锁生成且不出现空影响提示", async () => {
+test("锁定造型先按解锁后配置报价，点击才解锁并核对费用生成", async () => {
     const unlock = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: look });
-    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+    const generate = spyOn(api, "executeDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, 2_000_000, true));
     await renderLooks([{ ...look, locked: true, imageResourceId: "custom-look" }]);
-    await click("重新生成");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("解锁当前自定义图");
-    expect(document.querySelector('[aria-label="已有视频影响范围"]')).toBeNull();
-    await click("取消", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
     expect(unlock).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
-    await click("重新生成");
-    await click("解锁并生成", [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!);
+    expect(api.preflightDramaStudioBatch).toHaveBeenCalledWith("project", { action: "cast_image", targetIds: ["look"], regenerate: true, castDrafts: { look: { unlock: true } } });
+    await click("生成图片-2积分");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(unlock).toHaveBeenCalledWith("project", "look", { locked: false });
-    expect(generate).toHaveBeenCalledWith("project", "look", false);
+    expect(generate).toHaveBeenCalledWith("project", expect.objectContaining({ targetIds: ["look"], regenerate: true, confirmationToken: "quote-token" }));
+});
+
+test("造型生成费用变动后停止提交，更新按钮后再次点击才执行", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, 3_000_000, true));
+    let calls = 0;
+    spyOn(api, "preflightDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, ++calls === 1 ? 2_000_000 : 3_000_000));
+    await renderLooks();
+    await click("生成图片-2积分");
+    expect(generate).not.toHaveBeenCalled();
+    await click("生成图片-3积分");
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+test("造型生成同价但配置范围变化时停止，重新显示报价后才能生成", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch").mockImplementation(async (_project, input) => lookQuote(input, 2_000_000, true));
+    let reads = 0;
+    spyOn(api, "preflightDramaStudioBatch").mockImplementation(async (_project, input) => ({ ...lookQuote(input), scopeHash: ++reads === 1 ? "original-scope" : "changed-scope" }));
+    await renderLooks();
+    await click("生成图片-2积分");
+    expect(generate).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("生成提交结果待核对");
+    await settleUntil(() => reads >= 3);
+    await click("生成图片-2积分");
+    expect(generate).toHaveBeenCalledTimes(1);
+});
+
+test("造型生成提交结果未知时阻止再次生成，只读取已有任务状态", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch").mockRejectedValue(new Error("响应断开"));
+    const read = spyOn(api, "listDramaCast").mockResolvedValue({ cast: [{ ...look, imageStatus: "queued" }] });
+    await renderLooks();
+    await click("生成图片-2积分");
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("生成提交结果待核对");
+    const button = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.replace(/\s/g, "") === "生成图片-2积分")!;
+    expect(button.disabled).toBe(true);
+    await act(async () => button.click());
+    expect(generate).toHaveBeenCalledTimes(1);
+    await click("核对生成状态");
+    expect(read).toHaveBeenCalledWith("project");
+    expect(generate).toHaveBeenCalledTimes(1);
+});
+
+test("造型报价阻断时按钮禁用并在原处说明原因", async () => {
+    const generate = spyOn(api, "executeDramaStudioBatch");
+    spyOn(api, "preflightDramaStudioBatch").mockImplementation(async (_project, input) => ({ ...lookQuote(input), ready: false, reason: "积分不足", items: [{ ...lookQuote(input).items[0], status: "blocked" }] }));
+    await renderLooks();
+    await settleUntil(() => host.textContent?.includes("积分不足") || false);
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.startsWith("生成图片"))?.disabled).toBe(true);
+    expect(generate).not.toHaveBeenCalled();
 });
 
 test("voice preview distinguishes characters with and without audio", async () => {
@@ -440,16 +635,14 @@ test("reference removal updates only the selected source and keeps library/uploa
     expect(save).toHaveBeenLastCalledWith({ referenceCastIds: [] });
 });
 
-test("over-limit automatic voices can be adjusted before saving and restored to automatic mode", async () => {
+test("over-limit automatic voices are applied when adjusted and can be restored to automatic mode", async () => {
     const save = mock(async () => {});
     await renderReferences(save);
     expect(host.querySelector('[aria-label="关闭配角的音色"]')).toBeNull();
     const menu = await openReferenceMenu();
     expect(menu.textContent).toContain("当前模型音色不可多于 1 个");
     await click("关闭配角的音色", menu);
-    expect(save).not.toHaveBeenCalled();
     expect(menu.querySelector<HTMLButtonElement>('[aria-label="开启配角的音色"]')?.disabled).toBe(true);
-    await click("保存音色选择", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero"] });
     await renderReferences(save, { ...segment, audioReferenceMode: "custom", request: { ...segment.request, audioReferences: segment.request.audioReferences?.slice(0, 1) } });
     await click("恢复自动音色", menu);
@@ -474,12 +667,10 @@ test("a failed preview retains the selected voice when another voice is enabled"
     expect(menu.querySelector<HTMLButtonElement>('[aria-label="关闭主角的音色"]')?.disabled).toBe(false);
     expect(menu.textContent).toContain("视频请求尚未就绪，参考音色未发送");
     await click("开启配角的音色", menu);
-    expect(save).not.toHaveBeenCalled();
-    await click("保存音色选择", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero", "second"] });
 });
 
-test("a model without audio support still allows closing and saving the existing voice", async () => {
+test("a model without audio support still allows closing and applying the existing voice", async () => {
     const save = mock(async () => {});
     await renderReferences(save, {
         ...segment,
@@ -489,7 +680,6 @@ test("a model without audio support still allows closing and saving the existing
     const menu = await openReferenceMenu();
     expect(menu.querySelector<HTMLButtonElement>('[aria-label="关闭主角的音色"]')?.disabled).toBe(false);
     await click("关闭主角的音色", menu);
-    await click("保存音色选择", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: [] });
 });
 
@@ -527,7 +717,6 @@ test("voice controls stay under the character asset and a look inherits the base
     expect(host.querySelector('[aria-label="主角资产"]')).toBeNull();
     expect(host.querySelector('[aria-label="本段角色音色"]')).toBeNull();
     await click("关闭主角的音色", card!);
-    await click("保存音色选择", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: [] });
 });
 
@@ -557,14 +746,33 @@ test("secondary asset menu searches by alias, filters categories, and toggles se
     expect(save).toHaveBeenLastCalledWith({ referenceCastIds: ["hero"] });
 });
 
-test("voice edits made in the secondary menu can be saved there", async () => {
+test("voice edits made in the secondary menu apply without a save action", async () => {
     const save = mock(async () => {});
     await renderReferences(save);
     await click("管理参考资产");
     const menu = document.querySelector('[aria-label="搜索参考资产"]')!;
     await click("关闭配角的音色", menu);
-    await click("保存音色选择", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero"] });
+});
+
+test("failed automatic voice selection keeps the intended choice and retries explicitly", async () => {
+    let failed = true;
+    const save = mock(async () => {
+        if (failed) throw new Error("音色选择写入失败");
+    });
+    await renderReferences(save);
+    const menu = await openReferenceMenu();
+    await click("关闭配角的音色", menu);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero"] });
+    expect(menu.textContent).toContain("音色选择写入失败");
+    expect(menu.querySelector('[aria-label="开启配角的音色"]')).not.toBeNull();
+    expect(menu.textContent).not.toContain("保存音色选择");
+    failed = false;
+    await click("重试音色选择", menu);
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero"] });
+    expect(menu.textContent).not.toContain("音色选择写入失败");
 });
 
 test("reference image opens the real large preview and can return to the reference panel", async () => {

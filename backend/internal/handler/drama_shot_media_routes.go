@@ -24,6 +24,13 @@ func registerDramaShotMediaRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.PreflightDramaShotMedia(userID, c.Param("id"), c.Param("shotId"), c.Param("kind"), req)
 	}))
+	r.POST(path+"/quote", dramaRoute(svc, 256<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaShotMediaSaveRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.QuoteDramaShotMedia(userID, c.Param("id"), c.Param("shotId"), c.Param("kind"), req)
+	}))
 	r.POST(path+"/execute", dramaRoute(svc, 8<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.DramaShotMediaActionRequest
 		if err := bindDramaJSON(c, &req); err != nil {

@@ -22,11 +22,12 @@ type SegmentShot struct {
 
 // SegmentReference 是段内出场的角色、道具或场景；Label 与提交时参考图的顺序一致（参考图1、参考图2…）。
 type SegmentReference struct {
-	Label  string
-	Kind   string
-	Name   string
-	Detail string
-	Voice  string
+	Identity string
+	Label    string
+	Kind     string
+	Name     string
+	Detail   string
+	Voice    string
 }
 
 // SegmentPromptInput 是组装一整段多镜头视频提示词的全部输入。

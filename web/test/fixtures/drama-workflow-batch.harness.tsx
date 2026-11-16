@@ -85,7 +85,7 @@ function response(call: Call, statuses: DramaStudioBatchStatus[] = [], patch: Pa
         ...patch,
     };
 }
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+const settle = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 async function mount(overrides: Partial<WorkflowBatchProps> = {}) {
     checks.length = 0;
     executions.length = 0;
@@ -99,8 +99,7 @@ async function mount(overrides: Partial<WorkflowBatchProps> = {}) {
         projectId: "project-a",
         revision: 1,
         targetIds: ["segment-b", "segment-a"],
-        targetLabels: { "segment-a": "第 1 集 · 第 2 段", "segment-b": "第 3 集 · 第 1 段" },
-        actions: ["segment_prompt", "segment_assets", "segment_video"],
+        actions: ["segment_video"],
         onChanged: async () => {
             refreshes++;
             if (refreshFailure) throw new Error("队列暂时不可用");
@@ -111,8 +110,13 @@ async function mount(overrides: Partial<WorkflowBatchProps> = {}) {
         root.render(<WorkflowBatch {...props} />);
         await settle();
     });
+    const waitQuotes = () =>
+        act(async () => {
+            await settle(210);
+        });
     return {
         host,
+        waitQuotes,
         rerender: async (patch: Partial<WorkflowBatchProps>) => {
             props = { ...props, ...patch };
             await act(async () => {
@@ -128,7 +132,7 @@ async function mount(overrides: Partial<WorkflowBatchProps> = {}) {
 }
 function button(host: HTMLElement, text: string) {
     const found = [...host.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === text);
-    if (!found) throw new Error(`没有按钮 ${text}`);
+    if (!found) throw new Error(`没有按钮 ${text}；${host.textContent}`);
     return found;
 }
 async function click(element: HTMLElement) {
@@ -137,284 +141,281 @@ async function click(element: HTMLElement) {
         await settle();
     });
 }
-async function resolveCheck(index = checks.length - 1, patch: Partial<DramaStudioBatchView> = {}) {
+async function quote(view: Awaited<ReturnType<typeof mount>>, patch: Partial<DramaStudioBatchView> = {}, statuses: DramaStudioBatchStatus[] = []) {
+    await view.waitQuotes();
+    const call = checks.at(-1)!;
     await act(async () => {
-        checks[index].pending.resolve(response(checks[index], [], patch));
+        call.pending.resolve(response(call, statuses, patch));
         await settle();
     });
+    return call;
 }
 afterAll(() => browser.happyDOM.abort());
 
-test("只预检所选真实 ID，展示总价与逐项状态，明确确认才单次执行", async () => {
-    const view = await mount();
+test("自动报价只读，展示积分后一次点击提交真实范围，无确认窗口", async () => {
+    const v = await mount();
     try {
-        expect(checks).toHaveLength(0);
-        await click(button(view.host, "批量生成视频"));
-        expect(checks[0].input).toEqual({ action: "segment_video", targetIds: ["segment-a", "segment-b"], baseRevision: 1 });
-        await resolveCheck();
-        expect(view.host.textContent).toContain("预计合计 2 积分");
-        expect(view.host.textContent).toContain("第 3 集 · 第 1 段");
+        const call = await quote(v);
+        expect(call.input).toEqual({ action: "segment_video", targetIds: ["segment-a", "segment-b"], baseRevision: 1 });
         expect(executions).toHaveLength(0);
-        await click(button(view.host, "确认提交本批次"));
+        expect(v.host.querySelector('[role="dialog"]')).toBeNull();
+        await click(button(v.host, "批量生成视频 - 2积分"));
         expect(executions).toHaveLength(1);
-        expect(executions[0].input).toEqual({ action: "segment_video", targetIds: ["segment-a", "segment-b"], baseRevision: 1, confirmationToken: "confirmed-token" });
+        expect(executions[0].input).toEqual({ ...call.input, confirmationToken: "confirmed-token" });
         await act(async () => {
             executions[0].pending.resolve(response(executions[0], ["queued", "queued"]));
             await settle();
         });
-        expect(view.host.textContent).toContain("已加入队列 2 项");
+        expect(v.host.textContent).toContain("已加入队列 2 项");
         expect(refreshes).toBe(1);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("同步重复点击只提交一个批次，执行中不能关闭弹窗", async () => {
-    const view = await mount();
+test("同帧重复点击只提交一个批次", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量撰写提示词"));
-        await resolveCheck();
-        const confirm = button(view.host, "确认提交本批次");
+        await quote(v);
+        const b = button(v.host, "批量生成视频 - 2积分");
         await act(async () => {
-            confirm.click();
-            confirm.click();
+            b.click();
+            b.click();
             await settle();
         });
         expect(executions).toHaveLength(1);
-        expect(button(view.host, "取消").disabled).toBe(true);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("部分可提交时展示阻塞项与可执行部分总价，执行仍只提交一个完整批次", async () => {
-    const view = await mount();
+test("部分可执行只显示实际可执行部分积分，仍单请求提交", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await act(async () => {
-            checks[0].pending.resolve(response(checks[0], ["ready", "blocked"]));
-            await settle();
-        });
-        expect(view.host.textContent).toContain("预计合计 1 积分");
-        expect(view.host.querySelectorAll('[data-status="blocked"]')).toHaveLength(1);
-        await click(button(view.host, "确认提交本批次"));
+        await quote(v, {}, ["ready", "blocked"]);
+        await click(button(v.host, "批量生成视频 - 1积分"));
         expect(executions).toHaveLength(1);
         expect(executions[0].input.targetIds).toEqual(["segment-a", "segment-b"]);
+    } finally {
+        await v.close();
+    }
+});
+test("切换选择范围隔离迟到旧报价", async () => {
+    const v = await mount();
+    try {
+        await v.waitQuotes();
+        const old = checks[0];
+        await v.rerender({ targetIds: ["segment-c"] });
         await act(async () => {
-            executions[0].pending.resolve(response(executions[0], ["queued", "blocked"]));
+            old.pending.resolve(response(old));
             await settle();
         });
-        expect(view.host.textContent).toContain("已加入队列 1 项");
-        expect(view.host.querySelectorAll('[data-status="blocked"]')).toHaveLength(1);
+        expect(button(v.host, "批量生成视频 - 计价中").disabled).toBe(true);
+        const fresh = await quote(v);
+        expect(fresh.input.targetIds).toEqual(["segment-c"]);
+        await click(button(v.host, "批量生成视频 - 1积分"));
+        expect(executions[0].input.targetIds).toEqual(["segment-c"]);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("更换选择范围丢弃旧预检的迟到结果，新范围必须重新预检", async () => {
-    const view = await mount();
+test("revision变化先禁用旧价，新报价才可执行", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await view.rerender({ targetIds: ["segment-c"] });
-        await resolveCheck(0);
-        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
-        await click(button(view.host, "批量生成视频"));
-        expect(checks[1].input.targetIds).toEqual(["segment-c"]);
-        expect(executions).toHaveLength(0);
+        await quote(v);
+        await v.rerender({ revision: 2 });
+        expect(button(v.host, "批量生成视频 - 计价中").disabled).toBe(true);
+        await quote(v, { baseRevision: 2, amountMicrocredits: 3_000_000 });
+        await click(button(v.host, "批量生成视频 - 3积分"));
+        expect(executions[0].input.baseRevision).toBe(2);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("revision 改变保留旧预检并标记过期，重新预检才能提交", async () => {
-    const view = await mount();
+test("服务端变价冲突不自动提交新价，仅提供重新计价", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await resolveCheck();
-        await view.rerender({ revision: 2 });
-        expect(view.host.textContent).toContain("预检已过期");
-        expect(button(view.host, "确认提交本批次").disabled).toBe(true);
-        await click(button(view.host, "重新预检"));
-        expect(checks[1].input.baseRevision).toBe(2);
-        await resolveCheck();
-        expect(button(view.host, "确认提交本批次").disabled).toBe(false);
-    } finally {
-        await view.close();
-    }
-});
-
-test("409 details.batch 展示逐项冲突，原确认不能再次执行", async () => {
-    const view = await mount();
-    try {
-        await click(button(view.host, "批量生成视频"));
-        await resolveCheck();
-        await click(button(view.host, "确认提交本批次"));
+        await quote(v);
+        await click(button(v.host, "批量生成视频 - 2积分"));
         await act(async () => {
-            executions[0].pending.reject(new ApiError("内容或报价已改变", { status: 409, reason: "conflict", details: { batch: response(executions[0], ["conflict", "blocked"]) } }));
+            executions[0].pending.reject(new ApiError("内容或报价已改变", { status: 409, details: { batch: response(executions[0], ["conflict", "blocked"]) } }));
             await settle();
         });
-        expect(view.host.querySelectorAll('[data-status="conflict"]')).toHaveLength(1);
-        expect(view.host.querySelectorAll('[data-status="blocked"]')).toHaveLength(1);
-        expect(button(view.host, "确认提交本批次").disabled).toBe(true);
+        expect(v.host.textContent).toContain("内容或报价已改变");
+        expect(v.host.textContent).not.toContain("确认提交本批次");
+        await click(button(v.host, "重新计价"));
+        await quote(v, { amountMicrocredits: 4_000_000 });
+        expect(button(v.host, "批量生成视频 - 4积分").disabled).toBe(false);
         expect(executions).toHaveLength(1);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("模糊网络回执只能先核对状态，不能直接重复执行", async () => {
-    const view = await mount();
+test("未知回执关闭或切换选择后仍锁定，核对到任务后才解除", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await resolveCheck();
-        await click(button(view.host, "确认提交本批次"));
+        await quote(v);
+        await click(button(v.host, "批量生成视频 - 2积分"));
         await act(async () => {
-            executions[0].pending.reject(new Error("网络断开"));
+            executions[0].pending.reject(new Error("断网"));
             await settle();
         });
-        expect(view.host.textContent).toContain("提交结果尚未确认");
-        expect([...view.host.querySelectorAll("button")].some((element) => element.textContent === "确认提交本批次")).toBe(false);
-        await click(button(view.host, "核对最新状态"));
-        expect(checks).toHaveLength(2);
+        expect(v.host.textContent).toContain("提交结果尚未确认");
+        await click(button(v.host, "取消"));
+        await v.rerender({ targetIds: ["segment-c"] });
+        await quote(v);
+        expect(button(v.host, "批量生成视频 - 1积分").disabled).toBe(true);
+        await click(button(v.host, "查看待核对批次"));
+        await click(button(v.host, "核对最新状态"));
+        const call = checks.at(-1)!;
+        expect(call.input.targetIds).toEqual(["segment-a", "segment-b"]);
         await act(async () => {
-            checks[1].pending.resolve(response(checks[1], ["already_queued", "skipped_ready"]));
+            call.pending.resolve(response(call, ["already_queued", "skipped_ready"]));
             await settle();
         });
-        expect(button(view.host, "确认提交本批次").disabled).toBe(true);
+        expect(v.host.textContent).toContain("已核对到任务或生成结果");
         expect(executions).toHaveLength(1);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("成功入队后刷新失败仍保留成功回执，无重复执行按钮", async () => {
-    const view = await mount();
+test("刷新失败保留成功回执且不重复生成", async () => {
+    const v = await mount();
     try {
         refreshFailure = true;
-        await click(button(view.host, "批量生成缺失资产"));
-        await resolveCheck();
-        await click(button(view.host, "确认提交本批次"));
+        await quote(v);
+        await click(button(v.host, "批量生成视频 - 2积分"));
         await act(async () => {
             executions[0].pending.resolve(response(executions[0], ["queued", "queued"], { dispatchPending: true }));
             await settle();
         });
-        expect(view.host.textContent).toContain("已加入队列 2 项");
-        expect(view.host.textContent).toContain("批次结果已保留，刷新队列失败");
-        expect(view.host.textContent).toContain("无需重复提交");
-        expect([...view.host.querySelectorAll("button")].some((element) => element.textContent === "确认提交本批次")).toBe(false);
+        expect(v.host.textContent).toContain("已加入队列 2 项");
         expect(executions).toHaveLength(1);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("视频缺资产与未报价时不自动补图或付费", async () => {
-    const view = await mount();
+test("依赖阻塞与无法报价均禁用，不自动补图", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await act(async () => {
-            checks[0].pending.resolve(response(checks[0], ["blocked", "blocked"], { items: response(checks[0], ["blocked", "blocked"]).items.map((item) => ({ ...item, missingCasts: [{ id: "cast-a", name: "秦子文" }] })) }));
-            await settle();
-        });
-        expect(view.host.textContent).toContain("缺少参考图：秦子文");
-        expect(button(view.host, "确认提交本批次").disabled).toBe(true);
-        expect(checks).toHaveLength(1);
+        await quote(v, { ready: false, reason: "缺少参考图" }, ["blocked", "blocked"]);
+        expect(button(v.host, "批量生成视频 - 0积分").disabled).toBe(true);
+        expect(v.host.textContent).toContain("缺少参考图");
+        await v.rerender({ revision: 2 });
+        await quote(v, { priced: false });
+        expect(button(v.host, "批量生成视频 - 暂无报价").disabled).toBe(true);
         expect(executions).toHaveLength(0);
-        await click(button(view.host, "重新预检"));
-        await resolveCheck(1, { priced: false });
-        expect(button(view.host, "确认提交本批次").disabled).toBe(true);
-        expect(view.host.textContent).toContain("费用尚未确认");
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("账号切换后旧执行回执不刷新或污染新账号界面", async () => {
-    const view = await mount();
+test("账号切换隔离旧执行回执", async () => {
+    const v = await mount();
     try {
-        await click(button(view.host, "批量生成视频"));
-        await resolveCheck();
-        await click(button(view.host, "确认提交本批次"));
+        await quote(v);
+        await click(button(v.host, "批量生成视频 - 2积分"));
         await act(async () => {
             userStore.setState({ user: { id: "user-b" } });
             await settle();
-        });
-        await act(async () => {
             executions[0].pending.resolve(response(executions[0], ["queued", "queued"]));
             await settle();
         });
-        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
         expect(refreshes).toBe(0);
+        expect(v.host.querySelector('[role="dialog"]')).toBeNull();
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("项目或动作范围变化隔离旧预检，不能把资产请求变成视频", async () => {
-    const view = await mount({ actions: ["cast_image"] });
+test("切换项目或动作不会复用旧报价", async () => {
+    const v = await mount({ actions: ["cast_image"] });
     try {
-        await click(button(view.host, "批量生成参考图"));
-        await view.rerender({ actions: ["segment_video"] });
-        await resolveCheck();
-        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
-        await view.rerender({ projectId: "project-b" });
-        await click(button(view.host, "批量生成视频"));
-        expect(checks[1]).toMatchObject({ projectId: "project-b", input: { action: "segment_video" } });
+        await v.waitQuotes();
+        const old = checks[0];
+        await v.rerender({ projectId: "project-b", actions: ["segment_video"] });
+        await act(async () => {
+            old.pending.resolve(response(old));
+            await settle();
+        });
+        const fresh = await quote(v);
+        expect(fresh.projectId).toBe("project-b");
+        expect(fresh.input.action).toBe("segment_video");
         expect(executions).toHaveLength(0);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("本集批量参考图的预检与执行都保留所选集，不扩大为作品默认", async () => {
-    const view = await mount({ actions: ["cast_image"], targetIds: ["shared-cast"], episodeId: "episode-a" });
+test("参考图报价执行保留分集、重做与影响范围", async () => {
+    const v = await mount({ actions: ["cast_image"], targetIds: ["cast-a"], episodeId: "episode-a", regenerate: true, restyleSegments: true });
     try {
-        await click(button(view.host, "批量生成参考图"));
-        expect(checks[0].input).toEqual({ action: "cast_image", targetIds: ["shared-cast"], episodeId: "episode-a", baseRevision: 1 });
-        await resolveCheck();
-        await click(button(view.host, "确认提交本批次"));
-        expect(executions[0].input).toEqual({ action: "cast_image", targetIds: ["shared-cast"], episodeId: "episode-a", baseRevision: 1, confirmationToken: "confirmed-token" });
+        const call = await quote(v);
+        expect(call.input).toMatchObject({ episodeId: "episode-a", regenerate: true, restyleSegments: true });
+        await click(button(v.host, "批量生成图片 - 1积分"));
+        expect(executions[0].input).toMatchObject({ episodeId: "episode-a", regenerate: true, restyleSegments: true });
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("同主体批量切集丢弃旧集报价与迟到预检，重新确认只提交新集", async () => {
-    const view = await mount({ actions: ["cast_image"], targetIds: ["shared-cast"], episodeId: "episode-a" });
+test("重做图片提交超时后，旧图不能解锁，新版本可核对完成", async () => {
+    const v = await mount({ actions: ["cast_image"], targetIds: ["cast-a"], regenerate: true });
     try {
-        await click(button(view.host, "批量生成参考图"));
-        await resolveCheck();
-        await view.rerender({ episodeId: "episode-b" });
-        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
-        expect(executions).toHaveLength(0);
-        await click(button(view.host, "批量生成参考图"));
-        expect(checks[1].input.episodeId).toBe("episode-b");
-        await view.rerender({ episodeId: "episode-c" });
-        await resolveCheck(1);
-        expect(view.host.querySelector('[role="dialog"]')).toBeNull();
-        await click(button(view.host, "批量生成参考图"));
-        expect(checks[2].input.episodeId).toBe("episode-c");
-        await resolveCheck(2);
-        await click(button(view.host, "确认提交本批次"));
+        await v.waitQuotes();
+        const first = checks.at(-1)!;
+        const baseline = response(first);
+        await act(async () => {
+            first.pending.resolve({ ...baseline, items: baseline.items.map((item) => ({ ...item, resultVersion: 2, resultResourceId: "old-image" })) });
+            await settle();
+        });
+        await click(button(v.host, "批量生成图片 - 1积分"));
+        await act(async () => {
+            executions[0].pending.reject(new Error("断网"));
+            await settle();
+        });
+        await click(button(v.host, "核对最新状态"));
+        const old = checks.at(-1)!;
+        await act(async () => {
+            const view = response(old);
+            old.pending.resolve({ ...view, items: view.items.map((item) => ({ ...item, resultVersion: 2, resultResourceId: "old-image" })) });
+            await settle();
+        });
+        expect(v.host.textContent).toContain("尚未核对到全部任务");
+        await click(button(v.host, "核对最新状态"));
+        const done = checks.at(-1)!;
+        await act(async () => {
+            const view = response(done);
+            done.pending.resolve({ ...view, items: view.items.map((item) => ({ ...item, resultVersion: 3, resultResourceId: "new-image" })) });
+            await settle();
+        });
+        expect(v.host.textContent).toContain("已核对到任务或生成结果");
         expect(executions).toHaveLength(1);
-        expect(executions[0].input.episodeId).toBe("episode-c");
-        expect(executions[0].input.targetIds).toEqual(["shared-cast"]);
     } finally {
-        await view.close();
+        await v.close();
     }
 });
-
-test("空范围、重复 ID 与超过 200 项均不产生扩大范围的请求", async () => {
-    const view = await mount({ targetIds: [] });
+test("临时视频模型同时进入报价与提交", async () => {
+    const model = { modelId: "model-a", provider: "test", label: "视频" };
+    const v = await mount({ videoModel: model });
     try {
-        expect(button(view.host, "批量生成视频").disabled).toBe(true);
-        await view.rerender({ targetIds: Array.from({ length: 201 }, (_, index) => `segment-${index}`) });
-        expect(button(view.host, "批量生成视频").disabled).toBe(true);
-        await view.rerender({ targetIds: ["segment-a", "segment-a"] });
-        await click(button(view.host, "批量生成视频"));
-        expect(checks[0].input.targetIds).toEqual(["segment-a"]);
+        const call = await quote(v);
+        expect(call.input.videoModel).toEqual(model);
+        await click(button(v.host, "批量生成视频 - 2积分"));
+        expect(executions[0].input.videoModel).toEqual(model);
+    } finally {
+        await v.close();
+    }
+});
+test("无选择不报价，文字批量仍保留原确认交互", async () => {
+    const v = await mount({ targetIds: [], actions: ["segment_video", "segment_prompt"] });
+    try {
+        await v.waitQuotes();
+        expect(checks).toHaveLength(0);
+        await v.rerender({ targetIds: ["segment-a"], actions: ["segment_prompt"] });
+        await click(button(v.host, "批量撰写提示词"));
+        const call = checks.at(-1)!;
+        await act(async () => {
+            call.pending.resolve(response(call));
+            await settle();
+        });
+        expect(button(v.host, "确认提交本批次").disabled).toBe(false);
         expect(executions).toHaveLength(0);
     } finally {
-        await view.close();
+        await v.close();
     }
 });

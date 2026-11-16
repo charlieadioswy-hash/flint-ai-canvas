@@ -541,7 +541,7 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 			media = "prompt"
 			reason = segment.PromptError
 		}
-		summary.Inbox = append(summary.Inbox, DramaInboxItem{ID: "segment:" + segment.ID, Kind: "segment_failed", Severity: "error", Title: fmt.Sprintf("第 %d 集 · 第 %d 段", numberByEpisode[segment.EpisodeID], segment.SegmentIndex+1), Detail: reason, EpisodeID: segment.EpisodeID, EpisodeNumber: numberByEpisode[segment.EpisodeID], SegmentIndex: segment.SegmentIndex, Media: media})
+		summary.Inbox = append(summary.Inbox, DramaInboxItem{ID: "segment:" + segment.ID, Kind: "segment_failed", Severity: "error", Title: fmt.Sprintf("第 %d 集 · 第 %d 段", numberByEpisode[segment.EpisodeID], segment.SegmentIndex+1), Detail: reason, EpisodeID: segment.EpisodeID, EpisodeNumber: numberByEpisode[segment.EpisodeID], SegmentID: segment.ID, SegmentIndex: segment.SegmentIndex, Media: media})
 	}
 	if settings.ReviewMode == DramaReviewSample && !productionRow.SampleApproved {
 		for _, episode := range episodes {

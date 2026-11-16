@@ -10,6 +10,8 @@ import { useUserStore } from "@/stores/use-user-store";
 import { MediaThumb, mediaBusy, useResourceMediaUrl } from "./drama-shared";
 import { SegmentStatus, SegmentVideo, secondsLabel, segmentState } from "./studio/segment-parts";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
+import { QuotedMediaButton } from "./studio/drama-media-action-context";
+import { dramaVideoAction } from "./studio/drama-media-action-request";
 import { WorkflowSceneSplits } from "./workflow-scene-splits";
 import { WorkflowStoryboardDialog } from "./workflow-storyboard-dialog";
 import "./workflow-storyboard-page.css";
@@ -171,9 +173,15 @@ export function WorkflowStoryboardPage({
                                     <Button size="small" icon={<RefreshCw className="size-4" />} disabled={currentBusy} onClick={() => onWriteSegmentPrompt(segment)}>
                                         {writing ? "撰写中" : segment.promptStatus === "failed" ? "重试本段提示词" : "撰写本段提示词"}
                                     </Button>
-                                    <Button size="small" icon={<Play className="size-4" />} disabled={currentBusy || !videoAllowed} title={!videoAllowed ? "请先确认文字与提示词" : undefined} onClick={() => onGenerateSegment(segment)}>
-                                        {videoLabel}
-                                    </Button>
+                                    <QuotedMediaButton
+                                        size="small"
+                                        icon={<Play className="size-4" />}
+                                        disabled={currentBusy || !videoAllowed}
+                                        title={!videoAllowed ? "请先确认文字与提示词" : undefined}
+                                        request={segment.videoReprocessable ? { ...dramaVideoAction(detail.episode, segment), action: "segment_reprocess" } : dramaVideoAction(detail.episode, segment)}
+                                        label={videoLabel}
+                                        onClick={() => onGenerateSegment(segment)}
+                                    />
                                     <Button size="small" icon={<Play className="size-4" />} aria-expanded={previewSegmentId === segment.id} onClick={() => setPreviewSegmentId(previewSegmentId === segment.id ? undefined : segment.id)}>
                                         预览本段
                                     </Button>
@@ -308,6 +316,9 @@ function StoryboardShotCard({
         const cast = castById.get(id);
         return cast ? [cast] : [];
     });
+    const visibleSubjects = subjects.length > 6 ? subjects.slice(0, 5) : subjects;
+    const overflowSubjects = subjects.slice(visibleSubjects.length);
+    const overflowSubjectLabel = `另有 ${overflowSubjects.length} 个主体：${overflowSubjects.map((cast) => cast.name).join("、")}`;
     return (
         <article className="drama-storyboard-shot" data-tone={tone}>
             <button className="drama-storyboard-shot-cover" type="button" aria-label={`编辑分镜 ${shot.position + 1} 的媒体`} onClick={() => onOpen(video.data?.resourceId ? "video" : defaultKind)}>
@@ -349,12 +360,18 @@ function StoryboardShotCard({
                     <section className="drama-storyboard-shot-subjects" aria-label="镜头主体">
                         <strong>主体</strong>
                         <div>
-                            {subjects.map((cast) => (
+                            {visibleSubjects.map((cast) => (
                                 <button type="button" key={cast.id} title={cast.name} onClick={() => onOpenCast(cast.id)}>
                                     {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt="" /> : null}
                                     <span>{cast.name}</span>
                                 </button>
                             ))}
+                            {overflowSubjects.length ? (
+                                <span className="drama-storyboard-shot-subject-overflow" title={overflowSubjectLabel}>
+                                    <span aria-hidden>....</span>
+                                    <span className="sr-only">{overflowSubjectLabel}</span>
+                                </span>
+                            ) : null}
                         </div>
                     </section>
                 ) : null}

@@ -47,7 +47,6 @@ export function AssetSchemePicker({
     layout?: "wide" | "compact";
     imageModel?: DramaModelOption;
 }) {
-    const { modal } = App.useApp();
     const catalogQuery = useAssetSchemes();
     const catalog = catalogQuery.data;
     const [tab, setTab] = useState<"character" | "scene">("character");
@@ -75,22 +74,15 @@ export function AssetSchemePicker({
     const chooseMode = (mode: DramaAssetMode) => {
         if (mode === value.mode) return;
         const target = catalog.schemes.find((item) => item.mode === mode);
-        const apply = () =>
-            onChange({
-                ...value,
-                mode,
-                characterPrompt: target ? target.characterPrompt : value.characterPrompt,
-                characterRatio: target ? target.ratio : value.characterRatio,
-                sourceSkillId: target ? undefined : value.sourceSkillId,
-                sourceSkillName: target ? undefined : value.sourceSkillName,
-                sourcePath: target ? undefined : value.sourcePath,
-            });
-        const characterModified = scheme ? value.characterPrompt.trim() !== scheme.characterPrompt.trim() : true;
-        if (target && characterModified) {
-            modal.confirm({ title: `切换为「${target.name}」？`, content: "当前角色提示词有修改，切换后会替换为该方案的默认提示词。", okText: "切换", cancelText: "保留当前", centered: true, onOk: apply });
-            return;
-        }
-        apply();
+        onChange({
+            ...value,
+            mode,
+            characterPrompt: target ? target.characterPrompt : value.characterPrompt,
+            characterRatio: target ? target.ratio : value.characterRatio,
+            sourceSkillId: target ? undefined : value.sourceSkillId,
+            sourceSkillName: target ? undefined : value.sourceSkillName,
+            sourcePath: target ? undefined : value.sourcePath,
+        });
     };
     const insertVariable = (variable: string) => {
         const element = editorRef.current?.resizableTextArea?.textArea;
@@ -193,9 +185,7 @@ export function AssetSchemePicker({
                                 title={item.description}
                                 onClick={() => {
                                     if (prompt.trim() === item.prompt.trim()) return;
-                                    const apply = () => setPrompt(item.prompt);
-                                    if (modified) modal.confirm({ title: `使用「${item.name}」？`, content: "会替换当前场景提示词草稿。保存后仅影响后续生成，已有图片不会改变。", okText: "使用模板", cancelText: "保留当前", onOk: apply });
-                                    else apply();
+                                    setPrompt(item.prompt);
                                 }}
                             >
                                 {item.name}

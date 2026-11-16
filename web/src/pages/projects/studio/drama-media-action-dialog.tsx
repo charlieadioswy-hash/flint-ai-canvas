@@ -4,7 +4,8 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { formatDramaCredits } from "@/lib/drama/drama-format";
 import type { DramaStudioAction } from "@/services/api/drama";
 import { CastVideoImpact } from "../workflow-impact";
-import type { DramaMediaActionController } from "./use-drama-media-action";
+import { generationLabel } from "../workflow-generation";
+import { useDramaMediaQuote, type DramaMediaActionController, type DramaMediaActionTarget } from "./use-drama-media-action";
 
 const ACTION_LABEL: Record<DramaStudioAction, string> = {
     cast_image: "生成参考图",
@@ -26,38 +27,53 @@ function scopeLabel(controller: DramaMediaActionController) {
     return parts.join(" · ");
 }
 
-/** 确认弹窗只展示服务端预检结果；任务进度由父级制作队列负责，这里不是实时队列。 */
+/** 图片视频直接提交；文字保留确认，其余弹窗展示阻断或异常结果。 */
 export function DramaMediaActionDialog({ controller }: { controller: DramaMediaActionController }) {
     const { state } = controller;
     const preview = state.preview;
     const action = preview?.action || state.request?.action;
     const reprocessing = action === "segment_reprocess";
+    const textAction = action === "segment_prompt";
     const busy = state.loading || state.submitting;
-    const canConfirm = Boolean(preview?.ready && preview.confirmationToken && !state.submitted && !state.error && (action !== "cast_image" || state.castImpact));
     const missing = preview?.missingCasts ?? [];
     const canSwitchToAssets = action === "segment_video" && missing.length > 0 && !state.submitted;
     const canRecheckVideo = Boolean(state.pendingVideo && state.submitted && action === "segment_assets");
+    const assetRequest: DramaMediaActionTarget | null = canSwitchToAssets && state.request ? { ...state.request, action: "segment_assets", baseRevision: undefined, targetRevision: undefined, confirmationToken: undefined } : null;
+    const assetQuote = useDramaMediaQuote(controller, assetRequest, preview?.baseRevision);
+    useDramaMediaQuote(controller, textAction && state.open ? state.request : null, preview?.baseRevision);
+    const canConfirmText = Boolean(preview?.ready && preview.confirmationToken && !state.submitted && !state.error && !busy);
 
     return (
         <AppModal
             open={state.open}
             centered
             width={480}
-            title={state.submitted ? (state.queued > 0 ? (reprocessing ? "已提交重新处理" : "已提交") : "请核对队列") : reprocessing ? "确认重新处理已有视频" : "确认生成"}
-            okText={state.submitted ? "关闭" : "确认提交"}
-            cancelText={state.submitted ? "关闭" : "取消"}
-            okButtonProps={{ disabled: state.submitted ? false : !canConfirm || busy }}
-            confirmLoading={state.submitting}
-            onOk={() => {
-                if (state.submitted) controller.close();
-                else void controller.confirm();
-            }}
+            title={textAction ? (state.submitted ? "已提交提示词撰写" : "确认撰写提示词") : state.submitted ? "请核对制作队列" : state.error ? "暂时无法生成" : "生成条件尚未满足"}
+            footer={
+                <>
+                    <Button onClick={controller.close}>{textAction && !state.submitted ? "取消" : "关闭"}</Button>
+                    {textAction && !state.submitted ? (
+                        <Button type="primary" loading={state.submitting} disabled={!canConfirmText} onClick={() => void controller.confirm()}>
+                            确认提交
+                        </Button>
+                    ) : null}
+                </>
+            }
             onCancel={() => controller.close()}
         >
             <div className="flex flex-col gap-2 text-sm" aria-live="polite">
                 {state.request ? <p>{scopeLabel(controller)}</p> : null}
                 {preview ? <p>{preview.message}</p> : null}
-                {preview && reprocessing ? <p>本次 0 积分</p> : preview?.priced ? <p>预计 {formatDramaCredits(preview.amountMicrocredits)} 积分</p> : preview ? <p role="status">暂无法估算费用，以实际扣费为准</p> : null}
+                {preview && reprocessing ? (
+                    <p>本次 0 积分</p>
+                ) : preview?.priced ? (
+                    <p>
+                        {textAction ? "预计 " : ""}
+                        {formatDramaCredits(preview.amountMicrocredits)} 积分
+                    </p>
+                ) : textAction && preview ? (
+                    <p role="status">暂无法估算费用，以实际扣费为准</p>
+                ) : null}
                 {preview?.reason ? (
                     <p role="status">
                         {action === "segment_video" && missing.length ? "还不能生成视频：" : ""}
@@ -84,16 +100,18 @@ export function DramaMediaActionDialog({ controller }: { controller: DramaMediaA
                 {state.error ? (
                     <p role="alert">
                         {state.error}
-                        <Button type="link" size="small" disabled={busy} onClick={() => void controller.retry()}>
-                            重试
-                        </Button>
+                        {!state.submitted ? (
+                            <Button type="link" size="small" disabled={busy} onClick={controller.retry}>
+                                重新读取生成条件
+                            </Button>
+                        ) : null}
                     </p>
                 ) : null}
                 {state.notice ? <p role="status">{state.notice}</p> : null}
                 {state.submitted && state.queued > 0 ? (
                     <p role="status">
                         {reprocessing ? `已提交 ${state.queued} 项视频重新处理` : `已提交 ${state.queued} 个任务`}，可在下方制作队列查看进度。
-                        {action === "segment_assets" && state.pendingVideo ? " 视频还没有提交，需要你再单独确认一次。" : ""}
+                        {action === "segment_assets" && state.pendingVideo ? " 参考图就绪后，再点击生成视频。" : ""}
                     </p>
                 ) : null}
                 {!state.submitted && !state.loading && !state.error ? (
@@ -102,8 +120,8 @@ export function DramaMediaActionDialog({ controller }: { controller: DramaMediaA
                     </Button>
                 ) : null}
                 {canSwitchToAssets ? (
-                    <Button type="default" disabled={busy} onClick={() => void controller.requestMissingAssets()}>
-                        只生成缺失的参考图
+                    <Button type="default" disabled={busy || assetQuote.disabled} loading={assetQuote.submitting} onClick={controller.requestMissingAssets}>
+                        {generationLabel("生成缺失参考图", assetQuote.preview, assetQuote.loading)}
                     </Button>
                 ) : null}
                 {canRecheckVideo ? (

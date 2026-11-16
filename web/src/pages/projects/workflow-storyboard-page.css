@@ -191,6 +191,7 @@
 .drama-storyboard-shots-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--storyboard-card-min)), 1fr));
+    align-items: start;
     gap: var(--space-3);
 }
 
@@ -212,8 +213,9 @@
 .drama-storyboard-shot-cover {
     position: relative;
     display: grid;
+    flex: none;
     place-items: center;
-    aspect-ratio: 16 / 10;
+    aspect-ratio: 16 / 9;
     min-width: 0;
     overflow: hidden;
     background: var(--drama-sunken);
@@ -259,11 +261,14 @@
 
 .drama-storyboard-shot-content {
     display: grid;
-    gap: var(--space-2);
-    padding: var(--space-3);
+    flex: none;
+    grid-template-rows: var(--space-5) calc(var(--fs-tiny) * 8) calc(var(--space-16) + var(--space-2)) var(--space-4);
+    gap: var(--space-1);
+    padding: var(--space-2);
 }
 
 .drama-storyboard-shot-content > header {
+    grid-row: 1;
     justify-content: space-between;
 }
 
@@ -273,11 +278,12 @@
 }
 
 .drama-storyboard-shot-description {
+    grid-row: 2;
     display: -webkit-box;
-    -webkit-line-clamp: 7;
-    line-clamp: 7;
+    -webkit-line-clamp: 5;
+    line-clamp: 5;
     -webkit-box-orient: vertical;
-    min-height: 11.2em;
+    height: 8em;
     overflow: hidden;
     overflow-wrap: anywhere;
     font-size: var(--fs-tiny);
@@ -294,7 +300,6 @@
 .drama-storyboard-shot[data-tone="failed"] .drama-storyboard-shot-state {
     color: var(--drama-err);
 }
-.drama-storyboard-shot-subjects > div,
 .drama-storyboard-shot footer {
     display: flex;
     flex-wrap: wrap;
@@ -302,41 +307,81 @@
 }
 .drama-storyboard-shot-subjects {
     display: grid;
-    gap: var(--space-2);
+    grid-row: 3;
+    grid-template-rows: var(--space-4) minmax(0, 1fr);
+    min-height: 0;
+    gap: var(--space-1);
+}
+.drama-storyboard-shot-subjects > div {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, var(--space-6));
+    min-height: 0;
+    overflow: hidden;
+    align-content: start;
+    gap: var(--space-1);
 }
 .drama-storyboard-shot-subjects > strong {
     font-size: var(--fs-tiny);
     font-weight: 500;
+    line-height: var(--space-4);
 }
 
-.drama-storyboard-shot-subjects button {
-    padding: var(--space-1) var(--space-2);
+.drama-storyboard-shot-subjects button,
+.drama-storyboard-shot-subject-overflow {
+    padding: var(--space-half) var(--space-1);
     display: inline-flex;
+    flex: none;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-half);
+    min-width: 0;
+    width: 100%;
+    height: var(--space-6);
     max-width: 100%;
+    overflow: hidden;
     color: var(--drama-muted);
     background: var(--drama-sunken);
     border-radius: var(--r-full);
-    font-size: var(--fs-micro);
+    font-size: calc(var(--fs-label) - 1px);
+    line-height: var(--space-4);
+    text-align: left;
 }
-.drama-storyboard-shot-subjects button > span {
+.drama-storyboard-shot-subject-overflow {
+    justify-content: center;
+}
+.drama-storyboard-shot-subjects button > span:last-child {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.drama-storyboard-shot-subjects button > :is(.cached-resource-image-shell, .drama-thumb-state) {
+    flex: 0 0 var(--space-4);
+    width: var(--space-4);
+    height: var(--space-4);
+    overflow: hidden;
+    padding: 0;
+    border-radius: var(--r-full);
+}
+.drama-storyboard-shot-subjects .drama-thumb-state > span {
+    display: none;
+}
 .drama-storyboard-shot-subjects img {
     flex: none;
-    width: 20px;
-    height: 20px;
+    width: var(--space-4);
+    height: var(--space-4);
     border-radius: var(--r-full);
     object-fit: cover;
 }
 
 .drama-storyboard-shot footer {
+    flex: none;
+    flex-wrap: nowrap;
+    height: var(--space-8);
     margin-top: auto;
     align-items: center;
-    padding: var(--space-2);
+    padding: var(--space-1) var(--space-2);
 }
 .drama-storyboard-shot-edit {
     margin-left: auto;
@@ -350,6 +395,13 @@
 .drama-storyboard-shot-error {
     color: var(--drama-err);
     font-size: var(--fs-tiny);
+}
+.drama-storyboard-shot-content > .drama-storyboard-shot-error {
+    grid-row: 4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: var(--space-4);
 }
 .drama-storyboard-filter-note {
     margin-top: var(--space-3);

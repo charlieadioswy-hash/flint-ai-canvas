@@ -222,6 +222,22 @@ test("鼠标滚动后点击末项仍提交该模板，不依赖先前键盘焦�
     }
 });
 
+test("自定义模板切换内置模板立即更新名称与选中项，重新打开保持新选择", async () => {
+    const view = await mount({ value: "custom" });
+    try {
+        expect(view.trigger.textContent).toContain("自定义模板");
+        const list = await view.open();
+        await call(() => list.querySelector('[data-template="closeup_turnaround"]')!.closest<HTMLElement>('[role="option"]')!.click());
+        expect(view.changes).toEqual(["closeup_turnaround"]);
+        expect(view.trigger.textContent).toContain("模板1");
+        expect(document.querySelector('[role="listbox"]')).toBeNull();
+        const reopened = await view.open();
+        expect(reopened.querySelector('[aria-selected="true"] [data-template]')?.getAttribute("data-template")).toBe("closeup_turnaround");
+    } finally {
+        await view.close();
+    }
+});
+
 test("初始已选末项打开时直接可见，三列与两列均无需额外导航", async () => {
     for (const columns of [3, 2]) {
         const view = await mount({ columns, value: "headshot_fullbody" });

@@ -22,27 +22,69 @@
     margin-left: auto;
 }
 
-.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension:has(.drama-project-topbar.has-controls) {
-    container: drama-project-header / inline-size;
-}
-
-.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar.has-controls) {
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) {
+    --button-height: var(--space-8);
+    display: grid;
+    grid-template-areas:
+        "project system"
+        "navigation navigation";
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
     height: auto !important;
     flex-shrink: 0;
     padding-block: var(--space-2);
 }
 
-@media (max-width: 640px) {
-    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar {
-        height: auto !important;
-        flex-wrap: wrap;
-        gap: var(--space-2);
-        padding-block: var(--space-2);
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension:has(.drama-project-topbar),
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension > .drama-project-topbar {
+    display: contents;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .drama-project-topbar-main {
+    grid-area: project;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .drama-project-topbar-controls {
+    grid-area: navigation;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) .app-workspace-topbar-actions {
+    grid-area: system;
+    gap: var(--space-1);
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--border);
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) .app-workspace-account-trigger svg {
+    width: var(--button-icon-size);
+    height: var(--button-icon-size);
+}
+
+@media (max-width: 1023px) {
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) {
+        grid-template-areas:
+            "menu project system"
+            "navigation navigation navigation";
+        grid-template-columns: auto minmax(0, 1fr) auto;
     }
 
-    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-actions {
-        width: 100%;
-        justify-content: flex-end;
-        order: 1;
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-mobile-menu {
+        grid-area: menu;
+    }
+}
+
+@media (max-width: 640px) {
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) {
+        grid-template-areas:
+            "menu system"
+            "project project"
+            "navigation navigation";
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) .app-workspace-topbar-actions {
+        padding-left: 0;
+        border-left: 0;
     }
 }

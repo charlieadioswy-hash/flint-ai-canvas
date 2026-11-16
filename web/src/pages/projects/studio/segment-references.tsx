@@ -48,9 +48,19 @@ export function ReferenceBoard({
     const [libraryOpen, setLibraryOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [voiceDraft, setVoiceDraft] = useState<string[] | null>(null);
+    const [savingVoice, setSavingVoice] = useState(false);
+    const [voiceError, setVoiceError] = useState("");
+    const voiceSaveLock = useRef(false);
+    const mounted = useRef(true);
     const [preview, setPreview] = useState<{ resourceId: string; name: string }>();
     const fileRef = useRef<HTMLInputElement>(null);
     const railRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
     useEffect(() => {
         const rail = railRef.current;
         if (!rail) return;
@@ -67,7 +77,7 @@ export function ReferenceBoard({
         rail.addEventListener("wheel", onWheel, { passive: false });
         return () => rail.removeEventListener("wheel", onWheel);
     }, []);
-    const busy = saving || uploading;
+    const busy = saving || uploading || savingVoice;
     const openPreview = (image: { resourceId: string; name: string }) => {
         setMenuOpen(false);
         setPreview(image);
@@ -82,8 +92,26 @@ export function ReferenceBoard({
     const refsById = new Map(request.references.filter((ref) => ref.castId).map((ref) => [ref.castId, ref]));
     const selectedVoices = voiceDraft ?? (request.audioReferences || []).map((voice) => voice.castId);
     const audioLimit = request.modelMaxAudios || 0;
+    useEffect(() => {
+        if (!savingVoice && !voiceError && voiceDraft && JSON.stringify(voiceDraft) === JSON.stringify((request.audioReferences || []).map((voice) => voice.castId))) setVoiceDraft(null);
+    }, [request.audioReferences, savingVoice, voiceDraft, voiceError]);
+    const saveVoices = async (next: string[]) => {
+        if (voiceSaveLock.current || saving || uploading) return;
+        voiceSaveLock.current = true;
+        setVoiceDraft(next);
+        setVoiceError("");
+        setSavingVoice(true);
+        try {
+            await onSave({ audioCastIds: next });
+        } catch (error) {
+            if (mounted.current) setVoiceError(error instanceof Error ? error.message : "音色选择未能保存，请重试");
+        } finally {
+            voiceSaveLock.current = false;
+            if (mounted.current) setSavingVoice(false);
+        }
+    };
     const save = (patch: DramaSegmentReferencePatch) => {
-        // 父层 mutation 显示错误；失败后保留服务端选择和本地尚未保存的音色。
+        // 父层 mutation 显示错误；失败后不替换服务端选择。
         void onSave(patch).catch(() => {});
     };
     const saveIDs = (next: string[]) => save({ referenceCastIds: next });
@@ -146,12 +174,12 @@ export function ReferenceBoard({
                     aria-pressed={selected}
                     aria-label={`${selected ? "关闭" : "开启"}${character.name}的音色`}
                     disabled={busy || (!selected && (!character.voiceSampleResourceId || selectedVoices.length >= audioLimit))}
-                    onClick={() => setVoiceDraft(selected ? selectedVoices.filter((id) => id !== character.id) : [...selectedVoices, character.id])}
+                    onClick={() => void saveVoices(selected ? selectedVoices.filter((id) => id !== character.id) : [...selectedVoices, character.id])}
                 >
                     {selected ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}音色{selected ? "已开启" : "已关闭"}
                 </button>
                 <CastVoicePreview resourceId={character.voiceSampleResourceId} name={character.name} />
-                <small>{voiceDraft !== null ? "音色调整未保存" : audio ? (audio.sent ? `${audio.label} · 随请求发送` : audio.note) : !character.voiceSampleResourceId ? "请在角色设定中绑定音频" : cast.parentId ? "沿用角色本体音色" : ""}</small>
+                <small>{savingVoice ? "正在应用音色选择…" : audio ? (audio.sent ? `${audio.label} · 随请求发送` : audio.note) : !character.voiceSampleResourceId ? "请在角色设定中绑定音频" : cast.parentId ? "沿用角色本体音色" : ""}</small>
             </div>
         );
     };
@@ -201,27 +229,31 @@ export function ReferenceBoard({
     const voiceActions = (
         <>
             {segment.audioReferenceMode === "custom" ? (
-                <Button size="small" type="text" disabled={busy || voiceDraft !== null} onClick={() => save({ autoAudioReferences: true })}>
+                <Button
+                    size="small"
+                    type="text"
+                    disabled={busy}
+                    onClick={() => {
+                        void onSave({ autoAudioReferences: true })
+                            .then(() => {
+                                if (mounted.current) {
+                                    setVoiceDraft(null);
+                                    setVoiceError("");
+                                }
+                            })
+                            .catch(() => {});
+                    }}
+                >
                     恢复自动音色
                 </Button>
             ) : null}
-            {voiceDraft !== null ? (
-                <>
-                    <Button
-                        size="small"
-                        disabled={busy || selectedVoices.length > audioLimit}
-                        onClick={() => {
-                            void onSave({ audioCastIds: selectedVoices })
-                                .then(() => setVoiceDraft(null))
-                                .catch(() => {});
-                        }}
-                    >
-                        保存音色选择
+            {voiceError ? (
+                <p role="alert">
+                    {voiceError}
+                    <Button size="small" disabled={busy || selectedVoices.length > audioLimit} onClick={() => void saveVoices(selectedVoices)}>
+                        重试音色选择
                     </Button>
-                    <Button size="small" type="text" disabled={busy} onClick={() => setVoiceDraft(null)}>
-                        取消调整
-                    </Button>
-                </>
+                </p>
             ) : null}
         </>
     );
@@ -269,7 +301,7 @@ export function ReferenceBoard({
                                         音色 {selectedVoices.length}/{audioLimit} · {segment.audioReferenceMode === "custom" ? "手动选择" : "按对白自动开启"} · {audioLimit ? `当前模型音色不可多于 ${audioLimit} 个` : "当前模型不支持参考音色"}
                                     </small>
                                     {voiceActions}
-                                    {selectedVoices.length > audioLimit ? <p className="drama-sdx-hint is-error">已选音色超过模型上限，请在人物卡片下关闭部分音色后保存。</p> : null}
+                                    {selectedVoices.length > audioLimit ? <p className="drama-sdx-hint is-error">已选音色超过模型上限，请在人物卡片下关闭部分音色。</p> : null}
                                 </>
                             }
                             onLibrary={() => {

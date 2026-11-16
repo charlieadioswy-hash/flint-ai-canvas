@@ -1,16 +1,27 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button, InputNumber, Select } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
-import type { DramaSettings, DramaSummary } from "@/services/api/drama";
+import { updateDramaSettings, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
+import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import "./workflow-mode-dialog.css";
 
 type GenerationMode = "reference_video" | "grid_image" | "smart_director" | "storyboard";
-type Props = { open: boolean; summary: DramaSummary; onCancel: () => void; onConfirm: (settings: DramaSettings) => void | Promise<unknown> };
+type Props = {
+    open: boolean;
+    summary: DramaSummary;
+    onCancel: () => void;
+    onConfirm: (settings: DramaSettings) => void | Promise<unknown>;
+    onGenerationStateChange?: (pending: boolean) => void;
+    registerGenerationFlush?: (flush: (() => Promise<boolean>) | null) => void;
+};
 const MODES: Array<{ value: GenerationMode; title: string; detail: string; sequence: string[] }> = [
     { value: "reference_video", title: "参考生视频模式", detail: "以角色、场景等参考图生成视频，在镜头编辑中调整参考与提示词。", sequence: ["主体参考", "镜头视频"] },
     { value: "grid_image", title: "宫格图模式", detail: "先生成一张宫格图，再裁切为独立图片并采用到对应镜头。", sequence: ["宫格原图", "裁切分图", "镜头图片"] },
@@ -19,12 +30,31 @@ const MODES: Array<{ value: GenerationMode; title: string; detail: string; seque
 ];
 
 export function WorkflowModeDialog(props: Props) {
-    return props.open ? <WorkflowModeSession key={props.summary.project.id} {...props} /> : null;
+    const userId = useUserStore((state) => state.user?.id || "");
+    return props.open ? <WorkflowModeSession key={`${userId}:${props.summary.project.id}`} {...props} /> : null;
 }
 
-function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
+function generationConfiguration(settings: DramaSettings) {
+    return { models: { image: settings.models.image, video: settings.models.video }, aspectRatio: settings.aspectRatio, videoResolution: settings.videoResolution || "", videoContinuity: settings.videoContinuity || ("tail_frame" as const) };
+}
+
+function applyGenerationConfiguration(draft: DramaSettings, saved: DramaSettings): DramaSettings {
+    return { ...draft, aspectRatio: saved.aspectRatio, videoResolution: saved.videoResolution, videoContinuity: saved.videoContinuity, models: { ...draft.models, image: saved.models.image, video: saved.models.video } };
+}
+
+function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateChange, registerGenerationFlush }: Props) {
+    const queryClient = useQueryClient();
+    const operation = useDramaOperationScope(summary.project.id);
     const [draft, setDraft] = useState<DramaSettings>(() => structuredClone(summary.production.settings));
-    const [revision] = useState(summary.production.revision);
+    const [revision, setRevision] = useState(summary.production.revision);
+    const baseline = useRef(summary.production.settings);
+    const latestDraft = useRef(draft);
+    const latestSummary = useRef(summary);
+    latestSummary.current = summary;
+    const write = useRef<Promise<boolean> | null>(null);
+    const failedGeneration = useRef("");
+    const [mediaSaving, setMediaSaving] = useState(false);
+    const [mediaError, setMediaError] = useState("");
     const [mode, setMode] = useState<GenerationMode>(draft.storyboard.generationMode || "reference_video");
     const [busy, setBusy] = useState(false);
     const locked = useRef(false);
@@ -34,7 +64,9 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
     const sample = DRAMA_STYLES.find((item) => item.name === draft.styleName && item.prompt === draft.stylePrompt)?.cover || "/short-drama-styles/chinese-2d.jpg";
     const videoOptions = catalog.data?.options.video || [];
     const videoModel = videoOptions.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.models.video));
-    const stale = revision !== summary.production.revision;
+    const stale = revision < summary.production.revision;
+    const generationKey = JSON.stringify(generationConfiguration(draft));
+    const generationDirty = generationKey !== JSON.stringify(generationConfiguration(baseline.current));
     const hasVideo = mode !== "grid_image";
     const hasImage = mode === "storyboard";
     const continuity = draft.videoContinuity || "tail_frame";
@@ -42,38 +74,93 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
     const resolutionIssue = hasVideo ? dramaVideoResolutionIssue(videoModel, draft.videoResolution) : "";
     const continuityIssue = hasVideo && videoModel && continuity === "tail_frame" && !videoModel.tailFrameChain ? "不支持尾帧续接，请改为各段独立生成或更换模型" : "";
     const configIssue = ratioIssue || resolutionIssue || continuityIssue;
+    const disabled = busy || mediaSaving || stale;
     const update = (patch: Partial<DramaSettings>) => {
-        setDraft((previous) => ({ ...previous, ...patch }));
+        latestDraft.current = { ...latestDraft.current, ...patch };
+        setDraft(latestDraft.current);
         setError("");
+        if (failedGeneration.current !== JSON.stringify(generationConfiguration(latestDraft.current))) {
+            failedGeneration.current = "";
+            setMediaError("");
+        }
+    };
+    const persistGeneration = () => {
+        if (write.current) return write.current;
+        if (JSON.stringify(generationConfiguration(latestDraft.current)) === JSON.stringify(generationConfiguration(baseline.current))) return Promise.resolve(true);
+        const ticket = operation.capture();
+        const target = latestDraft.current;
+        setMediaSaving(true);
+        setMediaError("");
+        const pending = (async () => {
+            try {
+                if (stale) throw new Error("作品设置已有更新，请关闭后重新打开以载入最新参数。");
+                const saved = await updateDramaSettings(summary.project.id, { expectedRevision: revision, generation: generationConfiguration(target) });
+                if (!operation.isCurrent(ticket)) return false;
+                const cached = queryClient.getQueryData<DramaSummary>(dramaKeys.summary(summary.project.id));
+                if ((cached?.production.revision || 0) > saved.production.revision || latestSummary.current.production.revision > saved.production.revision) throw new Error("作品设置已有更新，请关闭后重新打开以载入最新参数。");
+                baseline.current = saved.production.settings;
+                latestDraft.current = applyGenerationConfiguration(latestDraft.current, saved.production.settings);
+                setDraft(latestDraft.current);
+                setRevision(saved.production.revision);
+                failedGeneration.current = "";
+                queryClient.setQueryData<DramaSummary>(dramaKeys.summary(summary.project.id), saved);
+                void queryClient.invalidateQueries({ queryKey: ["drama", summary.project.id] });
+                return true;
+            } catch (reason) {
+                if (operation.isCurrent(ticket)) {
+                    failedGeneration.current = JSON.stringify(generationConfiguration(target));
+                    setMediaError(reason instanceof Error ? reason.message : "生成配置未能应用，修改已保留");
+                }
+                return false;
+            } finally {
+                write.current = null;
+                if (operation.isCurrent(ticket)) setMediaSaving(false);
+            }
+        })();
+        write.current = pending;
+        return pending;
+    };
+    const generationFlush = useRef<() => Promise<boolean>>(() => Promise.resolve(true));
+    generationFlush.current = () => (stale || configIssue ? Promise.resolve(false) : persistGeneration());
+    useEffect(() => {
+        registerGenerationFlush?.(() => generationFlush.current());
+        return () => {
+            registerGenerationFlush?.(null);
+            onGenerationStateChange?.(false);
+        };
+    }, [registerGenerationFlush, onGenerationStateChange]);
+    useEffect(() => {
+        onGenerationStateChange?.(generationDirty || mediaSaving);
+    }, [generationDirty, mediaSaving, onGenerationStateChange]);
+    useEffect(() => {
+        if (!generationDirty || disabled || configIssue || failedGeneration.current === generationKey) return;
+        const timeout = window.setTimeout(() => void persistGeneration(), 350);
+        return () => window.clearTimeout(timeout);
+    }, [generationKey, generationDirty, disabled, configIssue]);
+    const cancel = async () => {
+        if (busy || locked.current) return;
+        const ticket = operation.capture();
+        if (stale || configIssue || (await persistGeneration())) {
+            if (operation.isCurrent(ticket)) onCancel();
+        }
     };
     const confirm = async () => {
-        if (locked.current || busy || stale || configIssue) return;
+        if (locked.current || busy || mediaSaving || generationDirty || stale || configIssue) return;
+        const ticket = operation.capture();
         locked.current = true;
         setBusy(true);
         setError("");
         try {
             await onConfirm({ ...draft, storyboard: { ...draft.storyboard, generationMode: mode, directorTemplate: mode === "smart_director" ? "smart_drama" : mode === "storyboard" ? "storyboard_detail" : "" } });
         } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "保存分镜模式失败，请重试");
+            if (operation.isCurrent(ticket)) setError(reason instanceof Error ? reason.message : "保存分镜模式失败，请重试");
         } finally {
             locked.current = false;
-            setBusy(false);
+            if (operation.isCurrent(ticket)) setBusy(false);
         }
     };
     return (
-        <AppModal
-            open
-            centered
-            width="min(1500px, calc(100vw - 48px))"
-            flush
-            title="选择分镜生成默认模式"
-            onCancel={() => {
-                if (!busy && !locked.current) onCancel();
-            }}
-            closable={!busy}
-            maskClosable={!busy}
-            footer={null}
-        >
+        <AppModal open centered width="min(1500px, calc(100vw - 48px))" flush title="选择分镜生成默认模式" onCancel={() => void cancel()} closable={!busy} maskClosable={!busy} footer={null}>
             <div className="drama-root drama-workflow-mode">
                 <div className="drama-workflow-mode-layout">
                     <div className="drama-workflow-mode-controls thin-scrollbar">
@@ -82,7 +169,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                 <button
                                     type="button"
                                     key={item.value}
-                                    disabled={busy}
+                                    disabled={disabled}
                                     aria-pressed={mode === item.value}
                                     onClick={() => {
                                         setMode(item.value);
@@ -101,7 +188,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                             {mode === "grid_image" ? (
                                 <div className="drama-workflow-mode-empty">
                                     <strong>当前无额外配置项</strong>
-                                    <p>进入漫剧分镜后，在当前段选择真实镜头与宫格规格，预检后生成原图并裁切。</p>
+                                    <p>进入漫剧分镜后，选择本段镜头与宫格规格，查看按钮积分后点击生成原图并裁切。</p>
                                 </div>
                             ) : (
                                 <>
@@ -110,7 +197,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                             <span>分镜数量</span>
                                             <Select
                                                 aria-label="分镜数量方式"
-                                                disabled={busy}
+                                                disabled={disabled}
                                                 value={draft.storyboard.targetShotCount ? "custom" : "auto"}
                                                 options={[
                                                     { value: "auto", label: "智能推荐" },
@@ -124,7 +211,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                                 <span>目标镜头数</span>
                                                 <InputNumber
                                                     aria-label="目标镜头数"
-                                                    disabled={busy}
+                                                    disabled={disabled}
                                                     min={1}
                                                     max={240}
                                                     precision={0}
@@ -137,7 +224,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                     {hasImage ? (
                                         <label>
                                             <span>生图模型</span>
-                                            <fieldset disabled={busy} inert={busy}>
+                                            <fieldset disabled={disabled} inert={disabled}>
                                                 <DramaModelPicker capability="image" value={draft.models.image} aspectRatio={draft.aspectRatio} onChange={(image) => update({ models: { ...draft.models, image } })} />
                                             </fieldset>
                                         </label>
@@ -145,7 +232,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                     {hasVideo ? (
                                         <label>
                                             <span>视频模型</span>
-                                            <fieldset disabled={busy} inert={busy}>
+                                            <fieldset disabled={disabled} inert={disabled}>
                                                 <DramaModelPicker
                                                     capability="video"
                                                     value={draft.models.video}
@@ -168,7 +255,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                             <span>视频与生图比例</span>
                                             <Select
                                                 aria-label="分镜视频与生图比例"
-                                                disabled={busy}
+                                                disabled={disabled}
                                                 value={draft.aspectRatio}
                                                 options={[...new Set([draft.aspectRatio, ...(videoModel?.videoRatios || ["16:9", "9:16", "1:1"])])].filter(Boolean).map((value) => ({ value, label: value }))}
                                                 onChange={(aspectRatio) => update({ aspectRatio })}
@@ -178,7 +265,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                             <span>视频分辨率</span>
                                             <Select
                                                 aria-label="分镜视频分辨率"
-                                                disabled={busy}
+                                                disabled={disabled}
                                                 value={draft.videoResolution || ""}
                                                 options={[
                                                     { value: "", label: "模型默认" },
@@ -192,7 +279,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                         <span>视频衔接</span>
                                         <Select
                                             aria-label="分镜视频衔接"
-                                            disabled={busy}
+                                            disabled={disabled}
                                             value={continuity}
                                             options={[
                                                 { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoModel && !videoModel.tailFrameChain) },
@@ -208,6 +295,18 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                                 </>
                             )}
                             {stale ? <p role="alert">作品设置已有更新，请关闭后重新打开以载入最新参数。</p> : null}
+                            {mediaError ? (
+                                <p role="alert">
+                                    {mediaError}
+                                    {!stale ? (
+                                        <Button type="link" size="small" disabled={mediaSaving} onClick={() => void persistGeneration()}>
+                                            重新应用生成配置
+                                        </Button>
+                                    ) : null}
+                                </p>
+                            ) : mediaSaving || (generationDirty && !configIssue) ? (
+                                <p role="status">正在应用生成配置…</p>
+                            ) : null}
                             {error ? <p role="alert">{error}</p> : null}
                         </section>
                     </div>
@@ -239,16 +338,11 @@ function WorkflowModeSession({ summary, onCancel, onConfirm }: Props) {
                     </figure>
                 </div>
                 <footer>
-                    <p>本次确认保存默认配置。生成任务会按实际范围预检并确认费用。</p>
-                    <Button
-                        disabled={busy}
-                        onClick={() => {
-                            if (!locked.current) onCancel();
-                        }}
-                    >
+                    <p>图片与视频配置修改后自动生效。确认仅应用制作模式，不会生成媒体。</p>
+                    <Button disabled={busy} onClick={() => void cancel()}>
                         取消
                     </Button>
-                    <Button type="primary" loading={busy} disabled={stale || Boolean(configIssue)} onClick={() => void confirm()}>
+                    <Button type="primary" loading={busy} disabled={stale || mediaSaving || generationDirty || Boolean(configIssue)} onClick={() => void confirm()}>
                         确认并进入漫剧分镜
                     </Button>
                 </footer>

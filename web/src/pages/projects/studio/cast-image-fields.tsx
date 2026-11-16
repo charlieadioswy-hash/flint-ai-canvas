@@ -53,7 +53,7 @@ export function CastImageFields({
             if (!operation.isCurrent(ticket)) return;
             if (latest.current === accepted) {
                 onChange({ imagePrompt: result.imagePrompt });
-                message.success("提示词已重新编排，保存后用于生成参考图");
+                message.success("提示词已重新编排");
             } else message.info("设定已变化，请按最新内容重新编排提示词");
         } catch (error) {
             if (operation.isCurrent(ticket)) message.error(error instanceof Error ? error.message : "编排提示词失败");
@@ -71,7 +71,7 @@ export function CastImageFields({
         if (!value.imagePrompt?.trim()) return void rebuild(ticket, accepted);
         confirmation.current = modal.confirm({
             title: "重新编排会替换当前提示词",
-            content: "确认后重新编排并替换当前草稿。不会保存设置或生成图片。",
+            content: "确认后重新编排并替换当前提示词，不会生成图片。",
             okText: "确认替换",
             cancelText: "取消",
             centered: true,
@@ -126,7 +126,7 @@ export function CastImageFields({
                 placeholder={`留空使用${episodeId ? "本集" : "作品"}模板；也可填写自己的生图要求`}
                 onChange={(event) => onChange({ imagePrompt: event.target.value })}
             />
-            <small className="drama-editor-note">留空使用{episodeId ? "本集" : "作品"}模板；切换模板或风格后可重新编排，已有人工提示词不会自动修改。编排不调用模型，保存后点击生成才开始生图。</small>
+            <small className="drama-editor-note">留空使用{episodeId ? "本集" : "作品"}模板；切换模板或风格后可重新编排，已有人工提示词不会自动修改。点击生成才开始生图。</small>
         </div>
     );
 }

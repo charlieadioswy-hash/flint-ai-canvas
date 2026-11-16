@@ -20,6 +20,15 @@ func registerDramaCastViewRoutes(r *gin.RouterGroup, svc *service.Service) {
 	})
 	r.POST(root, save)
 	r.PUT(root+"/:viewId", save)
+	quote := dramaRoute(svc, 128<<10, func(c *gin.Context, userID string) (any, error) {
+		var req service.DramaCastViewSaveRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.QuoteDramaCastViewDraft(userID, c.Param("id"), c.Param("castId"), c.Param("viewId"), req)
+	})
+	r.POST(root+"/quote", quote)
+	r.POST(root+"/:viewId/quote", quote)
 	r.DELETE(root+"/:viewId", dramaRoute(svc, 8<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.DramaCastViewActionRequest
 		if err := bindDramaJSON(c, &req); err != nil {

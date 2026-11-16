@@ -73,10 +73,11 @@ export function createInlineMentionChip(reference: CanvasResourceReference, toke
     chip.contentEditable = "false";
     chip.dataset.mentionToken = token;
     chip.dataset.mentionReferenceId = reference.id;
+    if (reference.textAliases?.includes(token)) chip.dataset.mentionPlainText = "true";
     const isDecorated = reference.kind === "skill" || reference.kind === "tool";
     chip.className = `canvas-resource-inline-mention ${isDecorated ? `is-${reference.kind}` : ""}`;
     // 图片、视频、角色悬停时有预览卡（卡里提示双击放大），不再叠一层原生 title。
-    if (!MEDIA_PREVIEW_KINDS.has(reference.kind)) chip.title = reference.title || reference.label;
+    if (!MEDIA_PREVIEW_KINDS.has(reference.kind) || !referencePreviewUrl(reference)) chip.title = [reference.title || reference.label, reference.text].filter(Boolean).join("\n");
     if (reference.kind === "skill") chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference));
     if (reference.kind === "tool") chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference));
 
@@ -96,7 +97,7 @@ export function createInlineMentionChip(reference: CanvasResourceReference, toke
 
     const label = document.createElement("span");
     label.className = "canvas-resource-inline-label";
-    label.textContent = reference.label;
+    label.textContent = reference.textAliases?.includes(token) ? token : reference.label;
     chip.appendChild(label);
 
     return chip;
@@ -198,6 +199,8 @@ export function syncInlineMentionPreviews(editor: HTMLElement, references: Canva
     editor.querySelectorAll<HTMLElement>("[data-mention-reference-id]").forEach((chip) => {
         const reference = byId.get(chip.dataset.mentionReferenceId || "");
         if (!reference) return;
+        if (!MEDIA_PREVIEW_KINDS.has(reference.kind) || !referencePreviewUrl(reference)) chip.title = [reference.title || reference.label, reference.text].filter(Boolean).join("\n");
+        else chip.removeAttribute("title");
         const preview = chip.querySelector(".canvas-resource-inline-preview");
         const hasImage = Boolean(usableInlineImageUrl(reference));
         const hasVideo = !hasImage && reference.kind === "video" && Boolean(reference.mediaUrl);
@@ -208,7 +211,8 @@ export function syncInlineMentionPreviews(editor: HTMLElement, references: Canva
             preview.replaceWith(createInlinePreview(reference));
         }
         const label = chip.querySelector(".canvas-resource-inline-label");
-        if (label && label.textContent !== reference.label) label.textContent = reference.label;
+        const text = reference.textAliases?.includes(chip.dataset.mentionToken || "") ? chip.dataset.mentionToken : reference.label;
+        if (label && label.textContent !== text) label.textContent = text || "";
     });
 }
 

@@ -52,6 +52,7 @@ type DramaStoryboardPreflight struct {
 	AmountMicrocredits int64  `json:"amountMicrocredits"`
 	Estimated          bool   `json:"estimated"`
 	ConfirmationToken  string `json:"confirmationToken"`
+	ScopeHash          string `json:"scopeHash"`
 }
 
 type dramaStoryboardPlan struct {
@@ -128,7 +129,7 @@ func (s *Service) CreateDramaStoryboard(userID, projectID string, req DramaStory
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return DramaStoryboardView{}, err
 	}
-	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, "image", req.Config)
+	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, projectID, "image", req.Config)
 	if err != nil {
 		return DramaStoryboardView{}, err
 	}
@@ -139,7 +140,7 @@ func (s *Service) CreateDramaStoryboard(userID, projectID string, req DramaStory
 		if err := repo.LockDramaCastImageReferences(userID, config.ReferenceResourceIDs); err != nil {
 			return BadAuthRequest("故事板参考图已变化，请重新选择")
 		}
-		config, err = s.normalizeDramaShotMediaConfig(repo, userID, "image", config)
+		config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, "image", config)
 		if err != nil {
 			return err
 		}
@@ -148,7 +149,7 @@ func (s *Service) CreateDramaStoryboard(userID, projectID string, req DramaStory
 			return err
 		}
 		config.Prompt = dramaStoryboardPrompt(config, shots, req.Rows, req.Columns)
-		config, err = s.normalizeDramaShotMediaConfig(repo, userID, "image", config)
+		config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, "image", config)
 		if err != nil {
 			return err
 		}
@@ -269,20 +270,49 @@ func (s *Service) PreflightDramaStoryboard(userID, projectID, boardID string, re
 }
 
 func (s *Service) prepareDramaStoryboard(repo *repository.Repository, userID, projectID, boardID string, req DramaStoryboardActionRequest) (dramaStoryboardPlan, error) {
-	plan := dramaStoryboardPlan{view: DramaStoryboardPreflight{BoardID: boardID}}
 	board, err := repo.DramaStoryboard(projectID, boardID)
 	if err != nil {
-		return plan, err
+		return dramaStoryboardPlan{}, err
 	}
+	return s.prepareDramaStoryboardBoard(repo, userID, projectID, *board, req)
+}
+
+// QuoteDramaStoryboard evaluates a new board without creating history rows or tasks.
+func (s *Service) QuoteDramaStoryboard(userID, projectID string, req DramaStoryboardCreateRequest) (DramaStoryboardPreflight, error) {
+	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
+		return DramaStoryboardPreflight{}, err
+	}
+	if !validDramaStoryboardGrid(req.Rows, req.Columns) || len(req.ShotIDs) > req.Rows*req.Columns {
+		return DramaStoryboardPreflight{}, BadAuthRequest("请选择 2×2、2×3 或 3×3 宫格，镜头数不能超过格数")
+	}
+	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, projectID, "image", req.Config)
+	if err != nil {
+		return DramaStoryboardPreflight{}, err
+	}
+	shots, hash, err := dramaStoryboardShotSnapshot(s.repo, projectID, req.ShotIDs)
+	if err != nil {
+		return DramaStoryboardPreflight{}, err
+	}
+	config.Prompt = dramaStoryboardPrompt(config, shots, req.Rows, req.Columns)
+	configJSON, _ := json.Marshal(config)
+	idsJSON, _ := json.Marshal(req.ShotIDs)
+	board := model.DramaStoryboardBoard{ProjectID: projectID, UserID: userID, EpisodeID: shots[0].EpisodeID, Rows: req.Rows, Columns: req.Columns, ConfigJSON: string(configJSON), ShotIDsJSON: string(idsJSON), ScriptHash: hash}
+	plan, err := s.prepareDramaStoryboardBoard(s.repo, userID, projectID, board, DramaStoryboardActionRequest{})
+	plan.view.ConfirmationToken = ""
+	return plan.view, dramaStoryboardError(err)
+}
+
+func (s *Service) prepareDramaStoryboardBoard(repo *repository.Repository, userID, projectID string, board model.DramaStoryboardBoard, req DramaStoryboardActionRequest) (dramaStoryboardPlan, error) {
+	plan := dramaStoryboardPlan{view: DramaStoryboardPreflight{BoardID: board.ID}}
 	p, err := repo.DramaProduction(projectID)
 	if err != nil {
 		return plan, err
 	}
-	config, ids, err := decodeDramaStoryboard(*board)
+	config, ids, err := decodeDramaStoryboard(board)
 	if err != nil {
 		return plan, err
 	}
-	plan.board, plan.config = *board, config
+	plan.board, plan.config = board, config
 	plan.view.Revision, plan.view.BaseRevision = board.Revision, p.Revision
 	if req.ExpectedRevision != nil && *req.ExpectedRevision != board.Revision || req.BaseRevision != nil && *req.BaseRevision != p.Revision {
 		return plan, repository.ErrDramaStoryboardChanged
@@ -297,7 +327,7 @@ func (s *Service) prepareDramaStoryboard(repo *repository.Repository, userID, pr
 	if _, hash, err := dramaStoryboardShotSnapshot(repo, projectID, ids); err != nil || hash != board.ScriptHash {
 		return blocked("镜头原稿已变化，请创建新的故事板")
 	}
-	config, err = s.normalizeDramaShotMediaConfig(repo, userID, "image", config)
+	config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, "image", config)
 	if err != nil || config.Model.Empty() || config.Prompt == "" {
 		return blocked("故事板模型、提示词或参考图不可用")
 	}
@@ -349,6 +379,7 @@ func (s *Service) prepareDramaStoryboard(repo *repository.Repository, userID, pr
 		}
 	}
 	plan.view.Ready = true
+	plan.view.ScopeHash = dramaShotMediaDigest([]any{projectID, board.EpisodeID, board.Rows, board.Columns, ids, board.ScriptHash, config, p.Revision, p.GuideStep, intent})
 	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{board, config, p.Revision, p.GuideStep, quote, intent})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_image", Operation: config.Operation, Prompt: config.Prompt, LogicalModelID: config.Model.LogicalModelID, Model: config.Model.ModelKey, Input: unresolved}
 	return plan, nil

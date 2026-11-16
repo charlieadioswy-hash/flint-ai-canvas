@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Checkbox, Input, InputNumber, Select, Switch } from "antd";
+import { useBlocker } from "react-router";
 import {
     AlertCircle,
     ArrowRight,
@@ -32,15 +33,15 @@ import {
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { applyDramaGenerationConfiguration, dramaGenerationConfiguration } from "@/lib/drama/generation-configuration";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { ApiError } from "@/services/api/request";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import { useUserStore } from "@/stores/use-user-store";
 import {
-    regenerateDramaCast,
     getDrama,
     listDramaCast,
-    regenerateDramaCasts,
     setDramaCastImage,
     updateDramaCast,
     updateDramaCastLook,
@@ -75,6 +76,10 @@ import { CastImageOptions, castImageOptionsDraft } from "./cast-image-options";
 import { CastViews, CastViewWorkspace } from "./cast-views";
 import { CastLooks } from "./cast-looks";
 import { useCastRegenerationGuard } from "./use-cast-regeneration-guard";
+import { useDramaOperationScope } from "./use-drama-operation-scope";
+import { CastImageNotSubmittedError, useCastImageQuote } from "./use-cast-image-quote";
+import { WorkflowBatch } from "../workflow-batch";
+import { generationLabel } from "../workflow-generation";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 import { CastCreateDialog } from "./cast-create-dialog";
 import { CastProjectImport } from "./cast-project-import";
@@ -139,9 +144,7 @@ export function CastPanel({
     assetsPending,
     releasing,
     onFocus,
-    onRetry,
     onChanged,
-    onReleaseAssets,
     onOpenCanvas,
     canvasOpening,
 }: {
@@ -161,6 +164,7 @@ export function CastPanel({
     /** 正在打开画布的设定 ID。 */
     canvasOpening?: string;
 }) {
+    const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
     const [kind, setKind] = useState<CastTab>("character");
     const [filter, setFilter] = useState<CastFilter>("all");
     const [creating, setCreating] = useState(false);
@@ -229,9 +233,16 @@ export function CastPanel({
                         </Button>
                     </div>
                     {failed ? (
-                        <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetry}>
-                            重试失败的 {failed} 个
-                        </Button>
+                        <WorkflowBatch
+                            projectId={projectId}
+                            revision={summary.data?.production.revision || 0}
+                            targetIds={cast.filter((item) => item.imageStatus === "failed").map((item) => item.id)}
+                            actions={["cast_image"]}
+                            disabled={!summary.data || retrying}
+                            onChanged={onChanged}
+                            triggerLabel={`重试 ${failed} 张图片`}
+                            compact
+                        />
                     ) : null}
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
@@ -242,9 +253,16 @@ export function CastPanel({
                                 <strong>参考图还没有生成</strong>
                                 <span>先核对角色、道具与场景的名称和外观描述，满意后再生成参考图；也可以在右侧单独生成某一个。参考图会随剧情段视频请求一起发送，保持人物和道具一致。</span>
                             </div>
-                            <Button type="primary" icon={<Play className="size-4" />} loading={releasing} onClick={onReleaseAssets}>
-                                生成全部参考图
-                            </Button>
+                            <WorkflowBatch
+                                projectId={projectId}
+                                revision={summary.data?.production.revision || 0}
+                                targetIds={cast.filter((item) => !item.locked && !mediaBusy(item.imageStatus) && item.imageStatus !== "ready").map((item) => item.id)}
+                                actions={["cast_image"]}
+                                disabled={!summary.data || releasing}
+                                onChanged={onChanged}
+                                triggerLabel="生成全部图片"
+                                compact
+                            />
                         </div>
                     ) : null}
                     <div className={`drama-cast-grid ${kindRatio.orientation}`}>
@@ -414,6 +432,7 @@ function CastEditorForm({
 }) {
     const { message, modal } = App.useApp();
     const { cancelBeforeExecution } = regenerationGuard;
+    const operation = useDramaOperationScope(projectId);
     useEffect(() => () => cancelBeforeExecution(), [cancelBeforeExecution]);
     const mounted = useRef(true);
     useEffect(() => {
@@ -438,54 +457,144 @@ function CastEditorForm({
     const [checkingGeneration, setCheckingGeneration] = useState(false);
     const [lookState, setLookState] = useState({ dirty: false, busy: false });
     const isLook = Boolean(cast.parentId);
-    const snapshot = JSON.stringify({ name, aliases, appearance, voiceInstructions, ...imageFields, from: isLook ? from || 0 : 0, to: isLook ? to || 0 : 0, imageOptions });
+    const draft = { name, aliases, appearance, voiceInstructions, ...imageFields, from: isLook ? from || 0 : 0, to: isLook ? to || 0 : 0, imageOptions };
+    const snapshot = JSON.stringify(draft);
     const [savedSnapshot, setSavedSnapshot] = useState(snapshot);
     const dirty = snapshot !== savedSnapshot;
-    const imageOptionsDirty = JSON.stringify(imageOptions) !== JSON.stringify(castImageOptionsDraft(baselineCast.imageOptionsJson));
-    const fields = { name, aliases, appearance, voiceInstructions, ...imageFields };
-    const saveFields = async () => {
-        if (imageOptions.corrupt) throw new Error("请先重新配置无法读取的图片设置");
-        if (!summary.data || typeof baselineCast.revision !== "number") throw new Error("当前作品或主体版本尚未读取，请刷新后重试");
-        const revisions = { expectedRevision: summary.data.production.revision, expectedCastRevision: baselineCast.revision, imageOptions: imageOptions.options, ...(episodeId ? { episodeId } : {}) };
-        if (isLook) return (await updateDramaCastLook(projectId, cast.id, { lookName: name, appearance, ...imageFields, fromChapter: from || 0, toChapter: to || 0, restyleSegments: restyle, ...revisions })).look;
-        const changed: DramaCastPatch = { ...revisions };
-        const baseline = {
-            name: baselineCast.name,
-            aliases: parseList(baselineCast.aliasesJson),
-            appearance: baselineCast.appearance,
-            voiceInstructions: baselineCast.voiceInstructions,
-            imagePrompt: baselineCast.imagePrompt || "",
-            imageStyleId: baselineCast.imageStyleId || "",
-            imageStyleName: baselineCast.imageStyleName || "",
-            imageStylePrompt: baselineCast.imageStylePrompt || "",
-        };
-        for (const key of Object.keys(fields) as Array<keyof typeof fields>) {
-            if (JSON.stringify(fields[key]) !== JSON.stringify(baseline[key])) Object.assign(changed, { [key]: fields[key] });
-        }
-        return (await updateDramaCast(projectId, cast.id, changed)).cast;
-    };
-    const acceptSaved = (updated: DramaCast) => {
-        if (!mounted.current) return;
-        setBaselineCast(updated);
-        setSavedSnapshot(snapshot);
-    };
+    const savedSnapshotRef = useRef(savedSnapshot);
+    const baselineRef = useRef(baselineCast);
+    baselineRef.current = baselineCast;
+    const revisionRef = useRef(summary.data?.production.revision);
+    if (summary.data) revisionRef.current = Math.max(revisionRef.current || 0, summary.data.production.revision);
+    const saveAttempt = useRef("");
+    const saveInFlight = useRef(false);
+    const [saveError, setSaveError] = useState("");
+    const validDraft = Boolean(name.trim() && appearance.trim()) && !imageOptions.corrupt && (!isLook || !from || !to || from <= to);
+    const versionReady = Boolean(summary.data) && typeof baselineCast.revision === "number";
+    const currentSaveError = saveAttempt.current === snapshot ? saveError : "";
+    const versionError = dirty && ((!summary.data && summary.isError) || typeof baselineCast.revision !== "number") ? "当前版本读取失败，修改已保留" : "";
+    const persistenceError = currentSaveError || versionError;
+    const imageQuote = useCastImageQuote({
+        projectId,
+        episodeId,
+        cast: baselineCast,
+        revision: summary.data?.production.revision,
+        draft: { name, appearance, ...imageFields, imageOptions: imageOptions.options },
+        failedLooks: isLook ? [] : looks.filter((look) => look.imageStatus === "failed"),
+        enabled: Boolean(summary.data) && !cast.locked && !mediaBusy(cast.imageStatus) && !imageOptions.corrupt && generationNotice?.kind !== "uncertain",
+    });
     const acceptIndependentUpdate = useCallback((updated: DramaCast) => {
         if (!mounted.current) return;
         // 独立操作和轮询只更新媒体或锁定时接收新版本，外部表单改动仍交给保存时的版本校验。
-        setBaselineCast((baseline) => (castEditorFormKey(updated) === castEditorFormKey(baseline) && (updated.revision || 0) > (baseline.revision || 0) ? updated : baseline));
+        if (castEditorFormKey(updated) === castEditorFormKey(baselineRef.current) && (updated.revision || 0) > (baselineRef.current.revision || 0)) {
+            baselineRef.current = updated;
+            setBaselineCast(updated);
+        }
     }, []);
-    const save = useMutation({
-        mutationFn: async () => {
-            return saveFields();
+    const autoSave = useMutation({
+        mutationFn: async (input: { draft: typeof draft; snapshot: string; restyle: boolean; ticket: ReturnType<typeof operation.capture> }) => {
+            const { draft: value, ticket } = input;
+            const previous = JSON.parse(savedSnapshotRef.current) as typeof draft;
+            const baseline = baselineRef.current;
+            if (!operation.isCurrent(ticket)) return;
+            if (revisionRef.current === undefined || typeof baseline.revision !== "number") throw new Error("当前作品或主体版本尚未读取，请刷新后重试");
+            const fields = {
+                name: value.name,
+                aliases: value.aliases,
+                appearance: value.appearance,
+                voiceInstructions: value.voiceInstructions,
+                imagePrompt: value.imagePrompt,
+                imageStyleId: value.imageStyleId,
+                imageStyleName: value.imageStyleName,
+                imageStylePrompt: value.imageStylePrompt,
+            };
+            const changed: DramaCastPatch = { imageOptions: value.imageOptions.options, ...(episodeId ? { episodeId } : {}) };
+            for (const key of Object.keys(fields) as Array<keyof typeof fields>) {
+                if (JSON.stringify(fields[key]) !== JSON.stringify(previous[key])) Object.assign(changed, { [key]: fields[key] });
+            }
+            const write = async (revision: number, current: DramaCast) => {
+                const revisions = { expectedRevision: revision, expectedCastRevision: current.revision };
+                const merged: typeof draft = {
+                    name: current.lookName || current.name,
+                    aliases: parseList(current.aliasesJson),
+                    appearance: current.appearance,
+                    voiceInstructions: current.voiceInstructions,
+                    imagePrompt: current.imagePrompt || "",
+                    imageStyleId: current.imageStyleId || "",
+                    imageStyleName: current.imageStyleName || "",
+                    imageStylePrompt: current.imageStylePrompt || "",
+                    from: isLook ? current.lookFromChapter || 0 : 0,
+                    to: isLook ? current.lookToChapter || 0 : 0,
+                    imageOptions: castImageOptionsDraft(current.imageOptionsJson),
+                };
+                // 重试只让页面实际编辑过的字段优先，其余字段沿用最新服务端设定。
+                for (const key of Object.keys(value) as Array<keyof typeof draft>) {
+                    if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) Object.assign(merged, { [key]: value[key] });
+                }
+                if (merged.imageOptions.corrupt) throw new Error("最新图片设置无法读取，修改已保留，请重新配置后重试");
+                if (isLook)
+                    return (
+                        await updateDramaCastLook(projectId, cast.id, {
+                            lookName: merged.name,
+                            appearance: merged.appearance,
+                            imagePrompt: merged.imagePrompt,
+                            imageStyleId: merged.imageStyleId,
+                            imageStyleName: merged.imageStyleName,
+                            imageStylePrompt: merged.imageStylePrompt,
+                            fromChapter: merged.from,
+                            toChapter: merged.to,
+                            restyleSegments: input.restyle,
+                            imageOptions: merged.imageOptions.options,
+                            ...(episodeId ? { episodeId } : {}),
+                            ...revisions,
+                        })
+                    ).look;
+                return (await updateDramaCast(projectId, cast.id, { ...changed, imageOptions: merged.imageOptions.options, ...revisions })).cast;
+            };
+            let updated: DramaCast;
+            try {
+                updated = await write(revisionRef.current, baseline);
+            } catch (error) {
+                if (!operation.isCurrent(ticket)) return;
+                if (!(error instanceof ApiError) || ![error.status, error.code].includes(409) || (error.reason && error.reason !== "conflict")) throw error;
+                const [latestSummary, latestCast] = await Promise.all([getDrama(projectId), listDramaCast(projectId)]);
+                if (!operation.isCurrent(ticket)) return;
+                const current = latestCast.cast.find((item) => item.id === cast.id);
+                // 只重试已确认的版本变化；权限、校验或生成中的冲突保留草稿并交给用户重试。
+                if (
+                    latestSummary.project.id !== projectId ||
+                    !current ||
+                    current.projectId !== projectId ||
+                    current.kind !== baseline.kind ||
+                    current.parentId !== baseline.parentId ||
+                    mediaBusy(current.imageStatus) ||
+                    typeof current.revision !== "number" ||
+                    !(latestSummary.production.revision > (revisionRef.current ?? 0) || current.revision > (baseline.revision ?? 0))
+                )
+                    throw error;
+                revisionRef.current = latestSummary.production.revision;
+                updated = await write(latestSummary.production.revision, current);
+            }
+            if (!operation.isCurrent(ticket)) return;
+            baselineRef.current = updated;
+            savedSnapshotRef.current = input.snapshot;
+            setBaselineCast(updated);
+            setSavedSnapshot(input.snapshot);
+            const latest = await summary.refetch();
+            if (!operation.isCurrent(ticket)) return;
+            if (latest.data) revisionRef.current = Math.max(revisionRef.current || 0, latest.data.production.revision);
+            return input;
         },
-        onSuccess: (updated) => {
-            if (!mounted.current) return;
-            acceptSaved(updated);
-            message.success("修改已保存");
+        onSuccess: (completed) => {
+            if (!completed || !operation.isCurrent(completed.ticket)) return;
+            setSaveError("");
             onChanged();
         },
-        onError: (error) => {
-            if (mounted.current) message.error(error instanceof Error ? error.message : "保存失败，完整草稿已保留");
+        onError: (error, input) => {
+            if (operation.isCurrent(input.ticket)) setSaveError(error instanceof Error ? error.message : "自动保存失败，修改已保留");
+        },
+        onSettled: () => {
+            saveInFlight.current = false;
         },
     });
     const lock = useMutation({
@@ -497,19 +606,18 @@ function CastEditorForm({
     });
     const regenerate = useMutation({
         mutationFn: async (isCurrent: () => boolean) => {
-            let saved = false;
-            if (dirty) {
-                const updated = await saveFields();
-                saved = true;
-                if (isCurrent()) acceptSaved(updated);
-            }
+            const acceptedQuote = imageQuote.data;
+            if (imageQuote.disabled || !acceptedQuote) throw new Error("图片费用尚未就绪，请稍后再试");
+            if (dirty || autoSave.isPending) throw new Error("设定正在自动保存，请稍后再生成");
+            const saved = false;
             if (!isCurrent()) return;
             try {
-                const result = await (episodeId ? regenerateDramaCast(projectId, cast.id, restyle, episodeId) : regenerateDramaCast(projectId, cast.id, restyle));
+                const result = await imageQuote.execute(acceptedQuote, restyle, isCurrent);
+                if (!result) return;
                 return { result, saved, isCurrent };
             } catch (error) {
                 if (!isCurrent()) return;
-                const rejected = error instanceof ApiError && [error.status, error.code].some((status) => status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429);
+                const rejected = error instanceof CastImageNotSubmittedError || (error instanceof ApiError && [error.status, error.code].some((status) => status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429));
                 const detail = error instanceof Error ? error.message : "请求未能完成";
                 setGenerationNotice({ kind: rejected ? "failed" : "uncertain", text: `${saved ? "修改已保存；" : ""}${rejected ? "生成提交失败" : "生成提交结果待核对"}：${detail}`, version: cast.imageVersion, resourceId: cast.imageResourceId, saved });
                 onChanged();
@@ -524,7 +632,7 @@ function CastEditorForm({
             onChanged();
         },
         onError: (error) => {
-            if (mounted.current) message.error(`保存失败，未提交生成：${error instanceof Error ? error.message : "请重试"}`);
+            if (mounted.current) message.error(`未提交生成：${error instanceof Error ? error.message : "请重试"}`);
         },
     });
     // 上传或从素材库选的形象图直接成为参考图并锁定：不会被重新生成覆盖，剧情段视频按这张图生成。
@@ -548,14 +656,27 @@ function CastEditorForm({
     const adoptLibraryImage = async (resourceId: string) => imageAdopted(await setDramaCastImage(projectId, cast.id, resourceId, restyle));
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
-    const saving = save.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
-    const busy = saving || mediaBusy(cast.imageStatus);
+    const saving = autoSave.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
+    const editBlocked = regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
+    const busy = saving || mediaBusy(cast.imageStatus) || dirty;
+    const startAutoSave = () => {
+        if (saveInFlight.current || !validDraft || !versionReady) return;
+        saveInFlight.current = true;
+        saveAttempt.current = snapshot;
+        setSaveError("");
+        autoSave.mutate({ draft, snapshot, restyle, ticket: operation.capture() });
+    };
+    useEffect(() => {
+        if (!dirty || editBlocked || autoSave.isPending || !validDraft || !summary.data || typeof baselineCast.revision !== "number" || saveAttempt.current === snapshot) return;
+        const timer = setTimeout(startAutoSave, 350);
+        return () => clearTimeout(timer);
+    }, [snapshot, dirty, editBlocked, autoSave.isPending, validDraft, summary.data, baselineCast.revision]);
     const parentReady = !isLook || (parent?.imageStatus === "ready" && Boolean(parent.imageResourceId));
     const editorState = useRef(onDirtyChange);
     editorState.current = onDirtyChange;
     useEffect(() => {
-        editorState.current?.(dirty || imageOptionsDirty || lookState.dirty, saving);
-    }, [dirty, imageOptionsDirty, lookState.dirty, saving]);
+        editorState.current?.(lookState.dirty || (dirty && (!validDraft || Boolean(persistenceError))), saving || (dirty && validDraft && !persistenceError));
+    }, [dirty, validDraft, lookState.dirty, saving, persistenceError]);
     useEffect(() => () => editorState.current?.(false, false), []);
     const remoteKey = castEditorFormKey(cast);
     const received = useRef(remoteKey);
@@ -564,7 +685,8 @@ function CastEditorForm({
     }, [remoteKey, cancelBeforeExecution]);
     useEffect(() => {
         acceptIndependentUpdate(cast);
-        if (dirty || busy) return;
+        if (dirty || saving || mediaBusy(cast.imageStatus)) return;
+        if (typeof cast.revision === "number" && typeof baselineCast.revision === "number" && cast.revision < baselineCast.revision) return;
         if (received.current === remoteKey) {
             return;
         }
@@ -580,6 +702,19 @@ function CastEditorForm({
         const imageOptions = castImageOptionsDraft(cast.imageOptionsJson);
         setImageOptions(imageOptions);
         setBaselineCast(cast);
+        baselineRef.current = cast;
+        saveAttempt.current = "";
+        setSaveError("");
+        savedSnapshotRef.current = JSON.stringify({
+            name: cast.lookName || cast.name,
+            aliases: parseList(cast.aliasesJson),
+            appearance: cast.appearance,
+            voiceInstructions: cast.voiceInstructions,
+            ...imageFields,
+            from: isLook ? cast.lookFromChapter || 0 : 0,
+            to: isLook ? cast.lookToChapter || 0 : 0,
+            imageOptions,
+        });
         setSavedSnapshot(
             JSON.stringify({
                 name: cast.lookName || cast.name,
@@ -592,7 +727,7 @@ function CastEditorForm({
                 imageOptions,
             }),
         );
-    }, [remoteKey, dirty, busy, cast, isLook, acceptIndependentUpdate]);
+    }, [remoteKey, dirty, busy, cast, isLook, acceptIndependentUpdate, baselineCast.revision]);
     const checkGeneration = async () => {
         if (checkingGeneration || !generationNotice) return;
         setCheckingGeneration(true);
@@ -663,28 +798,28 @@ function CastEditorForm({
                         </p>
                     ) : null}
                     <Field label={isLook ? "造型名称" : "名称"}>
-                        <Input value={name} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} aria-label={isLook ? "造型名称" : "名称"} />
+                        <Input value={name} maxLength={60} disabled={editBlocked} onChange={(event) => setName(event.target.value)} aria-label={isLook ? "造型名称" : "名称"} />
                     </Field>
                     {isCharacter ? (
                         <Field label="别名与称呼" hint="剧本里这些称呼都会归到此角色">
-                            <Select mode="tags" className="w-full" value={aliases} disabled={busy} onChange={setAliases} tokenSeparators={[",", "，", "、"]} placeholder="输入后回车" open={false} suffixIcon={null} aria-label="别名与称呼" />
+                            <Select mode="tags" className="w-full" value={aliases} disabled={editBlocked} onChange={setAliases} tokenSeparators={[",", "，", "、"]} placeholder="输入后回车" open={false} suffixIcon={null} aria-label="别名与称呼" />
                         </Field>
                     ) : null}
                     <Field label={APPEARANCE_LABEL[cast.kind]} hint="用于参考图与剧情段视频提示词">
-                        <Input.TextArea value={appearance} maxLength={1000} disabled={busy} autoSize={{ minRows: 4, maxRows: 10 }} onChange={(event) => setAppearance(event.target.value)} aria-label={APPEARANCE_LABEL[cast.kind]} />
+                        <Input.TextArea value={appearance} maxLength={1000} disabled={editBlocked} autoSize={{ minRows: 4, maxRows: 10 }} onChange={(event) => setAppearance(event.target.value)} aria-label={APPEARANCE_LABEL[cast.kind]} />
                     </Field>
                     {isLook ? (
                         <Field label="默认适用章节" hint="留空表示不限，按本季原著章节设置">
                             <div className="drama-look-form-range">
-                                <InputNumber aria-label="造型起始章" min={0} precision={0} value={from} placeholder="起始章" disabled={busy} onChange={setFrom} />
+                                <InputNumber aria-label="造型起始章" min={0} precision={0} value={from} placeholder="起始章" disabled={editBlocked} onChange={setFrom} />
                                 <span>至</span>
-                                <InputNumber aria-label="造型结束章" min={0} precision={0} value={to} placeholder="结束章" disabled={busy} onChange={setTo} />
+                                <InputNumber aria-label="造型结束章" min={0} precision={0} value={to} placeholder="结束章" disabled={editBlocked} onChange={setTo} />
                             </div>
                         </Field>
                     ) : null}
                     {isCharacter ? (
                         <Field label="声线" hint="写进视频提示词，由视频模型生成对白">
-                            <Input value={voiceInstructions} disabled={busy} placeholder="少年音，坚毅，语速偏快" onChange={(event) => setVoiceInstructions(event.target.value)} aria-label="声线" />
+                            <Input value={voiceInstructions} disabled={editBlocked} placeholder="少年音，坚毅，语速偏快" onChange={(event) => setVoiceInstructions(event.target.value)} aria-label="声线" />
                         </Field>
                     ) : null}
                     {isCharacter ? (
@@ -705,43 +840,103 @@ function CastEditorForm({
                             将引用视频标记为待更新
                         </Checkbox>
                     </div>
-                    {dirty || imageOptionsDirty || lookState.dirty ? (
-                        <p className="drama-editor-note" role="status">
-                            有未保存的修改。文字、提示词与图片配置将一并保存。
-                        </p>
-                    ) : null}
                 </div>
                 <div className="drama-editor-image-settings">
                     {layout === "workspace" ? <h3>生图设置</h3> : null}
-                    <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
-                    <CastImageFields projectId={projectId} episodeId={episodeId} castId={cast.id} appearance={appearance} value={imageFields} disabled={busy} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+                    <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={editBlocked} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
+                    <CastImageFields projectId={projectId} episodeId={episodeId} castId={cast.id} appearance={appearance} value={imageFields} disabled={editBlocked} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
                 </div>
             </section>
             <div className="drama-editor-actions">
-                <Button
-                    className="drama-editor-wide"
-                    disabled={!dirty || busy || imageOptions.corrupt || !name.trim() || !appearance.trim() || !summary.data || typeof baselineCast.revision !== "number"}
-                    loading={save.isPending}
-                    onClick={() => save.mutate()}
-                >
-                    保存修改
-                </Button>
-                {generationNotice ? (
-                    <div className="drama-editor-note" role={generationNotice.kind === "submitted" ? "status" : "alert"}>
-                        <p>{generationNotice.text}</p>
-                        {generationNotice.kind === "uncertain" ? (
-                            <Button loading={checkingGeneration} onClick={() => void checkGeneration()}>
-                                核对生成状态
+                <div className="drama-editor-status">
+                    {persistenceError ? (
+                        <p role="alert">
+                            自动保存失败：{persistenceError}。修改已保留。
+                            <Button size="small" type="link" disabled={autoSave.isPending || editBlocked || !validDraft || (!versionReady && summary.isFetching)} onClick={() => (versionReady ? startAutoSave() : void summary.refetch())}>
+                                重试保存
                             </Button>
-                        ) : null}
-                    </div>
-                ) : null}
-                <Button icon={<Upload className="size-4" />} disabled={busy} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
-                    上传形象图
-                </Button>
-                <Button className="drama-editor-wide" icon={<FolderOpen className="size-4" />} disabled={busy} onClick={() => setLibraryOpen(true)}>
-                    从素材库选择
-                </Button>
+                        </p>
+                    ) : dirty ? (
+                        <p className="drama-editor-note" role="status">
+                            {validDraft ? "正在自动保存…" : "请补全名称和描述，并检查图片设置与章节范围；修改已保留。"}
+                        </p>
+                    ) : null}
+                    {generationNotice ? (
+                        <div className="drama-editor-note" role={generationNotice.kind === "submitted" ? "status" : "alert"}>
+                            <p>{generationNotice.text}</p>
+                            {generationNotice.kind === "uncertain" ? (
+                                <Button loading={checkingGeneration} onClick={() => void checkGeneration()}>
+                                    核对生成状态
+                                </Button>
+                            ) : null}
+                        </div>
+                    ) : null}
+                    {imageQuote.data?.reason || imageQuote.error ? (
+                        <p className="drama-editor-note" role="status">
+                            {imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : "图片计价失败")}
+                            {imageQuote.isError ? (
+                                <Button size="small" type="link" disabled={busy || imageQuote.isFetching} onClick={() => void imageQuote.refetch()}>
+                                    重新计价
+                                </Button>
+                            ) : null}
+                        </p>
+                    ) : null}
+                </div>
+                <div className="drama-editor-action-buttons">
+                    <Button icon={<Upload className="size-4" />} disabled={busy} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
+                        上传形象图
+                    </Button>
+                    <Button className="drama-editor-wide" icon={<FolderOpen className="size-4" />} disabled={busy} onClick={() => setLibraryOpen(true)}>
+                        从素材库选择
+                    </Button>
+                    <Button className="drama-editor-wide" icon={<Brush className="size-4" />} disabled={busy} title={dirty ? "正在自动保存设定" : undefined} loading={canvasOpening} onClick={onOpenCanvas}>
+                        在画布中精修
+                    </Button>
+                    {isLook ? (
+                        <Button
+                            danger
+                            className="drama-editor-wide"
+                            icon={<Trash2 className="size-4" />}
+                            disabled={busy}
+                            onClick={() =>
+                                modal.confirm({
+                                    title: `删除造型「${cast.lookName}」？`,
+                                    content: "引用这套造型的镜头将回到角色基础造型。",
+                                    okText: "删除造型",
+                                    cancelText: "取消",
+                                    onOk: async () => {
+                                        await deleteDramaCastLook(projectId, cast.id, restyle);
+                                        onChanged();
+                                    },
+                                })
+                            }
+                        >
+                            删除造型
+                        </Button>
+                    ) : null}
+                    <Button
+                        type="primary"
+                        className="drama-editor-wide"
+                        icon={<RefreshCw className="size-4" />}
+                        disabled={
+                            cast.locked ||
+                            busy ||
+                            dirty ||
+                            imageQuote.disabled ||
+                            imageOptions.corrupt ||
+                            generationNotice?.kind === "uncertain" ||
+                            !parentReady ||
+                            !name.trim() ||
+                            !appearance.trim() ||
+                            (dirty && (!summary.data || typeof baselineCast.revision !== "number"))
+                        }
+                        title={!parentReady ? "请先生成或上传角色本体图" : imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : undefined)}
+                        loading={regenerate.isPending || regenerationGuard.busy}
+                        onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
+                    >
+                        {generationLabel("生成图片", imageQuote.data, imageQuote.isFetching)}
+                    </Button>
+                </div>
                 {libraryOpen ? <CastLibraryPicker open={libraryOpen} cast={cast} onClose={() => setLibraryOpen(false)} onPick={adoptLibraryImage} /> : null}
                 <input
                     ref={fileRef}
@@ -764,49 +959,6 @@ function CastEditorForm({
                         upload.mutate(file);
                     }}
                 />
-                <Button
-                    type="primary"
-                    className="drama-editor-wide"
-                    icon={<RefreshCw className="size-4" />}
-                    disabled={cast.locked || busy || imageOptions.corrupt || generationNotice?.kind === "uncertain" || !parentReady || !name.trim() || !appearance.trim() || (dirty && (!summary.data || typeof baselineCast.revision !== "number"))}
-                    title={!parentReady ? "请先生成或上传角色本体图" : undefined}
-                    loading={regenerate.isPending || regenerationGuard.busy}
-                    onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
-                >
-                    {cast.imageResourceId ? (dirty ? "保存并重新生成" : "重新生成") : dirty ? "保存并生成参考图" : "生成参考图"}
-                </Button>
-                <Button
-                    className="drama-editor-wide"
-                    icon={<Brush className="size-4" />}
-                    disabled={dirty || imageOptionsDirty || busy}
-                    title={dirty || imageOptionsDirty ? "请先保存设定与图片生成配置" : undefined}
-                    loading={canvasOpening}
-                    onClick={onOpenCanvas}
-                >
-                    在画布中精修
-                </Button>
-                {isLook ? (
-                    <Button
-                        danger
-                        className="drama-editor-wide"
-                        icon={<Trash2 className="size-4" />}
-                        disabled={busy}
-                        onClick={() =>
-                            modal.confirm({
-                                title: `删除造型「${cast.lookName}」？`,
-                                content: "引用这套造型的镜头将回到角色基础造型。",
-                                okText: "删除造型",
-                                cancelText: "取消",
-                                onOk: async () => {
-                                    await deleteDramaCastLook(projectId, cast.id, restyle);
-                                    onChanged();
-                                },
-                            })
-                        }
-                    >
-                        删除造型
-                    </Button>
-                ) : null}
             </div>
             <section className="drama-editor-extras" aria-label="造型与独立视图">
                 {layout === "workspace" ? (
@@ -815,7 +967,7 @@ function CastEditorForm({
                         <span>按需补充，独立保存与生成</span>
                     </div>
                 ) : null}
-                {viewSelector || <CastViews projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy || dirty || imageOptionsDirty} onChanged={onChanged} />}
+                {viewSelector || <CastViews projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy} onChanged={onChanged} />}
                 {isCharacter ? (
                     <CastLooks
                         projectId={projectId}
@@ -911,6 +1063,9 @@ const MEDIA_ICON: Record<NonNullable<DramaInboxItem["media"]>, ReactNode> = {
 const CHIP_LIMIT = 24;
 
 export function InboxPanel({
+    projectId,
+    revision,
+    onChanged,
     items,
     castById,
     retrying,
@@ -922,6 +1077,9 @@ export function InboxPanel({
     onOpenSettings,
     onReleaseAll,
 }: {
+    projectId: string;
+    revision: number;
+    onChanged: () => void | Promise<unknown>;
     items: DramaInboxItem[];
     castById: Map<string, DramaCast>;
     retrying: boolean;
@@ -936,6 +1094,7 @@ export function InboxPanel({
     const groups = useMemo(() => groupInbox(items), [items]);
     const failures = items.filter((item) => item.severity === "error").length;
     const reviews = items.filter((item) => item.kind === "review").length;
+    const textFailures = items.filter((item) => item.kind === "episode_error" || (item.kind === "segment_failed" && item.media === "prompt")).length;
     return (
         <div className="drama-view">
             <section className="drama-view-main">
@@ -958,9 +1117,9 @@ export function InboxPanel({
                             <span>共 {groups.length} 类</span>
                         </div>
                     ) : null}
-                    {failures ? (
+                    {textFailures ? (
                         <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetryAll}>
-                            全部重试
+                            重试失败文字
                         </Button>
                     ) : null}
                 </div>
@@ -968,7 +1127,9 @@ export function InboxPanel({
                     {groups.length ? (
                         <div className="drama-inbox">
                             {groups.map((group) => {
-                                const retryable = group.kind === "cast_failed" || group.kind === "segment_failed";
+                                const mediaAction = group.kind === "cast_failed" ? "cast_image" : group.kind === "segment_failed" && group.items[0].media === "video" ? "segment_video" : undefined;
+                                const mediaTargets = group.items.map((item) => (mediaAction === "cast_image" ? item.castId : item.segmentId)).filter((id): id is string => Boolean(id));
+                                const retryable = group.kind === "segment_failed" && !mediaAction;
                                 return (
                                     <article key={group.key} className={`drama-inbox-card is-${group.severity}`}>
                                         <header className="drama-inbox-card-head">
@@ -990,9 +1151,20 @@ export function InboxPanel({
                                                     </Button>
                                                 ) : null}
                                                 {group.kind === "media_ready" ? (
-                                                    <Button size="small" type="primary" icon={<Play className="size-3.5" />} loading={releasing} onClick={onReleaseAll}>
-                                                        全部开始生成
+                                                    <Button size="small" onClick={() => onOpen(group.items[0])}>
+                                                        查看待生成内容
                                                     </Button>
+                                                ) : null}
+                                                {mediaAction && mediaTargets.length === group.items.length ? (
+                                                    <WorkflowBatch
+                                                        projectId={projectId}
+                                                        revision={revision}
+                                                        targetIds={mediaTargets}
+                                                        actions={[mediaAction]}
+                                                        onChanged={onChanged}
+                                                        triggerLabel={mediaAction === "cast_image" ? "重试图片" : "重试视频"}
+                                                        compact
+                                                    />
                                                 ) : null}
                                                 {retryable ? (
                                                     <Button size="small" icon={<RotateCcw className="size-3.5" />} loading={retryingGroup === group.key} onClick={() => onRetryGroup(group.key, group.items)}>
@@ -1085,34 +1257,138 @@ const REVIEW_LABEL: Record<DramaReviewMode, { title: string; detail: string }> =
 const CONCURRENCY = [2, 4, 6, 8, 12, 16];
 
 export function SettingsPanel({ projectId, summary, cast, onChanged }: { projectId: string; summary: DramaSummary; cast: DramaCast[]; onChanged: () => void }) {
-    const { message, modal } = App.useApp();
-    const current = summary.production.settings;
-    const [settings, setSettings] = useState(current);
+    const userId = useUserStore((state) => state.user?.id || "");
+    return <SettingsPanelSession key={`${userId}:${projectId}`} {...{ projectId, summary, cast, onChanged }} />;
+}
+
+function SettingsPanelSession({ projectId, summary, cast, onChanged }: Parameters<typeof SettingsPanel>[0]) {
+    const { message } = App.useApp();
+    const operation = useDramaOperationScope(projectId);
+    const [current, setCurrent] = useState(summary.production.settings);
+    const [settings, setSettingsState] = useState(current);
     const [budget, setBudget] = useState(summary.production.budgetMicrocredits / 1_000_000);
+    const [mediaSaving, setMediaSaving] = useState(false);
+    const [mediaError, setMediaError] = useState("");
+    const baseline = useRef(summary);
+    const latestDraft = useRef(settings);
+    const writeLock = useRef(false);
+    const mounted = useRef(true);
+    const failedMedia = useRef("");
+    const account = useRef(JSON.stringify([getActiveUserScope(), useUserStore.getState().user?.id || ""]));
+    const sameAccount = () => mounted.current && account.current === JSON.stringify([getActiveUserScope(), useUserStore.getState().user?.id || ""]);
+    const mediaKey = (value: DramaSettings) => JSON.stringify(dramaGenerationConfiguration(value));
+    const setSettings = (next: DramaSettings) => {
+        latestDraft.current = next;
+        setSettingsState(next);
+    };
     useEffect(() => {
-        setSettings(summary.production.settings);
-        setBudget(summary.production.budgetMicrocredits / 1_000_000);
-    }, [summary.production.settings, summary.production.budgetMicrocredits]);
-    const dirty = useMemo(() => JSON.stringify(settings) !== JSON.stringify(current) || Math.round(budget * 1_000_000) !== summary.production.budgetMicrocredits, [budget, current, settings, summary.production.budgetMicrocredits]);
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+        };
+    }, []);
+    useEffect(() => {
+        if (writeLock.current || summary.production.revision < baseline.current.production.revision) return;
+        const previous = baseline.current.production;
+        const unchanged = JSON.stringify(latestDraft.current) === JSON.stringify(previous.settings);
+        const unchangedMedia = mediaKey(latestDraft.current) === mediaKey(previous.settings);
+        baseline.current = summary;
+        setCurrent(summary.production.settings);
+        if (unchanged) setSettings(summary.production.settings);
+        else if (unchangedMedia) setSettings(applyDramaGenerationConfiguration(latestDraft.current, summary.production.settings));
+        setBudget((value) => (Math.round(value * 1_000_000) === previous.budgetMicrocredits ? summary.production.budgetMicrocredits / 1_000_000 : value));
+    }, [summary.production.settings, summary.production.budgetMicrocredits, summary.production.revision]);
+    const mediaDirty = mediaKey(settings) !== mediaKey(current);
+    const blocker = useBlocker(
+        ({ currentLocation, nextLocation }) =>
+            sameAccount() && (mediaSaving || mediaKey(latestDraft.current) !== mediaKey(baseline.current.production.settings)) && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search),
+    );
+    const dirty = JSON.stringify(applyDramaGenerationConfiguration(settings, current)) !== JSON.stringify(current) || Math.round(budget * 1_000_000) !== baseline.current.production.budgetMicrocredits;
+    const persistMedia = async () => {
+        if (writeLock.current || !sameAccount()) return;
+        const ticket = operation.capture();
+        writeLock.current = true;
+        if (mounted.current) {
+            setMediaSaving(true);
+            setMediaError("");
+        }
+        try {
+            while (operation.isCurrent(ticket) && sameAccount() && mediaKey(latestDraft.current) !== mediaKey(baseline.current.production.settings)) {
+                const target = latestDraft.current;
+                const fresh = await getDrama(projectId);
+                if (!operation.isCurrent(ticket) || !sameAccount()) return;
+                // 媒体配置以当前页面为准，其他设置与预算继续保留服务端最新值。
+                const next = applyDramaGenerationConfiguration(fresh.production.settings, target);
+                const saved = await updateDramaSettings(projectId, {
+                    generation: { ...dramaGenerationConfiguration(next), videoResolution: next.videoResolution || "", videoContinuity: next.videoContinuity || "tail_frame" },
+                    expectedRevision: fresh.production.revision,
+                });
+                if (!operation.isCurrent(ticket) || !sameAccount()) return;
+                baseline.current = saved;
+                failedMedia.current = "";
+                if (mediaKey(latestDraft.current) === mediaKey(target)) latestDraft.current = applyDramaGenerationConfiguration(latestDraft.current, saved.production.settings);
+                if (mounted.current) {
+                    setCurrent(saved.production.settings);
+                    setSettingsState(latestDraft.current);
+                    onChanged();
+                }
+            }
+        } catch (error) {
+            if (!operation.isCurrent(ticket) || !sameAccount()) return;
+            failedMedia.current = mediaKey(latestDraft.current);
+            if (mounted.current && sameAccount()) setMediaError(error instanceof Error ? error.message : "生成配置自动保存失败，请重试");
+        } finally {
+            writeLock.current = false;
+            if (operation.isCurrent(ticket) && sameAccount()) setMediaSaving(false);
+        }
+    };
+    useEffect(() => {
+        if (!mediaDirty || failedMedia.current === mediaKey(settings)) return;
+        const timer = window.setTimeout(() => void persistMedia(), 350);
+        return () => window.clearTimeout(timer);
+    }, [mediaKey(settings), mediaDirty]);
+    useEffect(() => {
+        if (blocker.state !== "blocked") return;
+        if (!sameAccount() || mediaError) {
+            blocker.reset();
+            return;
+        }
+        if (writeLock.current || mediaSaving) return;
+        if (!mediaDirty) blocker.proceed();
+        else void persistMedia();
+    }, [blocker, mediaSaving, mediaDirty, mediaError]);
+    useEffect(() => {
+        if (!mediaDirty && !mediaSaving) return;
+        const preventLeave = (event: BeforeUnloadEvent) => event.preventDefault();
+        window.addEventListener("beforeunload", preventLeave);
+        return () => window.removeEventListener("beforeunload", preventLeave);
+    }, [mediaDirty, mediaSaving]);
     const save = useMutation({
-        mutationFn: () => updateDramaSettings(projectId, { settings, budgetMicrocredits: Math.max(0, Math.round((budget || 0) * 1_000_000)) }),
-        onSuccess: () => {
+        mutationFn: async () => {
+            if (writeLock.current || mediaDirty || !sameAccount()) throw new Error("请等待生成配置自动保存完成");
+            const ticket = operation.capture();
+            writeLock.current = true;
+            try {
+                const saved = await updateDramaSettings(projectId, { settings, budgetMicrocredits: Math.max(0, Math.round((budget || 0) * 1_000_000)), expectedRevision: baseline.current.production.revision });
+                return { saved, ticket };
+            } finally {
+                writeLock.current = false;
+            }
+        },
+        onSuccess: ({ saved, ticket }) => {
+            if (!operation.isCurrent(ticket) || !sameAccount()) return;
+            baseline.current = saved;
+            setCurrent(saved.production.settings);
+            setSettings(saved.production.settings);
+            setBudget(saved.production.budgetMicrocredits / 1_000_000);
             message.success("设置已保存，新任务会使用新配置");
             onChanged();
         },
-        onError: (error) => message.error(error instanceof Error ? error.message : "保存失败"),
+        onError: (error) => {
+            if (mounted.current && sameAccount()) message.error(error instanceof Error ? error.message : "保存失败");
+        },
     });
     const [restyleSegments, setRestyleSegments] = useState(true);
-    const regenerateAll = useMutation({
-        mutationFn: (kind: DramaCastKind) => regenerateDramaCasts(projectId, kind, restyleSegments),
-        onSuccess: (result, kind) => {
-            message.success(
-                `已按当前方案重做 ${result.queued} 个${CAST_KIND_LABEL[kind]}参考图${result.skipped ? `，${result.skipped} 个已锁定或正在生成` : ""}${result.affectedSegments ? `，${result.affectedSegments} 个剧情段的视频已标记为待更新` : ""}`,
-            );
-            onChanged();
-        },
-        onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
-    });
     const catalogQuery = useDramaModelCatalog();
     const videoOptionFor = (choice?: DramaModelChoice) => catalogQuery.data?.options.video?.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(choice));
     const videoOption = videoOptionFor(settings.models.video);
@@ -1145,24 +1421,32 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
             <section className="drama-view-main">
                 <div className="drama-view-head">
                     <h2 className="drama-view-title">制作设置</h2>
-                    <span className="drama-view-sub">{dirty ? "有未保存的修改" : "修改只影响之后新开始的任务"}</span>
+                    <span className="drama-view-sub">{mediaError ? "生成配置未能应用" : mediaSaving || mediaDirty ? "正在应用生成配置…" : dirty ? "其他设置尚未保存" : "图片与视频配置修改后自动生效"}</span>
                     <div className="ml-auto flex gap-2">
                         <Button
-                            disabled={!dirty}
+                            disabled={!dirty || save.isPending}
                             onClick={() => {
-                                setSettings(current);
-                                setBudget(summary.production.budgetMicrocredits / 1_000_000);
+                                setSettings(applyDramaGenerationConfiguration(current, settings));
+                                setBudget(baseline.current.production.budgetMicrocredits / 1_000_000);
                             }}
                         >
-                            还原
+                            还原其他设置
                         </Button>
-                        <Button type="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
-                            保存设置
+                        <Button type="primary" disabled={!dirty || mediaSaving || mediaDirty} loading={save.isPending} onClick={() => save.mutate()}>
+                            保存其他设置
                         </Button>
                     </div>
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
-                    <div className="drama-cfg">
+                    {mediaError ? (
+                        <p role="alert">
+                            {mediaError}{" "}
+                            <Button size="small" disabled={mediaSaving} onClick={() => void persistMedia()}>
+                                重试应用生成配置
+                            </Button>
+                        </p>
+                    ) : null}
+                    <div className="drama-cfg" inert={save.isPending}>
                         <div className="drama-cfg-main">
                             <EpisodeModeCard summary={summary} settings={settings} onChange={(patch) => setSettings({ ...settings, ...patch })} />
                             <section className="drama-cfg-card">
@@ -1201,30 +1485,26 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                     <div>
                                         <strong>按当前方案重做已有参考图</strong>
                                         <span>
-                                            {CAST_KINDS.map((kind) => `${countOf(kind)} 个${CAST_KIND_LABEL[kind]}`).join(" · ")}；锁定的设定不会变。{dirty ? "请先保存设置。" : ""}
+                                            {CAST_KINDS.map((kind) => `${countOf(kind)} 个${CAST_KIND_LABEL[kind]}`).join(" · ")}；锁定的设定不会变。{mediaSaving || mediaDirty ? "正在应用生成配置。" : ""}
                                         </span>
                                     </div>
                                     <Checkbox checked={restyleSegments} onChange={(event) => setRestyleSegments(event.target.checked)}>
                                         将引用视频标记为待更新
                                     </Checkbox>
                                     {CAST_KINDS.map((kind) => (
-                                        <Button
+                                        <WorkflowBatch
                                             key={kind}
-                                            disabled={dirty || !countOf(kind)}
-                                            loading={regenerateAll.isPending && regenerateAll.variables === kind}
-                                            onClick={() =>
-                                                modal.confirm({
-                                                    title: `按当前方案重做 ${countOf(kind)} 个${CAST_KIND_LABEL[kind]}参考图？`,
-                                                    content: `每张参考图都会重新生成并计费${restyleSegments ? "，引用它们的视频将标记为待更新" : ""}。旧版本保留在版本记录中。`,
-                                                    okText: "开始重做",
-                                                    cancelText: "取消",
-                                                    centered: true,
-                                                    onOk: () => regenerateAll.mutateAsync(kind),
-                                                })
-                                            }
-                                        >
-                                            重做{CAST_KIND_LABEL[kind]}
-                                        </Button>
+                                            projectId={projectId}
+                                            revision={summary.production.revision}
+                                            targetIds={cast.filter((item) => item.kind === kind && !item.locked && !mediaBusy(item.imageStatus)).map((item) => item.id)}
+                                            actions={["cast_image"]}
+                                            disabled={mediaSaving || mediaDirty || Boolean(mediaError)}
+                                            onChanged={onChanged}
+                                            triggerLabel={`重做${CAST_KIND_LABEL[kind]}图片`}
+                                            regenerate
+                                            restyleSegments={restyleSegments}
+                                            compact
+                                        />
                                     ))}
                                 </div>
                             </section>

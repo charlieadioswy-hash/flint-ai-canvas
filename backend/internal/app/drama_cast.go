@@ -111,16 +111,31 @@ func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDr
 	if err != nil {
 		return err
 	}
-	if err := requireDramaGuideAssetEdit(p); err != nil {
-		return err
+	if req.ExpectedRevision == nil {
+		return dramaGuideConflict("请提供当前作品版本后重试")
 	}
-	return s.withDramaGuideEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
+	if dramaGuideActive(p) {
+		if err := requireDramaGuideAssetEdit(p); err != nil {
+			return err
+		}
+	}
+	return s.withDramaTextEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
 		current, err := tx.DramaProduction(project.ID)
 		if err != nil {
 			return err
 		}
-		if err := requireDramaGuideAssetEdit(current); err != nil {
-			return err
+		if dramaGuideActive(current) {
+			if err := requireDramaGuideAssetEdit(current); err != nil {
+				return err
+			}
+		} else {
+			active, err := tx.DramaTextJobsActive(project.ID)
+			if err != nil {
+				return err
+			}
+			if active {
+				return dramaGuideConflict("文字任务正在进行，请完成后再应用修改")
+			}
 		}
 		cast, err := tx.DramaCast(project.ID, castID)
 		if err != nil {

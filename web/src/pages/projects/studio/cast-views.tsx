@@ -6,7 +6,6 @@ import { Images, Plus, RefreshCw, X } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { createClientUUID } from "@/lib/client-id";
-import { formatDramaCredits } from "@/lib/drama/drama-format";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
 import { getDrama, getDramaEpisodeStyle, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
@@ -16,17 +15,18 @@ import {
     executeDramaCastView,
     listDramaCastViews,
     preflightDramaCastView,
+    quoteDramaCastViewDraft,
     saveDramaCastView,
     type CastView,
     type CastViewConfig,
     type CastViewDirection,
-    type CastViewPreflight,
 } from "@/services/api/drama-cast-views";
 import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
 import { MediaThumb } from "../drama-shared";
+import { generationLabel } from "../workflow-generation";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { readCastImageOptions } from "./cast-image-options";
 import { clearCastViewPending, readCastViewPending, writeCastViewPending, type PendingCastView } from "./cast-views-state";
@@ -44,7 +44,7 @@ const DIRECTIONS: { value: CastViewDirection; label: string }[] = [
 ];
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已就绪", stale: "设定已更新", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
 type Props = { projectId: string; episodeId?: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
-type Quote = PendingCastView & { preview: CastViewPreflight };
+type CastViewSubmission = { submitted: boolean; message?: string };
 type Workspace = { renderMain: (selector: ReactNode) => ReactNode; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
 export function CastViewWorkspace(props: Props & Workspace) {
@@ -107,7 +107,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         refetchInterval: (value) => (value.state.data?.views.some((row) => ["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status))) ? 3000 : false),
     });
     const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
-    const [quote, setQuote] = useState<Quote>();
+    const [quoteEpoch, setQuoteEpoch] = useState(0);
     const [pending, setPending] = useState<PendingCastView>();
     const [loaded, setLoaded] = useState(false);
     const [loadError, setLoadError] = useState("");
@@ -132,7 +132,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         if (workspace && selected && selected !== "new" && query.isSuccess && !selectedRow) {
             setSelected(undefined);
             setWorkspaceEditor(undefined);
-            setQuote(undefined);
+            setQuoteEpoch((value) => value + 1);
             setNotice("所选独立视图已不存在，已返回主视觉");
             stateChange.current?.(false, false);
         }
@@ -176,49 +176,54 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
     };
     const refresh = async (ticket: ReturnType<typeof operation.capture>, text?: string) => {
         if (!operation.isCurrent(ticket)) return;
-        setQuote(undefined);
+        setQuoteEpoch((value) => value + 1);
         if (text) setNotice(text);
         onChanged();
         const refreshed = await Promise.all([query.refetch(), summary.refetch()]);
         if (operation.isCurrent(ticket) && refreshed.some((item) => item.isError)) setError("操作已完成，最新状态暂未刷新，请重新载入");
         return refreshed;
     };
-    const execute = (value: PendingCastView) =>
-        run("execute", async (ticket) => {
+    const execute = async (value: PendingCastView): Promise<CastViewSubmission> => {
+        let result: CastViewSubmission = { submitted: false, message: "生成未提交，请重试" };
+        await run("execute", async (ticket) => {
             await writeCastViewPending(userId, projectId, cast.id, value);
             if (!operation.isCurrent(ticket)) return;
             setPending(value);
             try {
                 await executeDramaCastView(projectId, cast.id, value.viewId, value.action);
+                result = { submitted: true };
                 await clearCastViewPending(userId, projectId, cast.id);
                 if (!operation.isCurrent(ticket)) return;
                 setPending(undefined);
                 await refresh(ticket, "视图生成已提交，进度将自动更新");
             } catch (reason) {
                 const rejected = reason instanceof ApiError && [reason.status, reason.code].some((status) => status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429);
+                result = { submitted: false, message: `${rejected ? "生成提交失败" : "生成提交结果待核对"}：${reason instanceof Error ? reason.message : "请求未完成"}` };
                 if (rejected) {
                     await clearCastViewPending(userId, projectId, cast.id);
                     if (operation.isCurrent(ticket)) {
                         setPending(undefined);
-                        setQuote(undefined);
+                        setQuoteEpoch((value) => value + 1);
                     }
                 }
                 throw reason;
             }
         });
+        return result;
+    };
     if (workspace) {
-        const select = (id?: string) => {
+        const select = (id?: string, discard = false) => {
             if (disabled || busy || editorState.busy || id === selected) return;
             const apply = () => {
                 setSelected(id);
-                setQuote(undefined);
+                setQuoteEpoch((value) => value + 1);
                 setError("");
                 setPreviewing(false);
                 setEditorState({ dirty: false, busy: false });
                 setWorkspaceEditor(id ? { row: query.data?.views.find((row) => row.id === id), expectedRevision: revision, castRevision: cast.revision } : undefined);
                 stateChange.current?.(false, false);
             };
-            if (!editorState.dirty) return apply();
+            if (discard || !editorState.dirty) return apply();
             const ticket = operation.capture();
             modal.confirm({
                 title: "放弃未保存的视图配置？",
@@ -300,8 +305,6 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         if (!selected) return workspace.renderMain(selector);
         const row = selectedRow;
         const active = row && (["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status)));
-        const currentQuote = quote?.viewId === row?.id ? quote : undefined;
-        const quoteStale = currentQuote && (currentQuote.action.viewRevision !== row?.revision || currentQuote.action.expectedRevision !== revision);
         return (
             <div className="drama-editor is-workspace is-view" aria-label={`${row?.config.name || "新建独立视图"}工作区`}>
                 <section className="drama-editor-settings thin-scrollbar" aria-label="独立视图配置">
@@ -319,11 +322,12 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                             expectedRevision={workspaceEditor.expectedRevision ?? revision}
                             inline
                             disabled={Boolean(busy) || Boolean(active) || Boolean(pending) || summary.isError || query.isError}
+                            onGenerate={execute}
                             onDirtyChange={(dirty, busy) => setEditorState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
-                            onClose={() => select()}
-                            onSaved={async (saved) => {
+                            onClose={(discard) => select(undefined, discard)}
+                            onSaved={async (saved, text) => {
                                 await run("save", async (ticket) => {
-                                    const refreshed = await refresh(ticket, "视图配置已保存，可预检生成");
+                                    const refreshed = await refresh(ticket, text);
                                     if (!operation.isCurrent(ticket) || !refreshed || refreshed.some((item) => item.isError)) return;
                                     setSelected(saved.id);
                                     setWorkspaceEditor({ row: saved, expectedRevision: refreshed[1].data?.production.revision, castRevision: cast.revision });
@@ -340,7 +344,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 <section className="drama-editor-preview" aria-label="当前独立视图">
                     <div className="drama-editor-workspace-heading">
                         <h3>{row?.config.name || "新建独立视图"}</h3>
-                        <span>{row ? STATUS[row.status] || row.status : "保存配置后可生成"}</span>
+                        <span>{row ? STATUS[row.status] || row.status : "填写名称后自动保存"}</span>
                     </div>
                     <button type="button" className="drama-cast-hero drama-cast-view-preview" disabled={!row?.resourceId} aria-label={`放大查看${row?.config.name || "视图"}`} onClick={() => setPreviewing(true)}>
                         {row?.resourceId ? <MediaThumb resourceId={row.resourceId} alt={row.config.name} /> : <span>{row ? STATUS[row.status] || row.status : "尚无图片"}</span>}
@@ -350,32 +354,6 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 <div className="drama-editor-actions">
                     {row ? (
                         <>
-                            <Button
-                                icon={<RefreshCw className="size-4" />}
-                                loading={busy === `check:${row.id}`}
-                                disabled={blocked || editorState.dirty || editorState.busy || Boolean(active)}
-                                onClick={() =>
-                                    void run(`check:${row.id}`, async (ticket) => {
-                                        const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) });
-                                        const current = await summary.refetch();
-                                        if (current.isError) throw new Error("无法确认最新作品版本，请刷新后重试");
-                                        if (operation.isCurrent(ticket))
-                                            setQuote({
-                                                viewId: row.id,
-                                                preview,
-                                                action: {
-                                                    expectedRevision: preview.revision,
-                                                    viewRevision: preview.viewRevision,
-                                                    confirmationToken: preview.confirmationToken,
-                                                    clientOperationId: `cast-view:${createClientUUID()}`,
-                                                    ...(episodeId ? { episodeId } : {}),
-                                                },
-                                            });
-                                    })
-                                }
-                            >
-                                预检生成
-                            </Button>
                             <Button
                                 danger
                                 disabled={blocked || editorState.dirty || editorState.busy || Boolean(active)}
@@ -401,20 +379,6 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                                 删除视图
                             </Button>
                         </>
-                    ) : null}
-                    {currentQuote ? (
-                        <div role="status">
-                            {quoteStale
-                                ? "配置已有更新，请重新预检。"
-                                : currentQuote.preview.ready
-                                  ? `${currentQuote.preview.estimated ? "预计" : "本次"} ${formatDramaCredits(currentQuote.preview.amountMicrocredits)} 积分`
-                                  : currentQuote.preview.reason || "当前无法生成"}
-                            {currentQuote.preview.ready ? (
-                                <Button type="primary" disabled={blocked || editorState.dirty || editorState.busy || Boolean(quoteStale) || !currentQuote.preview.priced} onClick={() => void execute(currentQuote)}>
-                                    确认生成此视图
-                                </Button>
-                            ) : null}
-                        </div>
                     ) : null}
                 </div>
                 <section className="drama-editor-extras">{selector}</section>
@@ -475,7 +439,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                         icon={<Plus className="size-4" />}
                         disabled={blocked || typeof cast.revision !== "number"}
                         onClick={() => {
-                            setQuote(undefined);
+                            setQuoteEpoch((value) => value + 1);
                             setEditor({});
                         }}
                     >
@@ -510,12 +474,10 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 ) : null}
                 {query.isPending || summary.isPending ? <p role="status">正在读取视图与当前配置…</p> : null}
                 {query.isError || summary.isError ? <p role="alert">读取视图或作品配置失败，请刷新后再操作。</p> : null}
-                {!query.isPending && !query.isError && !query.data?.views.length ? <p>还没有独立视图，点击“新增视图”选择方向并保存配置。</p> : null}
+                {!query.isPending && !query.isError && !query.data?.views.length ? <p>还没有独立视图，点击“新增视图”填写名称并选择方向。</p> : null}
                 <div className="drama-cast-views-grid">
                     {(query.data?.views || []).map((row) => {
                         const active = ["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status));
-                        const currentQuote = quote?.viewId === row.id ? quote : undefined;
-                        const quoteStale = currentQuote && (currentQuote.action.viewRevision !== row.revision || currentQuote.action.expectedRevision !== revision);
                         return (
                             <article key={row.id} className="drama-cast-view-card">
                                 <div className="drama-cast-view-image">{row.resourceId ? <MediaThumb resourceId={row.resourceId} alt={`${row.config.name}当前图片`} /> : <span>{STATUS[row.status] || "待生成"}</span>}</div>
@@ -531,38 +493,24 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                                         size="small"
                                         disabled={blocked || active}
                                         onClick={() => {
-                                            setQuote(undefined);
+                                            setQuoteEpoch((value) => value + 1);
                                             setEditor({ row });
                                         }}
                                     >
                                         编辑配置
                                     </Button>
-                                    <Button
-                                        size="small"
-                                        disabled={blocked || active}
-                                        loading={busy === `check:${row.id}`}
-                                        onClick={() =>
-                                            void run(`check:${row.id}`, async (ticket) => {
-                                                const preview = await preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) });
-                                                const current = await summary.refetch();
-                                                if (current.isError) throw new Error("无法确认最新作品版本，请刷新后重试");
-                                                if (operation.isCurrent(ticket))
-                                                    setQuote({
-                                                        viewId: row.id,
-                                                        preview,
-                                                        action: {
-                                                            expectedRevision: preview.revision,
-                                                            viewRevision: preview.viewRevision,
-                                                            confirmationToken: preview.confirmationToken,
-                                                            clientOperationId: `cast-view:${createClientUUID()}`,
-                                                            ...(episodeId ? { episodeId } : {}),
-                                                        },
-                                                    });
-                                            })
-                                        }
-                                    >
-                                        预检生成
-                                    </Button>
+                                    <CastViewGenerationButton
+                                        projectId={projectId}
+                                        episodeId={episodeId}
+                                        cast={cast}
+                                        row={row}
+                                        revision={revision}
+                                        epoch={quoteEpoch}
+                                        blocked={blocked || active || Boolean(editor)}
+                                        loading={busy === "execute"}
+                                        onGenerate={execute}
+                                        onVersionChange={() => void summary.refetch()}
+                                    />
                                     <Button
                                         size="small"
                                         danger
@@ -587,20 +535,6 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                                         删除视图
                                     </Button>
                                 </div>
-                                {currentQuote ? (
-                                    <div role="status">
-                                        {quoteStale
-                                            ? "配置已有更新，请重新预检。"
-                                            : currentQuote.preview.ready
-                                              ? `${currentQuote.preview.estimated ? "预计" : "本次"} ${formatDramaCredits(currentQuote.preview.amountMicrocredits)} 积分`
-                                              : currentQuote.preview.reason || "当前无法生成"}
-                                        {currentQuote.preview.ready ? (
-                                            <Button size="small" type="primary" disabled={blocked || Boolean(quoteStale) || !currentQuote.preview.priced} onClick={() => void execute(currentQuote)}>
-                                                确认生成此视图
-                                            </Button>
-                                        ) : null}
-                                    </div>
-                                ) : null}
                                 <details>
                                     <summary>历史结果（{row.takes.length}）</summary>
                                     <div className="drama-cast-view-history">
@@ -641,16 +575,84 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                         cast={cast}
                         row={editor.row}
                         expectedRevision={revision}
+                        disabled={blocked}
+                        onGenerate={execute}
                         onClose={() => setEditor(undefined)}
-                        onSaved={async () => {
+                        onSaved={async (saved, text, keepOpen) => {
                             const ticket = operation.capture();
-                            setEditor(undefined);
-                            await refresh(ticket, "视图配置已保存，可在卡片上预检生成");
+                            await refresh(ticket, text);
+                            if (operation.isCurrent(ticket)) setEditor(keepOpen ? { row: saved } : undefined);
                         }}
                     />
                 ) : null}
             </div>
         </AppModal>
+    );
+}
+
+function CastViewGenerationButton({
+    projectId,
+    episodeId,
+    cast,
+    row,
+    revision,
+    epoch,
+    blocked,
+    loading,
+    onGenerate,
+    onVersionChange,
+}: {
+    projectId: string;
+    episodeId?: string;
+    cast: DramaCast;
+    row: CastView;
+    revision?: number;
+    epoch: number;
+    blocked: boolean;
+    loading: boolean;
+    onGenerate: (value: PendingCastView) => Promise<CastViewSubmission>;
+    onVersionChange: () => void;
+}) {
+    const userId = useUserStore((state) => state.user?.id || "");
+    const enabled = !blocked && revision !== undefined;
+    const quote = useQuery({
+        queryKey: ["drama-cast-view-quote", userId, projectId, episodeId || "", cast.id, cast.revision, row.id, row.revision, revision, epoch],
+        queryFn: () => preflightDramaCastView(projectId, cast.id, row.id, { viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) }),
+        enabled,
+        retry: false,
+        staleTime: 30_000,
+        refetchInterval: enabled ? 60_000 : false,
+    });
+    const changed = useRef(onVersionChange);
+    changed.current = onVersionChange;
+    useEffect(() => {
+        if (quote.data && quote.data.revision !== revision) changed.current();
+    }, [quote.data, revision]);
+    const preview = quote.data;
+    const stale = Boolean(preview && (preview.revision !== revision || preview.viewRevision !== row.revision));
+    const quoting = enabled && (quote.isPending || quote.isFetching);
+    const ready = enabled && !quoting && !quote.isError && !stale && preview?.ready && preview.priced && Boolean(preview.confirmationToken);
+    const reason = quote.isError ? "报价读取失败，请重新进入后再试" : stale ? "作品配置已更新，正在更新报价" : preview && !preview.ready ? preview.reason || "当前无法生成" : preview && !preview.priced ? "当前参数暂无有效报价" : "";
+    return (
+        <span className="drama-cast-view-generation">
+            <Button
+                size="small"
+                type="primary"
+                disabled={!ready}
+                loading={loading || quoting}
+                title={reason || undefined}
+                onClick={() => {
+                    if (!ready || !preview) return;
+                    void onGenerate({
+                        viewId: row.id,
+                        action: { expectedRevision: preview.revision, viewRevision: preview.viewRevision, confirmationToken: preview.confirmationToken, clientOperationId: `cast-view:${createClientUUID()}`, ...(episodeId ? { episodeId } : {}) },
+                    });
+                }}
+            >
+                {generationLabel("生成图片", preview, quoting)}
+            </Button>
+            {reason ? <small role="status">{reason}</small> : null}
+        </span>
     );
 }
 
@@ -662,6 +664,7 @@ function CastViewEditor({
     expectedRevision,
     onClose,
     onSaved,
+    onGenerate,
     inline,
     disabled,
     onDirtyChange,
@@ -671,28 +674,31 @@ function CastViewEditor({
     cast: DramaCast;
     row?: CastView;
     expectedRevision: number;
-    onClose: () => void;
-    onSaved: (saved: CastView) => Promise<void>;
+    onClose: (discard?: boolean) => void;
+    onSaved: (saved: CastView, text?: string, keepOpen?: boolean) => Promise<void>;
+    onGenerate: (value: PendingCastView) => Promise<CastViewSubmission>;
     inline?: boolean;
     disabled?: boolean;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
 }) {
-    const { modal } = App.useApp();
     const userId = useUserStore((state) => state.user?.id || "");
     const operation = useDramaOperationScope(projectId);
     const [draft, setDraft] = useState<CastViewConfig>(() => (row ? structuredClone(row.config) : { name: "", direction: "front", prompt: "", imageOptions: { model: {}, ratio: "", resolution: "" } }));
     const initial = useRef(JSON.stringify(draft));
     const baseVersions = useRef({ expectedRevision, expectedCastRevision: cast.revision, viewRevision: row?.revision || 0 });
     const [saving, setSaving] = useState(false);
+    const [quotableDraft, setQuotableDraft] = useState(draft);
     const [error, setError] = useState("");
     const [picker, setPicker] = useState<"subjectReferenceIds" | "styleReferenceIds">();
     const locked = useRef(false);
+    const attempted = useRef("");
     const stateChange = useRef(onDirtyChange);
     stateChange.current = onDirtyChange;
     const dirty = initial.current !== JSON.stringify(draft);
+    const canAutoSave = Boolean(draft.name.trim() && (draft.direction !== "custom" || draft.prompt.trim()) && typeof cast.revision === "number");
     useEffect(() => {
-        stateChange.current?.(dirty, saving);
-    }, [dirty, saving]);
+        stateChange.current?.(dirty && (!canAutoSave || Boolean(error)), saving || (dirty && canAutoSave && !error));
+    }, [dirty, saving, error, canAutoSave]);
     useEffect(() => () => stateChange.current?.(false, false), []);
     const catalog = useDramaModelCatalog();
     let inherited: DramaCastImageOptions | undefined;
@@ -708,6 +714,28 @@ function CastViewEditor({
         enabled: Boolean(episodeId && summary.data),
     });
     const contextBlocked = Boolean(summary.isPending || summary.isError || (episodeId && (!episodeSettings.data || episodeSettings.isError)));
+    const draftKey = JSON.stringify(draft);
+    const validDraft = canAutoSave;
+    const quoteEnabled = !disabled && !saving && !contextBlocked && validDraft && JSON.stringify(quotableDraft) === draftKey;
+    const quote = useQuery({
+        queryKey: ["drama-cast-view-editor-quote", userId, projectId, episodeId || "", cast.id, baseVersions.current, row?.id || "new", draftKey, summary.data?.production.revision],
+        queryFn: () =>
+            dirty || !row
+                ? quoteDramaCastViewDraft(projectId, cast.id, row?.id, { ...baseVersions.current, expectedCastRevision: baseVersions.current.expectedCastRevision!, config: draft, ...(episodeId ? { episodeId } : {}) })
+                : preflightDramaCastView(projectId, cast.id, row.id, { expectedRevision: expectedRevision, viewRevision: row.revision, ...(episodeId ? { episodeId } : {}) }),
+        enabled: quoteEnabled,
+        retry: false,
+        staleTime: 30_000,
+        refetchInterval: quoteEnabled ? 60_000 : false,
+    });
+    useEffect(() => {
+        const timer = setTimeout(() => setQuotableDraft(draft), 250);
+        return () => clearTimeout(timer);
+    }, [draft]);
+    const quotePending = validDraft && !disabled && !saving && !contextBlocked && (!quoteEnabled || quote.isPending || quote.isFetching);
+    const quoteReady =
+        !dirty && quoteEnabled && !quote.isFetching && !quote.isError && quote.data?.ready && quote.data.priced && quote.data.revision === baseVersions.current.expectedRevision && quote.data.viewRevision === baseVersions.current.viewRevision;
+    const quoteReason = !validDraft ? "请先填写视图名称及必需的说明" : quote.isError ? "报价读取失败，请重新进入后再试" : quote.data && (!quote.data.ready || !quote.data.priced) ? quote.data.reason || "当前参数暂无有效报价" : "";
     const settings = episodeId ? episodeSettings.data?.settings : summary.data?.production.settings;
     const categoryModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
     const model = dramaChoiceKey(draft.imageOptions.model) ? draft.imageOptions.model : dramaChoiceKey(inherited?.model) ? inherited?.model : dramaChoiceKey(categoryModel) ? categoryModel : settings?.models.image;
@@ -720,18 +748,14 @@ function CastViewEditor({
     };
     const close = () => {
         if (locked.current) return;
-        if (inline) return onClose();
         if (initial.current === JSON.stringify(draft)) return onClose();
-        const ticket = operation.capture();
-        modal.confirm({
-            title: "放弃未保存的视图配置？",
-            onOk: () => {
-                if (operation.isCurrent(ticket)) onClose();
-            },
+        if (!validDraft || error) return onClose(true);
+        void save().then((saved) => {
+            if (saved) onClose();
         });
     };
     const save = async () => {
-        if (disabled || contextBlocked || locked.current || typeof baseVersions.current.expectedCastRevision !== "number") return;
+        if (disabled || contextBlocked || locked.current || typeof baseVersions.current.expectedCastRevision !== "number") return false;
         locked.current = true;
         setSaving(true);
         setError("");
@@ -740,10 +764,63 @@ function CastViewEditor({
             const saved = await saveDramaCastView(projectId, cast.id, row?.id, { ...baseVersions.current, expectedCastRevision: baseVersions.current.expectedCastRevision, config: draft, ...(episodeId ? { episodeId } : {}) });
             if (operation.isCurrent(ticket)) {
                 initial.current = JSON.stringify(draft);
-                await onSaved(saved);
+                await onSaved(saved, undefined, true);
+                return true;
             }
         } catch (reason) {
             if (operation.isCurrent(ticket)) setError(reason instanceof Error ? reason.message : "保存视图失败");
+        } finally {
+            locked.current = false;
+            if (operation.isCurrent(ticket)) setSaving(false);
+        }
+        return false;
+    };
+    useEffect(() => {
+        if (!dirty || !validDraft || disabled || contextBlocked || saving || attempted.current === draftKey) return;
+        const timer = setTimeout(() => {
+            attempted.current = draftKey;
+            void save();
+        }, 350);
+        return () => clearTimeout(timer);
+    }, [dirty, validDraft, disabled, contextBlocked, saving, draftKey]);
+    const generate = async () => {
+        if (!quoteReady || !quote.data || locked.current || disabled) return;
+        const displayed = quote.data;
+        const ticket = operation.capture();
+        locked.current = true;
+        setSaving(true);
+        setError("");
+        let saved: CastView | undefined;
+        try {
+            let preview = displayed;
+            let viewId = row?.id;
+            if (dirty || !row) {
+                saved = await saveDramaCastView(projectId, cast.id, row?.id, { ...baseVersions.current, expectedCastRevision: baseVersions.current.expectedCastRevision!, config: draft, ...(episodeId ? { episodeId } : {}) });
+                if (!operation.isCurrent(ticket)) return;
+                initial.current = draftKey;
+                viewId = saved.id;
+                preview = await preflightDramaCastView(projectId, cast.id, saved.id, { viewRevision: saved.revision, ...(episodeId ? { episodeId } : {}) });
+                if (!operation.isCurrent(ticket)) return;
+                if (!preview.ready || !preview.priced || preview.amountMicrocredits !== displayed.amountMicrocredits || !displayed.scopeHash || preview.scopeHash !== displayed.scopeHash) {
+                    await onSaved(saved, preview.reason || "报价或生成配置已更新，请核对更新后的按钮后再次生成", true);
+                    return;
+                }
+            }
+            if (!viewId || !preview.confirmationToken || !operation.isCurrent(ticket)) return;
+            const submission = await onGenerate({
+                viewId,
+                action: { expectedRevision: preview.revision, viewRevision: preview.viewRevision, confirmationToken: preview.confirmationToken, clientOperationId: `cast-view:${createClientUUID()}`, ...(episodeId ? { episodeId } : {}) },
+            });
+            if (saved && operation.isCurrent(ticket)) await onSaved(saved, submission.submitted ? "视图配置已保存，生成已提交" : `视图配置已保存；${submission.message || "生成未提交"}`, !submission.submitted);
+            else if (!submission.submitted && operation.isCurrent(ticket)) setError(submission.message || "生成未提交，请重试");
+        } catch (reason) {
+            if (!operation.isCurrent(ticket)) return;
+            const text = reason instanceof Error ? reason.message : "生成提交失败";
+            if (saved) await onSaved(saved, `视图配置已保存，${text}`, true);
+            else {
+                const rejected = reason instanceof ApiError && [reason.status, reason.code].some((status) => status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429);
+                setError(`${rejected ? "生成提交失败" : "生成提交结果待核对"}：${text}`);
+            }
         } finally {
             locked.current = false;
             if (operation.isCurrent(ticket)) setSaving(false);
@@ -767,7 +844,7 @@ function CastViewEditor({
                 </label>
                 <label>
                     <span>图片模型</span>
-                    <DramaModelPicker capability="image" value={model} onChange={(value) => patchOptions({ model: value, ratio: "", resolution: "" })} />
+                    <DramaModelPicker capability="image" value={model} showPrice={false} onChange={(value) => patchOptions({ model: value, ratio: "", resolution: "" })} />
                 </label>
                 <Button size="small" disabled={!dramaChoiceKey(draft.imageOptions.model)} onClick={() => patchOptions({ model: {}, ratio: "", resolution: "" })}>
                     沿用本资产模型
@@ -829,14 +906,20 @@ function CastViewEditor({
                         </section>
                     );
                 })}
-                <p>空模型和规格沿用本资产配置；主体图会自动用于保持一致性。保存配置不会提交生成或替换图片。</p>
+                <p>空模型和规格沿用本资产配置；修改后自动生效，点击生成才会生成图片。</p>
                 {error ? <p role="alert">{error}</p> : null}
                 <div className="drama-cast-views-actions">
-                    <Button onClick={close}>取消</Button>
-                    <Button type="primary" loading={saving} disabled={!draft.name.trim() || (draft.direction === "custom" && !draft.prompt.trim()) || typeof cast.revision !== "number"} onClick={() => void save()}>
-                        保存视图配置
+                    <Button onClick={close}>{dirty && (!validDraft || error) ? "放弃修改并关闭" : "关闭"}</Button>
+                    {error && dirty && validDraft ? (
+                        <Button disabled={disabled || contextBlocked} loading={saving} onClick={() => void save()}>
+                            重试保存
+                        </Button>
+                    ) : null}
+                    <Button type="primary" loading={saving || quotePending} disabled={!quoteReady} onClick={() => void generate()}>
+                        {generationLabel("生成图片", quote.data, quotePending)}
                     </Button>
                 </div>
+                {quoteReason ? <p role="status">{quoteReason}</p> : null}
             </fieldset>
             {picker ? (
                 <CastLibraryPicker
