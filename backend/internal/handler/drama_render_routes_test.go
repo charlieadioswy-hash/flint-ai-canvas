@@ -38,7 +38,7 @@ func TestDramaRenderRouteRequiresFreshEpisodeAndQueuesOnlyAssembly(t *testing.T)
 		&model.DramaProduction{ProjectID: "project", UserID: "owner", Status: model.DramaStatusPaused, GuideStep: model.DramaGuideCompleted, Revision: 1},
 		&model.DramaEpisode{ID: "episode", ProjectID: "project", Number: 1, Stage: model.DramaEpisodeVideo, VideoRequestsOnly: true, Revision: 3},
 		&model.DramaSegment{ID: "segment", ProjectID: "project", EpisodeID: "episode", VideoStatus: model.DramaMediaReady, VideoSeconds: 5, VideoResourceID: "video"},
-		&model.Resource{ID: "video", UserID: "owner", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 10},
+		&model.Resource{ID: "video", UserID: "owner", Kind: "video", Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 10},
 	} {
 		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)

@@ -25,6 +25,9 @@ func (r *Repository) LockDramaCastImportTarget(userID, projectID string) error {
 func (r *Repository) DramaCastsForUpdate(projectID string) ([]model.DramaCast, error) {
 	var casts []model.DramaCast
 	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ?", projectID).Order("kind asc, position asc, id asc").Find(&casts).Error
+	if err == nil {
+		inheritDramaCastParentNames(casts)
+	}
 	return casts, err
 }
 

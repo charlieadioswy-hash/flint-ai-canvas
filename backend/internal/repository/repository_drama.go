@@ -496,6 +496,9 @@ func (r *Repository) DramaChaptersByIDs(projectID string, ids []string) ([]model
 func (r *Repository) DramaCasts(projectID string) ([]model.DramaCast, error) {
 	var casts []model.DramaCast
 	err := r.db.Where("project_id = ?", projectID).Order("kind asc, position asc").Find(&casts).Error
+	if err == nil {
+		inheritDramaCastParentNames(casts)
+	}
 	return casts, err
 }
 
@@ -504,7 +507,7 @@ func (r *Repository) DramaCast(projectID string, id string) (*model.DramaCast, e
 	if err := r.db.First(&cast, "id = ? AND project_id = ?", id, projectID).Error; err != nil {
 		return nil, err
 	}
-	return &cast, nil
+	return &cast, r.resolveDramaCastParentName(&cast)
 }
 
 func (r *Repository) CreateDramaCasts(casts []model.DramaCast) error {
@@ -946,10 +949,13 @@ func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) err
 			return err
 		}
 		// Textual cast changes invalidate prompt inputs. Lock-only edits do not invalidate downstream prompts.
-		changed := false
+		changed, contentChanged := false, false
 		for _, key := range []string{"name", "appearance", "description", "voice_instructions", "aliases_json"} {
 			if _, ok := fields[key]; ok {
 				changed = true
+				if key != "name" && key != "aliases_json" {
+					contentChanged = true
+				}
 			}
 		}
 		if !changed {
@@ -974,7 +980,11 @@ func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) err
 			if err := tx.Where("episode_id = ? AND segment_index = ?", shot.EpisodeID, shot.SegmentIndex).First(&seg).Error; err != nil {
 				return err
 			}
-			if err := invalidateDramaSegment(tx, seg, map[string]any{"prompt_status": promptStatusAfterInputChange(seg.PromptStatus), "video_prompt_override": ""}, true); err != nil {
+			segmentFields := map[string]any{"prompt_status": promptStatusAfterInputChange(seg.PromptStatus)}
+			if contentChanged {
+				segmentFields["video_prompt_override"] = ""
+			}
+			if err := invalidateDramaSegment(tx, seg, segmentFields, true); err != nil {
 				return err
 			}
 		}

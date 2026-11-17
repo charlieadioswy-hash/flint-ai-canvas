@@ -686,7 +686,7 @@ func (s *Service) SetDramaCastVoice(userID, projectID, castID string, req SetDra
 	if cast.Kind != "character" || cast.ParentID != "" {
 		return nil, BadAuthRequest("只能为角色指定声音，造型沿用所属角色的声音")
 	}
-	fields := map[string]any{"voice_profile_id": "", "voice_sample_resource_id": ""}
+	profileID, sampleID := "", ""
 	if !clear {
 		profile, err := s.resolveVoiceProfile(userID, req.VoiceProfileID, req.SampleResourceID, firstNonEmpty(req.VoiceName, cast.Name+"的声音"))
 		if err != nil {
@@ -696,16 +696,37 @@ func (s *Service) SetDramaCastVoice(userID, projectID, castID string, req SetDra
 		if strings.TrimSpace(profile.SampleResourceID) == "" {
 			return nil, BadAuthRequest("这个声音没有样本音频，视频模型无法参考；请上传或录制一段角色的声音")
 		}
-		fields["voice_profile_id"], fields["voice_sample_resource_id"] = profile.ID, profile.SampleResourceID
-	}
-	if err := s.repo.UpdateDramaCastFields(cast.ID, fields); err != nil {
-		return nil, err
+		profileID, sampleID = profile.ID, profile.SampleResourceID
 	}
 	affected := 0
-	if req.RestyleSegments {
-		if affected, err = s.restyleDramaCastSegments(project.ID, cast.ID); err != nil {
-			return nil, err
+	if err := s.withDramaTextEdit(projectID, nil, false, func(tx *repository.Repository) error {
+		current, err := tx.DramaProduction(projectID)
+		if err != nil {
+			return err
 		}
+		if current.UserID != userID {
+			return BadAuthRequest("作品已变化，请重新打开")
+		}
+		if err := requireDramaGuideComplete(current); err != nil {
+			return err
+		}
+		locked, err := tx.DramaCastForUpdate(projectID, castID)
+		if err != nil {
+			return err
+		}
+		if locked.Kind != "character" || locked.ParentID != "" {
+			return BadAuthRequest("只能为角色指定声音，造型沿用所属角色的声音")
+		}
+		if err := tx.UpdateDramaCastVoice(projectID, castID, profileID, sampleID); err != nil {
+			return err
+		}
+		if req.RestyleSegments {
+			affected, err = restyleDramaCastWorkspaceSegments(tx, projectID, castID)
+			return err
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	updated, err := s.repo.DramaCast(project.ID, castID)
 	if err != nil {
@@ -986,57 +1007,67 @@ func (s *Service) RetryFailedDrama(userID, projectID string) (map[string]any, er
 	if err != nil {
 		return nil, err
 	}
-	segments, err := s.repo.FailedDramaSegments(project.ID, 5000)
-	if err != nil {
-		return nil, err
-	}
-	for _, seg := range segments {
-		fields := map[string]any{}
-		if seg.PromptStatus == model.DramaMediaFailed {
-			fields["prompt_status"] = ""
-			fields["prompt_error"] = ""
-		}
-		if seg.VideoStatus == model.DramaMediaFailed {
-			fields["video_error"] = ""
-			if seg.VideoResourceID == "" {
-				fields["video_status"] = model.DramaMediaQueued
-			} else {
-				fields["video_status"] = model.DramaMediaRunning
-			}
-		}
-		if err := s.repo.UpdateDramaSegmentFields(seg.ID, fields); err != nil {
-			return nil, err
-		}
-	}
-	if err := s.repo.RetryDramaResultJobs(project.ID); err != nil {
-		return nil, err
-	}
-	casts, err := s.repo.DramaCasts(project.ID)
-	if err != nil {
-		return nil, err
-	}
-	count := 0
-	for _, cast := range casts {
-		applied, err := s.repo.UpdateDramaCastIf(cast.ID, []string{model.DramaMediaFailed}, map[string]any{"image_status": model.DramaMediaQueued})
+	segmentCount, castCount := 0, 0
+	err = s.repo.Transaction(func(tx *repository.Repository) error {
+		var err error
+		p, err = tx.DramaProductionForUpdate(project.ID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if applied {
-			count++
+		segments, err := tx.FailedDramaSegments(project.ID, 5000)
+		if err != nil {
+			return err
 		}
-	}
-	episodes, err := s.repo.DramaEpisodes(project.ID)
+		segmentCount = len(segments)
+		for _, seg := range segments {
+			fields := map[string]any{}
+			if seg.PromptStatus == model.DramaMediaFailed {
+				fields["prompt_status"] = ""
+				fields["prompt_error"] = ""
+			}
+			if seg.VideoStatus == model.DramaMediaFailed {
+				fields["video_error"] = ""
+				// 保留的旧视频不代表本次失败任务可恢复。可用的新结果由下方原作业重放，
+				// 其余失败槽位重新排队；同一事务恢复作业，避免调度器重复提交模型。
+				fields["video_status"] = model.DramaMediaQueued
+			}
+			if err := tx.UpdateDramaSegmentFields(seg.ID, fields); err != nil {
+				return err
+			}
+		}
+		if err := tx.RetryDramaResultJobs(project.ID); err != nil {
+			return err
+		}
+		casts, err := tx.DramaCasts(project.ID)
+		if err != nil {
+			return err
+		}
+		for _, cast := range casts {
+			applied, err := tx.UpdateDramaCastIf(cast.ID, []string{model.DramaMediaFailed}, map[string]any{"image_status": model.DramaMediaQueued})
+			if err != nil {
+				return err
+			}
+			if applied {
+				castCount++
+			}
+		}
+		episodes, err := tx.DramaEpisodes(project.ID)
+		if err != nil {
+			return err
+		}
+		for _, episode := range episodes {
+			if episode.Error != "" {
+				if err := tx.UpdateDramaEpisodeUser(episode.ID, map[string]any{"error": ""}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	for _, episode := range episodes {
-		if episode.Error != "" {
-			if err := s.repo.UpdateDramaEpisodeUser(episode.ID, map[string]any{"error": ""}); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return map[string]any{"segments": len(segments), "casts": count}, s.requestDramaWork(p)
+	return map[string]any{"segments": segmentCount, "casts": castCount}, s.requestDramaWork(p)
 }
 
 type GenerateDramaSegmentsRequest struct {

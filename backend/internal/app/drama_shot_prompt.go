@@ -142,7 +142,7 @@ func dramaShotSubjectReference(cast model.DramaCast, casts map[string]model.Dram
 	name, voice := cast.Name, cast.VoiceInstructions
 	if cast.ParentID != "" {
 		if parent, ok := casts[cast.ParentID]; ok {
-			voice = parent.VoiceInstructions
+			name, voice = parent.Name, parent.VoiceInstructions
 		}
 		if cast.LookName != "" {
 			name += "·" + cast.LookName

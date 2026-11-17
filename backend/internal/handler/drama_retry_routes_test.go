@@ -20,13 +20,15 @@ import (
 func TestDramaRetryRouteKeepsExplicitEpisodeScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, test := range []struct {
-		name, body string
-		want       int
-		global     bool
-		completed  bool
+		name, body  string
+		want        int
+		global      bool
+		completed   bool
+		projectText bool
 	}{
 		{name: "legacy-no-body", want: http.StatusOK, global: true},
 		{name: "legacy-empty-object", body: `{}`, want: http.StatusOK, global: true},
+		{name: "project-text-only", want: http.StatusOK, projectText: true},
 		{name: "episode", body: `{"episodeId":"episode"}`, want: http.StatusOK},
 		{name: "episode-text", body: `{"episodeId":"episode","target":"text"}`, want: http.StatusOK},
 		{name: "render-before-guide-complete", body: `{"episodeId":"episode","target":"render"}`, want: http.StatusBadRequest},
@@ -70,10 +72,20 @@ func TestDramaRetryRouteKeepsExplicitEpisodeScope(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if test.projectText {
+				job := model.DramaJob{ID: "script-failed", ProjectID: "project", EpisodeID: "episode", Kind: model.DramaJobScript, Status: model.DramaJobFailed, PayloadJSON: `{"revision":1}`}
+				if err := db.Create(&job).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 			svc := service.New(repository.New(db), t.TempDir())
 			router := gin.New()
 			registerDramaRoutes(router.Group("/api"), svc)
-			req := httptest.NewRequest(http.MethodPost, "/api/dramas/project/retry-failed", strings.NewReader(test.body))
+			path := "/api/dramas/project/retry-failed"
+			if test.projectText {
+				path = "/api/dramas/project/retry-text"
+			}
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(test.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: "owner.test-token"})
 			response := httptest.NewRecorder()
@@ -92,6 +104,10 @@ func TestDramaRetryRouteKeepsExplicitEpisodeScope(t *testing.T) {
 			if test.global {
 				if cast.ImageStatus != model.DramaMediaQueued || episode.Error != "" {
 					t.Fatalf("legacy no-scope request must retain project retry behavior: %+v %+v", cast, episode)
+				}
+			} else if test.projectText {
+				if cast.ImageStatus != model.DramaMediaFailed || episode.Error != "" {
+					t.Fatalf("project text retry must recover script without retrying images: %+v %+v", cast, episode)
 				}
 			} else if cast.ImageStatus != model.DramaMediaFailed || episode.Error != "剧本失败" {
 				t.Fatalf("explicit episode requests must never fall back to project retry: %+v %+v", cast, episode)

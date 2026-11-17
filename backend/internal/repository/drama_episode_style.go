@@ -36,6 +36,11 @@ func (r *Repository) dramaSettingsBusy(projectID, episodeID string) (bool, error
 	for _, row := range rows {
 		var count int64
 		query := r.db.Model(row).Where("project_id = ? AND status IN ?", projectID, statuses)
+		if _, shotMedia := row.(*model.DramaShotMedia); shotMedia {
+			// 失败和取消不走产物登记；历史槽位可能仍是 queued，以当前绑定任务的终态解除配置限制。
+			finished := r.db.Model(&model.Task{}).Select("id").Where("project_id = ? AND status IN ?", projectID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
+			query = query.Where("task_id NOT IN (?)", finished)
+		}
 		if episodeID != "" {
 			query = query.Where("episode_id = ?", episodeID)
 		}

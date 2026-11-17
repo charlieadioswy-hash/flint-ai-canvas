@@ -53,6 +53,9 @@ const episodeStyles = new Map<string, DramaEpisodeStyle>();
 const episodeStyleReads: string[] = [];
 const castImageRequests: Array<{ castId: string; episodeId?: string }> = [];
 const modeConfigurationWrites: Array<Deferred<boolean>> = [];
+const projectTextRetries: string[] = [];
+const scopedRetries: Array<{ projectId: string; episodeId?: string }> = [];
+let chapterTitles = ["第一章"];
 let episodeStyleReader: ((projectId: string, episodeId: string) => Promise<DramaEpisodeStyle>) | undefined;
 let queueJobs: Array<{ id: string; kind: string; status: string; createdAt: string }> = [];
 let chapterReads = 0;
@@ -374,7 +377,7 @@ mock.module("@/services/api/drama", () => ({
         confirms.push({ projectId, input: structuredClone(input), pending });
         return pending.promise;
     },
-    listDramaChapters: async (projectId: string) => ({ chapters: [{ id: `${projectId}-chapter`, title: "第一章", wordCount: 4, position: 1, reserved: false }] }),
+    listDramaChapters: async (projectId: string) => ({ chapters: chapterTitles.map((title, index) => ({ id: `${projectId}-chapter${index ? `-${index + 1}` : ""}`, title, wordCount: 4, position: index + 1, reserved: false })) }),
     getDramaEpisode: async (projectId: string, episodeId: string) => ({ episode: { id: episodeId, number: 1, chapterIdsJson: JSON.stringify([`${projectId}-chapter`]) }, shots: [], segments: [] }),
     getDramaChapter: async (projectId: string, chapterId: string) => {
         chapterReads++;
@@ -388,7 +391,14 @@ mock.module("@/services/api/drama", () => ({
     saveDramaGuideSource: async () => {
         throw new Error("本组回归不提交制作范围");
     },
-    retryFailedDrama: async () => ({ jobs: 0 }),
+    retryFailedDrama: async (projectId: string, episodeId?: string) => {
+        scopedRetries.push({ projectId, episodeId });
+        return { jobs: 0 };
+    },
+    retryDramaProjectText: async (projectId: string) => {
+        projectTextRetries.push(projectId);
+        return { jobs: 2 };
+    },
     listDramaJobs: async () => ({ jobs: queueJobs }),
     updateDramaWorkflowStyle: (projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }) => {
         const pending = deferred<DramaSummary>();
@@ -466,6 +476,9 @@ async function mount(path = "/projects/project-a/guide?step=review", strict = fa
     episodeStyleReads.length = 0;
     castImageRequests.length = 0;
     modeConfigurationWrites.length = 0;
+    projectTextRetries.length = 0;
+    scopedRetries.length = 0;
+    chapterTitles = ["第一章"];
     episodeStyles.clear();
     episodeStyleReader = undefined;
     queueJobs = [];
@@ -1111,6 +1124,51 @@ test("仅历史媒体失败不展示文字重试，当前资产提取失败才�
         expect(mounted.host.textContent).toContain("重试失败的文字任务");
     } finally {
         await mounted.close();
+    }
+});
+
+test("资产提取失败的重试使用作品文字接口，不提交空集或重试媒体", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets");
+    try {
+        const assets = makeSummary("project-a", "assets", 7);
+        assets.production.stage = "bible";
+        queueJobs = [{ id: "bible-failed", kind: "bible", status: "failed", createdAt: "2026-01-01" }];
+        summaries.set("project-a", assets);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        await act(settle);
+        await click(button(mounted.host, "重试失败的文字任务"));
+        expect(projectTextRetries).toEqual(["project-a"]);
+        expect(scopedRetries).toEqual([]);
+        expect(notices.some((notice) => notice.text === "已重新排队 2 项文字任务")).toBe(true);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("query选集和单集路由的剧本都仅展示本集章节，作品管理仍展示全剧", async () => {
+    for (const [path, expected] of [
+        ["/projects/project-a/e/episode-a?step=review", ["第一章"]],
+        ["/projects/project-a/guide?step=review&episode=episode-a", ["第一章"]],
+        ["/projects/project-a/guide?manage=script&episode=episode-a", ["第一章", "第二章"]],
+    ] as const) {
+        const mounted = await mount(path);
+        try {
+            chapterTitles = ["第一章", "第二章"];
+            const completed = makeSummary("project-a", "completed", 7);
+            summaries.set("project-a", completed);
+            await act(async () => {
+                mounted.query.setQueryData(summaryKey("project-a"), completed);
+                await mounted.query.invalidateQueries({ queryKey: ["drama", "project-a", "chapters"] });
+                await settle();
+            });
+            const titles = Array.from(mounted.host.querySelectorAll('[role="option"] strong')).map((item) => item.textContent);
+            expect(titles).toEqual([...expected]);
+        } finally {
+            await mounted.close();
+        }
     }
 });
 

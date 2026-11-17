@@ -241,7 +241,7 @@ func (s *Service) AdoptDramaCastAssistance(userID, projectID, castID string, req
 			if err != nil {
 				return err
 			}
-			fields["voice_profile_id"], fields["voice_sample_resource_id"] = profile.ID, resourceID
+			return repo.UpdateDramaCastVoice(projectID, castID, profile.ID, resourceID)
 		} else {
 			if _, err := dramaTaskText(task); err != nil || req.Text == "" {
 				return BadAuthRequest("请审阅并填写要采用的文字")

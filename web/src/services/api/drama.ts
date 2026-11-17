@@ -855,6 +855,10 @@ export function retryFailedDrama(projectId: string, episodeId?: string, target?:
     return http.post<{ segments: number; casts: number } | { jobs: number }>(`${base(projectId)}/retry-failed`, episodeId === undefined ? undefined : { episodeId, ...(target ? { target } : {}) });
 }
 
+export function retryDramaProjectText(projectId: string) {
+    return http.post<{ jobs: number }>(`${base(projectId)}/retry-text`);
+}
+
 export function listDramaJobs(projectId: string, limit = 60, signal?: AbortSignal) {
     return http.get<{ jobs: DramaJob[] }>(`${base(projectId)}/jobs`, { params: { limit }, signal });
 }

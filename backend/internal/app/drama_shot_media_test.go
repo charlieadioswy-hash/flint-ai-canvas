@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
 	"yingce/backend/internal/repository"
 )
 
@@ -335,6 +336,91 @@ func TestDramaShotMediaTerminalFailureRequiresFreshAdmission(t *testing.T) {
 				t.Fatal("failure preflight or generic retry created another task")
 			}
 		})
+	}
+}
+
+func TestDramaShotMediaTerminalFailureReleasesSettingsWithoutReadRecovery(t *testing.T) {
+	for _, status := range []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			s, db, _ := shotMediaFixture(t)
+			s.coordinator = platform.NewCoordinatorWithRedis(nil, t.Name())
+			first, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "initial-video"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			completeShotMedia(t, s, db, first.ID, "retained-video")
+			task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "terminal-replacement"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"status": status, "error": "fixture failure"}).Error; err != nil {
+				t.Fatal(err)
+			}
+			// 不读取媒体页、不运行登记回调，已存在的 queued 槽位也必须能直接修改配置。
+			before, err := s.repo.DramaShotMedia("drama-project", "real-shot", "video")
+			if err != nil || before.Status != model.DramaMediaQueued || before.ResourceID != "retained-video" {
+				t.Fatalf("failed replacement fixture = %+v %v", before, err)
+			}
+			style, err := s.DramaEpisodeStyle("user", "drama-project", "episode")
+			if err != nil {
+				t.Fatal(err)
+			}
+			style.Settings.StylePrompt = "失败后仍可修改本集画风"
+			if _, err := s.UpdateDramaEpisodeStyle("user", "drama-project", "episode", UpdateDramaEpisodeStyleRequest{ExpectedRevision: &style.Revision, ExpectedEpisodeRevision: &style.EpisodeRevision, Settings: &style.Settings}); err != nil {
+				t.Fatalf("terminal shot blocked episode settings: %v", err)
+			}
+			p, err := s.repo.DramaProduction("drama-project")
+			if err != nil {
+				t.Fatal(err)
+			}
+			limit := 1
+			if _, err := s.UpdateDramaSettings("user", "drama-project", UpdateDramaSettingsRequest{ExpectedRevision: &p.Revision, Generation: &DramaGenerationSettings{ReferenceLimit: &limit}}); err != nil {
+				t.Fatalf("terminal shot blocked project settings: %v", err)
+			}
+			after, err := s.repo.DramaShotMedia("drama-project", "real-shot", "video")
+			if err != nil || after.Revision != before.Revision || after.TaskID != before.TaskID || after.CurrentTakeID != before.CurrentTakeID || after.ResourceID != before.ResourceID {
+				t.Fatalf("saving settings changed shot binding or selected result: before=%+v after=%+v err=%v", before, after, err)
+			}
+		})
+	}
+}
+
+func TestDramaShotMediaOldTerminalTaskKeepsNewSubmissionBusy(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	first, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "failed-old-video"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", first.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "new-video"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTask, err := s.repo.Task(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := s.RegisterDramaShotMediaTaskOutput(*oldTask); !handled || err != nil {
+		t.Fatalf("late failure callback = %v %v", handled, err)
+	}
+	for _, completed := range []bool{false, true} {
+		if completed {
+			completeShotMedia(t, s, db, first.ID, "late-old-video")
+		}
+		row, err := s.repo.DramaShotMedia("drama-project", "real-shot", "video")
+		if err != nil || row.TaskID != second.ID || row.PendingTakeID == "" || row.ResourceID != "" || row.CurrentTakeID != "" {
+			t.Fatalf("old callback changed current binding: %+v %v", row, err)
+		}
+		episodeBusy, err := s.repo.DramaEpisodeSettingsBusy("drama-project", "episode")
+		if err != nil || !episodeBusy {
+			t.Fatalf("old callback released episode settings during new generation: busy=%v err=%v", episodeBusy, err)
+		}
+		projectBusy, err := s.repo.DramaGenerationSettingsBusy("drama-project")
+		if err != nil || !projectBusy {
+			t.Fatalf("old callback released project settings during new generation: busy=%v err=%v", projectBusy, err)
+		}
 	}
 }
 

@@ -12,7 +12,7 @@ import { dramaDrawingConfiguration } from "@/lib/drama/drawing-configuration";
 import { applyDramaGenerationConfiguration, dramaGenerationConfiguration } from "@/lib/drama/generation-configuration";
 import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import { ApiError } from "@/services/api/request";
-import { confirmDramaGuide, getDramaEpisodeStyle, listDramaJobs, retryFailedDrama, updateDramaEpisodeStyle, updateDramaSettings, updateDramaWorkflowStyle, type DramaGuideStep, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { confirmDramaGuide, getDramaEpisodeStyle, listDramaJobs, retryDramaProjectText, updateDramaEpisodeStyle, updateDramaSettings, updateDramaWorkflowStyle, type DramaGuideStep, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaProjectTopbar } from "./studio/project-topbar";
@@ -327,7 +327,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const retryText = useMutation({
         mutationFn: (ticket: ReturnType<typeof operation.capture>) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或登录状态已变化，请重新操作");
-            return retryFailedDrama(ticket.projectId, "", "text");
+            return retryDramaProjectText(ticket.projectId);
         },
         onSuccess: (result, ticket) => {
             if (!operation.isCurrent(ticket)) return;
@@ -505,7 +505,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                 <WorkflowSourceReview
                                     summary={summary}
                                     step={active}
-                                    episodeId={managing ? undefined : routeEpisodeId}
+                                    episodeId={episodeStyleId}
                                     busy={confirm.isPending}
                                     onChanged={refresh}
                                     onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}

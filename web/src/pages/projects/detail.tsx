@@ -19,7 +19,7 @@ import {
     reprocessDramaSegmentVideo,
     renameDramaEpisode,
     rescriptDramaEpisode,
-    retryFailedDrama,
+    retryDramaProjectText,
     startDrama,
     updateDramaSegment,
     updateDramaSegmentReferences,
@@ -246,7 +246,7 @@ function AdvancedDramaStudioPage() {
         },
     });
     const retry = useMutation({
-        mutationFn: () => retryFailedDrama(projectId, "", "text"),
+        mutationFn: () => retryDramaProjectText(projectId),
         onSuccess: (result) => {
             invalidate(episodeId);
             message.success(`已重新排队 ${result.jobs} 项文字任务`);
@@ -258,7 +258,7 @@ function AdvancedDramaStudioPage() {
     const retryGroup = useMutation({
         mutationFn: async ({ items }: { key: string; items: DramaInboxItem[] }) => {
             const textItems = items.filter((item) => item.kind === "segment_failed" && item.media === "prompt");
-            if (textItems.length) await retryFailedDrama(projectId, "", "text");
+            if (textItems.length) await retryDramaProjectText(projectId);
             return textItems.length;
         },
         onMutate: ({ key }) => setRetryingGroup(key),

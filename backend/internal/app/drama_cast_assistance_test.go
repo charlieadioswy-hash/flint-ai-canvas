@@ -186,6 +186,9 @@ func TestDramaCastAssistanceVoiceSampleRequiresExplicitAdoption(t *testing.T) {
 	if err != nil || len(history) != 1 || history[0].ResourceID != "assist-audio-result" {
 		t.Fatalf("voice history = %+v %v", history, err)
 	}
+	if err := db.Model(&model.DramaCast{}).Where("id = ?", "assist-cast").Update("image_status", model.DramaMediaRunning).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AdoptDramaCastAssistance("user", "assist-project", "assist-cast", DramaCastAssistanceAdoptRequest{ExpectedRevision: req.ExpectedRevision, CastRevision: req.CastRevision, TakeID: history[0].ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +196,9 @@ func TestDramaCastAssistanceVoiceSampleRequiresExplicitAdoption(t *testing.T) {
 	profile, err := s.repo.VoiceProfileForUser("user", cast.VoiceProfileID)
 	if err != nil || cast.VoiceSampleResourceID != "assist-audio-result" || profile.SampleResourceID != cast.VoiceSampleResourceID || cast.Description != "年龄：26岁\n性格：冷静谨慎" {
 		t.Fatalf("voice not explicitly bound: %+v %+v %v", cast, profile, err)
+	}
+	if cast.Revision != *req.CastRevision || cast.ImageStatus != model.DramaMediaRunning {
+		t.Fatalf("voice adoption invalidated pending image: %+v", cast)
 	}
 }
 

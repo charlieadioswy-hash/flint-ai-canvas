@@ -39,6 +39,19 @@ tags:
   - name: pose-library
     description: 站点姿势库：浏览、选用，管理员导入与图片同步
 paths:
+  /dramas/{id}/retry-text:
+    post:
+      tags: [dramas]
+      summary: 重试作品当前失败的文字任务
+      description: 仅恢复当前有效的首次资产提取、分集规划、剧本和段提示词失败；独立查漏范围不在本接口内重试。保留已付费的可用结果、历史任务和已有媒体，不重试图片、视频或成片。重复请求不会重复排队。配置确认前拒绝调用。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: 成功信封，data.jobs 为实际恢复的文字任务数}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /dramas/{id}/cast:
     post:
       tags: [dramas]

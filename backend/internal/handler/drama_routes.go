@@ -195,6 +195,9 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/dramas/:id/pause", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.SetDramaRunning(userID, c.Param("id"), false)
 	}))
+	r.POST("/dramas/:id/retry-text", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.RetryDramaProjectText(userID, c.Param("id"))
+	}))
 	r.POST("/dramas/:id/retry-failed", dramaRoute(svc, 4<<10, func(c *gin.Context, userID string) (any, error) {
 		var req *struct {
 			EpisodeID json.RawMessage `json:"episodeId"`

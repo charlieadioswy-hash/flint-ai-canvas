@@ -30,6 +30,9 @@ mock.module("@/components/layout/workspace-page", () => ({ WorkspacePage: ({ chi
 mock.module("@/components/layout/workspace-state", () => ({ WorkspaceLoadingState: () => null, WorkspaceErrorState: () => null }));
 mock.module("@/components/ui/base/segmented-control", () => ({ SegmentedControl: () => null }));
 mock.module("@/pages/projects/workflow", () => ({ default: () => <div data-simple-studio /> }));
+mock.module("@/pages/projects/workflow-batch", () => ({ WorkflowBatch: () => null }));
+mock.module("@/pages/projects/studio/drama-media-action-dialog", () => ({ DramaMediaActionDialog: () => null }));
+mock.module("@/pages/projects/studio/use-drama-media-action", () => ({ useDramaMediaAction: () => ({ state: { submitting: false }, requestVideo() {} }) }));
 mock.module("@/pages/projects/drama-shared", () => ({
     formatCount: (value: number) => String(value),
     formatDuration: (value: number) => String(value),
@@ -94,6 +97,7 @@ mock.module("@/services/api/drama", () => ({
     renameDramaEpisode: noopRequest,
     rescriptDramaEpisode: noopRequest,
     retryFailedDrama: noopRequest,
+    retryDramaProjectText: noopRequest,
     startDrama: noopRequest,
     updateDramaSegment: noopRequest,
     updateDramaSegmentReferences: noopRequest,

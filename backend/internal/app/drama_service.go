@@ -1054,10 +1054,10 @@ func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots 
 			name, voice := cast.Name, cast.VoiceInstructions
 			if cast.ParentID != "" {
 				if base, ok := castByID[cast.ParentID]; ok {
-					voice = base.VoiceInstructions
+					name, voice = base.Name, base.VoiceInstructions
 				}
 				if cast.LookName != "" {
-					name = cast.Name + "·" + cast.LookName
+					name += "·" + cast.LookName
 				}
 			}
 			view.Request.References = append(view.Request.References, DramaSegmentReference{CastID: cast.ID, Label: label, Kind: cast.Kind, Name: name})

@@ -7,6 +7,14 @@ description: 信封、错误码与 OpenAPI
 
 ## 短剧分步创建
 
+`POST /api/dramas/:id/retry-text` 仅恢复当前有效的首次资产提取、分集规划、剧本与段提示词失败，返回 `{jobs}`；独立查漏范围不在本接口内重试。保留可重放的已付费结果和任务历史，不重试图片、视频或成片，不撤销已有显式媒体排队。`retry-failed` 的单集 text/render 请求仍必须提交非空集 ID。
+
+旧无范围 `retry-failed` 保留全局重试语义：失败的新视频即使保留上版资源也重新排队，可用成功结果的后处理失败则复用原任务；槽位与可重放作业在同一事务恢复，保留旧资源直至有效替换结果采用。
+
+单镜任务已失败或取消时，作品／本集生成配置可立即修改，无需先进入镜头页触发读取恢复。忙碌检查以当前绑定任务为准，历史失败任务不会解除新生成任务的配置保护。
+
+角色声音绑定、清除与辅助声音采用只更新声音字段和作品版本，不改变参考图版本或中断图片结果采用；显式要求更新下游时，同一事务内标记关联视频过期并保留已有资源。造型读取与自动提示词使用所属角色当前名称，单纯修改姓名或别名不覆盖手写提示词。
+
 `POST /api/dramas` 增加可选 `guided`（默认 false）与 `brief`。仅 `guided=true` 创建引导草稿，固定 `start=false`、`settings.mediaMode=manual`；可先保存创作简述，之后补齐正式章节。省略 `guided` 的传统新建、上传、粘贴入口保持原启动方式，不增加文字暂停点。
 
 短剧概览的 `production` 增加 `revision`、`guideStep`、`guideConversationId` 和 `creativeBrief`。`guideConversationId` 仅保留历史只读值；`guideStep` 为空表示传统流程；引导项目依次为 `configuring`、`assets`、`story`、`completed`。概览的 `guide={step,canConfirm,blockingReason?}` 由服务端判断能否确认，不由浏览器根据任务数量推断。`completed` 只表示引导结束，不表示短剧已经出片。
