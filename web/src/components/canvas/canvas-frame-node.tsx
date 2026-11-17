@@ -221,7 +221,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                 disabled
                 data-canvas-frame-hover-locked={!collapsed || editing || Boolean(dragOffset) || scale < 0.32 ? "true" : "false"}
                 style={{
-                    background: folder && collapsed ? "transparent" : frameColor ? "color-mix(in srgb, var(--canvas-frame-tint) 12%, transparent)" : active ? theme.frame.activeFill : theme.frame.fill,
+                    background: folder && collapsed ? "transparent" : frameColor ? "color-mix(in srgb, var(--canvas-frame-tint) 35%, transparent)" : active ? theme.frame.activeFill : theme.frame.fill,
                     borderColor: folder && collapsed ? "transparent" : active ? theme.frame.activeStroke : frameColor ? "color-mix(in srgb, var(--canvas-frame-tint) 48%, transparent)" : theme.frame.stroke,
                     borderWidth: folder && collapsed ? 0 : 1 / Math.max(scale, 0.05),
                     boxShadow: !fullDetail || (folder && collapsed) ? "none" : isSelected ? `0 0 0 ${1 / Math.max(scale, 0.05)}px ${theme.frame.activeStroke}33, 0 24px 72px ${theme.spatial.shadow}` : `0 18px 54px ${theme.spatial.shadow}`,
