@@ -60,11 +60,7 @@ export function findFrameDropTarget(nodes: CanvasNodeData[], draggedNodeIds: Set
     const dragged = nodes.filter((node) => draggedNodeIds.has(node.id));
     if (!dragged.length) return null;
 
-    return (
-        [...nodes]
-            .reverse()
-            .find((frame) => isValidFrameDropTarget(frame, dragged, draggedNodeIds))?.id || null
-    );
+    return [...nodes].reverse().find((frame) => isValidFrameDropTarget(frame, dragged, draggedNodeIds))?.id || null;
 }
 
 export type CanvasFrameDropIndex = CanvasSpatialIndex<CanvasNodeData>;
@@ -81,9 +77,7 @@ export function findFrameDropTargetFromIndex(index: CanvasFrameDropIndex, dragge
     const top = Math.min(...centers.map((center) => center.y)) - 0.01;
     const right = Math.max(...centers.map((center) => center.x)) + 0.01;
     const bottom = Math.max(...centers.map((center) => center.y)) + 0.01;
-    return [...index.query({ left, top, right, bottom })]
-        .reverse()
-        .find((frame) => isValidFrameDropTarget(frame, draggedNodes, draggedNodeIds, offset))?.id || null;
+    return [...index.query({ left, top, right, bottom })].reverse().find((frame) => isValidFrameDropTarget(frame, draggedNodes, draggedNodeIds, offset))?.id || null;
 }
 
 function isValidFrameDropTarget(frame: CanvasNodeData, dragged: CanvasNodeData[], draggedNodeIds: Set<string>, offset: Position = { x: 0, y: 0 }) {
@@ -109,76 +103,116 @@ export function applyFrameDrop(nodes: CanvasNodeData[], draggedNodeIds: Set<stri
         if (!frameId) return node.parentId ? { ...node, parentId: undefined } : node;
         return target && canContain(node) ? { ...node, parentId: frameId } : node;
     });
-    if (!frameId) return next;
+    if (!target) return next;
 
-    const children = getFrameChildren(frameId, next);
+    const children = getFrameChildren(target.id, next);
     if (!children.length) return next;
-    const frame = next.find((node) => node.id === frameId);
-    if (!frame || !isFrameNode(frame)) return next;
-
-    if (isCanvasFolderNode(frame) && frame.metadata?.frame?.collapsed) {
-        return layoutCollapsedFolderChildren(next, frame);
-    }
-
-    const left = Math.min(frame.position.x, ...children.map((node) => node.position.x - FRAME_PADDING));
-    const top = Math.min(frame.position.y, ...children.map((node) => node.position.y - FRAME_HEADER_HEIGHT - FRAME_PADDING));
-    const right = Math.max(frame.position.x + frame.width, ...children.map((node) => node.position.x + node.width + FRAME_PADDING));
-    const bottom = Math.max(frame.position.y + frame.height, ...children.map((node) => node.position.y + node.height + FRAME_PADDING));
-
-    return next.map((node) =>
-        node.id === frameId
-            ? {
-                  ...node,
-                  position: { x: left, y: top },
-                  width: right - left,
-                  height: bottom - top,
-                  metadata: {
-                      ...node.metadata,
-                      frame: {
-                          collapsed: false,
-                          expandedWidth: right - left,
-                          expandedHeight: bottom - top,
-                      },
-                  },
-              }
-            : node,
-    );
+    const updates = new Map<string, CanvasNodeData>();
+    collectFrameLayoutUpdates(target, children, updates);
+    return next.map((node) => updates.get(node.id) || node);
 }
 
-function layoutCollapsedFolderChildren(nodes: CanvasNodeData[], folder: CanvasNodeData) {
-    const children = getFrameChildren(folder.id, nodes);
-    if (!children.length) return nodes;
+/** Settle each directly dragged node independently; carried group children retain their parent. */
+export function applyFrameDrops(nodes: CanvasNodeData[], draggedNodeIds: Set<string>) {
+    const index = buildCanvasFrameDropIndex(nodes.filter((node) => !draggedNodeIds.has(node.id)));
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const parentById = new Map<string, string | null>();
+    const childrenByFrame = new Map<string, CanvasNodeData[]>();
+    const archives = new Map<string, { folder: CanvasNodeData; nodes: CanvasNodeData[] }>();
+    for (const id of draggedNodeIds) {
+        const node = byId.get(id);
+        if (!node || isFrameNode(node)) continue;
+        const targetId = findFrameDropTargetFromIndex(index, [node], draggedNodeIds, { x: 0, y: 0 });
+        const target = targetId ? byId.get(targetId) : undefined;
+        if (target?.metadata?.folder?.assetFolderId) {
+            const archive = archives.get(target.id) || { folder: target, nodes: [] };
+            archive.nodes.push(node);
+            archives.set(target.id, archive);
+            continue;
+        }
+        parentById.set(id, targetId);
+        if (targetId && !childrenByFrame.has(targetId)) childrenByFrame.set(targetId, []);
+    }
+    if (!parentById.size) return { nodes, archives: Array.from(archives.values()) };
+
+    // Resolve all memberships before measuring frames, so departing children cannot expand or be laid out in their old frame.
+    const next = nodes.map((node) => {
+        const parentId = parentById.get(node.id);
+        const updated = parentById.has(node.id) && node.parentId !== (parentId || undefined) ? { ...node, parentId: parentId || undefined } : node;
+        if (updated.parentId) childrenByFrame.get(updated.parentId)?.push(updated);
+        return updated;
+    });
+    const updates = new Map<string, CanvasNodeData>();
+    for (const [frameId, children] of childrenByFrame) {
+        collectFrameLayoutUpdates(byId.get(frameId)!, children, updates);
+    }
+    return { nodes: updates.size ? next.map((node) => updates.get(node.id) || node) : next, archives: Array.from(archives.values()) };
+}
+
+function collectFrameLayoutUpdates(frame: CanvasNodeData, children: CanvasNodeData[], updates: Map<string, CanvasNodeData>) {
+    if (!children.length) return;
+    if (isCanvasFolderNode(frame) && frame.metadata?.frame?.collapsed) {
+        collectCollapsedFolderLayoutUpdates(frame, children, updates);
+        return;
+    }
+
+    let left = frame.position.x;
+    let top = frame.position.y;
+    let right = left + frame.width;
+    let bottom = top + frame.height;
+    for (const child of children) {
+        left = Math.min(left, child.position.x - FRAME_PADDING);
+        top = Math.min(top, child.position.y - FRAME_HEADER_HEIGHT - FRAME_PADDING);
+        right = Math.max(right, child.position.x + child.width + FRAME_PADDING);
+        bottom = Math.max(bottom, child.position.y + child.height + FRAME_PADDING);
+    }
+    updates.set(frame.id, {
+        ...frame,
+        position: { x: left, y: top },
+        width: right - left,
+        height: bottom - top,
+        metadata: {
+            ...frame.metadata,
+            frame: {
+                ...frame.metadata?.frame,
+                collapsed: false,
+                expandedWidth: right - left,
+                expandedHeight: bottom - top,
+            },
+        },
+    });
+}
+
+function collectCollapsedFolderLayoutUpdates(folder: CanvasNodeData, children: CanvasNodeData[], updates: Map<string, CanvasNodeData>) {
     const gap = 24;
     const padding = FRAME_PADDING;
     const columns = Math.min(3, Math.ceil(Math.sqrt(children.length)));
     const rows = Math.ceil(children.length / columns);
-    const cellWidth = Math.max(...children.map((node) => node.width));
-    const cellHeight = Math.max(...children.map((node) => node.height));
+    let cellWidth = 0;
+    let cellHeight = 0;
+    for (const child of children) {
+        cellWidth = Math.max(cellWidth, child.width);
+        cellHeight = Math.max(cellHeight, child.height);
+    }
     const expandedWidth = padding * 2 + columns * cellWidth + Math.max(columns - 1, 0) * gap;
     const expandedHeight = FRAME_HEADER_HEIGHT + padding * 2 + rows * cellHeight + Math.max(rows - 1, 0) * gap;
-    const indexById = new Map(children.map((node, index) => [node.id, index]));
-
-    return nodes.map((node) => {
-        if (node.id === folder.id) {
-            return {
-                ...node,
-                metadata: {
-                    ...node.metadata,
-                    frame: { collapsed: true, expandedWidth, expandedHeight },
-                },
-            };
-        }
-        const index = indexById.get(node.id);
-        if (index === undefined) return node;
+    updates.set(folder.id, {
+        ...folder,
+        metadata: {
+            ...folder.metadata,
+            frame: { ...folder.metadata?.frame, collapsed: true, expandedWidth, expandedHeight },
+        },
+    });
+    children.forEach((node, index) => {
         const column = index % columns;
         const row = Math.floor(index / columns);
-        return {
+        updates.set(node.id, {
             ...node,
             position: {
                 x: folder.position.x + padding + column * (cellWidth + gap) + (cellWidth - node.width) / 2,
                 y: folder.position.y + FRAME_HEADER_HEIGHT + padding + row * (cellHeight + gap) + (cellHeight - node.height) / 2,
             },
-        };
+        });
     });
 }
 

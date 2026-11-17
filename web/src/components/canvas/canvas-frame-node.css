@@ -1,0 +1,87 @@
+.canvas-frame-node {
+    --canvas-frame-tint-blue: oklch(0.62 0.15 252);
+    --canvas-frame-tint-green: oklch(0.64 0.13 152);
+    --canvas-frame-tint-violet: oklch(0.6 0.16 295);
+    --canvas-frame-tint-amber: oklch(0.72 0.14 75);
+    --canvas-frame-tint-rose: oklch(0.63 0.16 12);
+    --canvas-frame-tint-teal: oklch(0.64 0.11 195);
+    --canvas-frame-tint-slate: oklch(0.6 0.02 260);
+}
+
+.canvas-frame-node[data-frame-color="blue"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-blue);
+}
+.canvas-frame-node[data-frame-color="green"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-green);
+}
+.canvas-frame-node[data-frame-color="violet"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-violet);
+}
+.canvas-frame-node[data-frame-color="amber"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-amber);
+}
+.canvas-frame-node[data-frame-color="rose"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-rose);
+}
+.canvas-frame-node[data-frame-color="teal"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-teal);
+}
+.canvas-frame-node[data-frame-color="slate"] {
+    --canvas-frame-tint: var(--canvas-frame-tint-slate);
+}
+
+.canvas-frame-header {
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.canvas-frame-colors {
+    border: 1px solid;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--motion-state) var(--motion-ease-out);
+}
+
+.canvas-frame-colors::before {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    inset-block-end: 100%;
+    block-size: var(--space-2);
+}
+
+.canvas-frame-node:hover .canvas-frame-colors,
+.canvas-frame-node[data-frame-selected] .canvas-frame-colors,
+.canvas-frame-colors:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.canvas-frame-color {
+    display: grid;
+    place-items: center;
+    inline-size: 22px;
+    block-size: 22px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    color: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    cursor: pointer;
+}
+
+.canvas-frame-color.is-default {
+    background: transparent;
+}
+.canvas-frame-color[aria-pressed="true"] {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+.canvas-frame-color:focus-visible {
+    outline: 2px solid var(--cn-active-stroke);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .canvas-frame-colors {
+        transition: none;
+    }
+}

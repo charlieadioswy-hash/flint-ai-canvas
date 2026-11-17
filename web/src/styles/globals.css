@@ -27561,47 +27561,31 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap {
     color: var(--popover-foreground) !important;
 }
 
-/* 图片浮层保留透明外壳，使原图缩放和拖动不被内容面板裁切。 */
+/* 图片预览占满视口，缩放与拖动只发生在内部舞台。 */
 .canvas-image-preview-modal {
-    width: fit-content !important;
-    max-width: calc(100vw - 24px);
+    width: 100vw !important;
+    max-width: 100vw;
 }
 
-.canvas-image-preview-modal .ant-modal-container,
-.canvas-image-preview-modal .ant-modal-content {
-    overflow: visible !important;
+.canvas-image-preview-modal .ant-modal-container {
     border: 0 !important;
-    background: transparent !important;
+    background: var(--workspace-surface) !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
 }
 
-.canvas-image-preview-modal .ant-modal-container,
-.canvas-image-preview-modal .ant-modal-body {
-    padding: 0 !important;
-}
-
 .canvas-image-preview-modal .ant-modal-header {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    background: var(--workspace-surface);
 }
 
 .canvas-image-preview-modal .ant-modal-close {
-    top: -40px !important;
-    inset-inline-end: 0 !important;
-    border-radius: 9999px;
-    background: color-mix(in srgb, black 58%, transparent);
-    color: white;
+    top: var(--space-3);
+    inset-inline-end: var(--space-3);
+    border-radius: var(--r-sm);
+    color: var(--workspace-text-muted);
 }
 
 .canvas-image-preview-modal .ant-modal-close:hover {
-    background: color-mix(in srgb, black 78%, transparent) !important;
-    color: white !important;
+    background: var(--workspace-surface-strong) !important;
+    color: var(--foreground) !important;
 }

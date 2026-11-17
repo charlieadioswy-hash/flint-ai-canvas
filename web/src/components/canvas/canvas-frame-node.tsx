@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { agentNodeEntranceDelay } from "@/lib/canvas/agent-canvas-entrance";
-import { ChevronDown, ChevronRight, Video } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Pencil, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CometCard } from "@/components/ui/aceternity/comet-card";
@@ -11,9 +11,20 @@ import { FRAME_HEADER_HEIGHT, FRAME_PADDING, isCanvasFolderNode } from "@/lib/ca
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasFrameColor, type CanvasNodeData, type Position } from "@/types/canvas";
+
+import "./canvas-frame-node.css";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+const FRAME_COLORS: { value: CanvasFrameColor; label: string }[] = [
+    { value: "blue", label: "蓝色" },
+    { value: "green", label: "绿色" },
+    { value: "violet", label: "紫色" },
+    { value: "amber", label: "琥珀色" },
+    { value: "rose", label: "玫瑰色" },
+    { value: "teal", label: "青色" },
+    { value: "slate", label: "灰色" },
+];
 
 export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     data,
@@ -28,6 +39,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     onToggleCollapsed,
     onFolderStyleChange,
     onFolderThemeChange = () => undefined,
+    onFrameColorChange,
     onTitleChange,
     onContextMenu,
     readOnly = false,
@@ -46,6 +58,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     onToggleCollapsed: (nodeId: string) => void;
     onFolderStyleChange: (nodeId: string, style: CanvasFolderStyle) => void;
     onFolderThemeChange?: (nodeId: string, theme: CanvasFolderTheme) => void;
+    onFrameColorChange?: (nodeId: string, color?: CanvasFrameColor) => void;
     onTitleChange: (nodeId: string, title: string) => void;
     onContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
     readOnly?: boolean;
@@ -92,31 +105,28 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
         return { left, top, right, bottom };
     }, [childNodes]);
 
-    const handleResizeMove = useCallback(
-        (event: MouseEvent) => {
-            const state = resizeRef.current;
-            if (!state.active) return;
-            const dx = (event.clientX - state.startX) / state.scale;
-            const dy = (event.clientY - state.startY) / state.scale;
-            const fromLeft = state.corner.includes("left");
-            const fromTop = state.corner.includes("top");
-            const startRight = state.startLeft + state.startWidth;
-            const startBottom = state.startTop + state.startHeight;
-            let left = fromLeft ? Math.min(state.startLeft + dx, startRight - 360) : state.startLeft;
-            let top = fromTop ? Math.min(state.startTop + dy, startBottom - 240) : state.startTop;
-            let right = fromLeft ? startRight : Math.max(state.startLeft + 360, startRight + dx);
-            let bottom = fromTop ? startBottom : Math.max(state.startTop + 240, startBottom + dy);
+    const handleResizeMove = useCallback((event: MouseEvent) => {
+        const state = resizeRef.current;
+        if (!state.active) return;
+        const dx = (event.clientX - state.startX) / state.scale;
+        const dy = (event.clientY - state.startY) / state.scale;
+        const fromLeft = state.corner.includes("left");
+        const fromTop = state.corner.includes("top");
+        const startRight = state.startLeft + state.startWidth;
+        const startBottom = state.startTop + state.startHeight;
+        let left = fromLeft ? Math.min(state.startLeft + dx, startRight - 360) : state.startLeft;
+        let top = fromTop ? Math.min(state.startTop + dy, startBottom - 240) : state.startTop;
+        let right = fromLeft ? startRight : Math.max(state.startLeft + 360, startRight + dx);
+        let bottom = fromTop ? startBottom : Math.max(state.startTop + 240, startBottom + dy);
 
-            if (state.childBounds) {
-                if (fromLeft) left = Math.min(left, state.childBounds.left - FRAME_PADDING);
-                else right = Math.max(right, state.childBounds.right + FRAME_PADDING);
-                if (fromTop) top = Math.min(top, state.childBounds.top - FRAME_HEADER_HEIGHT - FRAME_PADDING);
-                else bottom = Math.max(bottom, state.childBounds.bottom + FRAME_PADDING);
-            }
-            state.onResize(state.nodeId, right - left, bottom - top, { x: left, y: top });
-        },
-        [],
-    );
+        if (state.childBounds) {
+            if (fromLeft) left = Math.min(left, state.childBounds.left - FRAME_PADDING);
+            else right = Math.max(right, state.childBounds.right + FRAME_PADDING);
+            if (fromTop) top = Math.min(top, state.childBounds.top - FRAME_HEADER_HEIGHT - FRAME_PADDING);
+            else bottom = Math.max(bottom, state.childBounds.bottom + FRAME_PADDING);
+        }
+        state.onResize(state.nodeId, right - left, bottom - top, { x: left, y: top });
+    }, []);
 
     const handleResizeUp = useCallback(() => {
         resizeRef.current.active = false;
@@ -157,20 +167,31 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     const linkedFolder = Boolean(data.metadata?.folder?.assetFolderId);
     const fullDetail = renderLOD === "full" || hovered || editing;
     const [entranceDelay] = useState(() => agentNodeEntranceDelay(data.id));
-    // Agent 搭看板时按幕给背板着色；只认语义色名，具体颜色由主题样式决定。
     const frameColor = data.metadata?.frame?.color;
+    const editable = !readOnly && !data.metadata?.locked;
+    const frameLabel = folder ? "文件夹" : data.metadata?.workflowKind === "storyboard" ? "分镜组" : "背板";
 
     return (
         <div
             data-node-id={data.id}
+            data-canvas-frame
             data-node-lod={fullDetail ? "full" : renderLOD}
             data-agent-enter={entranceDelay === null ? undefined : "true"}
             data-frame-color={frameColor || undefined}
+            data-frame-selected={isSelected || undefined}
             role={folder && collapsed ? "group" : undefined}
             tabIndex={folder && collapsed ? 0 : undefined}
             aria-label={folder && collapsed ? t("canvasB.frameNode.folderAriaLabel", { title: data.title, count: childNodes.length }) : undefined}
-            className={`absolute z-0 select-none${folder && collapsed ? " canvas-folder-node" : ""} ${dragOffset ? "cursor-grabbing" : "cursor-default"}`}
-            style={{ transform: `translate(${data.position.x + (dragOffset?.x || 0)}px, ${data.position.y + (dragOffset?.y || 0)}px)`, width: data.width, height: data.height, contain: "layout style", ...(entranceDelay === null ? {} : { "--agent-enter-delay": `${entranceDelay}ms` }) } as CSSProperties}
+            className={`canvas-frame-node absolute z-0 select-none${folder && collapsed ? " canvas-folder-node" : ""} ${dragOffset ? "cursor-grabbing" : "cursor-default"}`}
+            style={
+                {
+                    transform: `translate(${data.position.x + (dragOffset?.x || 0)}px, ${data.position.y + (dragOffset?.y || 0)}px)`,
+                    width: data.width,
+                    height: data.height,
+                    contain: "layout style",
+                    ...(entranceDelay === null ? {} : { "--agent-enter-delay": `${entranceDelay}ms` }),
+                } as CSSProperties
+            }
             onMouseDown={(event) => onMouseDown(event, data.id)}
             onDoubleClick={(event) => {
                 if (!collapsed || (event.target instanceof Element && event.target.closest("button,input"))) return;
@@ -184,8 +205,14 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                 event.preventDefault();
                 onToggleCollapsed(data.id);
             }}
-            onMouseEnter={() => { setHovered(true); onHoverStart?.(data.id); }}
-            onMouseLeave={() => { setHovered(false); onHoverEnd?.(data.id); }}
+            onMouseEnter={() => {
+                setHovered(true);
+                onHoverStart?.(data.id);
+            }}
+            onMouseLeave={() => {
+                setHovered(false);
+                onHoverEnd?.(data.id);
+            }}
         >
             {/* 帧节点同样禁用指针跟随 3D 位移，hover 使用 CSS 静态抬升 */}
             <CometCard
@@ -194,15 +221,20 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                 disabled
                 data-canvas-frame-hover-locked={!collapsed || editing || Boolean(dragOffset) || scale < 0.32 ? "true" : "false"}
                 style={{
-                    background: folder && collapsed ? "transparent" : active ? theme.frame.activeFill : theme.frame.fill,
-                    borderColor: folder && collapsed ? "transparent" : active ? theme.frame.activeStroke : theme.frame.stroke,
+                    background: folder && collapsed ? "transparent" : frameColor ? "color-mix(in srgb, var(--canvas-frame-tint) 12%, transparent)" : active ? theme.frame.activeFill : theme.frame.fill,
+                    borderColor: folder && collapsed ? "transparent" : active ? theme.frame.activeStroke : frameColor ? "color-mix(in srgb, var(--canvas-frame-tint) 48%, transparent)" : theme.frame.stroke,
                     borderWidth: folder && collapsed ? 0 : 1 / Math.max(scale, 0.05),
                     boxShadow: !fullDetail || (folder && collapsed) ? "none" : isSelected ? `0 0 0 ${1 / Math.max(scale, 0.05)}px ${theme.frame.activeStroke}33, 0 24px 72px ${theme.spatial.shadow}` : `0 18px 54px ${theme.spatial.shadow}`,
                 }}
             >
                 {!fullDetail ? (
-                    <div className="flex h-full items-center justify-center rounded-[var(--node-radius)]" style={{ background: theme.frame.fill, color: theme.node.text }}>
-                        {data.title} · {childNodes.length}
+                    <div className="canvas-frame-header absolute inset-x-0 top-0 flex items-center gap-2 px-3" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold" title={data.title}>
+                            {data.title}
+                        </span>
+                        <span className="shrink-0 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
+                            {childNodes.length}
+                        </span>
                     </div>
                 ) : folder && collapsed ? (
                     // 素材库目录是单一事实源；画布节点只负责浏览和调用，避免本地改名后被同步结果覆盖。
@@ -219,60 +251,97 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     />
                 ) : (
                     <>
-                <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-2" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
-                    <button
-                        type="button"
-                        className="grid size-8 shrink-0 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:bg-white/10"
-                        style={{ outlineColor: theme.frame.activeStroke }}
-                        aria-label={collapsed ? t("canvasB.frameNode.expandBoard") : t("canvasB.frameNode.collapseBoard")}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onToggleCollapsed(data.id);
-                        }}
-                    >
-                        {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
-                    </button>
-                    {editing ? (
-                        <input
-                            autoFocus
-                            className="h-7 min-w-0 flex-1 rounded border bg-transparent px-2 text-sm font-semibold outline-none"
-                            style={{ borderColor: theme.frame.activeStroke, color: theme.node.text }}
-                            value={title}
-                            onChange={(event) => setTitle(event.target.value)}
-                            onBlur={commitTitle}
-                            onMouseDown={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => {
-                                if (event.key === "Enter") commitTitle();
-                                if (event.key === "Escape") {
-                                    setTitle(data.title);
-                                    setEditing(false);
-                                }
-                            }}
-                        />
-                    ) : (
-                        <button
-                            type="button"
-                            className="min-w-0 truncate text-left text-sm font-semibold"
-                            title={data.title}
-                            onDoubleClick={(event) => {
-                                event.stopPropagation();
-                                if (readOnly) return;
-                                setEditing(true);
-                            }}
-                        >
-                            {data.title}
-                        </button>
-                    )}
-                    <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
-                        {childNodes.length}
-                    </span>
-                </div>
+                        <div className="canvas-frame-header pointer-events-auto absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-2" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
+                            <button
+                                type="button"
+                                className="grid size-8 shrink-0 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:bg-white/10"
+                                style={{ outlineColor: theme.frame.activeStroke }}
+                                aria-label={collapsed ? t("canvasB.frameNode.expandBoard") : t("canvasB.frameNode.collapseBoard")}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    onToggleCollapsed(data.id);
+                                }}
+                            >
+                                {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
+                            </button>
+                            {editing ? (
+                                <input
+                                    autoFocus
+                                    className="h-7 min-w-0 flex-1 rounded border bg-transparent px-2 text-sm font-semibold outline-none"
+                                    style={{ borderColor: theme.frame.activeStroke, color: theme.node.text }}
+                                    value={title}
+                                    aria-label={`${frameLabel}名称`}
+                                    onChange={(event) => setTitle(event.target.value)}
+                                    onBlur={commitTitle}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => {
+                                        event.stopPropagation();
+                                        if (event.key === "Enter") event.currentTarget.blur();
+                                        if (event.key === "Escape") {
+                                            setTitle(data.title);
+                                            setEditing(false);
+                                        }
+                                    }}
+                                />
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="flex min-w-0 items-center gap-1 rounded text-left text-sm font-semibold focus-visible:outline focus-visible:outline-2"
+                                    title={data.title}
+                                    aria-label={editable ? `编辑${frameLabel}名称：${data.title}` : undefined}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (!editable) return;
+                                        setEditing(true);
+                                    }}
+                                >
+                                    <span className="min-w-0 truncate">{data.title}</span>
+                                    {editable ? <Pencil className="size-3 shrink-0 opacity-60" /> : null}
+                                </button>
+                            )}
+                            <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
+                                {childNodes.length}
+                            </span>
+                        </div>
 
-                {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} /> : null}
+                        {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} /> : null}
                     </>
                 )}
             </CometCard>
+            {!folder && editable && onFrameColorChange && fullDetail ? (
+                <div
+                    className="canvas-frame-colors absolute left-0 top-full mt-2 flex items-center gap-1 rounded-full px-2 py-1"
+                    role="group"
+                    aria-label={`${frameLabel}底色`}
+                    data-canvas-no-zoom
+                    style={{ background: theme.toolbar.panel, color: theme.node.text, borderColor: theme.frame.stroke }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                >
+                    <span className="px-1 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
+                        底色
+                    </span>
+                    <button type="button" className="canvas-frame-color is-default" aria-label={`${frameLabel}底色：默认`} aria-pressed={!frameColor} title="默认底色" onClick={() => onFrameColorChange(data.id, undefined)}>
+                        {!frameColor ? <Check className="size-3" /> : null}
+                    </button>
+                    {FRAME_COLORS.map(({ value, label }) => (
+                        <button
+                            key={value}
+                            type="button"
+                            className="canvas-frame-color"
+                            aria-label={`${frameLabel}底色：${label}`}
+                            aria-pressed={frameColor === value}
+                            title={label}
+                            style={{ background: `var(--canvas-frame-tint-${value})` }}
+                            onClick={() => onFrameColorChange(data.id, value)}
+                        >
+                            {frameColor === value ? <Check className="size-3" /> : null}
+                        </button>
+                    ))}
+                </div>
+            ) : null}
             {!readOnly && !collapsed && isSelected && !data.metadata?.locked ? (
                 <>
                     <ResizeHandle corner="top-left" scale={scale} theme={theme} onMouseDown={startResize} />
@@ -314,15 +383,29 @@ function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame:
         <div className="pointer-events-none absolute inset-x-2 bottom-2 overflow-hidden rounded-md" style={{ top: FRAME_HEADER_HEIGHT, background: theme.frame.preview }}>
             {layout.length ? (
                 layout.map(({ node, ...style }) => {
-                    return <div key={node.id} className="absolute overflow-hidden rounded-[var(--r-xs)] border" style={{ ...style, background: theme.node.fill, borderColor: theme.node.stroke }}>
-                        {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} /> : null}
-                        {node.type === CanvasNodeType.Video ? <CanvasVideoPreviewImage node={node} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} fallback={<Video className="m-auto size-4 h-full opacity-40" />} /> : null}
-                        {node.type === CanvasNodeType.Text ? <div className="line-clamp-3 p-1 text-[var(--fs-nano)] leading-[9px]" style={{ color: theme.node.text }}>{node.metadata?.content || node.title}</div> : null}
-                        {node.type === CanvasNodeType.Script ? <div className="p-1 text-[var(--fs-nano)] leading-[9px]" style={{ color: theme.node.text }}>{t("canvasB.frameNode.scriptSummary", { count: node.metadata?.storyboard?.rows.length || 0 })}</div> : null}
-                    </div>;
+                    return (
+                        <div key={node.id} className="absolute overflow-hidden rounded-[var(--r-xs)] border" style={{ ...style, background: theme.node.fill, borderColor: theme.node.stroke }}>
+                            {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} /> : null}
+                            {node.type === CanvasNodeType.Video ? (
+                                <CanvasVideoPreviewImage node={node} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} fallback={<Video className="m-auto size-4 h-full opacity-40" />} />
+                            ) : null}
+                            {node.type === CanvasNodeType.Text ? (
+                                <div className="line-clamp-3 p-1 text-[var(--fs-nano)] leading-[9px]" style={{ color: theme.node.text }}>
+                                    {node.metadata?.content || node.title}
+                                </div>
+                            ) : null}
+                            {node.type === CanvasNodeType.Script ? (
+                                <div className="p-1 text-[var(--fs-nano)] leading-[9px]" style={{ color: theme.node.text }}>
+                                    {t("canvasB.frameNode.scriptSummary", { count: node.metadata?.storyboard?.rows.length || 0 })}
+                                </div>
+                            ) : null}
+                        </div>
+                    );
                 })
             ) : (
-                <div className="grid h-full place-items-center text-[var(--fs-label)]" style={{ color: theme.node.faint }}>{t("canvasB.frameNode.emptyBoard")}</div>
+                <div className="grid h-full place-items-center text-[var(--fs-label)]" style={{ color: theme.node.faint }}>
+                    {t("canvasB.frameNode.emptyBoard")}
+                </div>
             )}
         </div>
     );

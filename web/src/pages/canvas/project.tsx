@@ -1246,6 +1246,7 @@ function CanvasViewportPage() {
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (
                 !node ||
+                node.type === CanvasNodeType.Frame ||
                 node.type === CanvasNodeType.Script ||
                 node.type === CanvasNodeType.Drawing ||
                 node.type === CanvasNodeType.Panorama ||
@@ -1318,6 +1319,7 @@ function CanvasViewportPage() {
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,
+        handleFrameColorChange,
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
@@ -3123,6 +3125,7 @@ function CanvasViewportPage() {
                                                         onToggleFrame={handleFrameToggle}
                                                         onFolderStyleChange={handleFolderStyleChange}
                                                         onFolderThemeChange={handleFolderThemeChange}
+                                                        onFrameColorChange={handleFrameColorChange}
                                                         onNodeTitleChange={handleNodeTitleChange}
                                                         onNodeContextMenu={handleNodeContextMenu}
                                                         onNodeContentChange={handleNodeContentChange}
@@ -3284,6 +3287,7 @@ function CanvasViewportPage() {
                             {dialogNode &&
                             !isCanvasImageSourceNode(dialogNode) &&
                             !dialogNode.metadata?.fileUpload &&
+                            dialogNode.type !== CanvasNodeType.Frame &&
                             dialogNode.type !== CanvasNodeType.Script &&
                             dialogNode.type !== CanvasNodeType.BatchTable &&
                             dialogNode.type !== CanvasNodeType.Drawing &&

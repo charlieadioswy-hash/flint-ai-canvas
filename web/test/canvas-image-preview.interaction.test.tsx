@@ -156,25 +156,35 @@ test("竖图和横图以完整比例适应窗口，媒体本身不增加描边",
     }
 });
 
-test("预览提供标题、缩放与全屏入口，恢复适应窗口时清除平移", async () => {
+test("预览默认占满视口，保留标题与缩放，适应窗口可还原，Esc直接关闭", async () => {
     const f = await fixture();
     try {
         expect(document.querySelector(".canvas-image-preview-modal .ant-modal-header")?.className).not.toContain("sr-only");
         const dialog = document.querySelector('.canvas-image-preview-modal [role="dialog"], .canvas-image-preview-modal[role="dialog"]')!;
         const label = document.getElementById(dialog.getAttribute("aria-labelledby")!);
         expect(label?.textContent).toContain("预览测试");
+        const modal = document.querySelector<HTMLElement>(".canvas-image-preview-modal")!;
+        const container = modal.querySelector<HTMLElement>(".ant-modal-container")!;
+        expect(modal.style.width).toBe("100vw");
+        expect(modal.style.maxWidth).toBe("100vw");
+        expect(modal.style.margin).toBe("0px");
+        expect(modal.style.top).toBe("0px");
+        // HappyDOM 尚不解析 dvh；此处验证弹窗约束与伸展布局，实际高度留给浏览器验收。
+        expect(container.style.display).toBe("flex");
+        expect(container.style.flexDirection).toBe("column");
+        expect(container.style.borderRadius).toBe("0px");
+        expect(f.stage().className).toContain("flex-1");
         await f.load();
         const zoomIn = document.querySelector<HTMLButtonElement>('[aria-label="放大图片"]')!;
         await act(async () => zoomIn.click());
         expect(transform(f.image()).scale).toBeGreaterThan(1);
-        const fullscreen = document.querySelector<HTMLButtonElement>('[aria-label="全屏查看"]')!;
-        await act(async () => fullscreen.click());
-        expect(fullscreen.getAttribute("aria-pressed")).toBe("true");
         const reset = [...document.querySelectorAll<HTMLButtonElement>(".canvas-image-preview-modal button")].find((button) => button.textContent?.includes("适应窗口"))!;
         await act(async () => reset.click());
         expect(transform(f.image())).toEqual({ x: 0, y: 0, scale: 1 });
-        await act(async () => fullscreen.click());
-        expect(fullscreen.getAttribute("aria-pressed")).toBe("false");
+        const wrap = modal.closest(".ant-modal-wrap")!;
+        await act(async () => wrap.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 }) as unknown as Event));
+        expect(f.closed()).toBe(1);
+        expect(document.querySelector(".canvas-image-preview-modal")).toBeNull();
     } finally {
         await f.dispose();
     }

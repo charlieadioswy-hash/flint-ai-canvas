@@ -15,7 +15,7 @@ import { downloadBrowserMedia, resolveBrowserMediaDownloadHref, startBrowserDown
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import type { AiConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasFrameColor, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
 // Chrome 对同一页面连续触发的下载会先询问一次「下载多个文件」，间隔过短时后续点击可能被丢弃。
 const BATCH_DOWNLOAD_INTERVAL_MS = 400;
@@ -60,7 +60,7 @@ export function useCanvasNodeEditor({ config, canvasId, canvasTitle, domainProje
                     // 否则每次图片重新加载都会把用户拉过的尺寸改回去。
                     const resized = { ...node, width, height, position: nextPosition, metadata: { ...node.metadata, manualSize: true } };
                     if (!isFrameNode(node) || node.metadata?.frame?.collapsed) return resized;
-                    return { ...resized, metadata: { ...resized.metadata, frame: { collapsed: false, expandedWidth: width, expandedHeight: height } } };
+                    return { ...resized, metadata: { ...resized.metadata, frame: { ...node.metadata?.frame, collapsed: false, expandedWidth: width, expandedHeight: height } } };
                 });
                 return changed ? next : current;
             });
@@ -86,14 +86,19 @@ export function useCanvasNodeEditor({ config, canvasId, canvasTitle, domainProje
                               height: frameState?.expandedHeight || NODE_DEFAULT_SIZE[CanvasNodeType.Frame].height,
                               metadata: {
                                   ...node.metadata,
-                                  frame: { collapsed: false, expandedWidth: frameState?.expandedWidth || NODE_DEFAULT_SIZE[CanvasNodeType.Frame].width, expandedHeight: frameState?.expandedHeight || NODE_DEFAULT_SIZE[CanvasNodeType.Frame].height },
+                                  frame: {
+                                      ...frameState,
+                                      collapsed: false,
+                                      expandedWidth: frameState?.expandedWidth || NODE_DEFAULT_SIZE[CanvasNodeType.Frame].width,
+                                      expandedHeight: frameState?.expandedHeight || NODE_DEFAULT_SIZE[CanvasNodeType.Frame].height,
+                                  },
                               },
                           }
                         : {
                               ...node,
                               width: folder ? FOLDER_COLLAPSED_WIDTH : FRAME_COLLAPSED_WIDTH,
                               height: folder ? FOLDER_COLLAPSED_HEIGHT : FRAME_COLLAPSED_HEIGHT,
-                              metadata: { ...node.metadata, frame: { collapsed: true, expandedWidth: node.width, expandedHeight: node.height } },
+                              metadata: { ...node.metadata, frame: { ...frameState, collapsed: true, expandedWidth: node.width, expandedHeight: node.height } },
                           };
                 }),
             );
@@ -140,6 +145,20 @@ export function useCanvasNodeEditor({ config, canvasId, canvasTitle, domainProje
             );
         },
         [setNodes],
+    );
+
+    const handleFrameColorChange = useCallback(
+        (nodeId: string, color?: CanvasFrameColor) => {
+            const target = nodesRef.current.find((node) => node.id === nodeId);
+            if (!isFrameNode(target) || isCanvasFolderNode(target) || target.metadata?.locked || target.metadata?.frame?.color === color || !canvasEditLeases.input(canvasId, nodeId)) return;
+            setNodes((current) =>
+                current.map((node) => {
+                    if (node.id !== nodeId || node.metadata?.locked) return node;
+                    return { ...node, metadata: { ...node.metadata, frame: { collapsed: false, expandedWidth: node.width, expandedHeight: node.height, ...node.metadata?.frame, color } } };
+                }),
+            );
+        },
+        [canvasId, nodesRef, setNodes],
     );
 
     const toggleNodeFreeResize = useCallback(
@@ -379,6 +398,7 @@ export function useCanvasNodeEditor({ config, canvasId, canvasTitle, domainProje
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,
+        handleFrameColorChange,
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
