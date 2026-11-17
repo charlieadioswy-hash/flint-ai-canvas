@@ -256,13 +256,41 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
     const readyCount = result?.items.filter((item) => item.status === "ready").length || 0;
     const succeededCount = result?.items.filter((item) => item.status === "succeeded").length || 0;
     const failedCount = result?.items.filter((item) => item.status === "failed" || item.status === "uncertain").length || 0;
+    const tools = (
+        <div className="drama-workflow-episodes-tools" role="group" aria-label="分集排序和搜索">
+            <Select
+                aria-label="分集排序方式"
+                value={sortBy}
+                labelRender={({ value }) => (value === "updated" ? "更新时间" : "集号")}
+                popupMatchSelectWidth={false}
+                onChange={setSortBy}
+                disabled={viewLocked}
+                options={[
+                    { value: "updated", label: "按更新时间排序" },
+                    { value: "number", label: "按集号排序" },
+                ]}
+            />
+            <Select
+                aria-label="分集排序"
+                value={descending ? "desc" : "asc"}
+                disabled={viewLocked}
+                onChange={(value) => setDescending(value === "desc")}
+                options={[
+                    { value: "asc", label: "正序" },
+                    { value: "desc", label: "倒序" },
+                ]}
+                suffixIcon={<ArrowDownWideNarrow className="size-3.5" />}
+            />
+            <Input aria-label="搜索分集" placeholder="搜索分集" prefix={<Search className="size-3.5" aria-hidden />} allowClear disabled={viewLocked} value={search} onChange={(event) => setSearch(event.target.value)} />
+        </div>
+    );
 
     return (
         <section className="drama-workflow-episodes" aria-label="分集管理">
             <header className="drama-workflow-episodes-head">
-                <div>
+                <div className="drama-workflow-episodes-heading">
                     <h2>分集管理</h2>
-                    <p>共 {summary.episodes.length} 集</p>
+                    {tools}
                 </div>
                 <div className="drama-workflow-episodes-actions">
                     <Button
@@ -341,30 +369,6 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
                             {label}
                         </button>
                     ))}
-                </div>
-                <div className="drama-workflow-episodes-tools">
-                    <Select
-                        aria-label="分集排序方式"
-                        value={sortBy}
-                        onChange={setSortBy}
-                        disabled={viewLocked}
-                        options={[
-                            { value: "updated", label: "按更新时间排序" },
-                            { value: "number", label: "按集号排序" },
-                        ]}
-                    />
-                    <Select
-                        aria-label="分集排序"
-                        value={descending ? "desc" : "asc"}
-                        disabled={viewLocked}
-                        onChange={(value) => setDescending(value === "desc")}
-                        options={[
-                            { value: "asc", label: "正序" },
-                            { value: "desc", label: "倒序" },
-                        ]}
-                        suffixIcon={<ArrowDownWideNarrow className="size-3.5" />}
-                    />
-                    <Input aria-label="搜索分集" placeholder="搜索集号、标题或梗概" prefix={<Search className="size-3.5" aria-hidden />} allowClear disabled={viewLocked} value={search} onChange={(event) => setSearch(event.target.value)} />
                 </div>
             </div>
             {selected.length ? (

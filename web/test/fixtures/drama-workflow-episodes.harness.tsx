@@ -281,7 +281,7 @@ test("分集卡展示真实类型更新时间和三项进度，没有继续选�
         expect(view.container.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-15T01:00:00Z");
         expect(view.container.textContent).toContain("真人剧");
         expect(view.container.textContent).toContain("暂无图片");
-        expect(view.container.textContent).toContain("共 3 集");
+        expect(view.container.querySelector(".drama-workflow-episodes-selection")?.textContent).toContain("共 3 项");
         expect(view.container.textContent).not.toContain("继续选章");
         expect(view.container.querySelectorAll(".drama-workflow-episode-card dl > div")).toHaveLength(9);
         expect(view.container.querySelector('[data-status="unknown"]')?.textContent).toContain("勾选后检查");

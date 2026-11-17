@@ -8,8 +8,7 @@
 .drama-workflow-episodes-toolbar,
 .drama-workflow-episodes-actions,
 .drama-workflow-episodes-filters,
-.drama-workflow-episodes-selection,
-.drama-workflow-episodes-tools {
+.drama-workflow-episodes-selection {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -34,13 +33,22 @@
     background: transparent;
 }
 
-.drama-workflow-episodes-head h2 {
+.drama-workflow-episodes-heading {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    min-width: 0;
+    max-width: 100%;
+}
+
+.drama-workflow-episodes-heading h2 {
     margin: 0;
     font-size: var(--fs-title);
     color: var(--text-primary);
+    white-space: nowrap;
 }
 
-.drama-workflow-episodes-head p,
 .drama-workflow-episodes-batch p,
 .drama-workflow-episodes-selection,
 .drama-workflow-episodes-empty p {
@@ -77,16 +85,25 @@
     color: var(--text-primary);
 }
 
+.drama-workflow-episodes-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    max-width: 100%;
+}
+
 .drama-workflow-episodes-tools > .ant-input-affix-wrapper {
-    width: min(260px, 100%);
+    width: 200px;
+    min-width: 0;
 }
 
 .drama-workflow-episodes-tools > .ant-select {
-    min-width: 90px;
+    flex: 0 0 76px;
 }
 
 .drama-workflow-episodes-tools > .ant-select:first-child {
-    min-width: 160px;
+    flex-basis: 114px;
 }
 
 .drama-workflow-episodes-selection label {
@@ -388,9 +405,25 @@
         flex-direction: column;
     }
 
-    .drama-workflow-episodes-tools,
-    .drama-workflow-episodes-tools > .ant-input-affix-wrapper {
+    .drama-workflow-episodes-tools {
         width: 100%;
+        gap: var(--space-1);
+    }
+
+    .drama-workflow-episodes-tools > .ant-input-affix-wrapper {
+        flex: 1;
+    }
+
+    .drama-workflow-episodes-tools .ant-input-prefix {
+        display: none;
+    }
+
+    .drama-workflow-episodes-tools > .ant-select {
+        flex-basis: 64px;
+    }
+
+    .drama-workflow-episodes-tools > .ant-select:first-child {
+        flex-basis: 90px;
     }
 
     .drama-workflow-episodes-grid {
