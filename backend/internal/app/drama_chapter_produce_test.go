@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/production"
@@ -13,9 +14,13 @@ func dramaChapterProduceFixture(t *testing.T, step string) (*Service, *fakeDrama
 	t.Helper()
 	svc, fake := newDramaTestService(t)
 	settings := DramaSettings{ReviewMode: DramaReviewAuto, MediaMode: DramaMediaManual, Concurrency: 16, Models: fakeDramaModels, EpisodeMode: DramaEpisodeModeChapter, ChaptersPerEpisode: 1}
+	input := []DramaChapterInput{{Title: "序章", Text: "萧炎在萧家大厅起身。"}, {Title: "第一章", Text: "预留章节甲：少年走向后山。"}, {Title: "第二章", Text: "预留章节乙：药老现身。"}}
+	if step != "" {
+		input = input[:1]
+	}
 	summary, err := svc.CreateDrama("usr-drama", CreateDramaRequest{
 		Name: "补入预留章节", Guided: step != "", SourceFormat: production.SourceScript, Settings: settings,
-		Chapters: []DramaChapterInput{{Title: "序章", Text: "萧炎在萧家大厅起身。"}, {Title: "第一章", Text: "预留章节甲：少年走向后山。"}, {Title: "第二章", Text: "预留章节乙：药老现身。"}}, SelectedChapters: []int{0},
+		Chapters: input, SelectedChapters: []int{0},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +37,16 @@ func dramaChapterProduceFixture(t *testing.T, step string) (*Service, *fakeDrama
 				summary = confirmGuide(t, svc, summary)
 			}
 		}
+	}
+	if step != "" {
+		// 模拟升级前留下的原文，不通过已经取消选章的新建入口制造预留章。
+		for i, item := range []DramaChapterInput{{Title: "第一章", Text: "预留章节甲：少年走向后山。"}, {Title: "第二章", Text: "预留章节乙：药老现身。"}} {
+			chapter := model.ProjectUnit{ID: newID(), ProjectID: summary.Project.ID, Kind: model.ProjectUnitKindChapter, Title: item.Title, SourceText: item.Text, WordCount: len([]rune(item.Text)), Status: model.ProjectUnitStatusReserved, Position: i + 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			if err := fake.db.Create(&chapter).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		summary.Production.ReservedChapterCount = 2
 	}
 	chapters, err := svc.DramaChapterOutline("usr-drama", summary.Project.ID)
 	if err != nil {
@@ -152,8 +167,8 @@ func TestDramaProduceChaptersConfiguringCannotBypassSourceSelection(t *testing.T
 		t.Fatal("configuring guide bypassed source selection")
 	}
 	after := guideSummary(t, svc, summary.Project.ID)
-	if len(after.Episodes) != 1 || after.Production.Revision != summary.Production.Revision || after.Production.ReservedChapterCount != 2 {
-		t.Fatal("configuration rejection changed source selection")
+	if len(after.Episodes) != 3 || after.Production.Revision != summary.Production.Revision+1 || after.Production.ReservedChapterCount != 0 {
+		t.Fatal("reading the rejected legacy selection must recover all original episodes")
 	}
 }
 
@@ -196,8 +211,8 @@ func TestDramaProduceChaptersCASSerializesGuideConfirmation(t *testing.T) {
 				requireGuideConflict(t, second)
 			}
 			after := guideSummary(t, svc, summary.Project.ID)
-			if after.Production.Revision != summary.Production.Revision+1 || len(after.Episodes) > 2 || len(after.Episodes) < 1 {
-				t.Fatalf("concurrent append or confirmation changed more than one snapshot: %+v", after)
+			if after.Production.Revision != summary.Production.Revision+2 || len(after.Episodes) != 3 {
+				t.Fatalf("one CAS edit followed by one catalog recovery must preserve all original chapters: %+v", after)
 			}
 		})
 	}

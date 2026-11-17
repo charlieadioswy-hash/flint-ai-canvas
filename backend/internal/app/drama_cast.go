@@ -79,6 +79,11 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 				return err
 			}
 		}
+		if req.EpisodeID != "" {
+			if _, err := tx.DramaEpisode(project.ID, req.EpisodeID); err != nil {
+				return dramaLookupError(err)
+			}
+		}
 		casts, err := tx.DramaCasts(project.ID)
 		if err != nil {
 			return err
@@ -94,7 +99,13 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 				cast.Position = existing.Position + 1
 			}
 		}
-		return tx.CreateDramaCasts([]model.DramaCast{cast})
+		if err := tx.CreateDramaCasts([]model.DramaCast{cast}); err != nil {
+			return err
+		}
+		if req.EpisodeID == "" {
+			return nil
+		}
+		return tx.MergeDramaEpisodeAssets(project.ID, []string{req.EpisodeID}, []string{cast.ID})
 	})
 	if err != nil {
 		return model.DramaCast{}, err

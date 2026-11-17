@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
+import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaJob, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
@@ -38,12 +38,15 @@ environmentManager.setIsServer(() => false);
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => void };
-type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number } };
+type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number; episodeId?: string } };
 type DeleteCall = { projectId: string; castId: string; expectedRevision: number };
 type BatchCall = { projectId: string; input: DramaStudioBatchRequest };
+type ExtractCall = { projectId: string; input: { expectedRevision: number; kind: DramaCastKind; allChapters?: boolean; episodeIds?: string[] } };
 
 const notices: Array<{ kind: string; text: string }> = [];
-const extractCalls: unknown[] = [];
+const extractCalls: ExtractCall[] = [];
+const pendingExtractions: Deferred<{ job: DramaJob; revision: number }>[] = [];
+const projectJobs = new Map<string, DramaJob[]>();
 const episodeReads: string[] = [];
 const episodeDetails = new Map<string, DramaEpisodeDetail>();
 let deferEpisodeReads = false;
@@ -241,7 +244,9 @@ mock.module("@/pages/projects/studio/cast-project-import", () => ({
         );
     },
 }));
-mock.module("@/pages/projects/studio/use-studio", () => ({ dramaKeys: { summary: (id: string) => ["drama", id], cast: (id: string) => ["drama", id, "cast"], chapters: (id: string) => ["drama", id, "chapters"] } }));
+mock.module("@/pages/projects/studio/use-studio", () => ({
+    dramaKeys: { summary: (id: string) => ["drama", id], cast: (id: string) => ["drama", id, "cast"], chapters: (id: string) => ["drama", id, "chapters"], jobs: (id: string) => ["drama", id, "jobs"] },
+}));
 mock.module("@/pages/projects/guide-panels", () => ({
     GuideAssets: ({
         cast,
@@ -311,7 +316,23 @@ mock.module("@/pages/projects/guide-panels", () => ({
         ),
 }));
 mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
-    CastEditorDialog: ({ summary, episodeId, cast, castId, onClose, onDirtyChange }: { summary: DramaSummary; episodeId?: string; cast: DramaCast[]; castId?: string; onClose: () => void; onDirtyChange?: (dirty: boolean, busy: boolean) => void }) => {
+    CastEditorDialog: ({
+        summary,
+        episodeId,
+        cast,
+        castId,
+        onClose,
+        onChanged,
+        onDirtyChange,
+    }: {
+        summary: DramaSummary;
+        episodeId?: string;
+        cast: DramaCast[];
+        castId?: string;
+        onClose: () => void;
+        onChanged: () => void;
+        onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+    }) => {
         if (!castId) return null;
         const current = cast.find((item) => item.id === castId && item.projectId === summary.project.id);
         return createElement(
@@ -320,7 +341,17 @@ mock.module("@/pages/projects/studio/cast-editor-dialog", () => ({
             current ? createElement("h2", null, `${current.name} · 资产设定`) : createElement("p", null, "此资产已不存在"),
             createElement("button", { type: "button", onClick: () => onDirtyChange?.(true, false) }, "修改资产设定"),
             createElement("button", { type: "button", onClick: () => onDirtyChange?.(false, true) }, "开始保存资产设定"),
-            createElement("button", { type: "button", onClick: () => onDirtyChange?.(false, false) }, "完成保存资产设定"),
+            createElement(
+                "button",
+                {
+                    type: "button",
+                    onClick: () => {
+                        onDirtyChange?.(false, false);
+                        onChanged();
+                    },
+                },
+                "完成保存资产设定",
+            ),
             createElement(
                 "button",
                 {
@@ -375,15 +406,24 @@ mock.module("@/services/api/drama", () => ({
                     : [{ id: "chapter-other", title: "其他项目章节", position: 1, wordCount: 8, reserved: false }],
         };
     },
-    extractDramaCast: async (projectId: string, input: unknown) => {
+    listDramaJobs: async (projectId: string) => ({ jobs: structuredClone(projectJobs.get(projectId) || []) }),
+    extractDramaCast: async (projectId: string, input: ExtractCall["input"]) => {
         extractCalls.push({ projectId, input: structuredClone(input) });
-        throw new Error("主体管理不应重新提取资产");
+        const pending = deferred<{ job: DramaJob; revision: number }>();
+        pendingExtractions.push(pending);
+        return pending.promise;
     },
     createDramaCast: async (projectId: string, input: CreateCall["input"]) => {
         createCalls.push({ projectId, input: structuredClone(input) });
         const pending = deferred<{ cast: DramaCast }>();
         pendingCreates.push(pending);
-        return pending.promise;
+        const result = await pending.promise;
+        if (input.episodeId) {
+            const detail = episodeDetails.get(input.episodeId) || episodeWithExtractedAssets(input.episodeId, []);
+            const assetIds = JSON.parse(detail.episode.assetIdsJson || "[]") as string[];
+            episodeDetails.set(input.episodeId, { ...detail, episode: { ...detail.episode, assetIdsJson: JSON.stringify([...new Set([...assetIds, result.cast.id])]) } });
+        }
+        return result;
     },
     deleteDramaCast: async (projectId: string, castId: string, expectedRevision: number) => {
         deleteCalls.push({ projectId, castId, expectedRevision });
@@ -578,9 +618,23 @@ function projectCast() {
     ];
 }
 
+function episodeWithAssets(episodeId: string, references = { characters: ["hero"], looks: ["hero-look"], props: ["key"], scene: "room" }): DramaEpisodeDetail {
+    return {
+        episode: { id: episodeId, assetIdsJson: "[]" },
+        shots: [{ castIdsJson: JSON.stringify(references.characters), lookCastIdsJson: JSON.stringify(references.looks), propIdsJson: JSON.stringify(references.props), sceneCastId: references.scene }],
+        segments: [],
+    } as unknown as DramaEpisodeDetail;
+}
+
+function episodeWithExtractedAssets(episodeId: string, assetIds: string[]): DramaEpisodeDetail {
+    return { episode: { id: episodeId, assetIdsJson: JSON.stringify(assetIds) }, shots: [], segments: [] } as unknown as DramaEpisodeDetail;
+}
+
 function resetFixture() {
     notices.length = 0;
     extractCalls.length = 0;
+    pendingExtractions.length = 0;
+    projectJobs.clear();
     createCalls.length = 0;
     deleteCalls.length = 0;
     pendingDeletes.length = 0;
@@ -598,6 +652,8 @@ function resetFixture() {
     chapterReads.length = 0;
     episodeReads.length = 0;
     episodeDetails.clear();
+    for (const episodeId of ["episode-1", "episode-2", "episode-3"]) episodeDetails.set(episodeId, episodeWithAssets(episodeId));
+    episodeDetails.set("episode-other", episodeWithAssets("episode-other", { characters: ["other-hero"], looks: [], props: ["other-prop"], scene: "other-room" }));
     deferEpisodeReads = false;
     pendingEpisodeReads.length = 0;
     pendingCreates.length = 0;
@@ -608,7 +664,7 @@ async function settle() {
     for (let index = 0; index < 8; index += 1) await Bun.sleep(10);
 }
 
-async function mount(initial: DramaSummary, cast = projectCast(), options: { loading?: boolean; busy?: boolean; variant?: "library" | "episode"; episodeId?: string; controlled?: boolean; advanceRevisionOnChange?: boolean; pickable?: boolean } = {}) {
+async function mount(initial: DramaSummary, cast = projectCast(), options: { loading?: boolean; busy?: boolean; variant?: "library" | "episode"; episodeId?: string; controlled?: boolean; advanceRevisionOnChange?: boolean } = {}) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
     const container = document.createElement("div");
     document.body.append(container);
@@ -618,7 +674,6 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
     const generatedEpisodes: Array<string | undefined> = [];
     const dirtyStates: Array<[boolean, boolean]> = [];
     const episodeChanges: string[] = [];
-    const pickedChapters: string[] = [];
     let current = { summary: initial, cast, loading: options.loading ?? false, busy: options.busy ?? false, variant: options.variant ?? "episode", episodeId: options.episodeId };
     const render = () => {
         configurationSummaries.set(current.summary.project.id, current.summary);
@@ -640,7 +695,6 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
                 },
                 onDirtyChange: (dirty, busy) => dirtyStates.push([dirty, busy]),
                 onEpisodeChange: options.controlled ? (id) => episodeChanges.push(id) : undefined,
-                onPickChapters: options.pickable ? () => pickedChapters.push(current.summary.project.id) : undefined,
             }),
         );
     };
@@ -662,7 +716,6 @@ async function mount(initial: DramaSummary, cast = projectCast(), options: { loa
         generatedEpisodes,
         dirtyStates,
         episodeChanges,
-        pickedChapters,
         client,
         update,
         dispose: async () => {
@@ -728,12 +781,62 @@ test("三列同时展示类型和角色造型，不展示其他作品资产", as
         expect(extractCalls).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
         expect(chapterReads).toHaveLength(0);
-        expect(view.container.textContent).toContain("本集尚未编排分镜，展示作品共享主体。");
+        expect(view.container.textContent).not.toContain("展示作品共享主体");
+        expect(view.container.querySelector(".drama-workflow-assets-shared")).toBeNull();
         expect(view.container.querySelector('[aria-label="提取范围"]')).toBeNull();
         expect(view.container.querySelector('[aria-label="按集查看资产"]')).toBeNull();
         expect(view.container.querySelector('[aria-label^="快速新增"]')).toBeNull();
         expect(view.container.textContent).not.toContain("补充提取资产");
         expect(view.container.textContent).not.toContain("批量选择");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("本集提取资产无需分镜即可展示且重载保留，正文关联与段引用均生效且不混入其他集", async () => {
+    resetFixture();
+    episodeDetails.set("episode-1", { episode: { id: "episode-1" }, shots: [], segments: [] } as unknown as DramaEpisodeDetail);
+    const unrelated = [castOf("project-a", "unused-hero", "character", "未关联角色"), castOf("project-a", "unused-room", "scene", "未关联场景"), castOf("project-a", "unused-key", "prop", "未关联道具")];
+    let view = await mount(summaryOf("project-a", 4), [...projectCast(), ...unrelated]);
+    try {
+        for (const label of ["角色", "场景", "道具"]) {
+            const column = view.container.querySelector(`[aria-label="${label}资产"]`)!;
+            expect(column.textContent).toContain(`本集暂无关联${label}`);
+            expect(column.textContent).toContain(`可提取本集全部${label}，或新增资产`);
+            expect(column.textContent).not.toContain("编排分镜后会显示本集关联资产");
+            expect(column.querySelector('[aria-label="资产卡片"]')).toBeNull();
+        }
+        expect(view.container.textContent).not.toContain("展示作品共享主体");
+        expect(view.container.querySelector(".drama-workflow-assets-shared")).toBeNull();
+        episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", ["hero-look", "room", "key"]));
+        await view.update({ summary: summaryOf("project-a", 5) });
+        for (const selector of ['[aria-label="character:林夏"]', '[aria-label="scene:旧宅"]', '[aria-label="prop:铜钥匙"]']) expect(view.container.querySelector(selector)).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="选择林夏 · 雨夜"]')).not.toBeNull();
+        await view.dispose();
+        view = await mount(summaryOf("project-a", 5), [...projectCast(), ...unrelated]);
+        for (const selector of ['[aria-label="character:林夏"]', '[aria-label="scene:旧宅"]', '[aria-label="prop:铜钥匙"]']) expect(view.container.querySelector(selector)).not.toBeNull();
+        episodeDetails.set("episode-2", { ...episodeWithExtractedAssets("episode-2", []), sourceAssetIds: unrelated.map((item) => item.id) });
+        await click(button(view.container, "下一集主体资产"));
+        for (const item of unrelated) expect(view.container.querySelector(`[aria-label="${item.kind}:${item.name}"]`)).not.toBeNull();
+        for (const selector of ['[aria-label="character:林夏"]', '[aria-label="scene:旧宅"]', '[aria-label="prop:铜钥匙"]']) expect(view.container.querySelector(selector)).toBeNull();
+        await view.update({ episodeId: "", summary: { ...summaryOf("project-a", 5), episodes: [] } });
+        expect(view.container.querySelector('[aria-label="资产卡片"]')).toBeNull();
+        for (const item of [...projectCast(), ...unrelated]) expect(view.container.querySelector(`[aria-label="${item.kind}:${item.name}"]`)).toBeNull();
+        episodeDetails.set("episode-1", { episode: { id: "episode-1", assetIdsJson: '["room"]' }, shots: [], segments: [{ request: { references: [{ castId: "key" }], audioReferences: [{ castId: "hero-look" }] } }] } as unknown as DramaEpisodeDetail);
+        await view.update({ episodeId: "episode-1", summary: summaryOf("project-a", 6) });
+        for (const selector of ['[aria-label="character:林夏"]', '[aria-label="scene:旧宅"]', '[aria-label="prop:铜钥匙"]']) expect(view.container.querySelector(selector)).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="选择林夏 · 雨夜"]')).not.toBeNull();
+        for (const item of unrelated) expect(view.container.querySelector(`[aria-label="${item.kind}:${item.name}"]`)).toBeNull();
+        await view.update({ variant: "library" });
+        for (const [label, kind] of [
+            ["角色", "character"],
+            ["场景", "scene"],
+            ["道具", "prop"],
+        ] as const) {
+            if (kind !== "character") await click(button(view.container.querySelector<HTMLElement>('[aria-label="主体资产分类"]')!, label));
+            expect(view.container.querySelector(`[aria-label="${kind}:${unrelated.find((item) => item.kind === kind)!.name}"]`)).not.toBeNull();
+        }
+        expect(view.container.textContent).not.toContain("其他作品角色");
     } finally {
         await view.dispose();
     }
@@ -973,7 +1076,9 @@ test("主体资产库批量选择只显示当前分类，选择当前范围后�
 
 test("单集三栏分别全选与提交真实类型范围，角色包含造型且不串入其他类型或作品", async () => {
     resetFixture();
-    const view = await mount(summaryOf("project-a", 4));
+    const extraCast = [castOf("project-a", "guest", "character", "第二集角色"), castOf("project-a", "yard", "scene", "第二集庭院"), castOf("project-a", "lantern", "prop", "第二集灯笼")];
+    episodeDetails.set("episode-2", episodeWithAssets("episode-2", { characters: ["guest"], looks: [], props: ["lantern"], scene: "yard" }));
+    const view = await mount(summaryOf("project-a", 4), [...projectCast(), ...extraCast]);
     try {
         const columns = [
             { label: "角色", ids: ["hero", "hero-look"] },
@@ -998,6 +1103,17 @@ test("单集三栏分别全选与提交真实类型范围，角色包含造型�
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.checked).toBe(false);
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部场景"]')?.checked).toBe(false);
         expect(button(view.container, "生成角色图片").disabled).toBe(true);
+        for (const [label, name, id] of [
+            ["角色", "第二集角色", "guest"],
+            ["场景", "第二集庭院", "yard"],
+            ["道具", "第二集灯笼", "lantern"],
+        ] as const) {
+            expect(view.container.textContent).toContain(name);
+            await click(field(view.container, `选择本集全部${label}`));
+            await click(button(view.container, `生成${label}图片`));
+            expect(batchExecutions.at(-1)?.input).toMatchObject({ targetIds: [id], episodeId: "episode-2" });
+        }
+        for (const selector of ['[aria-label="character:林夏"]', '[aria-label="scene:旧宅"]', '[aria-label="prop:铜钥匙"]']) expect(view.container.querySelector(selector)).toBeNull();
     } finally {
         await view.dispose();
     }
@@ -1056,29 +1172,35 @@ test("主体管理默认第一集，左右和下拉切换同一集范围且不�
     }
 });
 
-test("主体管理区分原文章节与制作集，继续选章只通知父层且草稿或忙碌时禁用", async () => {
+test("主体管理直接选择完整九集目录，待制作集无需继续选章，忙碌或编辑时保持选集保护", async () => {
     resetFixture();
     const data = summaryOf("project-a", 4);
-    data.production.chapterCount = 1;
-    data.production.reservedChapterCount = 8;
-    data.episodes = data.episodes.slice(0, 1);
-    const view = await mount(data, projectCast(), { pickable: true });
+    data.production.chapterCount = 9;
+    data.production.reservedChapterCount = 0;
+    data.episodes = Array.from({ length: 9 }, (_, index) => ({ ...data.episodes[0]!, id: `episode-${index + 1}`, number: index + 1, title: `第${index + 1}集`, stage: index ? "draft" : "queued" }));
+    episodeDetails.set("episode-9", episodeWithAssets("episode-9"));
+    const view = await mount(data);
     try {
-        expect(view.container.textContent).toContain("原文 9 章 · 制作 1 集 · 待制作 8 章");
-        expect(view.container.querySelectorAll('[aria-label="主体管理剧集"] option')).toHaveLength(1);
-        await click(button(view.container, "继续选章"));
-        expect(view.pickedChapters).toEqual(["project-a"]);
+        const select = view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')!;
+        expect(select.querySelectorAll("option")).toHaveLength(9);
+        expect(view.container.textContent).not.toContain("继续选章");
+        expect(view.container.textContent).not.toContain("原文 9 章 · 制作 1 集");
+        await act(async () => {
+            select.value = "episode-9";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(select.value).toBe("episode-9");
+        expect(episodeReads.at(-1)).toBe("project-a:episode-9");
         expect(chapterReads).toHaveLength(0);
         expect(createCalls).toHaveLength(0);
         expect(extractCalls).toHaveLength(0);
         await view.update({ busy: true });
-        expect(button(view.container, "继续选章").disabled).toBe(true);
+        expect(select.disabled).toBe(true);
         await view.update({ busy: false });
         await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
         await edit(field(view.container, "资产名称"), "尚未保存的角色");
-        expect(button(view.container, "继续选章").disabled).toBe(true);
-        await view.update({ summary: { ...data, production: { ...data.production, reservedChapterCount: 0 } } });
-        expect(view.container.textContent).not.toContain("继续选章");
+        expect(select.disabled).toBe(true);
     } finally {
         await view.dispose();
     }
@@ -1158,7 +1280,7 @@ test("批次直接提交后刷新同集引用，保留原列并禁止旧范围�
         await click(button(view.container, "重试"));
         expect(pendingEpisodeReads).toHaveLength(2);
         await act(async () => {
-            pendingEpisodeReads[1]!.resolve({ episode: { id: "episode-1" }, shots: [], segments: [] } as unknown as DramaEpisodeDetail);
+            pendingEpisodeReads[1]!.resolve(episodeWithAssets("episode-1", { characters: ["hero"], looks: [], props: [], scene: "" }));
             await settle();
         });
         expect(view.container.querySelector('[aria-label="角色资产"]')).toBe(column);
@@ -1166,6 +1288,7 @@ test("批次直接提交后刷新同集引用，保留原列并禁止旧范围�
         expect(view.container.querySelector<HTMLInputElement>('[aria-label="选择本集全部角色"]')?.disabled).toBe(false);
         await waitForQuote();
         expect(button(view.container, "生成角色图片").disabled).toBe(false);
+        expect(batchChecks.at(-1)?.input.targetIds).toEqual(["hero"]);
         expect(batchChecks.length).toBeGreaterThanOrEqual(1);
         expect(batchExecutions).toHaveLength(1);
         expect(view.container.querySelector('[role="dialog"]')).toBeNull();
@@ -1231,7 +1354,7 @@ test("快速新增只提交用户字段，成功后打开真实编辑器边界",
         await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
         await edit(field(view.container, "资产名称"), "新道具");
         await click(button(view.container, "保存资产"));
-        expect(createCalls).toEqual([{ projectId: "project-a", input: { kind: "character", name: "新道具", expectedRevision: 4 } }]);
+        expect(createCalls).toEqual([{ projectId: "project-a", input: { kind: "character", name: "新道具", expectedRevision: 4, episodeId: "episode-1" } }]);
         expect(createCalls[0]?.input).not.toHaveProperty("appearance");
         expect(createCalls[0]?.input).not.toHaveProperty("description");
         expect(extractCalls).toHaveLength(0);
@@ -1252,16 +1375,57 @@ test("快速新增只提交用户字段，成功后打开真实编辑器边界",
     }
 });
 
-test("本体已引用的未引用造型仍可从角色卡找到并单独生成", async () => {
+test("只显示本集引用的角色造型，引用造型时同时显示其本体", async () => {
     resetFixture();
     episodeDetails.set("episode-1", { episode: { id: "episode-1" }, shots: [{ castIdsJson: '["hero"]', lookCastIdsJson: "[]", propIdsJson: "[]" }], segments: [] } as unknown as DramaEpisodeDetail);
     const view = await mount(summaryOf("project-a", 4));
     try {
+        expect(view.container.querySelector('[aria-label="character:林夏"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="选择林夏 · 雨夜"]')).toBeNull();
+        expect(view.container.textContent).not.toContain("林夏造型 雨夜");
+        episodeDetails.set("episode-1", episodeWithAssets("episode-1", { characters: [], looks: ["hero-look"], props: [], scene: "" }));
+        await view.update({ summary: summaryOf("project-a", 5) });
         expect(view.container.querySelector('[aria-label="character:林夏"]')?.textContent).toContain("林夏造型 雨夜");
         await click(field(view.container, "选择林夏 · 雨夜"));
         expect(field(view.container, "选择本集全部角色")).toHaveProperty("checked", false);
         await click(button(view.container, "生成角色图片"));
         expect(batchChecks.at(-1)?.input.targetIds).toEqual(["hero-look"]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("本集新增造型保存回调后留在卡片与批量范围，重载保留且同一本体的其他集不混入", async () => {
+    resetFixture();
+    episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", ["hero"]));
+    episodeDetails.set("episode-2", episodeWithExtractedAssets("episode-2", ["hero"]));
+    const created = castOf("project-a", "new-hero-look", "character", "林夏", { parentId: "hero", lookName: "晚宴" });
+    const savedCast = [...projectCast(), created];
+    let view = await mount(summaryOf("project-a", 4), projectCast(), { advanceRevisionOnChange: true });
+    try {
+        await click(button(view.container, "编辑林夏"));
+        expect(view.container.querySelector('[aria-label="资产设定编辑器"]')?.getAttribute("data-episode")).toBe("episode-1");
+        episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", ["hero", created.id]));
+        await view.update({ cast: savedCast });
+        expect(view.container.querySelector('[aria-label="选择林夏 · 晚宴"]')).toBeNull();
+        await click(button(view.container, "完成保存资产设定"));
+        await click(button(view.container, "关闭资产设定"));
+        expect(view.changed).toEqual(["project-a"]);
+        expect(view.container.querySelector('[aria-label="character:林夏"]')?.textContent).toContain("林夏造型 晚宴");
+        expect(view.container.querySelector('[aria-label="选择林夏 · 雨夜"]')).toBeNull();
+        await click(field(view.container, "选择本集全部角色"));
+        await click(button(view.container, "生成角色图片"));
+        expect(batchExecutions.at(-1)?.input).toMatchObject({ targetIds: ["hero", created.id], episodeId: "episode-1" });
+
+        await view.dispose();
+        view = await mount(summaryOf("project-a", 5), savedCast);
+        expect(view.container.querySelector('[aria-label="选择林夏 · 晚宴"]')).not.toBeNull();
+        await click(button(view.container, "下一集主体资产"));
+        expect(view.container.querySelector('[aria-label="character:林夏"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="选择林夏 · 晚宴"]')).toBeNull();
+        expect(view.container.querySelector('[aria-label="选择林夏 · 雨夜"]')).toBeNull();
+        await click(button(view.container, "上一集主体资产"));
+        expect(view.container.querySelector('[aria-label="选择林夏 · 晚宴"]')).not.toBeNull();
     } finally {
         await view.dispose();
     }
@@ -1291,52 +1455,45 @@ for (const [kind, label] of [
     ["scene", "场景"],
     ["prop", "道具"],
 ] as const) {
-    test(`已编排集新增${label}保留在共享区，可编辑选择生成且重载后仍可找到`, async () => {
+    test(`无分镜时本集新增${label}直接关联并展示，重载保留且不混入其他集`, async () => {
         resetFixture();
-        const detail = { episode: { id: "episode-1" }, shots: [{ castIdsJson: '["hero"]', lookCastIdsJson: "[]", propIdsJson: '["key"]', sceneCastId: "room" }], segments: [] } as unknown as DramaEpisodeDetail;
-        episodeDetails.set("episode-1", detail);
+        episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", []));
+        episodeDetails.set("episode-2", episodeWithExtractedAssets("episode-2", []));
         const created = castOf("project-a", `new-${kind}`, kind, `新${label}`);
         let view = await mount(summaryOf("project-a", 4));
         try {
             await click(view.container.querySelector<HTMLButtonElement>(`[aria-label="新增${label}"]`)!);
             await edit(field(view.container, "资产名称"), created.name);
             await click(button(view.container, "保存资产"));
+            expect(createCalls.at(-1)?.input).toEqual({ kind, name: created.name, expectedRevision: 4, episodeId: "episode-1" });
             await act(async () => {
                 pendingCreates[0]!.resolve({ cast: created });
                 await settle();
             });
             await view.update({ cast: [...projectCast(), created], summary: summaryOf("project-a", 5) });
             await click(button(view.container, "关闭资产设定"));
-            const column = view.container.querySelector(`[aria-label="${label}资产"]`)!;
-            const shared = column.querySelector<HTMLDetailsElement>(".drama-workflow-assets-shared")!;
-            expect(shared.open).toBe(true);
-            expect(shared.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
-            expect(column.querySelector(`:scope > .drama-workflow-assets-column-content > [aria-label="资产卡片"] [aria-label="${kind}:${created.name}"]`)).toBeNull();
-            await click(button(shared, `编辑${created.name}`));
-            expect(view.container.querySelector('[aria-label="资产设定编辑器"]')?.textContent).toContain(created.name);
-            await click(button(view.container, "关闭资产设定"));
-            await click(button(shared, `生成${created.name}`));
-            expect(view.generated).toEqual([`project-a:${created.id}`]);
-            await click(field(shared, `选择${created.name}`));
-            await click(field(column, `选择本集全部${label}`));
-            await click(field(column, `选择本集全部${label}`));
-            expect(field(shared, `选择${created.name}`)).toHaveProperty("checked", true);
-            await click(button(column, `生成${label}图片`));
-            expect(batchChecks.at(-1)?.input.targetIds).toEqual([created.id]);
-            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
-            expect(batchExecutions.at(-1)?.input.targetIds).toEqual([created.id]);
+            expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
+            expect(view.container.querySelector(".drama-workflow-assets-shared")).toBeNull();
+            expect(view.generated).toEqual([]);
+            expect(batchExecutions).toEqual([]);
 
             await view.dispose();
             view = await mount(summaryOf("project-a", 5), [...projectCast(), created]);
-            const reloadedColumn = view.container.querySelector(`[aria-label="${label}资产"]`)!;
-            const reloaded = reloadedColumn.querySelector<HTMLDetailsElement>(".drama-workflow-assets-shared")!;
-            expect(reloaded.open).toBe(false);
-            expect(reloaded.querySelector("summary")?.textContent).toContain("本集未引用（1）");
-            await click(reloaded.querySelector("summary")!);
-            expect(reloaded.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
-            await view.update({ cast: projectCast() });
-            expect(reloadedColumn.querySelector(".drama-workflow-assets-shared")).toBeNull();
+            expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
+            await click(button(view.container, "下一集主体资产"));
             expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).toBeNull();
+            await click(button(view.container, "上一集主体资产"));
+            expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
+            await view.update({ variant: "library" });
+            if (kind !== "character") await click(button(view.container.querySelector<HTMLElement>('[aria-label="主体资产分类"]')!, label));
+            expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
+            await view.update({ variant: "episode" });
+            expect(view.container.querySelector(`[aria-label="${kind}:${created.name}"]`)).not.toBeNull();
+            await click(button(view.container, `生成${created.name}`));
+            expect(view.generated).toEqual([`project-a:${created.id}`]);
+            await click(field(view.container, `选择${created.name}`));
+            await click(button(view.container, `生成${label}图片`));
+            expect(batchExecutions.at(-1)?.input.targetIds).toEqual([created.id]);
         } finally {
             await view.dispose();
         }
@@ -1521,7 +1678,7 @@ test("新增名称参与离开保护，取消后恢复干净状态", async () =>
     resetFixture();
     const view = await mount(summaryOf("project-a", 4), []);
     try {
-        expect(view.container.textContent).toContain("暂无角色资产");
+        expect(view.container.textContent).toContain("本集暂无关联角色");
         expect(view.container.textContent).not.toContain("生成后会停在这里");
         await click(view.container.querySelector<HTMLButtonElement>('[aria-label="新增角色"]')!);
         await edit(field(view.container, "资产名称"), "待补设定的角色");
@@ -1724,3 +1881,307 @@ test("跨作品、账号、集或卸载后隔离迟到的删除成功及失败�
         }
     }
 }, 20_000);
+
+function extractionSummary(projectId = "project-a", revision = 4): DramaSummary {
+    const summary = summaryOf(projectId, revision);
+    return { ...summary, production: { ...summary.production, stage: "produce" } };
+}
+
+function extractionJob(kind: DramaCastKind, status: DramaJob["status"] = "queued"): DramaJob {
+    return {
+        id: `extract-${kind}`,
+        kind: "bible",
+        status,
+        assetKind: kind,
+        label: `提取${kind}`,
+        sourceChapterIds: ["chapter-a"],
+        sourceEpisodeIds: ["episode-1"],
+        costMicrocredits: 0,
+        attempt: 0,
+        createdAt: "2026-11-17T03:00:00Z",
+        updatedAt: "2026-11-17T03:00:00Z",
+    };
+}
+
+test("单集三类资产直接按当前集提取，空列表可提交且在途不重复、不清空已有资产", async () => {
+    for (const [kind, label] of [
+        ["character", "角色"],
+        ["scene", "场景"],
+        ["prop", "道具"],
+    ] as const) {
+        resetFixture();
+        const originalCast = kind === "character" ? projectCast() : projectCast().filter((item) => item.kind !== kind);
+        const view = await mount(extractionSummary(), originalCast);
+        try {
+            const targetEpisodeId = kind === "prop" ? "episode-2" : "episode-1";
+            if (targetEpisodeId === "episode-2") await click(button(view.container, "下一集主体资产"));
+            const trigger = button(view.container, `提取全部${label}`);
+            expect(trigger.disabled).toBe(false);
+            await act(async () => {
+                trigger.click();
+                trigger.click();
+                await settle();
+            });
+            expect(extractCalls).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, kind, episodeIds: [targetEpisodeId] } }]);
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+            expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+            for (const other of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${other}`).disabled).toBe(other === label);
+            expect(view.container.querySelector('[aria-label="character:林夏"]')).not.toBeNull();
+            const job = { ...extractionJob(kind), sourceEpisodeIds: [targetEpisodeId] };
+            projectJobs.set("project-a", [job]);
+            await act(async () => {
+                pendingExtractions[0].resolve({ job, revision: 4 });
+                await settle();
+            });
+            expect(view.changed).toEqual(["project-a"]);
+            expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+            for (const other of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${other}`).disabled).toBe(other === label);
+            expect(extractCalls).toHaveLength(1);
+            expect(createCalls).toHaveLength(0);
+            expect(view.generated).toEqual([]);
+            expect(chapterReads).toHaveLength(0);
+        } finally {
+            await view.dispose();
+        }
+    }
+}, 10_000);
+
+test("作品资产库只展示当前分类的提取入口，提交对应种类而非当前集", async () => {
+    resetFixture();
+    const view = await mount(extractionSummary(), projectCast(), { variant: "library" });
+    const kinds = [
+        ["character", "角色"],
+        ["scene", "场景"],
+        ["prop", "道具"],
+    ] as const;
+    try {
+        const tabs = view.container.querySelector<HTMLElement>('[aria-label="主体资产分类"]')!;
+        for (const [index, [, label]] of kinds.entries()) {
+            if (index) {
+                expect(button(tabs, label).disabled).toBe(false);
+                await click(button(tabs, label));
+            }
+            expect(view.container.querySelectorAll('[aria-label^="提取全部"]')).toHaveLength(1);
+            expect(button(view.container, `提取全部${label}`).disabled).toBe(false);
+            await click(button(view.container, `提取全部${label}`));
+            expect(extractCalls).toEqual(kinds.slice(0, index + 1).map(([kind]) => ({ projectId: "project-a", input: { expectedRevision: 4, kind, allChapters: true } })));
+            expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+            expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+        }
+        await click(button(tabs, "角色"));
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        expect(button(view.container, "提取全部角色").textContent).toContain("正在提取角色");
+        expect(pendingExtractions).toHaveLength(3);
+    } finally {
+        await view.dispose();
+    }
+}, 10_000);
+
+test("重进页面只禁用正在提取的类型，任务完成后恢复，其他文字任务仍阻止全部提取", async () => {
+    resetFixture();
+    projectJobs.set("project-a", [extractionJob("scene", "running")]);
+    const view = await mount(extractionSummary());
+    try {
+        expect(button(view.container, "提取全部场景").textContent).toContain("正在提取场景");
+        for (const label of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${label}`).disabled).toBe(label === "场景");
+        expect(extractCalls).toHaveLength(0);
+        projectJobs.set("project-a", [extractionJob("scene", "succeeded")]);
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama", "project-a", "jobs"] });
+            await settle();
+        });
+        expect(button(view.container, "提取全部场景").textContent).not.toContain("正在提取");
+        expect(button(view.container, "提取全部场景").disabled).toBe(false);
+        projectJobs.set("project-a", [{ ...extractionJob("prop"), id: "writing-script", kind: "script", assetKind: undefined }]);
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama", "project-a", "jobs"] });
+            await settle();
+        });
+        for (const label of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${label}`).disabled).toBe(true);
+        await click(button(view.container, "提取全部角色"));
+        expect(extractCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("单类提取失败不影响其他类型运行，保留资产并能用最新作品版本重试", async () => {
+    resetFixture();
+    projectJobs.set("project-a", [extractionJob("character", "running")]);
+    const view = await mount(extractionSummary());
+    try {
+        await click(button(view.container, "提取全部道具"));
+        await act(async () => {
+            pendingExtractions[0].reject(new Error("道具提取暂时不可用"));
+            await settle();
+        });
+        expect(notices.at(-1)).toEqual({ kind: "error", text: "道具提取暂时不可用" });
+        expect(view.container.querySelector('[aria-label="prop:铜钥匙"]')).not.toBeNull();
+        expect(view.changed).toEqual(["project-a"]);
+        expect(notices.some((notice) => notice.kind === "success")).toBe(false);
+        expect(button(view.container, "提取全部道具").disabled).toBe(false);
+        expect(button(view.container, "提取全部场景").disabled).toBe(false);
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        expect(button(view.container, "提取全部角色").textContent).toContain("正在提取角色");
+        await view.update({ summary: extractionSummary("project-a", 6) });
+        await click(button(view.container, "提取全部道具"));
+        expect(extractCalls.at(-1)).toEqual({ projectId: "project-a", input: { expectedRevision: 6, kind: "prop", episodeIds: ["episode-1"] } });
+        expect(view.generated).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("三类资产可同一版本同时提取，每类防重且并发回执不丢任务，刷新恢复各自状态", async () => {
+    resetFixture();
+    episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", []));
+    const view = await mount(extractionSummary());
+    const kinds = [
+        ["character", "角色"],
+        ["scene", "场景"],
+        ["prop", "道具"],
+    ] as const;
+    try {
+        await act(async () => {
+            for (const [, label] of kinds) {
+                const trigger = button(view.container, `提取全部${label}`);
+                trigger.click();
+                trigger.click();
+            }
+            await settle();
+        });
+        expect(extractCalls).toEqual(kinds.map(([kind]) => ({ projectId: "project-a", input: { expectedRevision: 4, kind, episodeIds: ["episode-1"] } })));
+        for (const [, label] of kinds) {
+            expect(button(view.container, `提取全部${label}`).disabled).toBe(true);
+            expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+        }
+        const jobs = kinds.map(([kind]) => extractionJob(kind));
+        projectJobs.set("project-a", jobs);
+        await act(async () => {
+            pendingExtractions[1].resolve({ job: jobs[1], revision: 4 });
+            await settle();
+        });
+        expect(view.changed).toEqual(["project-a"]);
+        for (const [, label] of kinds) expect(button(view.container, `提取全部${label}`).disabled).toBe(true);
+        await act(async () => {
+            pendingExtractions[2].resolve({ job: jobs[2], revision: 4 });
+            pendingExtractions[0].resolve({ job: jobs[0], revision: 4 });
+            await settle();
+        });
+        const queued = view.client.getQueryData<{ jobs: DramaJob[] }>(["drama", "project-a", "jobs"]);
+        expect(queued?.jobs.map((job) => job.id).sort()).toEqual(jobs.map((job) => job.id).sort());
+        expect(view.changed).toEqual(["project-a", "project-a", "project-a"]);
+        expect(extractCalls).toHaveLength(3);
+        expect(view.container.querySelector('[aria-label="character:林夏"]')).toBeNull();
+        episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", ["hero"]));
+        projectJobs.set("project-a", [extractionJob("character", "succeeded"), extractionJob("scene", "running"), extractionJob("prop", "failed")]);
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama", "project-a", "jobs"] });
+            await settle();
+        });
+        expect(button(view.container, "提取全部角色").disabled).toBe(false);
+        expect(button(view.container, "提取全部角色").textContent).not.toContain("正在提取");
+        expect(button(view.container, "提取全部场景").disabled).toBe(true);
+        expect(button(view.container, "提取全部场景").textContent).toContain("正在提取场景");
+        expect(button(view.container, "提取全部道具").disabled).toBe(false);
+        expect(button(view.container, "提取全部道具").textContent).not.toContain("正在提取");
+        expect(view.container.querySelector('[aria-label="character:林夏"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="scene:旧宅"]')).toBeNull();
+        expect(view.container.querySelector('[aria-label="prop:铜钥匙"]')).toBeNull();
+        const changedBeforeFinal = view.changed.length;
+        episodeDetails.set("episode-1", episodeWithExtractedAssets("episode-1", ["hero", "room"]));
+        projectJobs.set("project-a", [extractionJob("character", "succeeded"), extractionJob("scene", "succeeded"), extractionJob("prop", "failed")]);
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama", "project-a", "jobs"] });
+            await settle();
+        });
+        expect(view.changed.length).toBeGreaterThan(changedBeforeFinal);
+        expect(view.container.querySelector('[aria-label="scene:旧宅"]')).not.toBeNull();
+        expect(view.container.querySelector('[aria-label="prop:铜钥匙"]')).toBeNull();
+        for (const [, label] of kinds) expect(button(view.container, `提取全部${label}`).disabled).toBe(false);
+        await click(button(view.container, "提取全部角色"));
+        const fastJob = { ...extractionJob("character"), id: "extract-character-fast" };
+        projectJobs.set("project-a", [...(projectJobs.get("project-a") || []), { ...fastJob, status: "succeeded" }]);
+        const changedBeforeFast = view.changed.length;
+        let completedBeforeRender = false;
+        const unsubscribe = view.client.getQueryCache().subscribe((event) => {
+            if (event.type !== "updated" || event.query.queryKey.join(":") !== "drama:project-a:jobs" || completedBeforeRender) return;
+            const data = event.query.state.data as { jobs: DramaJob[] } | undefined;
+            if (!data?.jobs.some((job) => job.id === fastJob.id && job.status === "queued")) return;
+            completedBeforeRender = true;
+            view.client.setQueryData(["drama", "project-a", "jobs"], { jobs: data.jobs.map((job) => (job.id === fastJob.id ? { ...job, status: "succeeded" } : job)) });
+        });
+        try {
+            await act(async () => {
+                pendingExtractions[3].resolve({ job: fastJob, revision: 4 });
+                await settle();
+            });
+            expect(completedBeforeRender).toBe(true);
+            expect(view.client.getQueryData<{ jobs: DramaJob[] }>(["drama", "project-a", "jobs"])?.jobs.find((job) => job.id === fastJob.id)?.status).toBe("succeeded");
+            expect(button(view.container, "提取全部角色").disabled).toBe(false);
+            expect(view.changed.length - changedBeforeFast).toBeGreaterThanOrEqual(2);
+        } finally {
+            unsubscribe();
+        }
+        expect(view.generated).toEqual([]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("未完成首次建档、风格配置中、草稿或页面忙碌时不能提交全部资产提取", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        await view.update({ summary: { ...extractionSummary(), guide: { step: "configuring", canConfirm: false } } });
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        await view.update({ summary: extractionSummary(), busy: true });
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        await view.update({ busy: false });
+        expect(button(view.container, "提取全部角色").disabled).toBe(false);
+        await click(button(view.container, "新增角色"));
+        await edit(field(view.container, "资产名称"), "未完成的新增角色");
+        expect(button(view.container, "提取全部角色").disabled).toBe(true);
+        await click(button(view.container, "提取全部角色"));
+        expect(extractCalls).toHaveLength(0);
+        expect(field(view.container, "资产名称").value).toBe("未完成的新增角色");
+        await click(button(view.container, "取消"));
+        expect(button(view.container, "提取全部角色").disabled).toBe(false);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("切换作品或账号后隔离迟到的提取成功和失败，不污染当前队列或弹出旧提示", async () => {
+    for (const boundary of ["project", "account"] as const) {
+        for (const outcome of ["success", "failure"] as const) {
+            resetFixture();
+            const view = await mount(extractionSummary());
+            try {
+                await click(button(view.container, "提取全部场景"));
+                expect(extractCalls).toHaveLength(1);
+                if (boundary === "project") await view.update({ summary: extractionSummary("project-b", 1), cast: [castOf("project-b", "other-room", "scene", "其他作品场景")] });
+                else
+                    await act(async () => {
+                        userStore.getState().setUser({ id: "user-b", username: "b", displayName: "账号B", role: "user", status: "active" });
+                        await settle();
+                    });
+                const changedBefore = view.changed.length;
+                const noticesBefore = notices.length;
+                const jobsBefore = structuredClone(view.client.getQueryData(["drama", boundary === "project" ? "project-b" : "project-a", "jobs"]));
+                await act(async () => {
+                    if (outcome === "success") pendingExtractions[0].resolve({ job: extractionJob("scene"), revision: 4 });
+                    else pendingExtractions[0].reject(new ApiError("旧范围提取失败", { status: 409, reason: "conflict" }));
+                    await settle();
+                });
+                expect(view.changed.length).toBe(changedBefore);
+                expect(notices.slice(noticesBefore)).toEqual([]);
+                expect(view.client.getQueryData(["drama", boundary === "project" ? "project-b" : "project-a", "jobs"])).toEqual(jobsBefore);
+                expect(view.container.textContent).not.toContain("正在提取场景");
+            } finally {
+                await view.dispose();
+            }
+        }
+    }
+}, 15_000);

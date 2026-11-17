@@ -114,11 +114,6 @@ export function DramaMediaActionDialog({ controller }: { controller: DramaMediaA
                         {action === "segment_assets" && state.pendingVideo ? " 参考图就绪后，再点击生成视频。" : ""}
                     </p>
                 ) : null}
-                {!state.submitted && !state.loading && !state.error ? (
-                    <Button disabled={busy} onClick={() => controller.retry()}>
-                        重新检查
-                    </Button>
-                ) : null}
                 {canSwitchToAssets ? (
                     <Button type="default" disabled={busy || assetQuote.disabled} loading={assetQuote.submitting} onClick={controller.requestMissingAssets}>
                         {generationLabel("生成缺失参考图", assetQuote.preview, assetQuote.loading)}

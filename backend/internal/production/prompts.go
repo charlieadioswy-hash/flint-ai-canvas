@@ -98,6 +98,10 @@ func structuredSkillBlock(step string, skill *WritingSkill) string {
 
 // BiblePrompt 基于抽样后的全书文本建立角色、场景与整体风格；skill 不为空时按技能的方法提取。
 func BiblePrompt(title string, settings Settings, chapters []Chapter, maxChars int, skill *WritingSkill) string {
+	return biblePrompt(title, settings, chapters, maxChars, skill, "")
+}
+
+func biblePrompt(title string, settings Settings, chapters []Chapter, maxChars int, skill *WritingSkill, kind string) string {
 	settings = settings.Normalized()
 	var b strings.Builder
 	fmt.Fprintf(&b, "作品：%s\n画幅：%s\n视觉风格：%s\n对白语言：%s\n章节总数：%d\n\n", title, settings.AspectRatio, firstNonEmpty(settings.StylePrompt, "写实电影感"), settings.Language, len(chapters))
@@ -113,7 +117,11 @@ func BiblePrompt(title string, settings Settings, chapters []Chapter, maxChars i
 		`"looks":[]}],` +
 		`"props":[{"name":"道具名","description":"用途与归属","appearance":"可直接用于生图的外形、材质、颜色描述"}],` +
 		`"scenes":[{"name":"场景名","description":"用途","appearance":"可直接用于生图的环境描述"}]}` + "\n")
-	b.WriteString("要求：角色按重要性排序，最多 24 个，只保留会在镜头中出现的人物；同一人物的不同称呼必须合并到 aliases；道具最多 20 个，只保留反复出现或推动剧情的关键物件；场景最多 16 个，只保留反复出现的地点。\n")
+	if kind == "" {
+		b.WriteString("要求：角色按重要性排序，最多 24 个，只保留会在镜头中出现的人物；同一人物的不同称呼必须合并到 aliases；道具最多 20 个，只保留反复出现或推动剧情的关键物件；场景最多 16 个，只保留反复出现的地点。\n")
+	} else {
+		b.WriteString("要求：完整提取本次来源中实际出现、且拍摄制作需要的本类资产，不设置资产数量上限，不因重要性或出现次数遗漏。角色只保留会在镜头中出现的人物，同一人物的不同称呼必须合并到 aliases；场景与道具即使仅出现一次，只要参与镜头环境或人物动作，也应提取。不得把文风示例、假设或风格设置中的物件和地点当成本次原文资产。\n")
+	}
 	fmt.Fprintf(&b, "造型：同一角色在不同时期、身份或场合的服装与妆造明显不同时（如修仙者从散修到外门弟子、内门弟子、长老；都市人物的学生时代、刚工作、成为总裁），appearance 写第一次登场的造型，其余造型按时间顺序写进 looks，每个角色最多 %d 套；同一人物的五官、脸型与体态在各套造型里保持一致，只写服装、发型与妆容的变化。fromChapter / toChapter 用原文抽样里方括号中的章节序号，不确定的一端写 0；造型没有明显变化的角色 looks 给空数组。\n\n", MaxCharacterLooks)
 	b.WriteString("角色本体的 appearance 已是基础造型，禁止为了填充 looks 再建一套默认、初始、首次登场或与基础外观相同的造型；没有原文明示的换装依据时 looks 必须为 []。\n\n")
 	b.WriteString("只有确有额外换装时，looks 中才加入这样的对象：{\"name\":\"夜行装\",\"appearance\":\"这套造型的外貌、发型、服装与妆容\",\"fromChapter\":0,\"toChapter\":0}。章节序号必须是数字。characters、props、scenes 的每个条目都必须是独立的完整对象；所有条目结束后再闭合数组。每个字段名与字符串值必须分别用双引号包围，字段之间用逗号分隔。输出前检查整份 JSON 的括号和引号成对。\n\n")

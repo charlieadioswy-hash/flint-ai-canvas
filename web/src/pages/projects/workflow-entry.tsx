@@ -139,8 +139,7 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
             const analysis = analyzeNovel(input, { perEpisode: true });
             const chapters = analysis.chapters.map(({ title, text: chapterText }) => ({ title, text: chapterText }));
             if (!chapters.length) throw new Error("没有读取到正文");
-            const selected = [0];
-            if (selected.some((index) => sourceChars(chapters[index].text) > EPISODE_SOURCE_CHARS)) {
+            if (chapters.some((chapter) => sourceChars(chapter.text) > EPISODE_SOURCE_CHARS)) {
                 throw new Error("单章正文超过 1.2 万字，请用章节标题拆分后再导入");
             }
             return createDrama({
@@ -152,7 +151,6 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
                 start: false,
                 sourceFormat: format,
                 episodeMode: "chapter",
-                selectedChapters: selected,
             });
         },
         onSuccess: (summary) => {

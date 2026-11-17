@@ -6,16 +6,17 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { getResourceAccess, resolveResourceAccessURL, resourceFileUrl, type ResourceAccessVariant } from "@/services/api/resources";
 import type { DramaEpisodeRow, DramaEpisodeStage, DramaMediaMode, DramaMediaStatus, DramaSourceFormat, DramaVideoContinuity } from "@/services/api/drama";
 
-export const PIPELINE_STEPS: Array<{ key: Exclude<DramaEpisodeStage, "queued" | "review" | "done">; label: string }> = [
+export const PIPELINE_STEPS: Array<{ key: Exclude<DramaEpisodeStage, "draft" | "queued" | "review" | "done">; label: string }> = [
     { key: "script", label: "剧本" },
     { key: "prompts", label: "段提示词" },
     { key: "video", label: "视频" },
     { key: "render", label: "成片" },
 ];
 
-const STAGE_INDEX: Record<DramaEpisodeStage, number> = { queued: -1, script: 0, prompts: 1, review: 2, video: 2, render: 3, done: 4 };
+const STAGE_INDEX: Record<DramaEpisodeStage, number> = { draft: -1, queued: -1, script: 0, prompts: 1, review: 2, video: 2, render: 3, done: 4 };
 
 export const STAGE_LABEL: Record<DramaEpisodeStage, string> = {
+    draft: "待制作",
     queued: "排队中",
     script: "改编剧本",
     prompts: "撰写段提示词",
@@ -110,11 +111,12 @@ export function episodeTone(episode: DramaEpisodeRow): EpisodeTone {
     if (episode.awaitingMedia) return "ready";
     if (episode.stage === "review") return "review";
     if (episode.stage === "done" && !episode.finalStale) return "done";
-    if (episode.stage === "queued") return "idle";
+    if (episode.stage === "draft" || episode.stage === "queued") return "idle";
     return "active";
 }
 
 export function episodeStatusText(episode: DramaEpisodeRow) {
+    if (episode.stage === "draft") return "待制作";
     if (episode.error) return "需要处理";
     if (episode.awaitingMedia) return `剧本就绪 · ${episode.shotCount} 镜 · 待生成画面`;
     if (episode.stage === "done" && episode.finalStale) return "已修改 · 待重新合成";
@@ -132,6 +134,7 @@ export function episodeStatusText(episode: DramaEpisodeRow) {
 
 /** 每个流水线步骤的完成度：0 未开始、0-1 进行中、1 完成。 */
 export function stepProgress(episode: DramaEpisodeRow, step: (typeof PIPELINE_STEPS)[number]["key"]) {
+    if (episode.stage === "draft") return 0;
     const current = STAGE_INDEX[episode.stage];
     const index = PIPELINE_STEPS.findIndex((item) => item.key === step);
     if (episode.stage === "done" && !episode.finalStale) return 1;

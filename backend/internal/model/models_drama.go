@@ -25,6 +25,7 @@ const (
 	DramaGuideCompleted   = "completed"
 
 	// 单集阶段：剧本 → 撰写各剧情段完整视频提示词 →（确认）→ 按段顺序生成视频 → 合成成片。
+	DramaEpisodeDraft   = "draft"
 	DramaEpisodeQueued  = "queued"
 	DramaEpisodeScript  = "script"
 	DramaEpisodePrompts = "prompts"
@@ -148,6 +149,8 @@ type DramaEpisode struct {
 	Hook           string `json:"hook" gorm:"type:text"`
 	Cliffhanger    string `json:"cliffhanger" gorm:"type:text"`
 	ChapterIDsJSON string `json:"chapterIdsJson" gorm:"type:text"`
+	// 本集直接提取或手工新增的共享主体；在尚无分镜引用时也保留所属集。
+	AssetIDsJSON string `json:"assetIdsJson" gorm:"type:text;not null;default:''"`
 	// SourceFormat 是本集原文的素材类型（novel / script / storyboard），空串按小说处理。
 	SourceFormat string `json:"sourceFormat" gorm:"size:16"`
 	// 首次制作配置的独立快照；后续只修改本集，不跟随作品配置变化。

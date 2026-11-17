@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestDramaAssetExtractionScopesAndPreservesExistingAssets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.Revision != source.Production.Revision+1 || result.Job.AssetKind != kind || len(result.Job.SourceChapterIDs) != 1 || !reflect.DeepEqual(result.Job.SourceEpisodeIDs, []string{source.Episodes[1].ID}) {
+			if result.Revision != source.Production.Revision || result.Job.AssetKind != kind || len(result.Job.SourceChapterIDs) != 1 || !reflect.DeepEqual(result.Job.SourceEpisodeIDs, []string{source.Episodes[1].ID}) {
 				t.Fatalf("job must expose exact kind and scope: %+v", result)
 			}
 			pending, err := svc.repo.RunningDramaProductions(100)
@@ -86,7 +87,7 @@ func TestDramaAssetExtractionScopesAndPreservesExistingAssets(t *testing.T) {
 				t.Fatalf("must dedupe same name/alias and retain unrelated assets: %+v", casts)
 			}
 			productionAfter, _ := svc.repo.DramaProduction(projectID)
-			if productionAfter.Status != productionBefore.Status || productionAfter.Stage != productionBefore.Stage || productionAfter.BibleJSON != productionBefore.BibleJSON || productionAfter.GuideStep != productionBefore.GuideStep || productionAfter.Revision != result.Revision+1 {
+			if productionAfter.Status != productionBefore.Status || productionAfter.Stage != productionBefore.Stage || productionAfter.BibleJSON != productionBefore.BibleJSON || productionAfter.GuideStep != productionBefore.GuideStep || productionAfter.Revision != result.Revision {
 				t.Fatalf("scope result must not advance the global workflow: before=%+v after=%+v", productionBefore, productionAfter)
 			}
 			// 同一范围重新查漏不会创建第二套资产，也不会启动图片、分镜或视频。
@@ -103,6 +104,190 @@ func TestDramaAssetExtractionScopesAndPreservesExistingAssets(t *testing.T) {
 	}
 }
 
+func TestDramaAssetExtractionAllChaptersIncludesReservedWithoutProducingThem(t *testing.T) {
+	for _, kind := range []string{"character", "scene", "prop"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, fake, source := newDramaExtractionSource(t, model.DramaGuideAssets, model.DramaStatusPaused)
+			projectID := source.Project.ID
+			chaptersBefore, err := svc.repo.DramaGuideSourceChapters(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			episodesBefore, err := svc.repo.DramaEpisodes(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			foreign := model.ProjectUnit{ID: newID(), ProjectID: "foreign-project", Kind: model.ProjectUnitKindChapter, Title: "其他作品", SourceText: "其他作品的原文不得进入提取", Status: model.ProjectUnitStatusReserved}
+			if err := fake.db.Create(&foreign).Error; err != nil {
+				t.Fatal(err)
+			}
+			req := ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: kind, AllChapters: true}
+			if _, err := svc.ExtractDramaAssets("other-user", projectID, req); err == nil {
+				t.Fatal("all-source extraction must check project ownership")
+			}
+			result, err := svc.ExtractDramaAssets("usr-drama", projectID, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]string, len(chaptersBefore))
+			for index, chapter := range chaptersBefore {
+				ids[index] = chapter.ID
+			}
+			if result.Job.AssetKind != kind || !reflect.DeepEqual(result.Job.SourceChapterIDs, ids) || len(result.Job.SourceEpisodeIDs) != 0 || !strings.Contains(result.Job.Label, "全部原文（3 章）") {
+				t.Fatalf("all-source extraction must snapshot this project's full source: %+v", result)
+			}
+			_, err = svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: result.Revision, Kind: kind, AllChapters: true})
+			requireGuideConflict(t, err)
+			runDramaTicks(t, svc, projectID, 2)
+			if len(fake.requests) != 1 || !strings.Contains(fake.requests[0].Prompt, "范围外甲") || !strings.Contains(fake.requests[0].Prompt, "选中乙") || !strings.Contains(fake.requests[0].Prompt, "预留丙") || strings.Contains(fake.requests[0].Prompt, foreign.SourceText) {
+				t.Fatalf("all and only this project's source must reach the extraction model: %+v", fake.requests)
+			}
+			job, err := svc.repo.DramaJob(projectID, result.Job.ID)
+			if err != nil || job.Status != model.DramaJobSucceeded {
+				t.Fatalf("reserved source must remain readable when applying the result: %+v %v", job, err)
+			}
+			casts, err := svc.repo.DramaCasts(projectID)
+			if err != nil || len(casts) == 0 {
+				t.Fatalf("extraction must add requested text assets: %+v %v", casts, err)
+			}
+			for _, cast := range casts {
+				if cast.Kind != kind || cast.ImageResourceID != "" {
+					t.Fatalf("all-source extraction must only create requested-kind text assets: %+v", cast)
+				}
+			}
+			chaptersAfter, err := svc.repo.DramaGuideSourceChapters(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			episodesAfter, err := svc.repo.DramaEpisodes(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			productionAfter, err := svc.repo.DramaProduction(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(chaptersBefore, chaptersAfter) || !reflect.DeepEqual(episodesBefore, episodesAfter) || productionAfter.Status != model.DramaStatusPaused || productionAfter.GuideStep != model.DramaGuideAssets || fake.byKind["script"] != 0 || fake.byKind["image"] != 0 || fake.byKind["video"] != 0 {
+				t.Fatalf("extraction must not activate reserved chapters, change episodes, or generate media: chapters=%+v episodes=%+v production=%+v tasks=%v", chaptersAfter, episodesAfter, productionAfter, fake.byKind)
+			}
+		})
+	}
+}
+
+func TestDramaAssetExtractionKindsRunConcurrently(t *testing.T) {
+	for _, limit := range []int{2, 3} {
+		t.Run(fmt.Sprintf("text-concurrency-%d", limit), func(t *testing.T) {
+			svc, fake, source := newDramaExtractionSource(t, model.DramaGuideAssets, model.DramaStatusPaused)
+			projectID := source.Project.ID
+			// Shared-memory SQLite has immediate table locks instead of the production WAL busy timeout.
+			connection, err := fake.db.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			connection.SetMaxOpenConns(1)
+			settings := source.Production.Settings
+			settings.Concurrency = limit
+			if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+				t.Fatal(err)
+			}
+			type admission struct {
+				result ExtractDramaAssetsResult
+				err    error
+			}
+			start, admissions := make(chan struct{}), make(chan admission, 3)
+			for _, kind := range []string{"character", "scene", "prop"} {
+				go func() {
+					<-start
+					result, err := svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: kind, AllChapters: true})
+					admissions <- admission{result, err}
+				}()
+			}
+			close(start)
+			var acceptedResults []admission
+			for range 3 {
+				acceptedResults = append(acceptedResults, <-admissions)
+			}
+			for _, accepted := range acceptedResults {
+				if accepted.err != nil || accepted.result.Revision != source.Production.Revision {
+					t.Fatalf("different kinds must accept the same page revision: %+v %v", accepted.result, accepted.err)
+				}
+			}
+			_, err = svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "scene", AllChapters: true})
+			requireGuideConflict(t, err)
+			runDramaTicks(t, svc, projectID, 1)
+			running, err := svc.repo.DramaAssetExtractionJobs(projectID, model.DramaJobRunning)
+			if err != nil || len(running) != limit || len(fake.requests) != limit {
+				t.Fatalf("distinct kinds must dispatch together within text concurrency: running=%+v requests=%d error=%v", running, len(fake.requests), err)
+			}
+			chapters, _ := svc.repo.DramaGuideSourceChapters(projectID)
+			text := "修改后的正文"
+			_, err = svc.UpdateDramaChapter("usr-drama", projectID, chapters[0].ID, UpdateDramaChapterRequest{ExpectedRevision: &source.Production.Revision, Text: &text})
+			requireGuideConflict(t, err)
+			scope, err := dramaAssetExtraction(&running[0])
+			if err != nil || scope == nil {
+				t.Fatalf("running extraction has no valid kind: %+v %v", running[0], err)
+			}
+			_, err = svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: scope.AssetKind, AllChapters: true})
+			requireGuideConflict(t, err)
+			runDramaTicks(t, svc, projectID, 2)
+			jobs, err := svc.repo.DramaAssetExtractionJobs(projectID, model.DramaJobSucceeded)
+			if err != nil || len(jobs) != 3 || len(fake.requests) != 3 {
+				t.Fatalf("all three kind results must finish without invalidating one another: jobs=%+v requests=%d error=%v", jobs, len(fake.requests), err)
+			}
+			casts, _ := svc.repo.DramaCasts(projectID)
+			counts := map[string]int{}
+			for _, cast := range casts {
+				counts[cast.Kind]++
+			}
+			if counts["character"] != 2 || counts["scene"] != 1 || counts["prop"] != 1 {
+				t.Fatalf("each kind must add its own assets without dropping another kind: %+v", casts)
+			}
+			p, _ := svc.repo.DramaProduction(projectID)
+			if p.Revision != source.Production.Revision || p.Status != model.DramaStatusPaused || p.GuideStep != model.DramaGuideAssets {
+				t.Fatalf("independent extraction must not change the input revision or workflow: %+v", p)
+			}
+		})
+	}
+}
+
+func TestDramaAssetExtractionLaterKindAcceptsPageRevisionAfterOtherKindCompletes(t *testing.T) {
+	svc, _, source := newDramaExtractionSource(t, model.DramaGuideCompleted, model.DramaStatusCompleted)
+	for _, kind := range []string{"character", "scene", "prop"} {
+		if _, err := svc.ExtractDramaAssets("usr-drama", source.Project.ID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: kind, AllChapters: true}); err != nil {
+			t.Fatalf("%s must still accept the page revision after another kind completes: %v", kind, err)
+		}
+		runDramaTicks(t, svc, source.Project.ID, 2)
+	}
+	jobs, err := svc.repo.DramaAssetExtractionJobs(source.Project.ID, model.DramaJobSucceeded)
+	if err != nil || len(jobs) != 3 {
+		t.Fatalf("all separately submitted types must complete: %+v %v", jobs, err)
+	}
+}
+
+func TestDramaAssetExtractionRetainsTextAndInputEditConflicts(t *testing.T) {
+	for _, kind := range []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt} {
+		t.Run(kind, func(t *testing.T) {
+			svc, fake, source := newDramaExtractionSource(t, model.DramaGuideCompleted, model.DramaStatusCompleted)
+			job := model.DramaJob{ID: newID(), ProjectID: source.Project.ID, Kind: kind, Status: model.DramaJobQueued}
+			if err := fake.db.Create(&job).Error; err != nil {
+				t.Fatal(err)
+			}
+			_, err := svc.ExtractDramaAssets("usr-drama", source.Project.ID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "scene", AllChapters: true})
+			requireGuideConflict(t, err)
+		})
+	}
+	t.Run("source-edit-invalidates-old-page", func(t *testing.T) {
+		svc, _, source := newDramaExtractionSource(t, model.DramaGuideAssets, model.DramaStatusPaused)
+		chapters, _ := svc.repo.DramaGuideSourceChapters(source.Project.ID)
+		text := "正文已经修改，不能沿用旧页面版本提取。"
+		if _, err := svc.UpdateDramaChapter("usr-drama", source.Project.ID, chapters[0].ID, UpdateDramaChapterRequest{ExpectedRevision: &source.Production.Revision, Text: &text}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := svc.ExtractDramaAssets("usr-drama", source.Project.ID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "scene", AllChapters: true})
+		requireGuideConflict(t, err)
+	})
+}
+
 func TestDramaAssetExtractionRejectsUnavailableOrInvalidScopes(t *testing.T) {
 	svc, fake, source := newDramaExtractionSource(t, model.DramaGuideCompleted, model.DramaStatusCompleted)
 	chapters, _ := svc.repo.DramaGuideSourceChapters(source.Project.ID)
@@ -116,6 +301,8 @@ func TestDramaAssetExtractionRejectsUnavailableOrInvalidScopes(t *testing.T) {
 		{"empty-episodes", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", EpisodeIDs: []string{}}},
 		{"empty-chapters", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", ChapterIDs: []string{}}},
 		{"both-scopes", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", EpisodeIDs: []string{source.Episodes[0].ID}, ChapterIDs: []string{chapters[0].ID}}},
+		{"all-with-episodes", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", AllChapters: true, EpisodeIDs: []string{source.Episodes[0].ID}}},
+		{"all-with-chapters", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", AllChapters: true, ChapterIDs: []string{chapters[0].ID}}},
 		{"reserved-chapter", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", ChapterIDs: []string{chapters[2].ID}}},
 		{"reserved-episode", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", EpisodeIDs: []string{source.Episodes[2].ID}}},
 		{"foreign-episode", ExtractDramaAssetsRequest{ExpectedRevision: valid.ExpectedRevision, Kind: "scene", EpisodeIDs: []string{"foreign-episode"}}},
@@ -146,11 +333,11 @@ func TestDramaAssetExtractionRejectsUnavailableOrInvalidScopes(t *testing.T) {
 	if len(result.Job.SourceChapterIDs) != 2 || len(result.Job.SourceEpisodeIDs) != 0 {
 		t.Fatalf("omitted range must snapshot current selected chapters: %+v", result)
 	}
-	_, err = svc.ExtractDramaAssets("usr-drama", source.Project.ID, ExtractDramaAssetsRequest{ExpectedRevision: result.Revision, Kind: "character"})
+	_, err = svc.ExtractDramaAssets("usr-drama", source.Project.ID, ExtractDramaAssetsRequest{ExpectedRevision: result.Revision, Kind: valid.Kind})
 	requireGuideConflict(t, err)
 	runDramaTicks(t, svc, source.Project.ID, 2)
 	p, _ = svc.repo.DramaProduction(source.Project.ID)
-	if p.Status != model.DramaStatusCompleted || p.GuideStep != model.DramaGuideCompleted || p.Revision != result.Revision+1 {
+	if p.Status != model.DramaStatusCompleted || p.GuideStep != model.DramaGuideCompleted || p.Revision != result.Revision {
 		t.Fatalf("completed production must stay completed: %+v", p)
 	}
 }

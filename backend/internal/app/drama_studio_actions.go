@@ -74,10 +74,13 @@ type dramaStudioActionPlan struct {
 	videoModelJSON     *string
 	invalidateLater    bool
 	allowPendingPrompt bool
+	pendingVideoID     string
+	previousVideo      *model.DramaSegment
 }
 
 type dramaStudioActionOptions struct {
 	pendingParents     map[string]bool
+	pendingVideos      map[string]bool
 	allowPendingPrompt bool
 }
 
@@ -316,7 +319,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 			if !dramaPromptReady(*segment) {
 				blocked("请先撰写本段视频提示词")
 			}
-			if episode.Stage == model.DramaEpisodeQueued || episode.Stage == model.DramaEpisodeScript || episode.Error != "" {
+			if episode.Stage == model.DramaEpisodeDraft || episode.Stage == model.DramaEpisodeQueued || episode.Stage == model.DramaEpisodeScript || episode.Error != "" {
 				blocked("请先完成本集剧本与分镜")
 			}
 			if settings.ReviewMode == DramaReviewSample && !p.SampleApproved && episode.Number != 1 {
@@ -351,9 +354,14 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 				var previous *model.DramaSegment
 				if i > 0 && !settings.parallelVideo() {
 					previous = &rows[i-1]
+					plan.previousVideo = previous
 					snapshot = append(snapshot, previous)
 					if !dramaSegmentVideoDone(*previous) {
-						blocked("等待上一段视频生成（需要它的最后一帧）")
+						if options.pendingVideos[previous.ID] || options.pendingVideos != nil && mediaBusyStatus(previous.VideoStatus) {
+							plan.pendingVideoID = previous.ID
+						} else {
+							blocked("等待上一段视频生成（需要它的最后一帧）")
+						}
 					}
 				}
 				for _, draft := range drafts {
@@ -386,7 +394,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 					if segment.PromptSeconds > 0 && segment.PromptSeconds != request.Seconds {
 						blocked("所选模型时长档位与提示词不同，请先重新撰写本段提示词")
 					}
-					if request.FirstFramePending {
+					if request.FirstFramePending && plan.pendingVideoID == "" {
 						blocked("等待上一段尾帧就绪")
 					}
 					if max := request.PromptMaxChars; max > 0 && utf8.RuneCountInString(strings.TrimSpace(request.Header+"\n\n"+firstNonEmpty(segment.VideoPromptOverride, segment.VideoPrompt))) > max {
@@ -401,7 +409,11 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 					v.CanUseText = prepareErr == nil && len(v.MissingCasts) > 0
 					options := map[string]any{"videoSeconds": itoa(request.Seconds), "videoGenerateAudio": strconv.FormatBool(request.GenerateAudio)}
 					dramaVideoScreen{Size: request.Size, Resolution: request.Resolution}.apply(options)
-					intent = ModelRequestIntent{Capability: "video", Operation: request.Operation, Options: options, Inputs: map[string]int{"image": len(refs), "audio": len(audios)}}
+					imageCount := len(refs)
+					if request.FirstFramePending {
+						imageCount++ // 批次中的后段等尾帧就绪再提交，报价仍须包含这张实际首帧。
+					}
+					intent = ModelRequestIntent{Capability: "video", Operation: request.Operation, Options: options, Inputs: map[string]int{"image": imageCount, "audio": len(audios)}}
 					snapshot = append(snapshot, request)
 				}
 			}

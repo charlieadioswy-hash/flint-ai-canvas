@@ -34,6 +34,7 @@ const calls = {
     changed: 0,
     episodes: [] as string[],
     renders: [] as Array<[string, number]>,
+    storyboards: [] as string[],
     allowedMediaNavigation: [] as Array<{ pathname: string; search: string }>,
 };
 let episodeOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | undefined;
@@ -94,6 +95,7 @@ beforeEach(() => {
     calls.changed = 0;
     calls.episodes = [];
     calls.renders = [];
+    calls.storyboards = [];
     calls.allowedMediaNavigation = [];
     episodeOverride = undefined;
     readinessOverride = undefined;
@@ -133,6 +135,13 @@ mock.module("@/services/api/drama", () => ({
         return { jobs: 1 };
     },
     getDramaWorkflowReadiness: async () => (readinessOverride ? readinessOverride() : workflowReadiness()),
+    rescriptDramaEpisode: async (_projectId: string, episodeId: string) => {
+        calls.storyboards.push(episodeId);
+        const current = details.get(episodeId)!;
+        const next = { ...current, episode: { ...current.episode, stage: "script" as const }, jobs: [{ id: "new-script", status: "queued" }] as DramaEpisodeDetail["jobs"] };
+        details.set(episodeId, next);
+        return next;
+    },
     renderDramaEpisode: async (_projectId: string, episodeId: string, input: { expectedRevision: number }) => {
         calls.renders.push([episodeId, input.expectedRevision]);
         return { jobs: 1 };
@@ -406,7 +415,7 @@ function LocationProbe() {
     return createElement("output", { "data-location": `${location.pathname}${location.search}` });
 }
 
-async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide", waitForQueries = true, options: { onPickChapters?: () => void; busy?: boolean } = {}) {
+async function renderProduction(step: "story" | "preview", data: DramaSummary, path = "/projects/project/guide", waitForQueries = true, options: { busy?: boolean; headerActions?: ReactNode } = {}) {
     const host = document.createElement("div");
     document.body.append(host);
     const root: Root = createRoot(host);
@@ -516,28 +525,54 @@ test("失败且没有分镜的集保留错误和重试本集文字", async () =>
     }
 });
 
-test("选集保留所有制作集并说明待制作章节，状态筛选不隐藏继续选章入口", async () => {
+test("选集保留全部真实分集，状态筛选不隐藏标题引导或固定队列", async () => {
     const data = summary("story", [failed, ready]);
     data.production.chapterCount = 2;
     data.production.reservedChapterCount = 7;
-    let picks = 0;
-    const view = await renderProduction("story", data, "/projects/project/guide?step=story&status=ready", true, { onPickChapters: () => picks++ });
+    let completed = 0;
+    const view = await renderProduction("story", data, "/projects/project/guide?step=story&status=ready", true, {
+        headerActions: (
+            <>
+                <span role="status">确认后完成本次分镜编排</span>
+                <button onClick={() => completed++}>完成分镜编排</button>
+            </>
+        ),
+    });
     try {
-        expect(view.host.textContent).toContain("原文 9 章 · 制作 2 集 · 待制作 7 章");
+        expect(view.host.textContent).not.toContain("继续选章");
+        const guidance = view.host.querySelectorAll('[aria-label="制作流程引导"]');
+        expect(guidance).toHaveLength(1);
+        expect(guidance[0].closest(".drama-workflow-production-toolbar")).not.toBeNull();
+        expect(guidance[0].textContent).toContain("确认后完成本次分镜编排");
+        await click(view.host, "完成分镜编排");
+        expect(completed).toBe(1);
+        const queue = view.host.querySelector('[aria-label="定位队列任务"]');
+        expect(queue?.parentElement?.classList.contains("drama-workflow-production")).toBe(true);
+        expect(queue?.closest(".drama-workflow-production-scroll")).toBeNull();
         const options = [...view.host.querySelectorAll('[aria-label="选择集数"] option')].map((option) => option.getAttribute("value"));
         expect(options).toEqual(["all", failed.id, ready.id]);
-        await click(view.host, "继续选章");
-        expect(picks).toBe(1);
         expect(calls.actions).toHaveLength(0);
         expect(calls.retried).toHaveLength(0);
     } finally {
         await view.dispose();
     }
-    const locked = await renderProduction("story", data, "/projects/project/guide?step=story", true, { onPickChapters: () => picks++, busy: true });
+});
+
+test("补齐的待制作集不会自动开工，点击生成分镜只提交当前集", async () => {
+    const draft = episode("ep-draft", 9, { stage: "draft", shotCount: 0, stats: { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 } });
+    details.set(draft.id, { episode: draft, segments: [], shots: [], jobs: [], chapters: [] } as unknown as DramaEpisodeDetail);
+    const view = await renderProduction("story", summary("story", [ready, draft]), "/projects/project/guide?step=story&episode=ep-draft");
     try {
-        expect(actionButton(locked.host, "继续选章")?.disabled).toBe(true);
+        expect(calls.storyboards).toHaveLength(0);
+        expect(view.host.textContent).toContain("本集待制作");
+        await click(view.host, "生成分镜");
+        expect(calls.storyboards).toEqual([draft.id]);
+        expect(calls.changed).toBe(1);
+        expect(calls.retried).toHaveLength(0);
+        expect(calls.actions).toHaveLength(0);
+        expect(view.host.textContent).toContain("正在准备本集剧本与分镜");
     } finally {
-        await locked.dispose();
+        await view.dispose();
     }
 });
 
@@ -838,9 +873,11 @@ test("全镜头采用结果就绪时预览采用镜头计数，不再按缺失�
 
 test("镜头媒体草稿或提交中阻止队列定位，明确内部返回给出准确单次目标", async () => {
     const path = "/projects/project/guide?step=story&episode=ep-ready&editor=media&shot=shot-segment-1&media=video";
-    const view = await renderProduction("story", summary("completed", [ready]), path);
+    const view = await renderProduction("story", summary("completed", [ready]), path, true, { headerActions: <span>分镜流程提示</span> });
     try {
         expect(view.host.querySelector("[data-media-shot='shot-segment-1']")).toBeTruthy();
+        expect(view.host.querySelector('[aria-label="制作流程引导"]')).toBeNull();
+        expect(view.host.querySelector('[aria-label="定位队列任务"]')?.closest(".drama-workflow-production-scroll")).toBeNull();
         await click(view.host, "修改镜头媒体");
         await click(view.host, "定位队列任务");
         expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toBe(path);
@@ -854,6 +891,7 @@ test("镜头媒体草稿或提交中阻止队列定位，明确内部返回给�
         expect(allowed.pathname).toBe("/projects/project/e/ep-ready");
         expect(allowed.search).not.toContain("editor=");
         expect(`${allowed.pathname}${allowed.search}`).toBe(view.host.querySelector("[data-location]")?.getAttribute("data-location"));
+        expect(view.host.querySelector('[aria-label="制作流程引导"]')?.textContent).toBe("分镜流程提示");
     } finally {
         await view.dispose();
     }

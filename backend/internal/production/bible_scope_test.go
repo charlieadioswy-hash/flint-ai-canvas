@@ -1,6 +1,8 @@
 package production
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,37 @@ func TestParseBibleForKindKeepsOnlyRequestedKind(t *testing.T) {
 	}
 	if len(props.Props) != 1 || props.Props[0].Name != "神丹" || len(props.Characters) != 0 || len(props.Scenes) != 0 {
 		t.Fatalf("prop extraction must keep only props: %+v", props)
+	}
+}
+
+func TestParseBibleForKindDoesNotTruncateRequestedAssets(t *testing.T) {
+	bible := Bible{}
+	for i := 0; i < 30; i++ {
+		bible.Characters = append(bible.Characters, BibleCharacter{Name: fmt.Sprintf("角色%d", i)})
+		bible.Scenes = append(bible.Scenes, BibleScene{Name: fmt.Sprintf("场景%d", i)})
+		bible.Props = append(bible.Props, BibleProp{Name: fmt.Sprintf("道具%d", i)})
+	}
+	bible.Characters = append(bible.Characters, bible.Characters[0])
+	bible.Scenes = append(bible.Scenes, bible.Scenes[0])
+	bible.Props = append(bible.Props, bible.Props[0])
+	raw, err := json.Marshal(bible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"character", "scene", "prop"} {
+		t.Run(kind, func(t *testing.T) {
+			parsed, err := ParseBibleForKind(string(raw), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Characters)+len(parsed.Scenes)+len(parsed.Props) != 30 {
+				t.Fatalf("scoped extraction must keep all unique requested assets: %+v", parsed)
+			}
+		})
+	}
+	initial, err := ParseBible(string(raw))
+	if err != nil || len(initial.Characters) != 24 || len(initial.Scenes) != 16 || len(initial.Props) != 20 {
+		t.Fatalf("initial Bible must retain its existing limits: %+v %v", initial, err)
 	}
 }
 
@@ -140,6 +173,19 @@ func TestBibleExtractionPromptKeepsSkillChapterAndKindBoundary(t *testing.T) {
 	}
 	if strings.Contains(prompt, "这段不该进入本次来源。") {
 		t.Fatal("prompt included a chapter that was not requested")
+	}
+	for _, want := range []string{"完整提取本次来源中实际出现", "不设置资产数量上限", "即使仅出现一次"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("scoped prompt must request all production assets, missing %q", want)
+		}
+	}
+	for _, restricted := range []string{"最多 24 个", "最多 20 个", "最多 16 个", "只保留反复出现"} {
+		if strings.Contains(prompt, restricted) {
+			t.Fatalf("scoped prompt must not carry the initial Bible restriction %q", restricted)
+		}
+		if !strings.Contains(BiblePrompt("问道", Settings{}, chapters, 4000, nil), restricted) {
+			t.Fatalf("initial Bible must retain its restriction %q", restricted)
+		}
 	}
 	system := BibleExtractionSystemPrompt("prop")
 	for _, want := range []string{"作品圣经", "增量提取/重新查漏", "只抽取道具", "characters 与 scenes 必须为 []"} {

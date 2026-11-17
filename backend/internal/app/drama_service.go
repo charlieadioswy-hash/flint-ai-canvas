@@ -37,9 +37,13 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	brief := strings.TrimSpace(req.Brief)
 	if req.Guided {
 		req.Start, req.Settings.MediaMode = false, DramaMediaManual
+		req.SelectedChapters = nil
 		if utf8.RuneCountInString(brief) > 20000 {
 			return nil, BadAuthRequest("创作简述不能超过 2 万字")
 		}
+	}
+	if req.Draft != nil {
+		req.SelectedChapters = nil
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -260,7 +264,7 @@ func (s *Service) DramaDraft(userID string, projectID string) (DramaDraftView, e
 	}
 	selected := make([]int, 0, len(outline))
 	for _, chapter := range outline {
-		if chapter.Status != model.ProjectUnitStatusReserved {
+		if chapter.Status != model.ProjectUnitStatusReserved && chapter.Status != model.ProjectUnitStatusRemoved {
 			selected = append(selected, chapter.Position)
 		}
 	}
@@ -303,6 +307,10 @@ func dramaSelectedChapters(indexes []int, total int) (map[int]bool, error) {
 // groupDramaChapterEpisodes 按章节顺序每 perEpisode 章合成一集，编号从 startNumber 起；不相邻的章节（中间有未加入制作的章）
 // 不合进同一集。合并后单集原文超过上限时拒绝，提示减少每集章数。章节只需 ID、标题、位置与字数。
 func groupDramaChapterEpisodes(projectID string, startNumber int, chapters []model.ProjectUnit, perEpisode int, format string, now time.Time) ([]model.DramaEpisode, error) {
+	return groupDramaChapterEpisodesForStage(projectID, startNumber, chapters, perEpisode, format, now, model.DramaEpisodeQueued)
+}
+
+func groupDramaChapterEpisodesForStage(projectID string, startNumber int, chapters []model.ProjectUnit, perEpisode int, format string, now time.Time, stage string) ([]model.DramaEpisode, error) {
 	perEpisode = max(1, min(dramaMaxChaptersPerEpisode, perEpisode))
 	episodes := make([]model.DramaEpisode, 0, (len(chapters)+perEpisode-1)/perEpisode)
 	for start := 0; start < len(chapters); {
@@ -313,7 +321,9 @@ func groupDramaChapterEpisodes(projectID string, startNumber int, chapters []mod
 		group := chapters[start:end]
 		start = end
 		if len(group) == 1 {
-			episodes = append(episodes, newDramaChapterEpisode(projectID, startNumber+len(episodes), group[0], format, now))
+			episode := newDramaChapterEpisode(projectID, startNumber+len(episodes), group[0], format, now)
+			episode.Stage = stage
+			episodes = append(episodes, episode)
 			continue
 		}
 		ids, runes := make([]string, 0, len(group)), 0
@@ -322,11 +332,12 @@ func groupDramaChapterEpisodes(projectID string, startNumber int, chapters []mod
 			runes += chapter.WordCount
 		}
 		first, last := group[0].Position+1, group[len(group)-1].Position+1
-		if runes > dramaEpisodeSourceRunes {
+		// 历史正文可以先补为未开工目录，长度准入留给显式生成操作。
+		if stage != model.DramaEpisodeDraft && runes > dramaEpisodeSourceRunes {
 			return nil, BadAuthRequest(fmt.Sprintf("第 %d–%d 章合计 %d 字，每集原文不超过 %d 字，请减少每集章数", first, last, runes, dramaEpisodeSourceRunes))
 		}
 		title := truncateRunes(group[0].Title, 40) + fmt.Sprintf(" 等 %d 章", len(group))
-		episodes = append(episodes, model.DramaEpisode{ID: newID(), ProjectID: projectID, Number: startNumber + len(episodes), Title: truncateRunes(title, 60), ChapterIDsJSON: encodeStringList(ids), SourceFormat: format, Stage: model.DramaEpisodeQueued, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		episodes = append(episodes, model.DramaEpisode{ID: newID(), ProjectID: projectID, Number: startNumber + len(episodes), Title: truncateRunes(title, 60), ChapterIDsJSON: encodeStringList(ids), SourceFormat: format, Stage: stage, Revision: 1, CreatedAt: now, UpdatedAt: now})
 	}
 	return episodes, nil
 }
@@ -431,6 +442,14 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	if err != nil {
 		return DramaSummary{}, err
 	}
+	if _, err := s.ensureDramaEpisodeCatalog(project, productionRow); err != nil {
+		return DramaSummary{}, err
+	}
+	// 另一读取可能已完成补集；本次没有写入也必须返回新目录对应的制作版本。
+	productionRow, err = s.repo.DramaProduction(project.ID)
+	if err != nil {
+		return DramaSummary{}, err
+	}
 	outline, err := s.repo.DramaChapterOutline(project.ID)
 	if err != nil {
 		return DramaSummary{}, err
@@ -453,6 +472,9 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	}
 	chapterCount, words, reservedCount, reservedWords := 0, 0, 0, 0
 	for _, chapter := range outline {
+		if chapter.Status == model.ProjectUnitStatusRemoved {
+			continue
+		}
 		if chapter.Status == model.ProjectUnitStatusReserved {
 			reservedCount++
 			reservedWords += chapter.WordCount
@@ -587,6 +609,11 @@ func (s *Service) DramaEpisodeDetail(userID string, projectID string, episodeID 
 		}
 	}
 	detail := DramaEpisodeDetail{Episode: *episode, Shots: shots, Chapters: refs, Jobs: views}
+	casts, err := s.repo.DramaCasts(project.ID)
+	if err != nil {
+		return DramaEpisodeDetail{}, err
+	}
+	detail.SourceAssetIDs = dramaSourceAssetIDs(chapters, casts)
 	if job, jobErr := s.repo.LatestDramaJob(project.ID, model.DramaJobScript, episode.ID); jobErr == nil {
 		view := dramaJobView(*job)
 		detail.ScriptJob = &view

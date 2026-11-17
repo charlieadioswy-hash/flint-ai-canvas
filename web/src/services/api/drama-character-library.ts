@@ -4,6 +4,7 @@ import { http } from "./request";
 
 export type ImportDramaCharacterLibraryInput = {
     expectedRevision: number;
+    episodeId?: string;
     libraryAssetId: string;
     libraryVersionId: string;
     targetCastId?: string;

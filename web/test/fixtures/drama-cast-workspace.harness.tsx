@@ -36,6 +36,7 @@ const { CastPanel } = await import("../../src/pages/projects/studio/panels");
 const { CastEditorDialog } = await import("../../src/pages/projects/studio/cast-editor-dialog");
 const { CastCreateDialog } = await import("../../src/pages/projects/studio/cast-create-dialog");
 const { CastProjectImport } = await import("../../src/pages/projects/studio/cast-project-import");
+const { WorkflowAssetLibrary } = await import("../../src/pages/projects/workflow-asset-library");
 const { CastImageFields } = await import("../../src/pages/projects/studio/cast-image-fields");
 const { composeDramaStyleId, findDramaStyle } = await import("../../src/lib/drama/drama-styles");
 const api = await import("../../src/services/api/drama");
@@ -1222,6 +1223,50 @@ for (const [kind, label, chosen] of [
         await click("全选");
         await click(`导入 1 个${label}`);
         expect(imported).toHaveBeenCalledWith("current", { sourceProjectId: "season-one", castIds: [chosen.id], matchByName: true, replaceExisting: false });
+    });
+
+    test(`${kind} episode library import captures its episode and isolates responses after switching episodes`, async () => {
+        const { list, casts, imported } = mockSources();
+        casts.mockResolvedValue({ cast: [chosen] });
+        let finish!: (result: Awaited<ReturnType<typeof api.importDramaCast>>) => void;
+        let fail!: (error: Error) => void;
+        imported.mockImplementation(
+            () =>
+                new Promise((resolve, reject) => {
+                    finish = resolve;
+                    fail = reject;
+                }),
+        );
+        const onChanged = mock();
+        const onDirtyChange = mock();
+        const props = { projectId: "current", kind, cast: [], busy: false, onChanged, onDirtyChange };
+        await render(<WorkflowAssetLibrary {...props} episodeId="episode-1" />);
+        await click(`从${label}库导入`);
+        await settleUntil(() => list.mock.calls.length === 1 && !document.querySelector(".ant-select-loading"));
+        await chooseSource("第一季", `关联${chosen.name}`);
+        await check(`关联${chosen.name}`);
+        await click(`导入 1 个${label}`);
+        expect(imported).toHaveBeenCalledWith("current", { sourceProjectId: "season-one", castIds: [chosen.id], matchByName: true, replaceExisting: false, episodeId: "episode-1" });
+        await render(<WorkflowAssetLibrary {...props} episodeId="episode-2" />);
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+        await act(async () => {
+            if (kind === "scene") finish({ imported: 1, skipped: 0, cast: [chosen] });
+            else fail(new Error("旧集导入失败"));
+        });
+        expect(onChanged).not.toHaveBeenCalled();
+        expect(document.body.textContent).not.toContain("已关联 1 项素材");
+        expect(document.body.textContent).not.toContain("旧集导入失败");
+        await click(`从${label}库导入`);
+        await settleUntil(() => !document.querySelector(".ant-select-loading"));
+        expect(button(`导入 0 个${label}`).disabled).toBe(true);
+        await chooseSource("第一季", `关联${chosen.name}`);
+        await settleUntil(() => !checkbox(`关联${chosen.name}`).disabled);
+        await check(`关联${chosen.name}`);
+        imported.mockResolvedValue({ imported: 1, skipped: 0, cast: [chosen] });
+        await settleUntil(() => Boolean([...document.querySelectorAll("button")].find((item) => item.textContent?.replace(/\s/g, "") === `导入1个${label}`)));
+        await click(`导入 1 个${label}`);
+        expect(imported).toHaveBeenLastCalledWith("current", { sourceProjectId: "season-one", castIds: [chosen.id], matchByName: true, replaceExisting: false, episodeId: "episode-2" });
+        expect(onChanged).toHaveBeenCalledTimes(1);
     });
 }
 

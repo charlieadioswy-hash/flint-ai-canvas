@@ -187,13 +187,33 @@ test("同帧重复点击只提交一个批次", async () => {
         await v.close();
     }
 });
-test("部分可执行只显示实际可执行部分积分，仍单请求提交", async () => {
+test("部分可执行明确显示实际生成范围和对应积分，仍单请求提交", async () => {
     const v = await mount();
     try {
         await quote(v, {}, ["ready", "blocked"]);
-        await click(button(v.host, "批量生成视频 - 1积分"));
+        await click(button(v.host, "批量生成视频（1/2段） - 1积分"));
         expect(executions).toHaveLength(1);
         expect(executions[0].input.targetIds).toEqual(["segment-a", "segment-b"]);
+    } finally {
+        await v.close();
+    }
+});
+test("增减所选段后重新读取合计费用，不沿用单段价格或按数量倍乘", async () => {
+    const v = await mount({ targetIds: ["segment-a"] });
+    try {
+        await quote(v, { amountMicrocredits: 100_000_000 });
+        expect(button(v.host, "批量生成视频 - 100积分").disabled).toBe(false);
+        await v.rerender({ targetIds: ["segment-d", "segment-b", "segment-a", "segment-c", "segment-a"] });
+        expect(button(v.host, "批量生成视频 - 计价中").disabled).toBe(true);
+        const all = await quote(v, { amountMicrocredits: 575_000_000 });
+        expect(all.input.targetIds).toEqual(["segment-a", "segment-b", "segment-c", "segment-d"]);
+        expect(button(v.host, "批量生成视频 - 575积分").disabled).toBe(false);
+        await v.rerender({ targetIds: ["segment-d", "segment-b", "segment-c"] });
+        expect(button(v.host, "批量生成视频 - 计价中").disabled).toBe(true);
+        const remaining = await quote(v, { amountMicrocredits: 475_000_000 });
+        await click(button(v.host, "批量生成视频 - 475积分"));
+        expect(executions).toHaveLength(1);
+        expect(executions[0].input).toEqual({ ...remaining.input, confirmationToken: "confirmed-token" });
     } finally {
         await v.close();
     }

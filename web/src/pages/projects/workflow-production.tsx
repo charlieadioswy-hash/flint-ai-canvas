@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Select } from "antd";
 import { Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
+import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, rescriptDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
@@ -29,9 +29,9 @@ export type WorkflowProductionProps = {
     summary: DramaSummary;
     step: "story" | "preview";
     onChanged: () => void | Promise<unknown>;
+    headerActions?: ReactNode;
     embedded?: boolean;
     busy?: boolean;
-    onPickChapters?: () => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
     onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
 };
@@ -74,7 +74,7 @@ function readyVideos(detail?: DramaEpisodeDetail) {
     return (detail?.segments || []).filter((segment) => segment.videoStatus === "ready" && segment.videoResourceId && (segment.videoSeconds || 0) > 0).length;
 }
 
-export function WorkflowProduction({ summary, step, onChanged, embedded = false, busy = false, onPickChapters, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
+export function WorkflowProduction({ summary, step, onChanged, headerActions, embedded = false, busy = false, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
     const projectId = summary.project.id;
     const userId = useUserStore((state) => state.user?.id || "");
     const selectionOwner = `${userId}:${projectId}`;
@@ -173,6 +173,25 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
     const status = search.get("status") || "all";
     const guideStep = summary.guide?.step || summary.production.guideStep;
     const textConfirmed = guideStep === "completed" || !guideStep;
+    const canStartStoryboard = textConfirmed || guideStep === "story";
+    const storyboard = useMutation({
+        mutationFn: ({ episodeId, ticket }: { episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
+            if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
+            if (!canStartStoryboard || busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy) throw new Error("请先完成当前操作再生成分镜");
+            const current = queries.find((query) => query.data?.episode.id === episodeId)?.data?.episode;
+            if (current?.stage !== "draft") throw new Error("本集状态已更新，请刷新后再操作");
+            return rescriptDramaEpisode(ticket.projectId, episodeId);
+        },
+        onSuccess: (detail, { episodeId, ticket }) => {
+            if (!operation.isCurrent(ticket)) return;
+            queryClient.setQueryData(dramaKeys.episode(projectId, episodeId), detail);
+            void refresh(episodeId);
+            message.success("已开始生成本集分镜");
+        },
+        onError: (error, { ticket }) => {
+            if (operation.isCurrent(ticket)) message.error(error instanceof Error ? error.message : "分镜生成未能提交");
+        },
+    });
     const readiness = useQuery({
         queryKey: ["drama", projectId, "workflow-readiness", userId, summary.production.revision],
         queryFn: ({ signal }) => getDramaWorkflowReadiness(projectId, signal),
@@ -397,18 +416,6 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                         })
                                     }
                                 />
-                                {summary.production.reservedChapterCount > 0 ? (
-                                    <>
-                                        <span className="drama-workflow-production-note" role="status" aria-atomic="true">
-                                            原文 {summary.production.chapterCount + summary.production.reservedChapterCount} 章 · 制作 {episodes.length} 集 · 待制作 {summary.production.reservedChapterCount} 章
-                                        </span>
-                                        {onPickChapters ? (
-                                            <Button size="small" disabled={busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy || retry.isPending} onClick={onPickChapters}>
-                                                继续选章
-                                            </Button>
-                                        ) : null}
-                                    </>
-                                ) : null}
                                 {step === "story" ? (
                                     <Select
                                         className="drama-workflow-production-status-filter"
@@ -445,6 +452,11 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                     </Button>
                                 ) : null}
                             </div>
+                            {headerActions ? (
+                                <div className="drama-workflow-production-guidance" aria-label="制作流程引导">
+                                    {headerActions}
+                                </div>
+                            ) : null}
                         </div>
                         {step === "story" ? (
                             <section className="drama-workflow-production-batch" aria-label="已选剧情段批量操作">
@@ -513,7 +525,26 @@ export function WorkflowProduction({ summary, step, onChanged, embedded = false,
                                               </div>
                                           ) : null}
                                           {detail && !detail.segments.length && !current.error && !scriptError ? (
-                                              <p className="drama-workflow-production-empty">{detail.jobs.some((job) => job.status === "queued" || job.status === "running") ? "正在准备本集剧本与分镜，完成后自动显示" : "本集还没有分镜"}</p>
+                                              <div className="drama-workflow-production-empty">
+                                                  <p>
+                                                      {current.stage === "draft"
+                                                          ? "本集待制作，点击生成分镜开始。"
+                                                          : detail.jobs.some((job) => job.status === "queued" || job.status === "running")
+                                                            ? "正在准备本集剧本与分镜，完成后自动显示"
+                                                            : "本集还没有分镜"}
+                                                  </p>
+                                                  {current.stage === "draft" ? (
+                                                      <Button
+                                                          type="primary"
+                                                          loading={storyboard.isPending && storyboard.variables?.episodeId === episode.id}
+                                                          disabled={!canStartStoryboard || busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy || retry.isPending || storyboard.isPending}
+                                                          title={!canStartStoryboard ? "请先完成首次配置并确认主体资产" : undefined}
+                                                          onClick={() => storyboard.mutate({ episodeId: episode.id, ticket: operation.capture() })}
+                                                      >
+                                                          {storyboard.isPending && storyboard.variables?.episodeId === episode.id ? "正在生成分镜…" : "生成分镜"}
+                                                      </Button>
+                                                  ) : null}
+                                              </div>
                                           ) : null}
                                           {detail?.segments.length ? (
                                               <WorkflowStoryboardPage

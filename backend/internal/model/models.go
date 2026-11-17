@@ -147,6 +147,8 @@ const (
 	// ProjectUnitStatusReserved 是短剧导入时没有选中的原著章节：原文已保存，但不参与资产提取、分集与改编，
 	// 用户在制作台把它加入制作后变为 ready。
 	ProjectUnitStatusReserved ProjectUnitStatus = "reserved"
+	// 短剧主动删除的集保留原文，但不再参与制作或自动补回分集目录。
+	ProjectUnitStatusRemoved ProjectUnitStatus = "removed"
 
 	AssetCategoryCharacter   AssetCategory = "character"
 	AssetCategoryEnvironment AssetCategory = "environment"

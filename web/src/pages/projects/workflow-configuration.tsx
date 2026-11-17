@@ -58,7 +58,7 @@ export function WorkflowConfiguration({
     const [custom, setCustom] = useState(false);
     const [previewImage, setPreviewImage] = useState<string>();
     const [unavailableImages, setUnavailableImages] = useState<Set<string>>(() => new Set());
-    const [parametersOpen, setParametersOpen] = useState(false);
+    const [parametersOpen, setParametersOpen] = useState(true);
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const ratioField = useRef<HTMLDivElement>(null);
     const resolutionField = useRef<HTMLDivElement>(null);
@@ -130,100 +130,7 @@ export function WorkflowConfiguration({
 
     return (
         <section className="drama-workflow-configuration" aria-label="风格设置">
-            <div className="drama-workflow-config-form thin-scrollbar">
-                <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields">
-                    <legend>{scope === "episode" ? "绘图配置（本集）" : "绘图配置（作品）"}</legend>
-                    <label>
-                        <span>绘图模型</span>
-                        <DramaModelPicker capability="image" value={imageChoice} onChange={(choice) => patch({ models: { ...settings.models, image: choice, characterImage: choice, sceneImage: choice } })} />
-                    </label>
-                    <label>
-                        <span>角色绘图模板</span>
-                        <CharacterTemplatePicker value={settings.assets.mode} disabled={disabled || !schemes.data} schemes={schemes.data?.schemes || []} onChange={(value) => selectTemplate("character", value)} />
-                    </label>
-                    <label>
-                        <span>场景绘图模板</span>
-                        <Select
-                            aria-label="场景绘图模板"
-                            value={schemes.data?.sceneSchemes?.find((item) => item.prompt.trim() === settings.assets.scenePrompt.trim())?.id || "custom"}
-                            disabled={disabled || !schemes.data}
-                            options={[...(schemes.data?.sceneSchemes?.map((item) => ({ value: item.id, label: item.name })) || []), { value: "custom", label: "自定义模板", disabled: true }]}
-                            onChange={(value) => selectTemplate("scene", value)}
-                        />
-                    </label>
-                    {schemes.isError ? (
-                        <Button size="small" onClick={() => void schemes.refetch()}>
-                            重新读取绘图模板
-                        </Button>
-                    ) : null}
-                    <details className="drama-workflow-more">
-                        <summary>绘图模板提示词与画幅</summary>
-                        <AssetSchemePicker value={settings.assets} imageModel={imageOption} layout="compact" onChange={(assets) => patch({ assets })} />
-                    </details>
-                </fieldset>
-                <fieldset disabled={disabled} inert={disabled}>
-                    <legend>绘图风格</legend>
-                    <div className="drama-workflow-style-modes" role="group" aria-label="风格来源">
-                        <button type="button" aria-pressed={!custom} onClick={() => setCustom(false)}>
-                            预设风格
-                        </button>
-                        <button type="button" aria-pressed={custom} onClick={() => setCustom(true)}>
-                            自定义风格
-                        </button>
-                    </div>
-                    {custom ? (
-                        <>
-                            <label>
-                                <span>风格名称</span>
-                                <Input value={settings.styleName} maxLength={60} onChange={(event) => patch({ styleName: event.target.value })} />
-                            </label>
-                            <label>
-                                <span>风格说明</span>
-                                <Input.TextArea
-                                    value={settings.stylePrompt}
-                                    count={{ max: DRAMA_STYLE_PROMPT_MAX_LENGTH, show: true, strategy: (value) => Array.from(value).length }}
-                                    autoSize={{ minRows: 5, maxRows: 12 }}
-                                    onChange={(event) => patch({ stylePrompt: event.target.value })}
-                                    placeholder="描述画面质感、色调、光线与服化道"
-                                />
-                            </label>
-                        </>
-                    ) : (
-                        <>
-                            <div className="drama-workflow-style-categories" role="group" aria-label="风格分类">
-                                {DRAMA_STYLE_CATEGORIES.map((item) => (
-                                    <button key={item.key} type="button" aria-pressed={category === item.key} onClick={() => setCategory(item.key)}>
-                                        {item.label}
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="drama-workflow-style-options" role="group" aria-label="预设风格">
-                                {availableStyles.map((item) => (
-                                    <button key={item.id} type="button" aria-pressed={item.id === style?.id} title={item.description} onClick={() => patch({ styleName: item.name, stylePrompt: item.prompt })}>
-                                        {item.cover && !unavailableImages.has(item.cover) ? (
-                                            <img src={item.cover} alt="" loading="lazy" onError={() => imageFailed(item.cover!)} />
-                                        ) : (
-                                            <span className="drama-workflow-style-placeholder">
-                                                <ImageIcon aria-hidden="true" />
-                                                <span>{item.cover ? "样图不可用" : "暂无样图"}</span>
-                                            </span>
-                                        )}
-                                        <strong>{item.name}</strong>
-                                        {item.id === style?.id ? <Check className="drama-workflow-style-check" aria-hidden="true" /> : null}
-                                    </button>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                    <div className="drama-workflow-style-library-actions">
-                        <Button size="small" disabled={disabled} onClick={() => setPickerOpen(true)}>
-                            自由组合风格
-                        </Button>
-                        <Button size="small" disabled={disabled} onClick={() => setLibraryOpen(true)}>
-                            风格库 / 我的风格
-                        </Button>
-                    </div>
-                </fieldset>
+            <div className="drama-workflow-config-form drama-workflow-production-form thin-scrollbar">
                 <details className="drama-workflow-more" open={parametersOpen} onToggle={(event) => setParametersOpen(event.currentTarget.open)}>
                     <summary>
                         <SlidersHorizontal aria-hidden="true" /> 制作参数
@@ -326,6 +233,101 @@ export function WorkflowConfiguration({
                         </details>
                     </fieldset>
                 </details>
+            </div>
+            <div className="drama-workflow-config-form drama-workflow-drawing-form thin-scrollbar">
+                <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields">
+                    <legend>{scope === "episode" ? "绘图配置（本集）" : "绘图配置（作品）"}</legend>
+                    <label>
+                        <span>绘图模型</span>
+                        <DramaModelPicker capability="image" value={imageChoice} onChange={(choice) => patch({ models: { ...settings.models, image: choice, characterImage: choice, sceneImage: choice } })} />
+                    </label>
+                    <label>
+                        <span>角色绘图模板</span>
+                        <CharacterTemplatePicker value={settings.assets.mode} disabled={disabled || !schemes.data} schemes={schemes.data?.schemes || []} onChange={(value) => selectTemplate("character", value)} />
+                    </label>
+                    <label>
+                        <span>场景绘图模板</span>
+                        <Select
+                            aria-label="场景绘图模板"
+                            value={schemes.data?.sceneSchemes?.find((item) => item.prompt.trim() === settings.assets.scenePrompt.trim())?.id || "custom"}
+                            disabled={disabled || !schemes.data}
+                            options={[...(schemes.data?.sceneSchemes?.map((item) => ({ value: item.id, label: item.name })) || []), { value: "custom", label: "自定义模板", disabled: true }]}
+                            onChange={(value) => selectTemplate("scene", value)}
+                        />
+                    </label>
+                    {schemes.isError ? (
+                        <Button size="small" onClick={() => void schemes.refetch()}>
+                            重新读取绘图模板
+                        </Button>
+                    ) : null}
+                    <details className="drama-workflow-more">
+                        <summary>绘图模板提示词与画幅</summary>
+                        <AssetSchemePicker value={settings.assets} imageModel={imageOption} layout="compact" onChange={(assets) => patch({ assets })} />
+                    </details>
+                </fieldset>
+                <fieldset disabled={disabled} inert={disabled}>
+                    <legend>绘图风格</legend>
+                    <div className="drama-workflow-style-modes" role="group" aria-label="风格来源">
+                        <button type="button" aria-pressed={!custom} onClick={() => setCustom(false)}>
+                            预设风格
+                        </button>
+                        <button type="button" aria-pressed={custom} onClick={() => setCustom(true)}>
+                            自定义风格
+                        </button>
+                    </div>
+                    {custom ? (
+                        <>
+                            <label>
+                                <span>风格名称</span>
+                                <Input value={settings.styleName} maxLength={60} onChange={(event) => patch({ styleName: event.target.value })} />
+                            </label>
+                            <label>
+                                <span>风格说明</span>
+                                <Input.TextArea
+                                    value={settings.stylePrompt}
+                                    count={{ max: DRAMA_STYLE_PROMPT_MAX_LENGTH, show: true, strategy: (value) => Array.from(value).length }}
+                                    autoSize={{ minRows: 5, maxRows: 12 }}
+                                    onChange={(event) => patch({ stylePrompt: event.target.value })}
+                                    placeholder="描述画面质感、色调、光线与服化道"
+                                />
+                            </label>
+                        </>
+                    ) : (
+                        <>
+                            <div className="drama-workflow-style-categories" role="group" aria-label="风格分类">
+                                {DRAMA_STYLE_CATEGORIES.map((item) => (
+                                    <button key={item.key} type="button" aria-pressed={category === item.key} onClick={() => setCategory(item.key)}>
+                                        {item.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="drama-workflow-style-options" role="group" aria-label="预设风格">
+                                {availableStyles.map((item) => (
+                                    <button key={item.id} type="button" aria-pressed={item.id === style?.id} title={item.description} onClick={() => patch({ styleName: item.name, stylePrompt: item.prompt })}>
+                                        {item.cover && !unavailableImages.has(item.cover) ? (
+                                            <img src={item.cover} alt="" loading="lazy" onError={() => imageFailed(item.cover!)} />
+                                        ) : (
+                                            <span className="drama-workflow-style-placeholder">
+                                                <ImageIcon aria-hidden="true" />
+                                                <span>{item.cover ? "样图不可用" : "暂无样图"}</span>
+                                            </span>
+                                        )}
+                                        <strong>{item.name}</strong>
+                                        {item.id === style?.id ? <Check className="drama-workflow-style-check" aria-hidden="true" /> : null}
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                    <div className="drama-workflow-style-library-actions">
+                        <Button size="small" disabled={disabled} onClick={() => setPickerOpen(true)}>
+                            自由组合风格
+                        </Button>
+                        <Button size="small" disabled={disabled} onClick={() => setLibraryOpen(true)}>
+                            风格库 / 我的风格
+                        </Button>
+                    </div>
+                </fieldset>
             </div>
             <div className="drama-workflow-style-preview">
                 <header>

@@ -218,7 +218,11 @@ func (s *Service) AdoptDramaSceneSplit(userID, projectID, episodeID string, req 
 	if err != nil {
 		return DramaSummary{}, err
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	err = s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(repo *repository.Repository) error {
 		p, err := repo.DramaProduction(projectID)
 		if err != nil {
@@ -304,5 +308,7 @@ func (s *Service) AdoptDramaSceneSplit(userID, projectID, episodeID string, req 
 	if err != nil {
 		return DramaSummary{}, dramaLookupError(err)
 	}
+	release()
+	release = nil
 	return s.DramaSummary(userID, projectID)
 }

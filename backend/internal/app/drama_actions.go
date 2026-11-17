@@ -203,6 +203,15 @@ func (s *Service) resumeDrama(productionRow *model.DramaProduction) error {
 		if current.SettingsJSON != productionRow.SettingsJSON || current.GuideStep != productionRow.GuideStep {
 			return repository.ErrDramaGuideChanged
 		}
+		if current.Status == model.DramaStatusDraft && current.GuideStep == "" && current.PlanDone && settings.EpisodeMode == DramaEpisodeModeChapter {
+			project, err := tx.ProjectForUser(current.UserID, current.ProjectID)
+			if err != nil {
+				return err
+			}
+			if _, err := syncDramaEpisodeCatalog(tx, project, current, model.DramaEpisodeQueued); err != nil {
+				return err
+			}
+		}
 		if err := finalizeDramaInitialSettings(tx, current, settings, fields); err != nil {
 			return err
 		}
@@ -237,7 +246,7 @@ func (s *Service) requestDramaWork(productionRow *model.DramaProduction) error {
 	return nil
 }
 
-var dramaStageOrder = map[string]int{model.DramaEpisodeQueued: 0, model.DramaEpisodeScript: 1, model.DramaEpisodePrompts: 2, model.DramaEpisodeReview: 3, model.DramaEpisodeVideo: 4, model.DramaEpisodeRender: 5, model.DramaEpisodeDone: 6}
+var dramaStageOrder = map[string]int{model.DramaEpisodeDraft: -1, model.DramaEpisodeQueued: 0, model.DramaEpisodeScript: 1, model.DramaEpisodePrompts: 2, model.DramaEpisodeReview: 3, model.DramaEpisodeVideo: 4, model.DramaEpisodeRender: 5, model.DramaEpisodeDone: 6}
 
 // episodeRewind 累积一次用户操作对多集的影响，最后统一写回并递增各集版本。
 type episodeRewind struct {
@@ -348,10 +357,33 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 		expected = &productionRow.Revision
 	}
 	if err := s.withDramaGuideEdit(projectID, expected, false, func(tx *repository.Repository) error {
+		current, err := tx.DramaEpisode(project.ID, episode.ID)
+		if err != nil {
+			return err
+		}
+		if current.Stage == model.DramaEpisodeDraft {
+			chapters, err := tx.DramaChaptersByIDs(project.ID, decodeStringList(current.ChapterIDsJSON))
+			if err != nil {
+				return err
+			}
+			if len(chapters) == 0 {
+				return BadAuthRequest("本集没有来源正文，请先补充原文")
+			}
+			sourceRunes := 0
+			for _, chapter := range chapters {
+				if chapter.WordCount > production.ScriptSourceChapterRunes {
+					return BadAuthRequest(fmt.Sprintf("第 %d 章原文 %d 字，单章不超过 %d 字，请先拆分原文", chapter.Position+1, chapter.WordCount, production.ScriptSourceChapterRunes))
+				}
+				sourceRunes += chapter.WordCount
+			}
+			if sourceRunes > dramaEpisodeSourceRunes {
+				return BadAuthRequest(fmt.Sprintf("本集原文合计 %d 字，每集原文不超过 %d 字，请先拆分原文", sourceRunes, dramaEpisodeSourceRunes))
+			}
+		}
 		if err := tx.CancelQueuedDramaJobs(project.ID, func(db *gorm.DB) *gorm.DB { return db.Where("episode_id = ?", episode.ID) }); err != nil {
 			return err
 		}
-		_, err := tx.ApplyDramaScript(episode.ID, nil, fields, nil)
+		_, err = tx.ApplyDramaScript(episode.ID, nil, fields, nil)
 		return err
 	}); err != nil {
 		return DramaEpisodeDetail{}, err
@@ -533,21 +565,49 @@ func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCa
 	if err := validateDramaCastText(appearance, "这套造型的外观描述", 1000, true); err != nil {
 		return nil, err
 	}
-	existing, err := s.repo.DramaCasts(project.ID)
-	if err != nil {
-		return nil, err
-	}
-	looks := dramaLooksForCharacter(existing, character.ID)
-	if len(looks) >= production.MaxCharacterLooks {
-		return nil, BadAuthRequest(fmt.Sprintf("每个角色最多 %d 套造型", production.MaxCharacterLooks))
-	}
 	from, to := dramaNormalizeLookRange(req.FromChapter, req.ToChapter)
-	look := model.DramaCast{ID: newID(), ProjectID: project.ID, Kind: "character", ParentID: character.ID, Name: character.Name, LookName: truncateRunes(name, 60), Appearance: truncateRunes(appearance, 1000), LookFromChapter: from, LookToChapter: to, Position: character.Position*100 + len(looks) + 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	look := model.DramaCast{ID: newID(), ProjectID: project.ID, Kind: "character", ParentID: character.ID, LookName: truncateRunes(name, 60), Appearance: truncateRunes(appearance, 1000), LookFromChapter: from, LookToChapter: to, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	look.ImageStatus = model.DramaMediaDraft
 	if _, err := applyDramaCastImageFields(&look, req.ImagePrompt, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt); err != nil {
 		return nil, err
 	}
-	if err := s.repo.CreateDramaCasts([]model.DramaCast{look}); err != nil {
+	if err := s.withDramaTextEdit(project.ID, req.ExpectedRevision, true, func(tx *repository.Repository) error {
+		current, err := tx.DramaProduction(project.ID)
+		if err != nil {
+			return err
+		}
+		if err := requireDramaGuideComplete(current); err != nil {
+			return err
+		}
+		character, err := tx.DramaCast(project.ID, castID)
+		if err != nil {
+			return dramaLookupError(err)
+		}
+		if character.Kind != "character" || character.ParentID != "" {
+			return BadAuthRequest("只能为角色添加造型")
+		}
+		if req.EpisodeID != "" {
+			if _, err := tx.DramaEpisode(project.ID, req.EpisodeID); err != nil {
+				return dramaLookupError(err)
+			}
+		}
+		existing, err := tx.DramaCasts(project.ID)
+		if err != nil {
+			return err
+		}
+		looks := dramaLooksForCharacter(existing, character.ID)
+		if len(looks) >= production.MaxCharacterLooks {
+			return BadAuthRequest(fmt.Sprintf("每个角色最多 %d 套造型", production.MaxCharacterLooks))
+		}
+		look.Name, look.Position = character.Name, character.Position*100+len(looks)+1
+		if err := tx.CreateDramaCasts([]model.DramaCast{look}); err != nil {
+			return err
+		}
+		if req.EpisodeID == "" {
+			return nil
+		}
+		return tx.MergeDramaEpisodeAssets(project.ID, []string{req.EpisodeID}, []string{look.ID})
+	}); err != nil {
 		return nil, err
 	}
 	return map[string]any{"look": look}, nil

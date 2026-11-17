@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -93,6 +94,239 @@ func TestDramaStudioBatchCrossEpisodeVideoDoesNotInvalidateItsOwnToken(t *testin
 	replay, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
 	if err != nil || replay.Counts["queued"] != 0 || replay.Counts["skipped_ready"] != 2 {
 		t.Fatalf("successful videos must not regenerate on replay: %+v %v", replay, err)
+	}
+}
+
+func dramaStudioBatchTailFixture(t *testing.T) (*Service, *fakeDramaBackend, string, []model.DramaSegment) {
+	t.Helper()
+	svc, fake, projectID, detail := dramaStudioFixture(t)
+	segments, err := svc.repo.DramaSegments(detail.Episode.ID)
+	if err != nil || len(segments) != 2 {
+		t.Fatalf("fixture segments: %+v %v", segments, err)
+	}
+	shots, err := svc.repo.DramaShots(detail.Episode.ID)
+	if err != nil || len(shots) != 2 {
+		t.Fatalf("fixture shots: %+v %v", shots, err)
+	}
+	for i := 2; i < 4; i++ {
+		segment, shot := segments[i-2], shots[i-2]
+		segment.ID, segment.SegmentIndex = fmt.Sprintf("batch-tail-segment-%d", i), i
+		shot.ID, shot.SegmentIndex, shot.Position = fmt.Sprintf("batch-tail-shot-%d", i), i, i
+		if err := fake.db.Create(&segment).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := fake.db.Create(&shot).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fake.db.Model(&model.DramaSegment{}).Where("episode_id = ?", detail.Episode.ID).Update("reference_cast_ids_json", "[]").Error; err != nil {
+		t.Fatal(err)
+	}
+	image := fake.resource("usr-drama", "image", "image/png")
+	refs, _ := json.Marshal([]model.DramaReferenceImage{{ResourceID: image, Name: "首段参考图"}})
+	if err := fake.db.Model(&model.DramaSegment{}).Where("id = ?", segments[0].ID).Update("reference_images_json", string(refs)).Error; err != nil {
+		t.Fatal(err)
+	}
+	capability := dramaVideoFixture()
+	capability.References.MinImages = 1
+	setDramaVideoCapability(t, svc, fake, capability)
+	for _, row := range []any{
+		&model.ModelChannel{ID: "ch", Scope: model.ChannelScopeSystem, Enabled: true},
+		&model.ChannelModelPriceTier{ID: "batch-tail-video-price", ChannelModelID: "drama-video", SelectorKey: "{}", SelectorJSON: "{}", BillingMode: "fixed_request", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true},
+		&model.CreditAccount{UserID: "usr-drama", AvailableMicrocredits: 1000},
+	} {
+		if err := fake.db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	segments, err = svc.repo.DramaSegments(detail.Episode.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc, fake, projectID, segments
+}
+
+func TestDramaStudioBatchTailVideosQuotesAndQueuesWholeSelectedChain(t *testing.T) {
+	for _, scenario := range []string{"four_fixed_requests", "different_models_and_durations", "failed_with_previous_results"} {
+		t.Run(scenario, func(t *testing.T) {
+			svc, fake, projectID, segments := dramaStudioBatchTailFixture(t)
+			wantAmount := int64(400)
+			if scenario == "failed_with_previous_results" {
+				for _, segment := range segments {
+					if err := fake.db.Model(&model.DramaSegment{}).Where("id = ?", segment.ID).Updates(map[string]any{"video_status": model.DramaMediaFailed, "video_resource_id": fake.resource("usr-drama", "video", "video/mp4"), "tail_frame_resource_id": fake.resource("usr-drama", "image", "image/png")}).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if scenario == "different_models_and_durations" {
+				if err := fake.db.Model(&model.ChannelModelPriceTier{}).Where("id = ?", "batch-tail-video-price").Updates(map[string]any{"billing_mode": "per_second", "unit_price_microcredits": 10}).Error; err != nil {
+					t.Fatal(err)
+				}
+				capability := dramaVideoFixture()
+				capability.References.MinImages = 1
+				profile, _ := json.Marshal(&ModelCapabilityConfig{Version: 1, Video: &capability})
+				for _, row := range []any{
+					&model.ChannelModel{ID: "batch-tail-alternate", ChannelID: "ch", ModelKey: "alternate-video", Capability: "video", Protocol: model.ChannelInterfaceVolcengineArkVideo, Enabled: true, CapabilityConfigJSON: string(profile)},
+					&model.ChannelModelPriceTier{ID: "batch-tail-alternate-price", ChannelModelID: "batch-tail-alternate", SelectorKey: "{}", SelectorJSON: "{}", BillingMode: "per_second", UnitPriceMicrocredits: 20, PriceConfigured: true, Enabled: true},
+				} {
+					if err := fake.db.Create(row).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				choice, _ := json.Marshal(DramaModelChoice{ChannelID: "ch", ModelKey: "alternate-video"})
+				if err := fake.db.Model(&model.DramaSegment{}).Where("id IN ?", []string{segments[1].ID, segments[3].ID}).Update("video_model_json", string(choice)).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := fake.db.Model(&model.DramaShot{}).Where("episode_id = ? AND segment_index IN ?", segments[0].EpisodeID, []int{1, 3}).Update("duration_ms", 8000).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := fake.db.Model(&model.DramaSegment{}).Where("id IN ?", []string{segments[1].ID, segments[3].ID}).Update("prompt_seconds", 10).Error; err != nil {
+					t.Fatal(err)
+				}
+				wantAmount = 500 // 5s×10 + 10s×20 + 5s×10 + 10s×20。
+			}
+			ids := []string{segments[3].ID, segments[1].ID, segments[0].ID, segments[2].ID}
+			view, err := svc.PreflightDramaStudioBatch("usr-drama", projectID, DramaStudioBatchRequest{Action: "segment_video", TargetIDs: ids})
+			if err != nil || !view.Ready || !view.Priced || view.Counts["ready"] != 4 || view.AmountMicrocredits != wantAmount {
+				t.Fatalf("all selected tail-dependent videos must be quoted: %+v %v", view, err)
+			}
+			if fake.byKind["video"] != 0 || fake.byKind["image"] != 0 {
+				t.Fatal("preflight generated media")
+			}
+			result, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
+			if err != nil || result.Counts["queued"] != 4 || result.AmountMicrocredits != wantAmount {
+				t.Fatalf("whole selected chain must queue: %+v %v", result, err)
+			}
+			replay, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
+			if err != nil || replay.Counts["queued"] != 0 || replay.Counts["already_queued"] != 4 {
+				t.Fatalf("repeated request must not enqueue twice: %+v %v", replay, err)
+			}
+			for _, segment := range segments {
+				stored, _ := svc.repo.DramaSegment(projectID, segment.ID)
+				if stored.VideoStatus != model.DramaMediaQueued {
+					t.Fatalf("continuity invalidation lost a selected request: %+v", stored)
+				}
+			}
+			fake.fail = func(req CreateTaskRequest) bool {
+				if req.Type == "canvas_video" && fake.byKind["video"] > 0 {
+					previous, _ := svc.repo.DramaSegment(projectID, segments[fake.byKind["video"]-1].ID)
+					if !dramaSegmentVideoDone(*previous) {
+						t.Fatalf("next segment dispatched before preceding tail was ready: %+v", previous)
+					}
+				}
+				return false
+			}
+			runDramaTicks(t, svc, projectID, 18)
+			requests := dramaVideoRequests(fake)
+			if len(requests) != 4 || fake.byKind["image"] != 0 || fake.byKind["render"] != 0 {
+				t.Fatalf("selected chain scope changed: %v", fake.byKind)
+			}
+			for i, before := range segments {
+				stored, _ := svc.repo.DramaSegment(projectID, before.ID)
+				if !dramaSegmentVideoDone(*stored) {
+					t.Fatalf("segment %d did not complete in order: %+v", i, stored)
+				}
+				metadata := requests[i].Input["metadata"].(map[string]any)
+				if i > 0 && (metadata["videoEditOperation"] != "image_to_video" || metadata["videoStartFrameNodeId"] != "first-frame") {
+					t.Fatalf("segment %d lost tail dependency: %+v", i, requests[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDramaStudioBatchTailVideosKeepUnselectedAndBlockedDependenciesBlocked(t *testing.T) {
+	for _, blocker := range []string{"unselected_first", "blocked_middle"} {
+		t.Run(blocker, func(t *testing.T) {
+			svc, fake, projectID, segments := dramaStudioBatchTailFixture(t)
+			ids := []string{segments[1].ID, segments[2].ID, segments[3].ID}
+			wantReady, wantBlocked, wantAmount := 0, 3, int64(0)
+			if blocker == "blocked_middle" {
+				ids = append(ids, segments[0].ID)
+				if err := fake.db.Model(&model.DramaSegment{}).Where("id = ?", segments[1].ID).Updates(map[string]any{"prompt_status": model.DramaMediaFailed, "video_prompt": ""}).Error; err != nil {
+					t.Fatal(err)
+				}
+				wantReady, wantAmount = 1, 100
+			}
+			view, err := svc.PreflightDramaStudioBatch("usr-drama", projectID, DramaStudioBatchRequest{Action: "segment_video", TargetIDs: ids})
+			if err != nil || view.Counts["ready"] != wantReady || view.Counts["blocked"] != wantBlocked || view.AmountMicrocredits != wantAmount {
+				t.Fatalf("broken dependency must block its descendants: %+v %v", view, err)
+			}
+			result, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
+			if err != nil || result.Counts["queued"] != wantReady || result.Counts["blocked"] != wantBlocked {
+				t.Fatalf("blocked descendants were requested: %+v %v", result, err)
+			}
+			for _, segment := range segments[1:] {
+				stored, _ := svc.repo.DramaSegment(projectID, segment.ID)
+				if mediaBusyStatus(stored.VideoStatus) {
+					t.Fatalf("unavailable dependency released video: %+v", stored)
+				}
+			}
+		})
+	}
+}
+
+func TestDramaStudioBatchTailRetryDoesNotStrandVideosAfterSkippedSuccessfulDependency(t *testing.T) {
+	for _, selectMiddle := range []bool{false, true} {
+		t.Run(fmt.Sprintf("select_successful_middle_%t", selectMiddle), func(t *testing.T) {
+			svc, fake, projectID, segments := dramaStudioBatchTailFixture(t)
+			if err := fake.db.Model(&model.DramaSegment{}).Where("id = ?", segments[0].ID).Updates(map[string]any{"video_status": model.DramaMediaFailed, "video_resource_id": fake.resource("usr-drama", "video", "video/mp4")}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := fake.db.Model(&model.DramaSegment{}).Where("id = ?", segments[1].ID).Updates(map[string]any{"video_status": model.DramaMediaReady, "video_resource_id": fake.resource("usr-drama", "video", "video/mp4"), "tail_frame_resource_id": fake.resource("usr-drama", "image", "image/png")}).Error; err != nil {
+				t.Fatal(err)
+			}
+			ids := []string{segments[0].ID, segments[2].ID, segments[3].ID}
+			if selectMiddle {
+				ids = append(ids, segments[1].ID)
+			}
+			view, err := svc.PreflightDramaStudioBatch("usr-drama", projectID, DramaStudioBatchRequest{Action: "segment_video", TargetIDs: ids})
+			if err != nil || view.Counts["ready"] != 1 || view.Counts["blocked"] != 2 || view.AmountMicrocredits != 100 || selectMiddle && view.Counts["skipped_ready"] != 1 {
+				t.Fatalf("a skipped old tail cannot satisfy a chain invalidated by this batch: %+v %v", view, err)
+			}
+			result, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
+			if err != nil || result.Counts["queued"] != 1 || result.Counts["blocked"] != 2 {
+				t.Fatalf("batch queued stranded descendants: %+v %v", result, err)
+			}
+			runDramaTicks(t, svc, projectID, 8)
+			if fake.byKind["video"] != 1 {
+				t.Fatalf("batch implicitly regenerated skipped middle video: %v", fake.byKind)
+			}
+			for _, segment := range segments[1:] {
+				stored, _ := svc.repo.DramaSegment(projectID, segment.ID)
+				if mediaBusyStatus(stored.VideoStatus) {
+					t.Fatalf("batch stranded an unauthorized descendant: %+v", stored)
+				}
+			}
+		})
+	}
+}
+
+func TestDramaStudioBatchTailVideosChecksCombinedBalanceBeforeQueuing(t *testing.T) {
+	svc, fake, projectID, segments := dramaStudioBatchTailFixture(t)
+	ids := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		ids = append(ids, segment.ID)
+	}
+	view, err := svc.PreflightDramaStudioBatch("usr-drama", projectID, DramaStudioBatchRequest{Action: "segment_video", TargetIDs: ids})
+	if err != nil || view.Counts["ready"] != 4 || view.AmountMicrocredits != 400 {
+		t.Fatalf("initial chain quote: %+v %v", view, err)
+	}
+	if err := fake.db.Model(&model.CreditAccount{}).Where("user_id = ?", "usr-drama").Update("available_microcredits", 150).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.ExecuteDramaStudioBatch("usr-drama", projectID, confirmedDramaStudioBatch(view))
+	if err != nil || result.Ready || result.Counts["blocked"] != 4 || result.Counts["queued"] != 0 || !result.Priced || result.AmountMicrocredits != 400 || !strings.Contains(result.Reason, "积分不足") {
+		t.Fatalf("combined balance must block the whole chain and retain its quote: %+v %v", result, err)
+	}
+	for _, segment := range segments {
+		stored, _ := svc.repo.DramaSegment(projectID, segment.ID)
+		if mediaBusyStatus(stored.VideoStatus) {
+			t.Fatalf("insufficient batch balance partially queued: %+v", stored)
+		}
+	}
+	if fake.byKind["video"] != 0 {
+		t.Fatal("insufficient batch balance generated video")
 	}
 }
 

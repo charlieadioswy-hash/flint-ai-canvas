@@ -664,12 +664,19 @@ test("关闭媒体先完成同步，连续点击只关闭一次且不丢配置",
     }
 });
 
-test("一次重新载入即采用新版本，后台更新保留脏草稿并阻止覆盖", async () => {
+test("正常状态不显示重新载入，版本更新后可重新读取且不覆盖脏草稿", async () => {
     const view = await mount();
     try {
+        expect(view.host.textContent).not.toContain("重新载入");
+        expect(view.host.textContent).not.toContain("重新读取");
         server.image = { ...server.image, revision: 4, config: { ...server.image.config, prompt: "远端新配置" } };
-        await click(view.host, "重新载入");
+        await act(async () => {
+            await view.client.refetchQueries({ queryKey: ["drama-shot-media", "user-a", "project-a", "real-shot", "image"] });
+            await settle();
+        });
+        await click(view.host, "重新读取");
         expect(view.host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("远端新配置");
+        expect(view.host.textContent).not.toContain("重新读取");
         await prompt(view.host, "本地未保存草稿");
         await act(async () => {
             view.client.setQueryData(["drama-shot-media", "user-a", "project-a", "real-shot", "image"], { ...server.image, revision: 5 });
@@ -1121,12 +1128,22 @@ test("报价阻断或读取失败不影响配置自动同步，也不自动生�
         expect(view.host.querySelector<HTMLButtonElement>(".drama-shot-media-generate")!.disabled).toBe(true);
         expect(view.host.textContent).toContain("参考图未就绪");
         quoteBlocked = "";
+        await click(view.host, "重新读取");
+        await waitPrice(view.host);
+        expect(view.host.querySelector<HTMLButtonElement>(".drama-shot-media-generate")!.disabled).toBe(false);
+        expect(view.host.textContent).not.toContain("重新读取");
         quoteFailure = "报价服务暂不可用";
         await prompt(view.host, "另一个未保存草稿");
         for (let i = 0; i < 75 && !view.host.textContent?.includes("报价服务暂不可用"); i++) await act(settle);
         expect(view.host.textContent).toContain("生成图片 - 暂无报价");
         expect(view.host.textContent).toContain("报价服务暂不可用");
         expect(view.host.querySelector<HTMLButtonElement>(".drama-shot-media-generate")!.disabled).toBe(true);
+        expect(saves).toHaveLength(2);
+        quoteFailure = "";
+        await click(view.host, "重新读取");
+        await waitPrice(view.host);
+        expect(view.host.querySelector<HTMLButtonElement>(".drama-shot-media-generate")!.disabled).toBe(false);
+        expect(view.host.textContent).not.toContain("重新读取");
         expect(saves).toHaveLength(2);
         expect(executions).toHaveLength(0);
     } finally {
@@ -1236,7 +1253,8 @@ test("手工稿的空来源标记在报价刷新与自动保存中保留，报�
         for (let i = 0; i < 40; i++) await act(settle);
         expect(saves).toHaveLength(1);
         quoteAmount = 2_000_000;
-        await click(view.host, "重新载入");
+        await click(view.host, "图片");
+        await click(view.host, "视频");
         await waitPrice(view.host);
         expect(view.host.textContent).toContain("生成视频 - 2积分");
         expect(saves).toHaveLength(1);

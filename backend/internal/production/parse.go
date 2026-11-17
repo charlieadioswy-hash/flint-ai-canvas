@@ -247,7 +247,7 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		character.Looks = normalizeBibleLooks(character)
 		characters = append(characters, character)
-		if len(characters) >= 24 {
+		if kind == "" && len(characters) >= 24 {
 			break
 		}
 	}
@@ -262,7 +262,7 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		sceneSeen[key] = true
 		scenes = append(scenes, scene)
-		if len(scenes) >= 16 {
+		if kind == "" && len(scenes) >= 16 {
 			break
 		}
 	}
@@ -277,7 +277,7 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		propSeen[key] = true
 		props = append(props, prop)
-		if len(props) >= 20 {
+		if kind == "" && len(props) >= 20 {
 			break
 		}
 	}

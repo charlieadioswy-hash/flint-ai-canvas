@@ -261,7 +261,7 @@ export function CastLooks({
         onChanged();
     };
     const add = useMutation({
-        mutationFn: (value: LookInput) => addDramaCastLook(projectId, character.id, value),
+        mutationFn: (value: LookInput) => addDramaCastLook(projectId, character.id, { ...value, ...(episodeId ? { episodeId } : {}) }),
         onSuccess: () => done("造型已保存，可上传自定义图或单独生成造型图"),
         onError: (error) => message.error(error instanceof Error ? error.message : "添加失败"),
     });

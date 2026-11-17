@@ -118,7 +118,11 @@ func (s *Service) updateDramaGenerationSettings(userID, projectID string, req Up
 	if err != nil {
 		return DramaSummary{}, err
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	err = s.repo.Transaction(func(tx *repository.Repository) error {
 		current, err := tx.DramaProductionForUpdate(projectID)
 		if err != nil {
@@ -161,5 +165,7 @@ func (s *Service) updateDramaGenerationSettings(userID, projectID string, req Up
 	if err != nil {
 		return DramaSummary{}, dramaGuideError(err)
 	}
+	release()
+	release = nil
 	return s.DramaSummary(userID, projectID)
 }

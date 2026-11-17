@@ -42,7 +42,7 @@ func BibleExtractionSystemPrompt(kind string) string {
 // BibleExtractionPrompt 复用全书设定提示词，并要求只抽取本次种类。
 // 非本类数组必须为空；不得根据已有资产补写本次来源中未出现的内容，不得生成图片。
 func BibleExtractionPrompt(title string, settings Settings, chapters []Chapter, maxChars int, skill *WritingSkill, kind string) string {
-	base := BiblePrompt(title, settings, chapters, maxChars, skill)
+	base := biblePrompt(title, settings, chapters, maxChars, skill, kind)
 	var b strings.Builder
 	b.WriteString(base)
 	b.WriteString("\n【增量提取/重新查漏】\n")

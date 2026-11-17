@@ -48,6 +48,8 @@ const chapterLists = new Map<string, DramaChapterRef[]>();
 const chapterBodies = new Map<string, ChapterBody>();
 const chapterReads: string[] = [];
 const episodeChapterIDs = new Map<string, string[]>();
+const draftEpisodes = new Set<string>();
+const storyboardStarts: string[] = [];
 const chapterWrites: Array<{ projectId: string; chapterId: string; patch: { title?: string; text?: string; expectedRevision?: number } }> = [];
 const notices: Array<{ kind: string; text: string }> = [];
 const navigations: string[] = [];
@@ -289,7 +291,14 @@ mock.module("@/pages/projects/asset-scheme", () => ({
 }));
 mock.module("@/services/api/drama", () => ({
     listDramaChapters: async (projectId: string) => ({ chapters: chapterLists.get(projectId) || [] }),
-    getDramaEpisode: async (projectId: string, episodeId: string) => ({ episode: { id: episodeId, number: 2, title: "第二集", chapterIdsJson: JSON.stringify(episodeChapterIDs.get(`${projectId}:${episodeId}`) || []) } }),
+    getDramaEpisode: async (projectId: string, episodeId: string) => ({
+        episode: { id: episodeId, number: 2, title: "第二集", stage: draftEpisodes.has(episodeId) ? "draft" : "script", chapterIdsJson: JSON.stringify(episodeChapterIDs.get(`${projectId}:${episodeId}`) || []) },
+    }),
+    rescriptDramaEpisode: async (projectId: string, episodeId: string) => {
+        storyboardStarts.push(episodeId);
+        draftEpisodes.delete(episodeId);
+        return { episode: { id: episodeId, stage: "script", chapterIdsJson: JSON.stringify(episodeChapterIDs.get(`${projectId}:${episodeId}`) || []) } };
+    },
     getDramaChapter: async (projectId: string, chapterId: string) => {
         chapterReads.push(chapterKey(projectId, chapterId));
         const chapter = chapterBodies.get(chapterKey(projectId, chapterId));
@@ -313,12 +322,12 @@ mock.module("@/services/api/drama", () => ({
         if (input.chapters)
             seedChapters(
                 projectId,
-                input.chapters.map((chapter, index) => ({ id: `replacement-${index}`, title: chapter.title, text: chapter.text, reserved: !input.selectedChapters?.includes(index) })),
+                input.chapters.map((chapter, index) => ({ id: `replacement-${index}`, title: chapter.title, text: chapter.text, reserved: input.selectedChapters ? !input.selectedChapters.includes(index) : false })),
             );
         else
             chapterLists.set(
                 projectId,
-                (chapterLists.get(projectId) || []).map((chapter, index) => ({ ...chapter, reserved: !input.selectedChapters?.includes(index) })),
+                (chapterLists.get(projectId) || []).map((chapter, index) => ({ ...chapter, reserved: input.selectedChapters ? !input.selectedChapters.includes(index) : false })),
             );
         return summaryOf(projectId, input.expectedRevision + 1, input.sourceFormat);
     },
@@ -442,6 +451,8 @@ function resetFixture() {
     chapterBodies.clear();
     chapterReads.length = 0;
     episodeChapterIDs.clear();
+    draftEpisodes.clear();
+    storyboardStarts.length = 0;
     chapterWrites.length = 0;
     notices.length = 0;
     navigations.length = 0;
@@ -662,78 +673,69 @@ test("剧本格式默认阅读，显式编辑与取消只影响当前章，制�
     }
 });
 
-test("九章只选择首章时明确一集与八章预留，制作勾选和章节状态默认可见", async () => {
+test("九章完整展示真实九集，没有制作范围复选框或默认首章说明", async () => {
     resetFixture();
     seedChapters(
         "project-a",
-        Array.from({ length: 9 }, (_, index) => ({ id: `scope-${index}`, title: index === 0 ? "序章" : `第${index}章`, text: "原文章节".repeat(index + 1), reserved: index > 0, episodeNumber: index === 0 ? 1 : undefined })),
+        Array.from({ length: 9 }, (_, index) => ({ id: `scope-${index}`, title: index === 0 ? "序章" : `第${index}章`, text: "原文章节".repeat(index + 1), episodeNumber: index + 1 })),
     );
     const initial = summaryOf("project-a", 4);
     initial.production.chapterCount = 9;
-    initial.production.reservedChapterCount = 8;
+    initial.episodes = Array.from({ length: 9 }, (_, index) => ({ ...initial.episodes[0], id: `episode-${index}`, number: index + 1 }));
     const view = await mount((props) => createElement(WorkflowSourceReview, props), initial);
     try {
         const heading = view.container.querySelector(".drama-source-chapter-summary")!;
-        expect(heading.textContent).toBe("原文共 9 章 · 本次选择 1 章 · 预留 8 章 · 当前待确认分集 1 集");
+        expect(heading.textContent).toBe("原文共 9 章 · 共 9 集");
         expect(view.container.querySelector(".drama-source-chapter-list > p")?.textContent).toBe(heading.textContent);
         expect(view.container.querySelector<HTMLDetailsElement>(".drama-source-review-options")?.open).toBe(false);
         expect(options(view.container)).toHaveLength(9);
-        expect(options(view.container)[0].textContent).toContain("第 1 集（待确认）");
-        expect(options(view.container)[1].textContent).toContain("待加入制作（预留）");
+        expect(options(view.container)[0].textContent).toContain("第 1 集");
+        expect(options(view.container)[1].textContent).toContain("第 2 集");
         expect(options(view.container)[1].textContent).toContain("8 字");
-        const selected = field(view.container, "本次制作 序章");
-        const reserved = field(view.container, "本次制作 第1章");
-        expect((selected as HTMLInputElement).checked).toBe(true);
-        expect((reserved as HTMLInputElement).checked).toBe(false);
-        expect(getComputedStyle(reserved.parentElement!).display).toBe("flex");
+        expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
         expect(getComputedStyle(options(view.container)[1].querySelector("span")!).display).toBe("block");
-        expect(view.container.textContent).toContain("导入默认先选首章");
+        expect(view.container.textContent).toContain("全部章节已加入分集列表");
         await act(async () => {
-            reserved.click();
+            options(view.container)[8].click();
             await settle();
         });
-        expect(heading.textContent).toBe("原文共 9 章 · 本次选择 2 章 · 预留 7 章 · 当前待确认分集 1 集");
-        expect(button(view.container, "保存类型与制作范围").disabled).toBe(false);
+        expect(heading.textContent).toBe("原文共 9 章 · 共 9 集");
+        expect(options(view.container)[8].getAttribute("aria-selected")).toBe("true");
         expect(sourceWrites).toHaveLength(0);
-        expect(chapterLists.get("project-a")?.filter((chapter) => chapter.reserved)).toHaveLength(8);
+        expect(chapterLists.get("project-a")?.filter((chapter) => chapter.reserved)).toHaveLength(0);
     } finally {
         await view.dispose();
     }
 });
 
-test("确认后仍展示九章一集与待加入标记，继续选章回调在脏稿和忙碌时锁定", async () => {
+test("确认后原文目录保持全部章节，阅读切章不再要求继续选章", async () => {
     resetFixture();
     seedChapters(
         "project-a",
-        Array.from({ length: 9 }, (_, index) => ({ id: `scope-${index}`, title: index === 0 ? "序章" : `第${index}章`, text: "原文章节".repeat(index + 1), reserved: index > 0, episodeNumber: index === 0 ? 1 : undefined })),
+        Array.from({ length: 9 }, (_, index) => ({ id: `scope-${index}`, title: index === 0 ? "序章" : `第${index}章`, text: "原文章节".repeat(index + 1), episodeNumber: index + 1 })),
     );
     const initial = summaryOf("project-a", 4);
     initial.production.chapterCount = 9;
-    initial.production.reservedChapterCount = 8;
+    initial.episodes = Array.from({ length: 9 }, (_, index) => ({ ...initial.episodes[0], id: `episode-${index}`, number: index + 1 }));
     initial.production.guideStep = "assets";
     initial.guide!.step = "assets";
     let busy = false;
     let step: "source" | "review" = "review";
-    const picked: string[] = [];
-    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, busy, step, onPickChapters: () => picked.push("pick") }), initial);
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, busy, step }), initial);
     try {
-        expect(view.container.querySelector(".drama-source-chapter-summary")?.textContent).toBe("原文共 9 章 · 已加入制作 1 章 · 待加入 8 章 · 实际 1 集");
+        expect(view.container.querySelector(".drama-source-chapter-summary")?.textContent).toBe("原文共 9 章 · 共 9 集");
         expect(options(view.container)).toHaveLength(9);
         expect(options(view.container)[0].textContent).toContain("第 1 集");
-        expect(options(view.container)[1].textContent).toContain("待加入制作");
+        expect(options(view.container)[1].textContent).toContain("第 2 集");
         expect(getComputedStyle(options(view.container)[1].querySelector("span")!).display).toBe("block");
         expect(view.container.querySelector('[aria-label^="本次制作 "]')).toBeNull();
-        await tap(view.container, "继续选章");
-        expect(picked).toHaveLength(1);
-        await edit(field(view.container, "章节正文"), "不能因继续选章而丢失的草稿");
-        expect(button(view.container, "继续选章").disabled).toBe(true);
-        await tap(view.container, "继续选章");
-        expect(picked).toHaveLength(1);
+        expect(view.container.textContent).not.toContain("继续选章");
+        await tap(view.container, "手动编辑");
+        await edit(field(view.container, "章节正文"), "切章不能丢失的草稿");
         await act(async () => {
             options(view.container)[1].click();
             await settle();
         });
-        expect(button(view.container, "继续选章").disabled).toBe(true);
         await act(async () => {
             options(view.container)[0].click();
             await settle();
@@ -741,12 +743,11 @@ test("确认后仍展示九章一集与待加入标记，继续选章回调在�
         await tap(view.container, "放弃本章修改");
         busy = true;
         await view.update(initial);
-        expect(button(view.container, "继续选章").disabled).toBe(true);
+        expect(button(view.container, "手动编辑").disabled).toBe(true);
         busy = false;
         step = "source";
         await view.update(initial);
-        await tap(view.container, "继续选章");
-        expect(picked).toHaveLength(2);
+        expect(view.container.textContent).not.toContain("继续选章");
         expect(sourceWrites).toHaveLength(0);
         expect(chapterWrites).toHaveLength(0);
     } finally {
@@ -754,15 +755,14 @@ test("确认后仍展示九章一集与待加入标记，继续选章回调在�
     }
 });
 
-test("配置确认后继续选章不会绕过上传页尚未保存的粘贴输入", async () => {
+test("配置确认后仍保留上传页未保存的粘贴输入且不出现选章入口", async () => {
     resetFixture();
     seedChapters("project-a", [
         { id: "chapter-a", title: "序章", text: "保留的首章", episodeNumber: 1 },
         { id: "chapter-b", title: "第一章", text: "尚未加入的正文", reserved: true },
     ]);
-    const picked: string[] = [];
     const initial = summaryOf("project-a", 4);
-    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step: "source", onPickChapters: () => picked.push("pick") }), initial);
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step: "source" }), initial);
     try {
         expect(Array.from(view.container.querySelectorAll("button")).some((item) => item.textContent?.includes("继续选章"))).toBe(false);
         await tap(view.container, "手动输入 / 粘贴");
@@ -771,13 +771,10 @@ test("配置确认后继续选章不会绕过上传页尚未保存的粘贴输�
         confirmed.production.guideStep = "assets";
         confirmed.guide!.step = "assets";
         await view.update(confirmed);
-        expect(button(view.container, "继续选章").disabled).toBe(true);
-        await tap(view.container, "继续选章");
-        expect(picked).toHaveLength(0);
+        expect(view.container.textContent).not.toContain("继续选章");
         expect(field(view.container, "粘贴新的来源正文").value).toBe("尚未保存的新来源正文");
         await tap(view.container, "清空输入");
-        await tap(view.container, "继续选章");
-        expect(picked).toHaveLength(1);
+        expect(view.container.textContent).not.toContain("继续选章");
         expect(sourceWrites).toHaveLength(0);
     } finally {
         await view.dispose();
@@ -811,6 +808,29 @@ test("单集剧本按真实章节关联限制目录，缺少关联时不回退�
     }
 });
 
+test("待制作集在剧本页直接生成分镜，读取与阅读均不自动启动", async () => {
+    resetFixture();
+    episodeChapterIDs.set("project-a:episode-b", ["chapter-b"]);
+    draftEpisodes.add("episode-b");
+    const initial = summaryOf("project-a", 4);
+    initial.production.guideStep = "story";
+    initial.guide!.step = "story";
+    let started = 0;
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, episodeId: "episode-b", onStoryboardStarted: () => started++ }), initial);
+    try {
+        expect(storyboardStarts).toHaveLength(0);
+        expect(options(view.container)).toHaveLength(1);
+        expect(button(view.container, "生成分镜").disabled).toBe(false);
+        await tap(view.container, "生成分镜");
+        expect(storyboardStarts).toEqual(["episode-b"]);
+        expect(started).toBe(1);
+        expect(sourceWrites).toHaveLength(0);
+        expect(chapterWrites).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
 test("粘贴来源先解析与预览，确认才写入并沿用原有分集设置", async () => {
     resetFixture();
     const states: Array<[boolean, boolean]> = [];
@@ -826,7 +846,8 @@ test("粘贴来源先解析与预览，确认才写入并沿用原有分集设�
         await tap(view.container, "解析正文");
         expect(view.container.textContent).toContain("替换预览：手动输入的正文");
         expect(sourceWrites).toHaveLength(0);
-        expect(view.container.querySelectorAll('input[aria-label^="替换范围 "]')).toHaveLength(2);
+        expect(view.container.querySelectorAll(".drama-source-replacement-item")).toHaveLength(2);
+        expect(view.container.querySelector('input[aria-label^="替换范围 "]')).toBeNull();
         await tap(view.container, "确认替换正文");
         expect(sourceWrites).toHaveLength(1);
         expect(sourceWrites[0]?.input).toEqual({
@@ -836,7 +857,6 @@ test("粘贴来源先解析与预览，确认才写入并沿用原有分集设�
                 { title: "第2集", text: "顾言走进房间。" },
             ],
             sourceFormat: "novel",
-            selectedChapters: [0],
         });
         expect(initial.production.settings.episodeMode).toBe("auto");
         expect(initial.production.settings.chaptersPerEpisode).toBe(3);
@@ -879,7 +899,7 @@ test("下载剧本包含全部章节和当前草稿，不触发正文保存", as
     }
 });
 
-test("新建单集只保存当前章，类型比例备注真实写入且连续点击不重复", async () => {
+test("新建单集保留全部原文章节，类型比例备注真实写入且连续点击不重复", async () => {
     resetFixture();
     const initial = summaryOf("project-a", 4);
     initial.production.settings.episodeMode = "auto";
@@ -903,7 +923,7 @@ test("新建单集只保存当前章，类型比例备注真实写入且连续�
             await settle();
         });
         await tap(view.container, "创建单集");
-        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("仅制作当前章：第二章 B");
+        expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("全部章节已加入分集列表");
         expect(view.container.querySelectorAll(".drama-source-type-card img")).toHaveLength(3);
         await edit(field(view.container, "剧集名称"), "雨夜单集");
         await edit(field(view.container, "剧集备注"), "以解说推进剧情");
@@ -921,7 +941,7 @@ test("新建单集只保存当前章，类型比例备注真实写入且连续�
             await settle();
         });
         expect(sourceWrites).toHaveLength(1);
-        expect(sourceWrites[0]?.input.selectedChapters).toEqual([1]);
+        expect(sourceWrites[0]?.input.selectedChapters).toBeUndefined();
         expect(settingsWrites).toHaveLength(1);
         expect(settingsWrites[0]?.input.expectedRevision).toBe(5);
         expect(settingsWrites[0]?.input.settings).toMatchObject({ dramaType: "narration", aspectRatio: "16:9", episodeMode: "auto", chaptersPerEpisode: 3 });
@@ -1154,7 +1174,7 @@ test("创建请求和文件读取在卸载或切账号后返回时，不跳转�
     }
 });
 
-test("素材类型与制作范围单独保存，不重传章节正文", async () => {
+test("素材类型单独保存，不重传正文或缩减章节范围", async () => {
     resetFixture();
     const view = await mount((props) => createElement(WorkflowSourceReview, props), summaryOf("project-a", 4));
     try {
@@ -1162,23 +1182,22 @@ test("素材类型与制作范围单独保存，不重传章节正文", async ()
         await act(async () => {
             select.value = "script";
             select.dispatchEvent(new Event("change", { bubbles: true }));
-            field(view.container, "本次制作 第一章 A").click();
             await settle();
         });
-        expect(button(view.container, "保存类型与制作范围").disabled).toBe(false);
+        expect(button(view.container, "保存素材类型").disabled).toBe(false);
         await act(async () => {
-            button(view.container, "保存类型与制作范围").click();
+            button(view.container, "保存素材类型").click();
             await settle();
         });
-        expect(sourceWrites).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, sourceFormat: "script", selectedChapters: [1] } }]);
+        expect(sourceWrites).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, sourceFormat: "script" } }]);
         expect(chapterBodies.get(chapterKey("project-a", "chapter-a"))?.sourceText).toBe("A的服务器正文");
-        expect(chapterLists.get("project-a")?.map((chapter) => chapter.reserved)).toEqual([true, false]);
+        expect(chapterLists.get("project-a")?.map((chapter) => chapter.reserved)).toEqual([false, false]);
     } finally {
         await view.dispose();
     }
 });
 
-test("替换先预览再显式确认范围，长预留章节不阻止导入", async () => {
+test("替换预览全量章节，任一章节过长时必须先拆分再导入", async () => {
     resetFixture();
     const states: Array<[boolean, boolean]> = [];
     const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, onDirtyChange: (dirty: boolean, busy: boolean) => states.push([dirty, busy]) }), summaryOf("project-a", 4));
@@ -1197,21 +1216,21 @@ test("替换先预览再显式确认范围，长预留章节不阻止导入", as
         expect(view.container.textContent).toContain("替换预览：replace.txt");
         expect(sourceWrites).toHaveLength(0);
         expect(states.at(-1)).toEqual([true, false]);
-        const range = Array.from(view.container.querySelectorAll<HTMLInputElement>('input[aria-label^="替换范围 "]'));
-        expect(range).toHaveLength(2);
-        expect(range.map((item) => item.checked)).toEqual([true, false]);
-        await act(async () => {
-            range[1].click();
-            await settle();
-        });
+        expect(view.container.querySelector('input[aria-label^="替换范围 "]')).toBeNull();
+        expect(button(view.container, "确认替换正文").disabled).toBe(true);
         await act(async () => {
             button(view.container, "确认替换正文").click();
             await settle();
         });
         expect(sourceWrites).toHaveLength(0);
-        expect(notices.at(-1)?.text).toContain("1.2 万字");
+        expect(view.container.textContent).toContain("请先拆分正文");
+        await tap(view.container, "取消替换");
         await act(async () => {
-            range[1].click();
+            const input = field(view.container, "替换正文文件");
+            Object.defineProperty(input, "files", { configurable: true, value: [new File(["正文"], "split.txt")] });
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+            fileReads.at(-1)!.resolve("第一章 初见\n林夏推门。\n第二章 后续\n她走进屋里。");
             await settle();
         });
         await act(async () => {
@@ -1219,9 +1238,9 @@ test("替换先预览再显式确认范围，长预留章节不阻止导入", as
             await settle();
         });
         expect(sourceWrites).toHaveLength(1);
-        expect(sourceWrites[0]?.input.selectedChapters).toEqual([0]);
+        expect(sourceWrites[0]?.input.selectedChapters).toBeUndefined();
         expect(sourceWrites[0]?.input.chapters).toHaveLength(2);
-        expect(sourceWrites[0]?.input.chapters?.[1].text.length).toBeGreaterThan(12000);
+        expect(chapterLists.get("project-a")?.every((chapter) => !chapter.reserved)).toBe(true);
     } finally {
         await view.dispose();
     }

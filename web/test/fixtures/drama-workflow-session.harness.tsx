@@ -135,7 +135,6 @@ mock.module("@/pages/projects/workflow-assets", () => ({
         episodeId,
         onEpisodeChange,
         onGenerate,
-        onPickChapters,
     }: {
         summary: DramaSummary;
         onDirtyChange: (dirty: boolean, busy: boolean) => void;
@@ -145,7 +144,6 @@ mock.module("@/pages/projects/workflow-assets", () => ({
         episodeId?: string;
         onEpisodeChange?: (episodeId: string) => void;
         onGenerate: (cast: { id: string }, episodeId?: string) => void;
-        onPickChapters?: () => void;
     }) => {
         const [dirty, setDirty] = useState(false);
         useEffect(() => {
@@ -164,7 +162,6 @@ mock.module("@/pages/projects/workflow-assets", () => ({
                 <button onClick={() => onEpisodeChange?.("episode-b")}>切换主体到第二集</button>
                 <button onClick={() => onGenerate({ id: "shared-cast" }, "episode-b")}>生成当前选集主体</button>
                 <button onClick={() => onGenerate({ id: "shared-cast" })}>生成页面所属主体</button>
-                {onPickChapters ? <button onClick={onPickChapters}>继续选章</button> : null}
                 {onContinue ? (
                     <button disabled={continueDisabled} onClick={onContinue}>
                         编排剧本
@@ -180,13 +177,13 @@ mock.module("@/pages/projects/workflow-production", () => ({
         busy,
         onDirtyChange,
         onAllowMediaNavigation,
-        onPickChapters,
+        headerActions,
     }: {
         summary: DramaSummary;
         busy?: boolean;
         onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
         onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
-        onPickChapters?: () => void;
+        headerActions?: ReactNode;
     }) => {
         const [dirty, setDirty] = useState(false);
         const [automatic, setAutomatic] = useState(false);
@@ -200,7 +197,16 @@ mock.module("@/pages/projects/workflow-production", () => ({
         }, [dirty, automaticBusy, automatic, onDirtyChange]);
         return (
             <div>
+                <header className="drama-workflow-production-toolbar">
+                    <h2>分镜管理</h2>
+                    {headerActions ? (
+                        <div className="drama-workflow-production-guidance" aria-label="制作流程引导">
+                            {headerActions}
+                        </div>
+                    ) : null}
+                </header>
                 分镜制作 {summary.project.name}
+                <output aria-label="分镜页分集目录">{summary.episodes.map((episode) => episode.id).join(",")}</output>
                 <output aria-label="分镜页本集配置">
                     {summary.production.settings.styleName} · {summary.production.settings.language}
                 </output>
@@ -232,7 +238,6 @@ mock.module("@/pages/projects/workflow-production", () => ({
                 >
                     配置自动同步失败
                 </button>
-                {onPickChapters ? <button onClick={onPickChapters}>继续选章</button> : null}
                 <button
                     onClick={() => {
                         const next = { pathname: `/projects/${summary.project.id}/e/episode-a`, search: "?step=story&editor=media&shot=shot-b" };
@@ -246,47 +251,13 @@ mock.module("@/pages/projects/workflow-production", () => ({
         );
     },
 }));
-mock.module("@/pages/projects/studio/chapter-picker", () => ({
-    ChapterPickerModal: ({
-        summary,
-        onClose,
-        onDirtyChange,
-        onProduced,
-        busy,
-        blockedReason,
-    }: {
-        summary: DramaSummary;
-        onClose: () => void;
-        onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
-        onProduced: (ids: string[]) => void | Promise<void>;
-        busy?: boolean;
-        blockedReason?: string;
-    }) => {
-        const [dirty, setDirty] = useState(false);
-        const [submitting, setSubmitting] = useState(false);
-        useEffect(() => {
-            onDirtyChange?.(dirty, submitting);
-            return () => onDirtyChange?.(false, false);
-        }, [dirty, submitting, onDirtyChange]);
-        return (
-            <div role="dialog" aria-label="原著章节">
-                <output aria-label="选章作品">{summary.project.id}</output>
-                <p>{blockedReason}</p>
-                <button disabled={busy} onClick={() => setDirty(true)}>
-                    勾选后续章节
-                </button>
-                <button disabled={busy} onClick={() => setSubmitting(true)}>
-                    选章提交中
-                </button>
-                <button onClick={() => void onProduced(["episode-new"])}>完成加入制作</button>
-                <button disabled={submitting} onClick={onClose}>
-                    关闭选章
-                </button>
-            </div>
-        );
-    },
+mock.module("@/pages/projects/workflow-episodes", () => ({
+    WorkflowEpisodes: ({ summary }: { summary: DramaSummary }) => (
+        <div>
+            分集管理列表<output aria-label="管理页分集目录">{summary.episodes.map((episode) => episode.id).join(",")}</output>
+        </div>
+    ),
 }));
-mock.module("@/pages/projects/workflow-episodes", () => ({ WorkflowEpisodes: ({ onPickChapters }: { onPickChapters?: () => void }) => <div>分集管理列表{onPickChapters ? <button onClick={onPickChapters}>继续选章</button> : null}</div> }));
 mock.module("@/pages/projects/workflow-mode-dialog", () => ({
     WorkflowModeDialog: ({
         open,
@@ -792,46 +763,44 @@ test("资产方案的未保存状态接入主壳，阻止确认和离开直到�
     }
 });
 
-test("继续选章的草稿和忙状态独立保护主流程，不会被编辑器清空回调覆盖", async () => {
+test("完整目录中的待制作集直接进入主流程，不要求选章或自动启动制作", async () => {
     const mounted = await mount("/projects/project-a/guide?step=story");
     try {
         const data = makeSummary("project-a", "story", 2);
-        data.production.reservedChapterCount = 8;
+        data.production.chapterCount = 9;
+        data.episodes = Array.from({ length: 9 }, (_, index) => ({ id: `episode-${index + 1}`, number: index + 1, title: `第 ${index + 1} 集`, stage: index < 2 ? "prompts" : "draft" })) as DramaSummary["episodes"];
         summaries.set("project-a", data);
         await act(async () => {
             mounted.query.setQueryData(summaryKey("project-a"), data);
             await settle();
         });
-        await click(button(mounted.host, "继续选章"));
-        expect(mounted.host.querySelector('[aria-label="选章作品"]')?.textContent).toBe("project-a");
-        await click(button(mounted.host, "勾选后续章节"));
-        await click(button(mounted.host, "编辑镜头配置"));
-        await click(button(mounted.host, "还原镜头配置"));
-        expect(button(mounted.host, "完成分镜编排").disabled).toBe(true);
-        const draftLeave = new browser.Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(draftLeave);
-        expect(draftLeave.defaultPrevented).toBe(true);
-        await click(button(mounted.host, "剧本格式"));
-        expect(mounted.router.state.location.search).toBe("?step=story");
-        await click(button(mounted.host, "关闭选章"));
+        expect(mounted.host.querySelector('[aria-label="分镜页分集目录"]')?.textContent?.split(",")).toHaveLength(9);
+        expect(mounted.host.textContent).not.toContain("继续选章");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
         expect(button(mounted.host, "完成分镜编排").disabled).toBe(false);
-        await click(button(mounted.host, "继续选章"));
-        await click(button(mounted.host, "选章提交中"));
-        expect(button(mounted.host, "完成分镜编排").disabled).toBe(true);
-        const busyLeave = new browser.Event("beforeunload", { cancelable: true });
-        window.dispatchEvent(busyLeave);
-        expect(busyLeave.defaultPrevented).toBe(true);
+        await mounted.go("/projects/project-a");
+        expect(mounted.host.querySelector('[aria-label="管理页分集目录"]')?.textContent?.split(",")).toHaveLength(9);
+        expect(mounted.host.textContent).not.toContain("继续选章");
+        await mounted.go("/projects/project-a?step=assets");
+        expect(mounted.host.textContent).not.toContain("继续选章");
         expect(confirms).toHaveLength(0);
+        expect(sourceSaves).toHaveLength(0);
+        expect(projectTextRetries).toHaveLength(0);
+        expect(scopedRetries).toHaveLength(0);
     } finally {
         await mounted.close();
     }
 });
 
-test("加入后续章节刷新全作品摘要与所有分集章节缓存，保留当前步骤和筛选", async () => {
+test("刷新摘要补齐全部剧集时保留当前步骤、筛选与已有分集缓存", async () => {
     const mounted = await mount("/projects/project-a/guide?step=story&status=failed&scope=all");
     try {
         const data = makeSummary("project-a", "story", 2);
-        data.production.reservedChapterCount = 8;
+        data.production.reservedChapterCount = 7;
+        data.episodes = [
+            { id: "episode-a", number: 1, title: "第一集" },
+            { id: "episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
         summaries.set("project-a", data);
         await act(async () => {
             mounted.query.setQueryData(summaryKey("project-a"), data);
@@ -842,17 +811,21 @@ test("加入后续章节刷新全作品摘要与所有分集章节缓存，保�
             mounted.query.setQueryData(["drama", "project-a", "chapters"], { old: true });
             await settle();
         });
-        await click(button(mounted.host, "继续选章"));
-        const next = { ...data, production: { ...data.production, revision: 3, chapterCount: 9, reservedChapterCount: 0 } };
+        const next = {
+            ...data,
+            production: { ...data.production, revision: 3, chapterCount: 9, reservedChapterCount: 0 },
+            episodes: [...data.episodes, ...Array.from({ length: 7 }, (_, index) => ({ id: `episode-new-${index + 3}`, number: index + 3, title: `第 ${index + 3} 集`, stage: "draft" }))] as DramaSummary["episodes"],
+        };
         summaries.set("project-a", next);
-        await click(button(mounted.host, "完成加入制作"));
+        await act(async () => {
+            await mounted.query.invalidateQueries({ queryKey: summaryKey("project-a"), exact: true });
+            await settle();
+        });
         expect(mounted.query.getQueryData(summaryKey("project-a"))).toEqual(next);
-        for (const key of [
-            ["drama", "project-a", "episode", "episode-a"],
-            ["drama", "project-a", "episode", "episode-b"],
-            ["drama", "project-a", "chapters"],
-        ])
-            expect(mounted.query.getQueryState(key)?.isInvalidated).toBe(true);
+        expect(mounted.host.querySelector('[aria-label="分镜页分集目录"]')?.textContent?.split(",")).toHaveLength(9);
+        expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-a"])).toEqual({ old: true });
+        expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-b"])).toEqual({ old: true });
+        expect(mounted.host.textContent).not.toContain("继续选章");
         expect(mounted.router.state.location.search).toBe("?step=story&status=failed&scope=all");
         expect(confirms).toHaveLength(0);
     } finally {
@@ -865,21 +838,21 @@ test("已有集默认进入分集管理，显式步骤单集链接与未确认�
     try {
         const data = makeSummary("project-a", "story", 2);
         data.episodes = [{ id: "episode-a", number: 1, title: "序章" }] as DramaSummary["episodes"];
-        data.production.reservedChapterCount = 8;
+        data.production.chapterCount = 1;
         summaries.set("project-a", data);
         await act(async () => {
             mounted.query.setQueryData(summaryKey("project-a"), data);
             await settle();
         });
         expect(mounted.host.textContent).toContain("分集管理列表");
-        await click(button(mounted.host, "继续选章"));
-        expect(mounted.host.querySelector('[aria-label="选章作品"]')?.textContent).toBe("project-a");
-        await click(button(mounted.host, "关闭选章"));
+        expect(mounted.host.querySelector(".drama-workflow-body")?.classList.contains("is-production")).toBe(false);
+        expect(mounted.host.textContent).not.toContain("继续选章");
         await mounted.go("/projects/project-a?step=assets");
         expect(mounted.host.textContent).toContain("主体资产列表");
         expect(mounted.host.textContent).not.toContain("分集管理列表");
         await mounted.go("/projects/project-a/e/episode-a");
         expect(mounted.host.textContent).toContain("分镜制作 project-a");
+        expect(mounted.host.querySelector(".drama-workflow-body")?.classList.contains("is-production")).toBe(true);
         expect(mounted.host.textContent).not.toContain("分集管理列表");
         const configuring = { ...data, guide: { step: "configuring" as const, canConfirm: true }, production: { ...data.production, guideStep: "configuring" as const } };
         summaries.set("project-a", configuring);
@@ -1834,11 +1807,18 @@ test("本集预览风格与剧本页不显示其他集的全剧阻断，阶段�
             });
             await act(settle);
             const footer = mounted.host.querySelector(".drama-workflow-footer");
-            if (step === "preview" || step === "assets") expect(footer).toBeNull();
+            if (step === "preview" || step === "assets" || step === "story") expect(footer).toBeNull();
             else expect(footer).not.toBeNull();
             expect(mounted.host.textContent?.includes("第 7 集剧本与分镜尚未就绪")).toBe(blocked);
             if (step === "assets") expect(button(mounted.host, "编排剧本").disabled).toBe(true);
-            if (step === "story") expect(button(mounted.host, "完成分镜编排").disabled).toBe(true);
+            if (step === "story") {
+                const guidance = mounted.host.querySelectorAll('[aria-label="制作流程引导"]');
+                expect(guidance).toHaveLength(1);
+                expect(guidance[0].closest(".drama-workflow-production-toolbar")).not.toBeNull();
+                expect(guidance[0].textContent).toContain("第 7 集剧本与分镜尚未就绪");
+                expect(button(guidance[0] as HTMLElement, "完成分镜编排").disabled).toBe(true);
+                expect([...mounted.host.querySelectorAll("button")].filter((item) => item.textContent === "完成分镜编排")).toHaveLength(1);
+            }
             expect(confirms).toHaveLength(0);
         } finally {
             await mounted.close();

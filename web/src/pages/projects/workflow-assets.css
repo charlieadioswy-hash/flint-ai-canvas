@@ -49,8 +49,7 @@
     justify-content: flex-end;
 }
 
-.drama-workflow-assets-column-count,
-.drama-workflow-assets-shared-note {
+.drama-workflow-assets-column-count {
     margin: 0;
     color: var(--text-secondary);
     font-size: var(--fs-label);
@@ -171,6 +170,7 @@
 
 .drama-workflow-assets-column-head {
     justify-content: space-between;
+    flex-wrap: wrap;
 }
 
 .drama-workflow-assets-column-head h3 {
@@ -414,23 +414,6 @@
 .drama-workflow-assets-column-empty strong {
     color: var(--text-primary);
     font-size: var(--fs-ui);
-}
-
-.drama-workflow-assets-shared {
-    min-width: 0;
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
-}
-
-.drama-workflow-assets-shared > summary {
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: var(--fs-label);
-}
-
-.drama-workflow-assets-shared > p {
-    margin-block: var(--space-2);
-    font-size: var(--fs-label);
 }
 
 .drama-workflow-assets fieldset {

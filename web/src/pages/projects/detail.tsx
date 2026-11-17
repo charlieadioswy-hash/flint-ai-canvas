@@ -40,7 +40,6 @@ import { EpisodeDeleteModal } from "./studio/episode-delete-modal";
 import { EpisodeRail } from "./studio/episode-rail";
 import { AddEpisodeModal, type EpisodePlacement } from "./studio/episode-source";
 import { AssetImportModal, AssetPackageModal } from "./studio/asset-transfer";
-import { ChapterPickerModal } from "./studio/chapter-picker";
 import { FinalView } from "./studio/final-view";
 import { StudioGenesis } from "./studio/genesis";
 import { SegmentDialog } from "./studio/segment-dialog";
@@ -82,7 +81,6 @@ function AdvancedDramaStudioPage() {
     // 有值时“添加一集”弹窗插到这一集前后，否则追加到末尾。
     const [placement, setPlacement] = useState<EpisodePlacement>();
     const [deleting, setDeleting] = useState<DramaEpisodeRow | null>(null);
-    const [pickingChapters, setPickingChapters] = useState(false);
     const [assetDialog, setAssetDialog] = useState<"export" | "import" | null>(null);
     const [castSelection, setCastSelection] = useState<{ projectId: string; id: string }>();
     // 窄屏只显示一栏：集列表与制作区用分段切换（宽屏两栏并排，不受影响）。
@@ -499,7 +497,6 @@ function AdvancedDramaStudioPage() {
                                 episodes={episodes}
                                 currentId={episodeId}
                                 planning={!production.planDone}
-                                reservedChapters={production.reservedChapterCount}
                                 onSelect={(id) => {
                                     selectEpisode(id);
                                     setMobilePane("production");
@@ -513,7 +510,6 @@ function AdvancedDramaStudioPage() {
                                     setAdding(true);
                                 }}
                                 onDelete={setDeleting}
-                                onPickChapters={() => setPickingChapters(true)}
                             />
                             <main className="drama-main">
                                 {episodeRow ? (
@@ -774,19 +770,6 @@ function AdvancedDramaStudioPage() {
                             invalidate(undefined, { renumbered: true, removedEpisodeId: id });
                         }}
                     />
-                    {pickingChapters ? (
-                        <ChapterPickerModal
-                            open={pickingChapters}
-                            summary={summary}
-                            blockedReason={production.planDone ? undefined : "前面的章节还在分集规划，完成后才能加入新的章节。"}
-                            onClose={() => setPickingChapters(false)}
-                            onProduced={(ids) => {
-                                setPickingChapters(false);
-                                invalidate(ids[0]);
-                                if (ids[0]) selectEpisode(ids[0]);
-                            }}
-                        />
-                    ) : null}
                     {assetDialog === "export" ? <AssetPackageModal open projectId={projectId} episodes={episodes} onClose={() => setAssetDialog(null)} /> : null}
                     {assetDialog === "import" ? <AssetImportModal open projectId={projectId} onClose={() => setAssetDialog(null)} /> : null}
                 </div>

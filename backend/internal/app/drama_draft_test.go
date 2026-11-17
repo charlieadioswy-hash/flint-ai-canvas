@@ -23,7 +23,7 @@ func TestDramaDraftReplaceThenStart(t *testing.T) {
 		t.Fatalf("status = %s", created.Production.Status)
 	}
 	draft, err := svc.DramaDraft("usr-drama", project)
-	if err != nil || draft.Form.StyleID != "guoman" || draft.Form.SourceText == "" || len(draft.SelectedChapters) != 1 || draft.ChapterCount != 2 {
+	if err != nil || draft.Form.StyleID != "guoman" || draft.Form.SourceText == "" || len(draft.SelectedChapters) != 2 || draft.ChapterCount != 2 {
 		t.Fatalf("draft = %+v %v", draft, err)
 	}
 	if _, err := svc.DramaDraft("usr-other", project); err == nil {

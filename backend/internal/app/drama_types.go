@@ -634,6 +634,8 @@ type DramaEpisodeDetail struct {
 	Segments []DramaSegmentView `json:"segments"`
 	Chapters []DramaChapterRef  `json:"chapters"`
 	Jobs     []DramaJobView     `json:"jobs"`
+	// SourceAssetIDs 来自本集原文明示名称，不依赖是否已经编排分镜。
+	SourceAssetIDs []string `json:"sourceAssetIds"`
 	// ScriptJob 是本集最近一次改编剧本的调度工作，可查看改编提示词与模型返回。
 	ScriptJob *DramaJobView `json:"scriptJob,omitempty"`
 	// DialogueCheck 只在本集有镜头、且原文章节不与其他集共用时给出（共用时无法判断哪些台词属于本集）。
@@ -790,6 +792,7 @@ type DramaCastLookRequest struct {
 
 type CreateDramaCastRequest struct {
 	ExpectedRevision  *int64   `json:"expectedRevision,omitempty"`
+	EpisodeID         string   `json:"episodeId,omitempty"`
 	Kind              string   `json:"kind"`
 	Name              string   `json:"name"`
 	Aliases           []string `json:"aliases"`
@@ -833,6 +836,7 @@ type DramaCastImagePromptRequest struct {
 }
 
 type ImportDramaCastRequest struct {
+	EpisodeID       string   `json:"episodeId,omitempty"`
 	SourceProjectID string   `json:"sourceProjectId"`
 	CastIDs         []string `json:"castIds"`
 	MatchByName     bool     `json:"matchByName"`

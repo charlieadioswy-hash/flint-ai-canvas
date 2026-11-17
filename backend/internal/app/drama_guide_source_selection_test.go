@@ -72,7 +72,7 @@ func countDramaEpisodes(t *testing.T, fake *fakeDramaBackend, projectID string) 
 	return count
 }
 
-// 只改素材类型和制作范围时，三章 ID 与原文都还在；未选章变为预留，且只为选中章各建一集。
+// 只改素材类型时保留所有章 ID 与原文；旧客户端选章字段不再缩减分集目录。
 func TestDramaGuideSourceSelectionSwitchesFormatWithoutLosingChapters(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc,
@@ -116,44 +116,41 @@ func TestDramaGuideSourceSelectionSwitchesFormatWithoutLosingChapters(t *testing
 		t.Fatalf("episode settings must be persisted: %+v", saved.Production.Settings)
 	}
 	after := loadGuideChapters(t, svc, projectID)
-	wantStatus := []model.ProjectUnitStatus{model.ProjectUnitStatusReady, model.ProjectUnitStatusReserved, model.ProjectUnitStatusReady}
+	wantStatus := []model.ProjectUnitStatus{model.ProjectUnitStatusReady, model.ProjectUnitStatusReady, model.ProjectUnitStatusReady}
 	if len(after) != len(wantStatus) {
 		t.Fatalf("metadata save must keep all chapters: %+v", after)
 	}
 	for i, row := range after {
 		if row.ID != before[i].ID || row.Title != before[i].Title || row.Text != before[i].Text || row.Status != wantStatus[i] {
-			t.Fatalf("chapter %d must keep its id and text while recording selection: before=%+v after=%+v", i, before[i], row)
+			t.Fatalf("chapter %d must keep its id and text in the complete catalog: before=%+v after=%+v", i, before[i], row)
 		}
 	}
-	if len(saved.Episodes) != 2 || countDramaEpisodes(t, fake, projectID) != 2 {
-		t.Fatalf("only the two selected chapters may have episodes: summary=%d stored=%d", len(saved.Episodes), countDramaEpisodes(t, fake, projectID))
+	if len(saved.Episodes) != 3 || countDramaEpisodes(t, fake, projectID) != 3 {
+		t.Fatalf("all three chapters must have episodes: summary=%d stored=%d", len(saved.Episodes), countDramaEpisodes(t, fake, projectID))
 	}
 	episodes := loadGuideEpisodes(t, svc, saved)
-	wantRefs := []string{before[0].ID, before[2].ID}
+	wantRefs := []string{before[0].ID, before[1].ID, before[2].ID}
 	for i, episode := range episodes {
 		if episode.SourceFormat != string(production.SourceScript) || !sameStrings(episode.ChapterIDs, []string{wantRefs[i]}) {
-			t.Fatalf("episode %d must reference only the selected script chapter: %+v", i, episode)
+			t.Fatalf("episode %d must reference its original script chapter: %+v", i, episode)
 		}
 		if _, err := svc.repo.DramaChaptersByIDs(projectID, episode.ChapterIDs); err != nil {
 			t.Fatal(err)
 		}
 	}
 	confirmed := confirmGuide(t, svc, saved)
-	if len(confirmed.Episodes) != 2 {
-		t.Fatalf("configuration confirmation expanded the selected range: %+v", confirmed.Episodes)
+	if len(confirmed.Episodes) != 3 {
+		t.Fatalf("configuration confirmation lost catalog episodes: %+v", confirmed.Episodes)
 	}
 	runDramaTicks(t, svc, projectID, 2)
-	selectedSourceRead := false
+	completeSourceRead := false
 	for _, request := range fake.requests {
-		if strings.Contains(request.Prompt, "乙原文") {
-			t.Fatal("asset extraction must not read reserved chapter text")
-		}
-		if strings.Contains(request.Prompt, "甲原文") && strings.Contains(request.Prompt, "丙原文") {
-			selectedSourceRead = true
+		if strings.Contains(request.Prompt, "甲原文") && strings.Contains(request.Prompt, "乙原文") && strings.Contains(request.Prompt, "丙原文") {
+			completeSourceRead = true
 		}
 	}
-	if !selectedSourceRead {
-		t.Fatal("asset extraction must read the selected chapters after confirmation")
+	if !completeSourceRead {
+		t.Fatal("asset extraction must read all catalog source after explicit confirmation")
 	}
 }
 
@@ -185,28 +182,6 @@ func TestDramaGuideSourceSelectionRejectsInvalidUpdates(t *testing.T) {
 		}
 	}
 
-	t.Run("empty selection", func(t *testing.T) {
-		_, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
-			ExpectedRevision: draft.Production.Revision,
-			SelectedChapters: []int{},
-		})
-		if err == nil {
-			t.Fatal("explicit empty selection must be rejected")
-		}
-		assertUnchanged(t)
-	})
-	t.Run("out of range", func(t *testing.T) {
-		for _, index := range []int{-1, len(chaptersBefore)} {
-			_, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
-				ExpectedRevision: draft.Production.Revision,
-				SelectedChapters: []int{index},
-			})
-			if err == nil {
-				t.Fatalf("chapter index %d must be rejected", index)
-			}
-			assertUnchanged(t)
-		}
-	})
 	t.Run("unknown format", func(t *testing.T) {
 		_, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
 			ExpectedRevision: draft.Production.Revision,
@@ -218,21 +193,23 @@ func TestDramaGuideSourceSelectionRejectsInvalidUpdates(t *testing.T) {
 		}
 		assertUnchanged(t)
 	})
-	t.Run("replacement without selection", func(t *testing.T) {
+	t.Run("empty replacement", func(t *testing.T) {
 		_, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
 			ExpectedRevision: draft.Production.Revision,
-			Chapters:         []DramaChapterInput{{Title: "替换", Text: "新正文"}},
+			Chapters:         []DramaChapterInput{},
 		})
 		if err == nil {
-			t.Fatal("full replacement must not silently select every chapter")
+			t.Fatal("empty source replacement must be rejected")
 		}
-		_, err = svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
+		assertUnchanged(t)
+	})
+	t.Run("foreign owner", func(t *testing.T) {
+		_, err := svc.UpdateDramaGuideSource("other-user", projectID, UpdateDramaGuideSourceRequest{
 			ExpectedRevision: draft.Production.Revision,
 			Chapters:         []DramaChapterInput{{Title: "替换", Text: "新正文"}},
-			SelectedChapters: []int{},
 		})
 		if err == nil {
-			t.Fatal("full replacement with an empty selection must be rejected")
+			t.Fatal("a foreign owner cannot replace source")
 		}
 		assertUnchanged(t)
 	})
@@ -270,72 +247,50 @@ func TestDramaGuideSourceSelectionRejectsInvalidUpdates(t *testing.T) {
 	})
 }
 
-func TestDramaGuideSourceSelectionKeepsOversizedReservedChapter(t *testing.T) {
+func TestDramaGuideSourceSelectionCannotHideOversizedChapter(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	longText := strings.Repeat("长", 13000)
 	settings := DramaSettings{ReviewMode: DramaReviewAuto, MediaMode: DramaMediaManual, Models: fakeDramaModels, EpisodeMode: DramaEpisodeModeChapter, ChaptersPerEpisode: 1}
-	created, err := svc.CreateDrama("usr-drama", CreateDramaRequest{
-		Name:             "预留一万三",
+	_, err := svc.CreateDrama("usr-drama", CreateDramaRequest{
+		Name:             "全量长度校验",
 		Guided:           true,
 		Settings:         settings,
 		Chapters:         []DramaChapterInput{{Title: "短章", Text: "短正文"}, {Title: "长章", Text: longText}},
 		SelectedChapters: []int{0},
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("legacy selection cannot bypass the source length limit on creation")
 	}
+	created := createGuidedDrama(t, svc, DramaChapterInput{Title: "甲", Text: "甲原文"}, DramaChapterInput{Title: "乙", Text: "乙原文"})
 	projectID := created.Project.ID
+	chapters := loadGuideChapters(t, svc, projectID)
+	episodes := loadGuideEpisodes(t, svc, created)
 	requestsBefore := len(fake.requests)
-	saved, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
+	_, err = svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
 		ExpectedRevision: created.Production.Revision,
 		SourceFormat:     production.SourceStoryboard,
+		Chapters:         []DramaChapterInput{{Title: "短章", Text: "短正文"}, {Title: "长章", Text: longText}},
 		SelectedChapters: []int{0},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Production.Revision != created.Production.Revision+1 || saved.Production.GuideStep != created.Production.GuideStep {
-		t.Fatalf("keeping a long reserved chapter must only bump revision: %+v", saved.Production)
-	}
-	if saved.Production.Settings.EpisodeMode != DramaEpisodeModeChapter || saved.Production.Settings.ChaptersPerEpisode != 1 {
-		t.Fatalf("storyboard source must force one chapter per episode: %+v", saved.Production.Settings)
-	}
-	if len(fake.requests) != requestsBefore {
-		t.Fatalf("saving a reserved long chapter must not generate: %d requests", len(fake.requests))
-	}
-	chapters := loadGuideChapters(t, svc, projectID)
-	if len(chapters) != 2 || chapters[0].Status != model.ProjectUnitStatusReady || chapters[1].Status != model.ProjectUnitStatusReserved || chapters[1].Text != longText || chapters[0].Text != "短正文" {
-		t.Fatalf("13000-character chapter must stay reserved with its text: %+v", chapters)
-	}
-	episodes := loadGuideEpisodes(t, svc, saved)
-	if len(episodes) != 1 || countDramaEpisodes(t, fake, projectID) != 1 || episodes[0].SourceFormat != string(production.SourceStoryboard) || !sameStrings(episodes[0].ChapterIDs, []string{chapters[0].ID}) {
-		t.Fatalf("only the short chapter may be produced: %+v", episodes)
-	}
-
-	before := guideSummary(t, svc, projectID)
-	_, err = svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
-		ExpectedRevision: before.Production.Revision,
-		SelectedChapters: []int{0, 1},
-	})
 	if err == nil {
-		t.Fatal("selecting a chapter over 12000 characters must be rejected")
+		t.Fatal("legacy selection cannot bypass the source length limit on replacement")
 	}
 	after := guideSummary(t, svc, projectID)
-	if after.Production.Revision != before.Production.Revision || after.Production.GuideStep != before.Production.GuideStep {
-		t.Fatalf("rejected selection must roll back the production: %+v", after.Production)
+	if after.Production.Revision != created.Production.Revision || after.Production.GuideStep != created.Production.GuideStep {
+		t.Fatalf("rejected source must roll back the production: %+v", after.Production)
 	}
-	if after.Production.Settings.EpisodeMode != DramaEpisodeModeChapter || after.Production.Settings.ChaptersPerEpisode != 1 {
-		t.Fatalf("rejected selection must keep the saved episode settings: %+v", after.Production.Settings)
+	if after.Production.Settings.EpisodeMode != created.Production.Settings.EpisodeMode || after.Production.Settings.ChaptersPerEpisode != created.Production.Settings.ChaptersPerEpisode || after.Project.SourceType != created.Project.SourceType {
+		t.Fatalf("rejected source must keep original source format and episode settings: %+v", after)
 	}
 	if !sameChapterViews(chapters, loadGuideChapters(t, svc, projectID)) || !sameEpisodeViews(episodes, loadGuideEpisodes(t, svc, after)) {
-		t.Fatal("rejected selection must not change chapters or episode references")
+		t.Fatal("rejected source must not change chapters or episode references")
 	}
 	if len(fake.requests) != requestsBefore {
-		t.Fatalf("rejected selection started generation: %d requests", len(fake.requests))
+		t.Fatalf("rejected source started generation: %d requests", len(fake.requests))
 	}
 }
 
-func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
+func TestDramaGuideSourceReplacementKeepsEveryChapterText(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc, DramaChapterInput{Title: "旧章节", Text: "旧正文"})
 	projectID := draft.Project.ID
@@ -359,16 +314,16 @@ func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
 		t.Fatalf("replacement must bump revision without leaving configuration: %+v", next.Production)
 	}
 	if next.Production.Settings.EpisodeMode != DramaEpisodeModeChapter || next.Production.Settings.ChaptersPerEpisode != 1 {
-		t.Fatalf("storyboard replacement must produce one episode per selected chapter: %+v", next.Production.Settings)
+		t.Fatalf("storyboard replacement must produce one episode per chapter: %+v", next.Production.Settings)
 	}
 	if len(fake.requests) != requestsBefore {
 		t.Fatalf("replacement must not start generation: %d requests", len(fake.requests))
 	}
 	chapters := loadGuideChapters(t, svc, projectID)
 	want := []guideChapterView{
-		{Title: "新一", Text: "保留甲", Status: model.ProjectUnitStatusReserved},
+		{Title: "新一", Text: "保留甲", Status: model.ProjectUnitStatusReady},
 		{Title: "新二", Text: "选中乙", Status: model.ProjectUnitStatusReady},
-		{Title: "新三", Text: "保留丙", Status: model.ProjectUnitStatusReserved},
+		{Title: "新三", Text: "保留丙", Status: model.ProjectUnitStatusReady},
 		{Title: "新四", Text: "选中丁", Status: model.ProjectUnitStatusReady},
 	}
 	if len(chapters) != len(want) {
@@ -377,7 +332,7 @@ func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
 	seen := map[string]bool{}
 	for i, row := range chapters {
 		if row.ID == "" || seen[row.ID] || row.Title != want[i].Title || row.Text != want[i].Text || row.Status != want[i].Status {
-			t.Fatalf("chapter %d was not stored as an explicit selection: %+v", i, row)
+			t.Fatalf("chapter %d was not stored in the complete catalog: %+v", i, row)
 		}
 		seen[row.ID] = true
 		if row.Text == "旧正文" {
@@ -385,8 +340,8 @@ func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
 		}
 	}
 	saved := guideSummary(t, svc, projectID)
-	if len(saved.Episodes) != 2 || countDramaEpisodes(t, fake, projectID) != 2 {
-		t.Fatalf("only the two selected replacement chapters may become episodes: %d", len(saved.Episodes))
+	if len(saved.Episodes) != 4 || countDramaEpisodes(t, fake, projectID) != 4 {
+		t.Fatalf("all four replacement chapters must become episodes: %d", len(saved.Episodes))
 	}
 	for _, episode := range saved.Episodes {
 		if episode.ID == oldEpisodeID {
@@ -397,10 +352,10 @@ func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
 		t.Fatal("previous episode row must be removed with the replaced source")
 	}
 	episodes := loadGuideEpisodes(t, svc, saved)
-	wantRefs := []string{chapters[1].ID, chapters[3].ID}
+	wantRefs := []string{chapters[0].ID, chapters[1].ID, chapters[2].ID, chapters[3].ID}
 	for i, episode := range episodes {
 		if episode.SourceFormat != string(production.SourceStoryboard) || !sameStrings(episode.ChapterIDs, []string{wantRefs[i]}) {
-			t.Fatalf("episode %d must reference only a selected storyboard chapter: %+v", i, episode)
+			t.Fatalf("episode %d must reference its storyboard chapter: %+v", i, episode)
 		}
 		if _, err := svc.repo.DramaChaptersByIDs(projectID, episode.ChapterIDs); err != nil {
 			t.Fatal(err)
@@ -408,11 +363,11 @@ func TestDramaGuideSourceReplacementKeepsUnselectedChapterText(t *testing.T) {
 	}
 }
 
-func TestDramaGuideSourceMetadataKeepsPriorSelection(t *testing.T) {
+func TestDramaGuideSourceMetadataKeepsCompleteCatalog(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	settings := DramaSettings{ReviewMode: DramaReviewAuto, MediaMode: DramaMediaManual, Models: fakeDramaModels, EpisodeMode: DramaEpisodeModeChapter, ChaptersPerEpisode: 1}
 	created, err := svc.CreateDrama("usr-drama", CreateDramaRequest{
-		Name:             "保留既有范围",
+		Name:             "保留完整目录",
 		Guided:           true,
 		Settings:         settings,
 		Chapters:         []DramaChapterInput{{Title: "甲", Text: "甲原文"}, {Title: "乙", Text: "乙原文"}, {Title: "丙", Text: "丙原文"}},
@@ -423,8 +378,13 @@ func TestDramaGuideSourceMetadataKeepsPriorSelection(t *testing.T) {
 	}
 	projectID := created.Project.ID
 	before := loadGuideChapters(t, svc, projectID)
-	if len(created.Episodes) != 1 || len(before) != 3 || before[1].Status != model.ProjectUnitStatusReady || before[0].Status != model.ProjectUnitStatusReserved || before[2].Status != model.ProjectUnitStatusReserved {
-		t.Fatalf("partial create must reserve the unselected chapters: episodes=%d chapters=%+v", len(created.Episodes), before)
+	if len(created.Episodes) != 3 || len(before) != 3 {
+		t.Fatalf("legacy selection on create must not shrink the catalog: episodes=%d chapters=%+v", len(created.Episodes), before)
+	}
+	for _, chapter := range before {
+		if chapter.Status != model.ProjectUnitStatusReady {
+			t.Fatalf("every source chapter must be part of the catalog: %+v", chapter)
+		}
 	}
 	requestsBefore := len(fake.requests)
 	next, err := svc.UpdateDramaGuideSource("usr-drama", projectID, UpdateDramaGuideSourceRequest{
@@ -451,11 +411,54 @@ func TestDramaGuideSourceMetadataKeepsPriorSelection(t *testing.T) {
 	}
 	saved := guideSummary(t, svc, projectID)
 	episodes := loadGuideEpisodes(t, svc, saved)
-	if len(episodes) != 1 || countDramaEpisodes(t, fake, projectID) != 1 || episodes[0].SourceFormat != string(production.SourceNovel) || !sameStrings(episodes[0].ChapterIDs, []string{before[1].ID}) {
-		t.Fatalf("omitted selection must keep the previous ready chapter only: %+v", episodes)
+	if len(episodes) != 3 || countDramaEpisodes(t, fake, projectID) != 3 {
+		t.Fatalf("omitted selection must keep every catalog episode: %+v", episodes)
 	}
-	if _, err := svc.repo.DramaChaptersByIDs(projectID, episodes[0].ChapterIDs); err != nil {
-		t.Fatal(err)
+	for i, episode := range episodes {
+		if episode.SourceFormat != string(production.SourceNovel) || !sameStrings(episode.ChapterIDs, []string{before[i].ID}) {
+			t.Fatalf("episode %d must keep its own source reference: %+v", i, episode)
+		}
+		if _, err := svc.repo.DramaChaptersByIDs(projectID, episode.ChapterIDs); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDramaGuideSourceSelectionLegacyFieldsCannotShrinkCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		selected []int
+	}{
+		{name: "omitted"},
+		{name: "empty", selected: []int{}},
+		{name: "partial", selected: []int{1}},
+		{name: "obsolete indexes", selected: []int{-1, 99}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, fake := newDramaTestService(t)
+			created := createGuidedDrama(t, svc, DramaChapterInput{Title: "旧", Text: "旧原文"})
+			updated, err := svc.UpdateDramaGuideSource("usr-drama", created.Project.ID, UpdateDramaGuideSourceRequest{
+				ExpectedRevision: created.Production.Revision,
+				Chapters:         []DramaChapterInput{{Title: "甲", Text: "甲原文"}, {Title: "乙", Text: "乙原文"}, {Title: "丙", Text: "丙原文"}},
+				SelectedChapters: tc.selected,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(updated.Episodes) != 3 || updated.Production.ChapterCount != 3 || updated.Production.ReservedChapterCount != 0 || updated.Production.Revision != created.Production.Revision+1 {
+				t.Fatalf("legacy selection cannot change the full-source contract: %+v", updated)
+			}
+			chapters := loadGuideChapters(t, svc, created.Project.ID)
+			episodes := loadGuideEpisodes(t, svc, updated)
+			for i, chapter := range chapters {
+				if chapter.Status != model.ProjectUnitStatusReady || !sameStrings(episodes[i].ChapterIDs, []string{chapter.ID}) {
+					t.Fatalf("every source needs its matching catalog episode: chapter=%+v episode=%+v", chapter, episodes[i])
+				}
+			}
+			if len(fake.requests) != 0 {
+				t.Fatal("saving the complete catalog must not invoke models")
+			}
+		})
 	}
 }
 

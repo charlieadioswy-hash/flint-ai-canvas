@@ -124,7 +124,7 @@ func dramaWorkflowTextReason(p *model.DramaProduction, episode *model.DramaEpiso
 	if dramaGuideActive(p) && p.GuideStep != model.DramaGuideStory {
 		return "请先确认资产文字设定，再推进分集制作"
 	}
-	if episode.Stage == model.DramaEpisodeQueued || episode.Stage == model.DramaEpisodeScript || len(shots) == 0 || episode.ShotCount != len(shots) {
+	if episode.Stage == model.DramaEpisodeDraft || episode.Stage == model.DramaEpisodeQueued || episode.Stage == model.DramaEpisodeScript || len(shots) == 0 || episode.ShotCount != len(shots) {
 		return "本集剧本与分镜尚未就绪"
 	}
 	if len(segments) == 0 {
@@ -157,6 +157,15 @@ func dramaWorkflowTextReason(p *model.DramaProduction, episode *model.DramaEpiso
 
 // Only explicit media requests may cross the story-stage barrier, after this episode's text is ready.
 func dramaGuideAllowsScopedJob(repo *repository.Repository, p *model.DramaProduction, job model.DramaJob) (bool, error) {
+	if job.EpisodeID != "" && (job.Kind == model.DramaJobScript || job.Kind == model.DramaJobSegmentPrompt || job.Kind == model.DramaJobSegmentVideo || job.Kind == model.DramaJobRender) {
+		episode, err := repo.DramaEpisode(p.ProjectID, job.EpisodeID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		if err != nil || episode.Stage == model.DramaEpisodeDraft {
+			return false, err
+		}
+	}
 	if dramaGuideAllowsJob(p, job.Kind) {
 		return true, nil
 	}
@@ -207,7 +216,11 @@ func (s *Service) UpdateDramaWorkflowStyle(userID, projectID string, req UpdateD
 	if err != nil {
 		return DramaSummary{}, err
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	err = s.repo.Transaction(func(tx *repository.Repository) error {
 		p, err := tx.DramaProductionForUpdate(projectID)
 		if err != nil {
@@ -230,5 +243,7 @@ func (s *Service) UpdateDramaWorkflowStyle(userID, projectID string, req UpdateD
 	if err != nil {
 		return DramaSummary{}, dramaGuideError(err)
 	}
+	release()
+	release = nil
 	return s.DramaSummary(userID, projectID)
 }

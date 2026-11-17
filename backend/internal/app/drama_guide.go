@@ -23,7 +23,7 @@ type UpdateDramaGuideSourceRequest struct {
 	ExpectedRevision int64               `json:"expectedRevision"`
 	Chapters         []DramaChapterInput `json:"chapters,omitempty"`
 	SourceFormat     string              `json:"sourceFormat,omitempty"`
-	// nil 保留已有制作范围；显式空数组不表示全选。
+	// 引导始终按全部正文建集；保留此字段仅供旧客户端提交。
 	SelectedChapters []int `json:"selectedChapters,omitempty"`
 }
 
@@ -162,7 +162,12 @@ func dramaGuideReadiness(repo *repository.Repository, p *model.DramaProduction) 
 		if len(episodes) == 0 {
 			return false, "尚无可确认的剧集", nil
 		}
+		started := 0
 		for _, episode := range episodes {
+			if episode.Stage == model.DramaEpisodeDraft {
+				continue
+			}
+			started++
 			if episode.Error != "" || episode.ShotCount == 0 || dramaStageOrder[episode.Stage] < dramaStageOrder[model.DramaEpisodePrompts] {
 				return false, fmt.Sprintf("第 %d 集剧本与分镜尚未就绪", episode.Number), nil
 			}
@@ -178,6 +183,9 @@ func dramaGuideReadiness(repo *repository.Repository, p *model.DramaProduction) 
 					return false, fmt.Sprintf("第 %d 集视频提示词尚未就绪，请完成撰写或重试", episode.Number), nil
 				}
 			}
+		}
+		if started == 0 {
+			return false, "请先为一集生成分镜，再确认制作成果", nil
 		}
 		return true, "", nil
 	default:
@@ -376,7 +384,7 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 		if format != production.SourceNovel {
 			settings.EpisodeMode, settings.ChaptersPerEpisode = DramaEpisodeModeChapter, 1
 		}
-		input, selected := req.Chapters, req.SelectedChapters
+		input := req.Chapters
 		var existing []model.ProjectUnit
 		if req.Chapters == nil {
 			stored, err := tx.DramaGuideSourceChapters(projectID)
@@ -385,29 +393,16 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 			}
 			existing = stored
 			input = make([]DramaChapterInput, 0, len(existing))
-			if selected == nil {
-				selected = make([]int, 0, len(existing))
-				for index, chapter := range existing {
-					if chapter.Status != model.ProjectUnitStatusReserved {
-						selected = append(selected, index)
-					}
-				}
-			}
 			for _, chapter := range existing {
 				input = append(input, DramaChapterInput{Title: chapter.Title, Text: chapter.SourceText})
 			}
-		} else if selected == nil {
-			return BadAuthRequest("替换正文时请明确选择本次制作的章节")
 		}
-		if len(selected) == 0 {
-			return BadAuthRequest("请至少选择一个本次制作的章节")
-		}
-		chapters, episodes, cursor, done, err := prepareDramaSource(projectID, input, selected, settings, format, existing, time.Now())
+		chapters, episodes, cursor, done, err := prepareDramaSource(projectID, input, nil, settings, format, existing, time.Now())
 		if err != nil {
 			return err
 		}
 		if req.Chapters == nil {
-			selectedIDs := make([]string, 0, len(selected))
+			selectedIDs := make([]string, 0, len(chapters))
 			for _, chapter := range chapters {
 				if chapter.Status == model.ProjectUnitStatusReady {
 					selectedIDs = append(selectedIDs, chapter.ID)

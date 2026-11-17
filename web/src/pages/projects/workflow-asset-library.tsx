@@ -8,21 +8,21 @@ import type { DramaCast } from "@/services/api/drama";
 import { CAST_KIND_LABEL } from "./drama-shared";
 import { CastProjectImport } from "./studio/cast-project-import";
 
-export function WorkflowAssetLibrary({
-    projectId,
-    kind,
-    cast,
-    busy,
-    onChanged,
-    onDirtyChange,
-}: {
+type WorkflowAssetLibraryProps = {
     projectId: string;
+    episodeId?: string;
     kind: "scene" | "prop";
     cast: DramaCast[];
     busy: boolean;
     onChanged: () => void;
     onDirtyChange: (dirty: boolean, busy: boolean) => void;
-}) {
+};
+
+export function WorkflowAssetLibrary(props: WorkflowAssetLibraryProps) {
+    return <WorkflowAssetLibrarySession key={JSON.stringify([props.projectId, props.episodeId, props.kind])} {...props} />;
+}
+
+function WorkflowAssetLibrarySession({ projectId, episodeId, kind, cast, busy, onChanged, onDirtyChange }: WorkflowAssetLibraryProps) {
     const [open, setOpen] = useState(false);
     const latest = useRef(onDirtyChange);
     latest.current = onDirtyChange;
@@ -36,7 +36,7 @@ export function WorkflowAssetLibrary({
             <Tooltip title={`${label}库`}>
                 <IconButton size="sm" icon={VenetianMask} aria-label={`从${label}库导入`} disabled={busy} onClick={() => setOpen(true)} />
             </Tooltip>
-            {open ? <CastProjectImport projectId={projectId} kind={kind} currentCast={cast} disabled={busy} onClose={() => setOpen(false)} onImported={onChanged} onStateChange={onDirtyChange} /> : null}
+            {open ? <CastProjectImport projectId={projectId} episodeId={episodeId} kind={kind} currentCast={cast} disabled={busy} onClose={() => setOpen(false)} onImported={onChanged} onStateChange={onDirtyChange} /> : null}
         </>
     );
 }

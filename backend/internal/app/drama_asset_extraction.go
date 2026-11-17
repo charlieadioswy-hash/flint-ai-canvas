@@ -16,6 +16,7 @@ const dramaAssetExtractionScope = "asset_extraction"
 type ExtractDramaAssetsRequest struct {
 	ExpectedRevision int64    `json:"expectedRevision"`
 	Kind             string   `json:"kind"`
+	AllChapters      bool     `json:"allChapters,omitempty"`
 	EpisodeIDs       []string `json:"episodeIds,omitempty"`
 	ChapterIDs       []string `json:"chapterIds,omitempty"`
 }
@@ -57,6 +58,9 @@ func (s *Service) ExtractDramaAssets(userID, projectID string, req ExtractDramaA
 	if !validDramaCastKind(req.Kind) {
 		return ExtractDramaAssetsResult{}, BadAuthRequest("资产类型必须为角色、场景或道具")
 	}
+	if req.AllChapters && (req.EpisodeIDs != nil || req.ChapterIDs != nil) {
+		return ExtractDramaAssetsResult{}, BadAuthRequest("提取全部原文时不能同时指定剧集或章节范围")
+	}
 	if req.EpisodeIDs != nil && req.ChapterIDs != nil {
 		return ExtractDramaAssetsResult{}, BadAuthRequest("请选择按集或按章节提取，不要同时提交两种范围")
 	}
@@ -64,10 +68,13 @@ func (s *Service) ExtractDramaAssets(userID, projectID string, req ExtractDramaA
 		return ExtractDramaAssetsResult{}, BadAuthRequest("请至少选择一集或一个章节")
 	}
 	var job model.DramaJob
-	err = s.withDramaTextEdit(project.ID, &req.ExpectedRevision, false, func(tx *repository.Repository) error {
-		current, err := tx.DramaProduction(project.ID)
+	err = dramaGuideError(s.repo.Transaction(func(tx *repository.Repository) error {
+		current, err := tx.DramaProductionForUpdate(project.ID)
 		if err != nil {
 			return err
+		}
+		if current.Revision != req.ExpectedRevision {
+			return repository.ErrDramaGuideChanged
 		}
 		if current.GuideStep != "" && current.GuideStep != model.DramaGuideAssets && current.GuideStep != model.DramaGuideStory && current.GuideStep != model.DramaGuideCompleted {
 			return dramaGuideConflict("请先确认制作方案，再增量提取资产")
@@ -75,12 +82,28 @@ func (s *Service) ExtractDramaAssets(userID, projectID string, req ExtractDramaA
 		if current.Stage == model.DramaStageBible {
 			return dramaGuideConflict("请先完成首次资产提取，再按类型重新查漏")
 		}
-		// 已完成引导也与其他文字操作互斥；不能靠进入制作台绕过运行中的任务。
-		active, err := tx.DramaTextJobsActive(project.ID)
+		// 各类查漏只添加对应资产，可同时进行；正文、编排等其他文字任务仍与查漏互斥。
+		active, err := tx.DramaJobsByStatus(project.ID, model.DramaJobQueued, model.DramaJobRunning)
 		if err != nil {
 			return err
 		}
-		if active {
+		for _, activeJob := range active {
+			switch activeJob.Kind {
+			case model.DramaJobBible:
+				scope, err := dramaAssetExtraction(&activeJob)
+				if err != nil {
+					return err
+				}
+				if scope != nil {
+					if scope.AssetKind == req.Kind {
+						return dramaGuideConflict("该类型资产正在提取，请等待当前任务完成")
+					}
+					continue
+				}
+			case model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt:
+			default:
+				continue
+			}
 			return dramaGuideConflict("文字任务正在进行，请完成后再增量提取")
 		}
 		payload, label, err := dramaAssetExtractionSource(tx, project.ID, req)
@@ -94,17 +117,24 @@ func (s *Service) ExtractDramaAssets(userID, projectID string, req ExtractDramaA
 		now := time.Now()
 		job = model.DramaJob{ID: newID(), ProjectID: project.ID, Kind: model.DramaJobBible, Status: model.DramaJobQueued, Priority: dramaPriorityBible, Label: label, PayloadJSON: string(encoded), CreatedAt: now, UpdatedAt: now}
 		return tx.CreateDramaJobs([]model.DramaJob{job})
-	})
+	}))
 	if err != nil {
 		return ExtractDramaAssetsResult{}, err
 	}
 	s.wakeDramaScheduler()
-	return ExtractDramaAssetsResult{Job: dramaJobView(job), Revision: req.ExpectedRevision + 1}, nil
+	// 查漏入队不改变正文或制作配置，不递增共用版本，允许其他种类沿用当前页面版本入队。
+	return ExtractDramaAssetsResult{Job: dramaJobView(job), Revision: req.ExpectedRevision}, nil
 }
 
 func dramaAssetExtractionSource(tx *repository.Repository, projectID string, req ExtractDramaAssetsRequest) (dramaAssetExtractionPayload, string, error) {
 	payload := dramaAssetExtractionPayload{Scope: dramaAssetExtractionScope, AssetKind: req.Kind, SourceChapterIDs: []string{}}
-	chapters, err := tx.DramaChapters(projectID)
+	var chapters []model.ProjectUnit
+	var err error
+	if req.AllChapters {
+		chapters, err = tx.DramaGuideSourceChapters(projectID)
+	} else {
+		chapters, err = tx.DramaChapters(projectID)
+	}
 	if err != nil {
 		return payload, "", err
 	}
@@ -154,10 +184,15 @@ func dramaAssetExtractionSource(tx *repository.Repository, projectID string, req
 		}
 	}
 	if len(payload.SourceChapterIDs) == 0 {
+		if req.AllChapters {
+			return payload, "", BadAuthRequest("没有可提取的原文")
+		}
 		return payload, "", BadAuthRequest("没有可提取的制作正文")
 	}
 	label := map[string]string{"character": "角色", "scene": "场景", "prop": "道具"}[req.Kind] + "增量提取 / 重新查漏："
-	if len(episodeNumbers) > 0 {
+	if req.AllChapters {
+		label += fmt.Sprintf("全部原文（%d 章）", len(payload.SourceChapterIDs))
+	} else if len(episodeNumbers) > 0 {
 		label += "第 " + strings.Join(episodeNumbers, "、") + " 集"
 	} else {
 		label += fmt.Sprintf("%d 个制作章节", len(payload.SourceChapterIDs))

@@ -135,7 +135,7 @@ func (r *Repository) AddDramaEpisodeSource(projectID string, chapter *model.Proj
 		}
 		// 规划游标只数已加入制作的章节；追加时位置仍排在全部章节（含预留章节）之后。
 		var count int64
-		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status <> ?", projectID, model.ProjectUnitKindChapter, model.ProjectUnitStatusReserved).Count(&count).Error; err != nil {
+		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status NOT IN ?", projectID, model.ProjectUnitKindChapter, []model.ProjectUnitStatus{model.ProjectUnitStatusReserved, model.ProjectUnitStatusRemoved}).Count(&count).Error; err != nil {
 			return err
 		}
 		var position int
@@ -273,13 +273,21 @@ func (r *Repository) DeleteDramaEpisode(projectID, episodeID string, releaseChap
 		}
 		now := time.Now()
 		if len(releaseChapterIDs) > 0 {
+			status := model.ProjectUnitStatusReserved
+			var settings struct {
+				EpisodeMode string `json:"episodeMode"`
+			}
+			_ = json.Unmarshal([]byte(production.SettingsJSON), &settings)
+			if production.GuideStep != "" || settings.EpisodeMode == "chapter" {
+				status = model.ProjectUnitStatusRemoved
+			}
 			if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND id IN ?", projectID, model.ProjectUnitKindChapter, releaseChapterIDs).
-				Updates(map[string]any{"status": model.ProjectUnitStatusReserved, "updated_at": now}).Error; err != nil {
+				Updates(map[string]any{"status": status, "updated_at": now}).Error; err != nil {
 				return err
 			}
 		}
 		var count int64
-		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status <> ?", projectID, model.ProjectUnitKindChapter, model.ProjectUnitStatusReserved).Count(&count).Error; err != nil {
+		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status NOT IN ?", projectID, model.ProjectUnitKindChapter, []model.ProjectUnitStatus{model.ProjectUnitStatusReserved, model.ProjectUnitStatusRemoved}).Count(&count).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Updates(map[string]any{"plan_cursor": count, "updated_at": now}).Error
@@ -417,14 +425,14 @@ func refreshDramaSegmentAfterShotChange(tx *gorm.DB, shot model.DramaShot) error
 // DramaChapters 返回已加入制作的章节（不含预留章节），供资产提取与分集规划读取原文。
 func (r *Repository) DramaChapters(projectID string) ([]model.ProjectUnit, error) {
 	var units []model.ProjectUnit
-	err := r.db.Where("project_id = ? AND kind = ? AND status <> ?", projectID, model.ProjectUnitKindChapter, model.ProjectUnitStatusReserved).Order("position asc").Find(&units).Error
+	err := r.db.Where("project_id = ? AND kind = ? AND status NOT IN ?", projectID, model.ProjectUnitKindChapter, []model.ProjectUnitStatus{model.ProjectUnitStatusReserved, model.ProjectUnitStatusRemoved}).Order("position asc").Find(&units).Error
 	return units, err
 }
 
 // DramaChapterSummaries 与 DramaChapters 同一范围但不读原文；分集规划游标按这个列表计数。
 func (r *Repository) DramaChapterSummaries(projectID string) ([]model.ProjectUnit, error) {
 	var units []model.ProjectUnit
-	err := dramaChapterSummaryQuery(r.db, projectID).Where("status <> ?", model.ProjectUnitStatusReserved).Find(&units).Error
+	err := dramaChapterSummaryQuery(r.db, projectID).Where("status NOT IN ?", []model.ProjectUnitStatus{model.ProjectUnitStatusReserved, model.ProjectUnitStatusRemoved}).Find(&units).Error
 	return units, err
 }
 
@@ -464,7 +472,7 @@ func (r *Repository) ProduceDramaChapters(projectID string, chapterIDs []string,
 			return ErrDramaChaptersChanged
 		}
 		var count int64
-		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status <> ?", projectID, model.ProjectUnitKindChapter, model.ProjectUnitStatusReserved).Count(&count).Error; err != nil {
+		if err := tx.Model(&model.ProjectUnit{}).Where("project_id = ? AND kind = ? AND status NOT IN ?", projectID, model.ProjectUnitKindChapter, []model.ProjectUnitStatus{model.ProjectUnitStatusReserved, model.ProjectUnitStatusRemoved}).Count(&count).Error; err != nil {
 			return err
 		}
 		var number int
@@ -1100,7 +1108,8 @@ func (r *Repository) requestDramaSegmentPrompts(projectID, episodeID string, ind
 // PendingDramaSegments 返回待撰写提示词的段；按集与段序排列。
 func (r *Repository) PendingDramaSegments(projectID string) ([]model.DramaSegment, error) {
 	var segments []model.DramaSegment
-	err := r.db.Where("project_id = ? AND prompt_status = ?", projectID, "").Order("episode_id asc, segment_index asc").Limit(500).Find(&segments).Error
+	started := r.db.Model(&model.DramaEpisode{}).Select("id").Where("project_id = ? AND stage <> ?", projectID, model.DramaEpisodeDraft)
+	err := r.db.Where("project_id = ? AND prompt_status = ? AND episode_id IN (?)", projectID, "", started).Order("episode_id asc, segment_index asc").Limit(500).Find(&segments).Error
 	return segments, err
 }
 

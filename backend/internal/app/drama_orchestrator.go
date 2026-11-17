@@ -583,13 +583,18 @@ func (r *dramaRun) plan() error {
 	for i := range episodes {
 		episode := &episodes[i]
 		// 等待放行生图的集不占制作窗口，剧本可以全部先写出来供审阅。
-		if episode.Stage != model.DramaEpisodeQueued && episode.Stage != model.DramaEpisodeDone && episode.Stage != model.DramaEpisodeReview && !r.mediaHeld(episode) {
+		if episode.Stage != model.DramaEpisodeDraft && episode.Stage != model.DramaEpisodeQueued && episode.Stage != model.DramaEpisodeDone && episode.Stage != model.DramaEpisodeReview && !r.mediaHeld(episode) {
 			inFlight++
 		}
 	}
 	allDone := p.PlanDone && len(episodes) > 0
+	started := 0
 	for i := range episodes {
 		episode := &episodes[i]
+		if episode.Stage == model.DramaEpisodeDraft {
+			continue
+		}
+		started++
 		if episode.Stage != model.DramaEpisodeDone || episode.FinalStale {
 			allDone = false
 		}
@@ -628,7 +633,7 @@ func (r *dramaRun) plan() error {
 			break
 		}
 	}
-	if allDone && len(r.active) == 0 {
+	if allDone && started > 0 && len(r.active) == 0 {
 		p.Status, p.Stage = model.DramaStatusCompleted, model.DramaStageDone
 	}
 	return nil
@@ -1053,17 +1058,21 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 	}
 	if scope != nil {
 		return r.s.repo.Transaction(func(tx *repository.Repository) error {
-			current, err := tx.DramaProductionForUpdate(r.project.ID)
+			if _, err := tx.DramaProductionForUpdate(r.project.ID); err != nil {
+				return err
+			}
+			// 只增量添加本类资产；共用版本仍代表正文与制作配置，其他类型的查漏不会使其失效。
+			ids, err := r.applyBibleCasts(tx, bible, true)
 			if err != nil {
 				return err
 			}
-			if err := r.applyBibleCasts(tx, bible, true); err != nil {
-				return err
+			if len(scope.SourceEpisodeIDs) != 1 {
+				return nil
 			}
-			return tx.UpdateDramaGuideIf(r.project.ID, current.Revision, current.GuideStep, map[string]any{})
+			return tx.MergeDramaEpisodeAssets(r.project.ID, scope.SourceEpisodeIDs, ids)
 		})
 	}
-	if err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
+	if _, err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
 		return err
 	}
 	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
@@ -1073,16 +1082,17 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
 }
 
-func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production.Bible, scoped bool) error {
+func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production.Bible, scoped bool) ([]string, error) {
 	existing, err := repo.DramaCasts(r.project.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// 提前手动创建或跨季导入的设定不能阻止本季提取其余素材；同类型同名只补缺失项。
 	// 重名角色存在歧义时保留现状，不把模型提取的造型挂到任意一条角色上。
 	byName := map[string][]model.DramaCast{}
 	byDefinition := map[string][]model.DramaCast{}
 	lookNames, lookCounts := map[string]map[string]bool{}, map[string]int{}
+	looksByName := map[string]map[string][]model.DramaCast{}
 	positions := map[string]int{}
 	for _, cast := range existing {
 		if cast.ParentID == "" {
@@ -1103,13 +1113,24 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		} else {
 			if lookNames[cast.ParentID] == nil {
 				lookNames[cast.ParentID] = map[string]bool{}
+				looksByName[cast.ParentID] = map[string][]model.DramaCast{}
 			}
-			lookNames[cast.ParentID][production.NormalizeName(cast.LookName)] = true
+			key := production.NormalizeName(cast.LookName)
+			lookNames[cast.ParentID][key] = true
+			looksByName[cast.ParentID][key] = append(looksByName[cast.ParentID][key], cast)
 			lookCounts[cast.ParentID]++
 		}
 	}
 	now := time.Now()
 	casts := make([]model.DramaCast, 0, len(bible.Characters)+len(bible.Props)+len(bible.Scenes))
+	assetIDs := []string{}
+	linked := map[string]bool{}
+	linkAsset := func(cast model.DramaCast) {
+		if !linked[cast.ID] {
+			linked[cast.ID] = true
+			assetIDs = append(assetIDs, cast.ID)
+		}
+	}
 	addBase := func(cast model.DramaCast) model.DramaCast {
 		if scoped {
 			cast.ImageStatus = model.DramaMediaDraft
@@ -1119,6 +1140,7 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		casts = append(casts, cast)
 		key := cast.Kind + "|" + production.NormalizeName(cast.Name)
 		byName[key] = append(byName[key], cast)
+		linkAsset(cast)
 		return cast
 	}
 	for index, character := range bible.Characters {
@@ -1133,6 +1155,7 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		var base model.DramaCast
 		if len(matches) == 1 {
 			base = matches[0]
+			linkAsset(base)
 		} else {
 			instructions := strings.TrimSpace(strings.Join(nonEmpty(character.Gender, character.Age, character.Voice), "，"))
 			description := truncateRunes(character.Description, 1000)
@@ -1147,10 +1170,17 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		}
 		if lookNames[base.ID] == nil {
 			lookNames[base.ID] = map[string]bool{}
+			looksByName[base.ID] = map[string][]model.DramaCast{}
 		}
 		for _, look := range character.Looks {
 			key := production.NormalizeName(look.Name)
-			if lookNames[base.ID][key] || lookCounts[base.ID] >= production.MaxCharacterLooks {
+			if lookNames[base.ID][key] {
+				if matches := looksByName[base.ID][key]; len(matches) == 1 {
+					linkAsset(matches[0])
+				}
+				continue
+			}
+			if lookCounts[base.ID] >= production.MaxCharacterLooks {
 				continue
 			}
 			lookCounts[base.ID]++
@@ -1160,21 +1190,32 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 				cast.ImageStatus = model.DramaMediaDraft
 			}
 			casts = append(casts, cast)
+			looksByName[base.ID][key] = append(looksByName[base.ID][key], cast)
+			linkAsset(cast)
 		}
 	}
 	for _, prop := range bible.Props {
 		name := truncateRunes(prop.Name, 60)
-		if len(byName["prop|"+production.NormalizeName(name)]) == 0 {
+		matches := byName["prop|"+production.NormalizeName(name)]
+		if len(matches) == 0 {
 			addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "prop", Name: name, AliasesJSON: "[]", Description: truncateRunes(prop.Description, 1000), Appearance: truncateRunes(prop.Appearance, 1000), CreatedAt: now, UpdatedAt: now})
+		} else if len(matches) == 1 {
+			linkAsset(matches[0])
 		}
 	}
 	for _, scene := range bible.Scenes {
 		name := truncateRunes(scene.Name, 60)
-		if len(byName["scene|"+production.NormalizeName(name)]) == 0 {
+		matches := byName["scene|"+production.NormalizeName(name)]
+		if len(matches) == 0 {
 			addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "scene", Name: name, AliasesJSON: "[]", Description: truncateRunes(scene.Description, 1000), Appearance: truncateRunes(scene.Appearance, 1000), CreatedAt: now, UpdatedAt: now})
+		} else if len(matches) == 1 {
+			linkAsset(matches[0])
 		}
 	}
-	return repo.CreateDramaCasts(casts)
+	if err := repo.CreateDramaCasts(casts); err != nil {
+		return nil, err
+	}
+	return assetIDs, nil
 }
 
 func nonEmpty(values ...string) []string {

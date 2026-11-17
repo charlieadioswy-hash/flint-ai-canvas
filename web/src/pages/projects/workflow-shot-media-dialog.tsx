@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Select, Switch } from "antd";
-import { RefreshCw } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
@@ -381,7 +380,7 @@ function ShotMediaEditor({
         const request = (async () => {
             while (operation.isCurrent(ticket)) {
                 const snapshot = editor.current;
-                if (!snapshot.draft || !snapshot.baseline || !snapshot.current || snapshot.current.revision !== snapshot.baseline.revision) throw new Error("镜头媒体配置已有更新，请先重新载入");
+                if (!snapshot.draft || !snapshot.baseline || !snapshot.current || snapshot.current.revision !== snapshot.baseline.revision) throw new Error("镜头媒体配置已有更新，请先重新读取");
                 const key = JSON.stringify(snapshot.draft);
                 if (key === snapshot.baseline.config && (snapshot.current.id || !create)) return snapshot.current;
                 const saved = await saveDramaShotMedia(projectId, shot.id, kind, { expectedRevision: snapshot.baseline.revision, config: snapshot.draft });
@@ -477,7 +476,7 @@ function ShotMediaEditor({
                 accept(updated);
                 onChanged?.();
             } catch {
-                if (operation.isCurrent(ticket)) setError("任务已提交，最新进度暂未刷新，请稍后重新载入");
+                if (operation.isCurrent(ticket)) setError("任务已提交，最新进度暂未刷新，请稍后重新读取");
             }
         });
     const options = catalog.data?.options[kind] || [];
@@ -591,7 +590,7 @@ function ShotMediaEditor({
                     ) : null}
                     <WorkflowShotReferences projectId={projectId} userId={userId} kind={kind} config={draft} disabled={configLocked} onChange={patch} onBusyChange={setReferenceBusy} />
                     <WorkflowShotPromptEditor projectId={projectId} userId={userId} shot={shot} kind={kind} config={draft} disabled={controlsDisabled} onChange={patch} />
-                    {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新载入后再操作。</p> : null}
+                    {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新读取后再操作。</p> : null}
                     {error ? <p role="alert">{error}</p> : null}
                     {notice ? <p role="status">{notice}</p> : null}
                     <div className="drama-shot-media-actions">
@@ -600,24 +599,27 @@ function ShotMediaEditor({
                                 重新同步配置
                             </Button>
                         ) : null}
-                        <Button
-                            icon={<RefreshCw className="size-3.5" />}
-                            disabled={Boolean(busy) || saving || quote?.uncertain || referenceBusy}
-                            onClick={() =>
-                                void run("reload", async (ticket) => {
-                                    if (dirty && !stale) await save(ticket);
-                                    if (dirty && stale) throw new Error("镜头媒体已有新版本，请关闭后放弃本地修改再重新进入");
-                                    const value = await getDramaShotMedia(projectId, shot.id, kind);
-                                    if (operation.isCurrent(ticket)) {
-                                        accept(value);
-                                        setQuote(undefined);
-                                        setPriceVersion((version) => version + 1);
-                                    }
-                                })
-                            }
-                        >
-                            重新载入
-                        </Button>
+                        {stale || query.isError || error || priceError?.key === draftKey || (displayedPrice && (!displayedPrice.ready || !displayedPrice.priced)) ? (
+                            <Button
+                                type="text"
+                                size="small"
+                                disabled={Boolean(busy) || saving || quote?.uncertain || referenceBusy}
+                                onClick={() =>
+                                    void run("reload", async (ticket) => {
+                                        if (dirty && !stale) await save(ticket);
+                                        if (dirty && stale) throw new Error("镜头媒体已有新版本，请关闭后放弃本地修改再重新进入");
+                                        const value = await getDramaShotMedia(projectId, shot.id, kind);
+                                        if (operation.isCurrent(ticket)) {
+                                            accept(value);
+                                            setQuote(undefined);
+                                            setPriceVersion((version) => version + 1);
+                                        }
+                                    })
+                                }
+                            >
+                                重新读取
+                            </Button>
+                        ) : null}
                         <Button
                             className="drama-shot-media-generate"
                             type="primary"

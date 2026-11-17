@@ -26,12 +26,13 @@ export type WorkflowCharacterLibraryControls = {
 type Props = {
     summary: DramaSummary;
     cast: DramaCast[];
+    episodeId?: string;
     busy?: boolean;
     onChanged: () => void;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
     children?: (controls: WorkflowCharacterLibraryControls) => ReactNode;
 };
-type Dialog = { mode: "import" | "info" | "save"; revision: number; target?: DramaCast };
+type Dialog = { mode: "import" | "info" | "save"; revision: number; episodeId?: string; target?: DramaCast };
 const ROLE_LABELS: Record<string, string> = { primary: "主形象", front: "正面", side: "侧面", back: "背面", turnaround_sheet: "三视图", expression_sheet: "表情图" };
 
 function CharacterImage({ resourceId, label }: { resourceId?: string; label: string }) {
@@ -46,10 +47,10 @@ function CharacterAudio({ resourceId }: { resourceId?: string }) {
 
 export function WorkflowCharacterLibrary(props: Props) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return <CharacterLibrarySession key={JSON.stringify([userId, getActiveUserScope(), props.summary.project.id])} {...props} userId={userId} />;
+    return <CharacterLibrarySession key={JSON.stringify([userId, getActiveUserScope(), props.summary.project.id, props.episodeId])} {...props} userId={userId} />;
 }
 
-function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDirtyChange, children, userId }: Props & { userId: string }) {
+function CharacterLibrarySession({ summary, cast, episodeId, busy = false, onChanged, onDirtyChange, children, userId }: Props & { userId: string }) {
     const { modal } = App.useApp();
     const operation = useDramaOperationScope(summary.project.id);
     const [dialog, setDialog] = useState<Dialog>();
@@ -74,7 +75,7 @@ function CharacterLibrarySession({ summary, cast, busy = false, onChanged, onDir
             currentTarget = current.cast.find((item) => item.id === target.id && item.projectId === current.summary.project.id && !item.parentId);
             if (target.projectId !== current.summary.project.id || target.parentId || !currentTarget || currentTarget.kind !== target.kind || currentTarget.revision !== target.revision || (mode !== "info" && target.kind !== "character")) return;
         }
-        setDialog({ mode, revision: current.summary.production.revision, target: currentTarget });
+        setDialog({ mode, revision: current.summary.production.revision, episodeId, target: currentTarget });
     };
     const close = () => {
         if (dialogStateRef.current.busy) return;
@@ -221,6 +222,7 @@ function CharacterDialog({
                 if (!library) throw new Error("请先选择角色库中的角色");
                 await importDramaCharacterLibrary(ticket.projectId, {
                     expectedRevision: draft.revision,
+                    ...(draft.episodeId ? { episodeId: draft.episodeId } : {}),
                     libraryAssetId: library.asset.id,
                     libraryVersionId: library.character.versionId,
                     targetCastId: target?.id,

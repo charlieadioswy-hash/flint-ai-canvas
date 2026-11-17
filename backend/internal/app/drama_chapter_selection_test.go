@@ -12,11 +12,14 @@ func TestDramaSelectedChaptersReserveTheRest(t *testing.T) {
 	svc, fake := newDramaTestService(t)
 	settings := DramaSettings{ReviewMode: DramaReviewAuto, MediaMode: DramaMediaManual, Concurrency: 16, Models: fakeDramaModels, EpisodeMode: DramaEpisodeModeChapter, ChaptersPerEpisode: 2}
 	chapters := []DramaChapterInput{{Title: "第一章", Text: "甲甲"}, {Title: "第二章", Text: "乙乙"}, {Title: "第三章", Text: "预留丙"}, {Title: "第四章", Text: "丁丁"}, {Title: "第五章", Text: "预留戊"}}
-	summary, err := svc.CreateDrama("usr-drama", CreateDramaRequest{Name: "选章", Start: true, Settings: settings, Chapters: chapters, SelectedChapters: []int{0, 1, 3}})
+	summary, err := svc.CreateDrama("usr-drama", CreateDramaRequest{Name: "选章", Settings: settings, Chapters: chapters, SelectedChapters: []int{0, 1, 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	project := summary.Project.ID
+	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", project).UpdateColumn("status", model.DramaStatusRunning).Error; err != nil {
+		t.Fatal(err)
+	}
 	// 第一、二章相邻合成一集；第四章与第二章之间隔着预留章节，单独成集。
 	if len(summary.Episodes) != 2 || summary.Production.ChapterCount != 3 || summary.Production.ReservedChapterCount != 2 || summary.Production.PlanCursor != 3 {
 		t.Fatalf("selected chapters must produce 2 episodes and reserve 2 chapters: %+v %+v", summary.Episodes, summary.Production)
@@ -46,7 +49,8 @@ func TestDramaSelectedChaptersReserveTheRest(t *testing.T) {
 	if _, err := svc.DramaChapterOutline("someone", project); err == nil {
 		t.Fatal("outline must check ownership")
 	}
-	revision := guideSummary(t, svc, project).Production.Revision
+	current, _ := svc.repo.DramaProduction(project)
+	revision := current.Revision
 	if _, err := svc.ProduceDramaChapters("usr-drama", project, ProduceDramaChaptersRequest{ExpectedRevision: &revision, ChapterIDs: []string{outline[0].ID}}); err == nil {
 		t.Fatal("chapters already in production cannot be added again")
 	}

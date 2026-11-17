@@ -23,13 +23,17 @@ func TestDramaAssetExtractionRouteKeepsExplicitScope(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		want       int
+		all        bool
 	}{
-		{"valid", `{"expectedRevision":1,"kind":"scene","episodeIds":["episode"]}`, http.StatusOK},
-		{"empty-episodes", `{"expectedRevision":1,"kind":"scene","episodeIds":[]}`, http.StatusBadRequest},
-		{"empty-chapters", `{"expectedRevision":1,"kind":"scene","chapterIds":[]}`, http.StatusBadRequest},
-		{"wrong-kind", `{"expectedRevision":1,"kind":"location"}`, http.StatusBadRequest},
-		{"foreign-episode", `{"expectedRevision":1,"kind":"scene","episodeIds":["foreign-episode"]}`, http.StatusNotFound},
-		{"stale", `{"expectedRevision":0,"kind":"scene","episodeIds":["episode"]}`, http.StatusConflict},
+		{"valid", `{"expectedRevision":1,"kind":"scene","episodeIds":["episode"]}`, http.StatusOK, false},
+		{"all-chapters", `{"expectedRevision":1,"kind":"scene","allChapters":true}`, http.StatusOK, true},
+		{"all-with-episodes", `{"expectedRevision":1,"kind":"scene","allChapters":true,"episodeIds":["episode"]}`, http.StatusBadRequest, false},
+		{"all-with-chapters", `{"expectedRevision":1,"kind":"scene","allChapters":true,"chapterIds":["chapter"]}`, http.StatusBadRequest, false},
+		{"empty-episodes", `{"expectedRevision":1,"kind":"scene","episodeIds":[]}`, http.StatusBadRequest, false},
+		{"empty-chapters", `{"expectedRevision":1,"kind":"scene","chapterIds":[]}`, http.StatusBadRequest, false},
+		{"wrong-kind", `{"expectedRevision":1,"kind":"location"}`, http.StatusBadRequest, false},
+		{"foreign-episode", `{"expectedRevision":1,"kind":"scene","episodeIds":["foreign-episode"]}`, http.StatusNotFound, false},
+		{"stale", `{"expectedRevision":0,"kind":"scene","episodeIds":["episode"]}`, http.StatusConflict, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -48,6 +52,7 @@ func TestDramaAssetExtractionRouteKeepsExplicitScope(t *testing.T) {
 				&model.Project{ID: "project", UserID: "owner", Name: "作品"},
 				&model.DramaProduction{ProjectID: "project", UserID: "owner", GuideStep: model.DramaGuideAssets, Stage: model.DramaStageProduce, Status: model.DramaStatusPaused, Revision: 1},
 				&model.ProjectUnit{ID: "chapter", ProjectID: "project", Kind: model.ProjectUnitKindChapter, Status: model.ProjectUnitStatusReady, Title: "来源", SourceText: "庭院中下起雨。"},
+				&model.ProjectUnit{ID: "reserved", ProjectID: "project", Kind: model.ProjectUnitKindChapter, Status: model.ProjectUnitStatusReserved, Position: 1, Title: "预留来源", SourceText: "山门前停着马车。"},
 				&model.DramaEpisode{ID: "episode", ProjectID: "project", Number: 1, ChapterIDsJSON: `["chapter"]`},
 				&model.DramaEpisode{ID: "foreign-episode", ProjectID: "another-project", Number: 1, ChapterIDsJSON: `["chapter"]`},
 			} {
@@ -90,8 +95,15 @@ func TestDramaAssetExtractionRouteKeepsExplicitScope(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 				t.Fatal(err)
 			}
-			if envelope.Code != 0 || envelope.Data.Revision != 2 || envelope.Data.Job.AssetKind != "scene" || len(envelope.Data.Job.SourceChapterIDs) != 1 || envelope.Data.Job.SourceChapterIDs[0] != "chapter" || len(envelope.Data.Job.SourceEpisodeIDs) != 1 || envelope.Data.Job.SourceEpisodeIDs[0] != "episode" || len(jobs) != 1 {
+			if envelope.Code != 0 || envelope.Data.Revision != 1 || envelope.Data.Job.AssetKind != "scene" || len(jobs) != 1 {
 				t.Fatalf("response must expose exact accepted scope: %s jobs=%+v", response.Body.String(), jobs)
+			}
+			if tc.all {
+				if len(envelope.Data.Job.SourceChapterIDs) != 2 || envelope.Data.Job.SourceChapterIDs[0] != "chapter" || envelope.Data.Job.SourceChapterIDs[1] != "reserved" || len(envelope.Data.Job.SourceEpisodeIDs) != 0 {
+					t.Fatalf("allChapters must retain reserved source in the queued scope: %s", response.Body.String())
+				}
+			} else if len(envelope.Data.Job.SourceChapterIDs) != 1 || envelope.Data.Job.SourceChapterIDs[0] != "chapter" || len(envelope.Data.Job.SourceEpisodeIDs) != 1 || envelope.Data.Job.SourceEpisodeIDs[0] != "episode" {
+				t.Fatalf("explicit episode scope must remain limited: %s", response.Body.String())
 			}
 		})
 	}

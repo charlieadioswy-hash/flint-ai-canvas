@@ -56,7 +56,7 @@ func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *m
 		return wait
 	}
 	switch {
-	case e.Stage == model.DramaEpisodeQueued || e.Stage == model.DramaEpisodeScript:
+	case e.Stage == model.DramaEpisodeDraft || e.Stage == model.DramaEpisodeQueued || e.Stage == model.DramaEpisodeScript:
 		return "等待本集剧本完成"
 	case dramaMediaHeld(settings, p, e) && segments[index].VideoStatus != model.DramaMediaQueued:
 		return "本集尚未放行生图"

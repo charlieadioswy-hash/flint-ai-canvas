@@ -89,6 +89,11 @@ func (s *Service) ImportDramaCast(userID, projectID string, req ImportDramaCastR
 				targetProduction = row
 			}
 		}
+		if req.EpisodeID != "" {
+			if _, err := repo.DramaEpisode(projectID, req.EpisodeID); err != nil {
+				return err
+			}
+		}
 		source, err := repo.DramaCastsForUpdate(req.SourceProjectID)
 		if err != nil {
 			return err
@@ -235,6 +240,15 @@ func (s *Service) ImportDramaCast(userID, projectID string, req ImportDramaCastR
 			claimed[copy.ID] = src.ID
 			result.Imported++
 			result.Cast = append(result.Cast, *row)
+		}
+		if req.EpisodeID != "" {
+			assetIDs := make([]string, 0, len(result.Cast))
+			for _, cast := range result.Cast {
+				assetIDs = append(assetIDs, cast.ID)
+			}
+			if err := repo.MergeDramaEpisodeAssets(projectID, []string{req.EpisodeID}, assetIDs); err != nil {
+				return err
+			}
 		}
 		return repo.UpdateDramaGuideIf(projectID, targetProduction.Revision, targetProduction.GuideStep, map[string]any{})
 	})

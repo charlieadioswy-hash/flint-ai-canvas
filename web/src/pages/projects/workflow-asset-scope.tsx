@@ -7,9 +7,9 @@ import { useUserStore } from "@/stores/use-user-store";
 import { MediaThumb, parseList } from "./drama-shared";
 import { WorkflowBatch } from "./workflow-batch";
 
-/** 包含人工段引用及造型本体，不根据名称或出现章节猜测出场资产。 */
+/** 提取和新增直接归本集，编排分镜后补充镜头、段引用及造型本体。 */
 export function episodeAssetIds(detail: DramaEpisodeDetail, cast: DramaCast[]) {
-    const ids = new Set<string>();
+    const ids = new Set<string>([...parseList(detail.episode.assetIdsJson), ...(detail.sourceAssetIds || [])]);
     for (const shot of detail.shots) {
         for (const id of [...parseList(shot.castIdsJson), ...parseList(shot.lookCastIdsJson), ...parseList(shot.propIdsJson), shot.sceneCastId || ""]) if (id) ids.add(id);
     }
@@ -26,10 +26,9 @@ type ScopeProps = {
     kind?: DramaCastKind;
     episodeId?: string;
     showToolbar?: boolean;
-    sharedBeforeStoryboard?: boolean;
     busy: boolean;
     onChanged: () => void;
-    children: (cast: DramaCast[], refreshing: boolean, sharedCast: DramaCast[]) => ReactNode;
+    children: (cast: DramaCast[], refreshing: boolean) => ReactNode;
 };
 
 export function WorkflowAssetScope(props: ScopeProps) {
@@ -37,7 +36,7 @@ export function WorkflowAssetScope(props: ScopeProps) {
     return <AssetScopeSession key={`${userId}:${props.summary.project.id}`} {...props} userId={userId} />;
 }
 
-function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId, showToolbar = true, sharedBeforeStoryboard = false, busy, onChanged, children, userId }: ScopeProps & { userId: string }) {
+function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId, showToolbar = true, busy, onChanged, children, userId }: ScopeProps & { userId: string }) {
     const [localEpisodeId, setEpisodeId] = useState("");
     const episodeId = controlledEpisodeId ?? localEpisodeId;
     const [selecting, setSelecting] = useState(false);
@@ -56,10 +55,9 @@ function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId
     if (episode && detail.data?.episode.id === episodeId) lastDetail.current = detail.data;
     const currentDetail = episode && lastDetail.current?.episode.id === episodeId ? lastDetail.current : undefined;
     const referenced = currentDetail ? episodeAssetIds(currentDetail, projectCast) : new Set<string>();
-    const shared = Boolean(sharedBeforeStoryboard && currentDetail && !currentDetail.shots.length && !currentDetail.segments.length);
-    const visible = projectCast.filter((item) => (!kind || item.kind === kind) && (!episodeId || (episode && (shared || referenced.has(item.id)))));
-    const sharedCast = sharedBeforeStoryboard && currentDetail && !shared ? projectCast.filter((item) => (!kind || item.kind === kind) && !referenced.has(item.id)) : [];
-    const selected = [...selection].filter((id) => projectCast.some((item) => item.id === id));
+    const episodeScoped = controlledEpisodeId !== undefined || Boolean(episodeId);
+    const visible = projectCast.filter((item) => (!kind || item.kind === kind) && (!episodeScoped || (episode && referenced.has(item.id))));
+    const selected = [...selection].filter((id) => visible.some((item) => item.id === id));
     const toggle = (id: string) =>
         setSelection((current) => {
             const next = new Set(current);
@@ -67,7 +65,7 @@ function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId
             else next.add(id);
             return next;
         });
-    const unavailable = Boolean(episodeId && (!episode || !currentDetail));
+    const unavailable = episodeScoped && (!episode || !currentDetail);
     const refreshing = Boolean(episodeId && (detail.isPending || detail.isFetching || detail.isError));
 
     return (
@@ -96,11 +94,6 @@ function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId
                     ) : null}
                 </div>
             ) : null}
-            {shared ? (
-                <p className="drama-workflow-assets-shared-note" role="status">
-                    本集尚未编排分镜，展示作品共享主体。
-                </p>
-            ) : null}
             {currentDetail && detail.isError ? (
                 <p role="alert">
                     本集引用资产刷新失败，已保留列表，重试后可继续操作。<Button onClick={() => void detail.refetch()}>重试</Button>
@@ -108,7 +101,7 @@ function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId
             ) : null}
             {unavailable ? (
                 <p role={detail.isError ? "alert" : "status"}>
-                    {!episode ? "本集已移除，请重新选择范围。" : detail.isError ? "本集引用资产读取失败。" : "正在读取本集引用资产…"}
+                    {!episodeId ? "请先创建或选择剧集。" : !episode ? "本集已移除，请重新选择范围。" : detail.isError ? "本集引用资产读取失败。" : "正在读取本集引用资产…"}
                     {episode && detail.isError ? <Button onClick={() => void detail.refetch()}>重试</Button> : null}
                 </p>
             ) : !visible.length && kind ? (
@@ -127,7 +120,7 @@ function AssetScopeSession({ summary, cast, kind, episodeId: controlledEpisodeId
                     ))}
                 </div>
             ) : (
-                children(visible, refreshing, sharedCast)
+                children(visible, refreshing)
             )}
             {selecting ? (
                 <WorkflowBatch projectId={projectId} revision={summary.production.revision} targetIds={selected} actions={["cast_image"]} disabled={busy || refreshing} onChanged={onChanged} onClearSelection={() => setSelection(new Set())} />

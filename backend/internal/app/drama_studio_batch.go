@@ -138,6 +138,18 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 	conflictingEpisodes := map[string]bool{}
 	targets := map[string]bool{}
 	pendingParents := map[string]bool{}
+	var pendingVideos map[string]bool
+	if req.Action == "segment_video" {
+		pendingVideos = map[string]bool{}
+		for _, id := range req.TargetIDs {
+			pendingVideos[id] = true
+		}
+		for _, job := range jobs {
+			if job.Kind == model.DramaJobSegmentVideo {
+				pendingVideos[job.ShotID] = true
+			}
+		}
+	}
 	snapshots := []any{req.Action, projectID, req.TargetIDs, req.EpisodeID, req.VideoModel, req.Regenerate, req.RestyleSegments, p.Revision, p.SettingsJSON, p.BibleJSON, p.GuideStep, p.SampleApproved, p.MediaRequestsOnly, p.AssetsReleased, p.BudgetMicrocredits}
 	if req.Action == "segment_assets" {
 		for _, id := range req.TargetIDs {
@@ -199,7 +211,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 		if draft, ok := req.CastDrafts[id]; ok {
 			castDraft = &draft
 		}
-		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, EpisodeID: episodeID, VideoModel: req.VideoModel, CastDraft: castDraft}, dramaStudioActionOptions{pendingParents: pendingParents, allowPendingPrompt: true})
+		target, err := s.prepareDramaStudioActionWithOptions(repo, userID, projectID, DramaStudioActionRequest{Action: action, TargetID: id, EpisodeID: episodeID, VideoModel: req.VideoModel, CastDraft: castDraft}, dramaStudioActionOptions{pendingParents: pendingParents, pendingVideos: pendingVideos, allowPendingPrompt: true})
 		if err != nil {
 			kind := "segment"
 			if action == "cast_image" {
@@ -219,7 +231,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 		plan.view.Items = append(plan.view.Items, item)
 		snapshots = append(snapshots, target.view)
 	}
-	plan.propagateBlockedParents()
+	plan.propagateBlockedDependencies()
 	plan.summarize()
 	if plan.view.Counts["ready"] > 0 && plan.view.Priced {
 		account, err := repo.CreditAccount(userID)
@@ -310,7 +322,7 @@ func dramaStudioBatchItem(action string, plan dramaStudioActionPlan, busy map[st
 	return item
 }
 
-func (p *dramaStudioBatchPlan) propagateBlockedParents() {
+func (p *dramaStudioBatchPlan) propagateBlockedDependencies() {
 	indexes := map[string]int{}
 	for i, item := range p.view.Items {
 		indexes[item.TargetID] = i
@@ -340,11 +352,49 @@ func (p *dramaStudioBatchPlan) propagateBlockedParents() {
 		if cast := p.plans[id].cast; cast != nil && cast.ParentID != "" && !visit(cast.ParentID) {
 			item.Status, item.Reason = "blocked", "角色本体尚未就绪且无法在本批次生成，请先处理本体的阻塞项"
 		}
+		if previous := p.plans[id].pendingVideoID; previous != "" && !visit(previous) {
+			item.Status, item.Reason = "blocked", "上一段无法在本批次生成，请先处理上一段的阻塞项"
+		}
 		visited[id] = 2
 		return item.Status == "ready"
 	}
 	for id := range indexes {
 		visit(id)
+	}
+	// 前段重试会让后续旧视频失效；跳过成功中间段时，不能把它的旧尾帧当作本批仍可用的依赖。
+	ordered := make([]int, 0, len(indexes))
+	for i, item := range p.view.Items {
+		if p.plans[item.TargetID].segment != nil && p.plans[item.TargetID].view.Action == "segment_video" {
+			ordered = append(ordered, i)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := p.plans[p.view.Items[ordered[i]].TargetID].segment, p.plans[p.view.Items[ordered[j]].TargetID].segment
+		if a.EpisodeID == b.EpisodeID {
+			return a.SegmentIndex < b.SegmentIndex
+		}
+		return a.EpisodeID < b.EpisodeID
+	})
+	invalidatedFrom := map[string]int{}
+	for _, index := range ordered {
+		item := &p.view.Items[index]
+		if item.Status != "ready" {
+			continue
+		}
+		target := p.plans[item.TargetID]
+		if previous := target.previousVideo; previous != nil {
+			if from, invalidated := invalidatedFrom[item.EpisodeID]; invalidated && previous.SegmentIndex >= from {
+				dependency, selected := indexes[previous.ID]
+				if !selected || p.view.Items[dependency].Status != "ready" && p.view.Items[dependency].Status != "already_queued" {
+					item.Status, item.Reason = "blocked", "上一段视频将因本批重试失效，且未重新排队，请先处理上一段"
+				}
+			}
+		}
+		if item.Status == "ready" && target.invalidateLater {
+			if _, ok := invalidatedFrom[item.EpisodeID]; !ok {
+				invalidatedFrom[item.EpisodeID] = target.segment.SegmentIndex
+			}
+		}
 	}
 }
 

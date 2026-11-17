@@ -8,9 +8,11 @@
 }
 
 .drama-workflow-production-scroll {
+    flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: auto;
+    scrollbar-gutter: stable;
     padding: var(--space-4);
     container: drama-workflow-production / inline-size;
 }
@@ -24,6 +26,7 @@
 }
 
 .drama-workflow-production-toolbar {
+    flex-wrap: wrap;
     margin-bottom: var(--space-3);
     padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--drama-line);
@@ -38,9 +41,33 @@
 
 .drama-workflow-production-filters {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+}
+
+.drama-workflow-production-guidance {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+    margin-left: auto;
+    font-size: var(--fs-tiny);
+    line-height: var(--lh-body);
+}
+
+.drama-workflow-production-guidance > span {
+    min-width: 0;
+    max-width: 32rem;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.drama-workflow-production-guidance > .ant-btn {
+    flex: none;
+    height: var(--space-8);
 }
 
 .drama-workflow-production-episode-filter {
@@ -336,8 +363,27 @@
 }
 
 .drama-workflow-production > .drama-queue {
+    display: flex;
+    flex-direction: column;
     flex: none;
     min-width: 0;
+    max-height: 50%;
+}
+
+.drama-workflow-production > .drama-queue > .drama-queue-bar,
+.drama-workflow-production > .drama-queue .drama-queue-filters {
+    flex: none;
+}
+
+.drama-workflow-production > .drama-queue > .drama-queue-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.drama-workflow-production > .drama-queue .drama-queue-list {
+    min-height: 0;
 }
 
 .drama-workflow-production-advanced {

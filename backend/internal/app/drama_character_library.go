@@ -13,6 +13,7 @@ import (
 )
 
 type ImportDramaCharacterLibraryRequest struct {
+	EpisodeID            string `json:"episodeId,omitempty"`
 	ExpectedRevision     *int64 `json:"expectedRevision"`
 	LibraryAssetID       string `json:"libraryAssetId"`
 	LibraryVersionID     string `json:"libraryVersionId"`
@@ -102,6 +103,11 @@ func (s *Service) ImportDramaCharacterLibrary(userID, projectID string, req Impo
 		}
 		if dramaGuideActive(p) {
 			if err := requireDramaGuideAssetEdit(p); err != nil {
+				return err
+			}
+		}
+		if req.EpisodeID != "" {
+			if _, err := repo.DramaEpisode(projectID, req.EpisodeID); err != nil {
 				return err
 			}
 		}
@@ -278,10 +284,16 @@ func (s *Service) ImportDramaCharacterLibrary(userID, projectID string, req Impo
 			}
 		}
 		row, err := repo.DramaCast(projectID, copy.ID)
-		if err == nil {
-			result = *row
+		if err != nil {
+			return err
 		}
-		return err
+		if req.EpisodeID != "" {
+			if err := repo.MergeDramaEpisodeAssets(projectID, []string{req.EpisodeID}, []string{row.ID}); err != nil {
+				return err
+			}
+		}
+		result = *row
+		return nil
 	})
 	return result, dramaLookupError(err)
 }

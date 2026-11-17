@@ -21,7 +21,6 @@ export type WorkflowEpisodesProps = {
     summary: DramaSummary;
     onChanged: () => void | Promise<unknown>;
     onOpenEpisode: (episodeId: string, step?: "review" | "story") => void;
-    onPickChapters?: () => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
     busy?: boolean;
 };
@@ -100,7 +99,7 @@ export function WorkflowEpisodes(props: WorkflowEpisodesProps) {
     return <WorkflowEpisodesSession key={`${userId}:${props.summary.project.id}`} {...props} userId={userId} />;
 }
 
-function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onPickChapters, onDirtyChange, busy: externalBusy = false, userId }: WorkflowEpisodesProps & { userId: string }) {
+function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyChange, busy: externalBusy = false, userId }: WorkflowEpisodesProps & { userId: string }) {
     const projectId = summary.project.id;
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
@@ -263,11 +262,7 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onPickChap
             <header className="drama-workflow-episodes-head">
                 <div>
                     <h2>分集管理</h2>
-                    {summary.production.reservedChapterCount > 0 ? (
-                        <p>
-                            原文 {summary.production.chapterCount + summary.production.reservedChapterCount} 章 · 制作 {summary.episodes.length} 集 · 待制作 {summary.production.reservedChapterCount} 章
-                        </p>
-                    ) : null}
+                    <p>共 {summary.episodes.length} 集</p>
                 </div>
                 <div className="drama-workflow-episodes-actions">
                     <Button
@@ -297,11 +292,6 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onPickChap
                     <Button icon={<FileArchive className="size-3.5" />} disabled={viewLocked} onClick={() => setExporting(true)}>
                         导出资产包
                     </Button>
-                    {summary.production.reservedChapterCount > 0 && onPickChapters ? (
-                        <Button disabled={viewLocked || adding || exporting} onClick={onPickChapters}>
-                            继续选章
-                        </Button>
-                    ) : null}
                     <Button
                         type="primary"
                         icon={<Plus className="size-3.5" />}
@@ -488,13 +478,13 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onPickChap
                                             {PROGRESS_LABEL[subjectState(byId.get(episode.id))]} · {subjectStatus(byId.get(episode.id))}
                                         </dd>
                                     </div>
-                                    <div data-status={storyboardState(episode)} title={episode.shotCount ? `${episode.shotCount} 镜头` : "等待拆镜"}>
+                                    <div data-status={storyboardState(episode)} title={episode.shotCount ? `${episode.shotCount} 镜头` : episode.stage === "draft" ? "待制作" : "等待拆镜"}>
                                         <dt>
                                             <span className="drama-workflow-episode-dot" aria-hidden />
                                             分镜
                                         </dt>
                                         <dd className="sr-only">
-                                            {PROGRESS_LABEL[storyboardState(episode)]} · {episode.shotCount ? `${episode.shotCount} 镜头` : "等待拆镜"}
+                                            {PROGRESS_LABEL[storyboardState(episode)]} · {episode.shotCount ? `${episode.shotCount} 镜头` : episode.stage === "draft" ? "待制作" : "等待拆镜"}
                                         </dd>
                                     </div>
                                     <div data-status={videoState(episode)} title={episode.stats.segments ? `${episode.stats.videoReady}/${episode.stats.segments} 段连续视频就绪` : "尚无连续视频"}>

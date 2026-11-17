@@ -15,6 +15,9 @@ func dramaEpisodeAddFixture(t *testing.T, step string) (*Service, *fakeDramaBack
 	t.Helper()
 	svc, fake, summary, chapters := dramaChapterProduceFixture(t, step)
 	svc.coordinator = platform.NewCoordinatorWithRedis(nil, "episode-add-test")
+	if step != "" {
+		summary = guideSummary(t, svc, summary.Project.ID)
+	}
 	return svc, fake, summary, chapters
 }
 
@@ -42,13 +45,14 @@ func TestDramaAddEpisodeDuringGuidePreservesExistingWork(t *testing.T) {
 			segments, _ := svc.repo.DramaSegments(originalID)
 			casts, _ := svc.repo.DramaCasts(projectID)
 			requests, scripts, bibles := len(fake.requests), fake.byKind["script"], fake.byKind["bible"]
+			wantNumber := len(before.Episodes) + 1
 			detail, err := svc.AddDramaEpisode("usr-drama", projectID, AddDramaEpisodeRequest{ExpectedRevision: &before.Production.Revision, Text: "新增一集：萧炎走向后山。", SourceFormat: production.SourceScript})
-			if err != nil || detail.Episode.ID == "" || detail.Episode.Number != 2 || detail.Episode.Title != model.DramaEpisodeDefaultTitle(2) || detail.Episode.Stage != model.DramaEpisodeQueued || len(detail.Chapters) != 1 {
+			if err != nil || detail.Episode.ID == "" || detail.Episode.Number != wantNumber || detail.Episode.Title != model.DramaEpisodeDefaultTitle(wantNumber) || detail.Episode.Stage != model.DramaEpisodeQueued || len(detail.Chapters) != 1 {
 				t.Fatalf("append in %s: %+v %v", step, detail, err)
 			}
 			after := guideSummary(t, svc, projectID)
 			currentProduction, _ := svc.repo.DramaProduction(projectID)
-			if len(after.Episodes) != 2 || after.Episodes[1].ID != detail.Episode.ID || after.Production.Revision != before.Production.Revision+1 || after.Production.ReservedChapterCount != 2 || after.Production.PlanCursor != 2 {
+			if len(after.Episodes) != wantNumber || after.Episodes[wantNumber-1].ID != detail.Episode.ID || after.Production.Revision != before.Production.Revision+1 || after.Production.ReservedChapterCount != 0 || after.Production.PlanCursor != wantNumber {
 				t.Fatalf("summary did not include the appended episode: %+v", after)
 			}
 			if after.Production.GuideStep != step || after.Production.Stage != before.Production.Stage || after.Production.Status != before.Production.Status || currentProduction.BibleJSON != originalProduction.BibleJSON || len(fake.requests) != requests {
@@ -153,9 +157,9 @@ func TestDramaAddEpisodeRejectsInvalidScopeAndStateAtomically(t *testing.T) {
 }
 
 func TestDramaAddEpisodeCASSerializesConcurrentEdits(t *testing.T) {
-	for _, race := range []string{"confirm", "duplicate_append", "produce_reserved"} {
+	for _, race := range []string{"confirm", "duplicate_append", "style"} {
 		t.Run(race, func(t *testing.T) {
-			svc, fake, summary, chapters := dramaEpisodeAddFixture(t, model.DramaGuideAssets)
+			svc, fake, summary, _ := dramaEpisodeAddFixture(t, model.DramaGuideAssets)
 			// The shared-memory fixture has table locks without a busy timeout;
 			// serialize its connections while exercising the real revision CAS.
 			connection, err := fake.db.DB()
@@ -178,8 +182,8 @@ func TestDramaAddEpisodeCASSerializesConcurrentEdits(t *testing.T) {
 					_, err = svc.ConfirmDramaGuide("usr-drama", summary.Project.ID, ConfirmDramaGuideRequest{ExpectedStep: model.DramaGuideAssets, ExpectedRevision: summary.Production.Revision})
 				case "duplicate_append":
 					_, err = svc.AddDramaEpisode("usr-drama", summary.Project.ID, req)
-				case "produce_reserved":
-					_, err = svc.ProduceDramaChapters("usr-drama", summary.Project.ID, ProduceDramaChaptersRequest{ExpectedRevision: &summary.Production.Revision, ChapterIDs: []string{chapters[1].ID}})
+				case "style":
+					_, err = svc.UpdateDramaWorkflowStyle("usr-drama", summary.Project.ID, UpdateDramaWorkflowStyleRequest{ExpectedRevision: &summary.Production.Revision, StyleName: "并发风格", StylePrompt: "并发的制作配置修改"})
 				}
 				outcomes <- err
 			}()
@@ -194,7 +198,7 @@ func TestDramaAddEpisodeCASSerializesConcurrentEdits(t *testing.T) {
 				requireGuideConflict(t, second)
 			}
 			after := guideSummary(t, svc, summary.Project.ID)
-			if after.Production.Revision != summary.Production.Revision+1 || len(after.Episodes) > 2 || len(after.Episodes) < 1 {
+			if after.Production.Revision != summary.Production.Revision+1 || len(after.Episodes) > len(summary.Episodes)+1 || len(after.Episodes) < len(summary.Episodes) {
 				t.Fatalf("concurrent edit changed more than one snapshot: %+v", after)
 			}
 		})

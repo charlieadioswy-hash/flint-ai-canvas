@@ -273,6 +273,8 @@ function WorkflowBatchSession({
                 const canGenerate = quoted?.preview?.ready && quoted.preview.priced && quoted.preview.confirmationToken;
                 const reason = quoted?.error || quoted?.preview?.reason || quoted?.preview?.items.find((item) => item.status === "blocked" || item.status === "failed" || item.status === "conflict")?.reason;
                 const label = triggerLabel || (action === "cast_image" ? "批量生成图片" : action === "segment_assets" ? "生成缺失图片" : ACTION_LABEL[action]);
+                const readyCount = quoted?.preview?.counts.ready || 0;
+                const scopedLabel = action === "segment_video" && readyCount > 0 && readyCount < ids.length ? `${label}（${readyCount}/${ids.length}段）` : label;
                 return (
                     <Button
                         key={action}
@@ -282,7 +284,7 @@ function WorkflowBatchSession({
                         loading={busy && state.action === action}
                         onClick={() => (media ? void confirm({ open: false, action, phase: "ready", preview: quoted?.preview, signature }) : void check(action))}
                     >
-                        {media ? generationLabel(label, quoted?.preview, Boolean(validScope && !disabled && (!quoted || quoted.loading))) : label}
+                        {media ? generationLabel(scopedLabel, quoted?.preview, Boolean(validScope && !disabled && (!quoted || quoted.loading))) : label}
                     </Button>
                 );
             })}

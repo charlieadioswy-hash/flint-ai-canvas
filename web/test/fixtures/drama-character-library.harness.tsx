@@ -177,7 +177,12 @@ async function mount() {
     const changed: string[] = [];
     const states: Array<{ dirty: boolean; busy: boolean }> = [];
     let libraryControls: WorkflowCharacterLibraryControls;
-    let current = { summary: summaryOf(), cast: [castOf(), castOf({ id: "look", parentId: "hero", name: "造型" }), castOf({ id: "scene", kind: "scene", name: "旧宅" }), castOf({ id: "foreign", projectId: "project-b", name: "其他作品" })], busy: false };
+    let current = {
+        summary: summaryOf(),
+        episodeId: undefined as string | undefined,
+        cast: [castOf(), castOf({ id: "look", parentId: "hero", name: "造型" }), castOf({ id: "scene", kind: "scene", name: "旧宅" }), castOf({ id: "foreign", projectId: "project-b", name: "其他作品" })],
+        busy: false,
+    };
     const update = async (patch: Partial<typeof current> = {}) => {
         current = { ...current, ...patch };
         await act(async () => {
@@ -333,6 +338,38 @@ test("只列本作品基础角色，导入可不带图片，使用用户选中�
         expect(fixture.container.querySelector('[role="dialog"]')).toBeNull();
     } finally {
         await fixture.dispose();
+    }
+});
+
+test("单集角色库导入携带本集快照，切集清理选择并隔离晚到回执", async () => {
+    for (const outcome of ["success", "error"] as const) {
+        reset();
+        const fixture = await mount();
+        try {
+            await fixture.update({ episodeId: "episode-1" });
+            await chooseLibrary(fixture.container);
+            await fixture.update({ episodeId: "episode-2" });
+            expect(fixture.container.querySelector('[role="dialog"]')).toBeNull();
+            await click(button(fixture.container, "从角色库导入"));
+            expect(button(fixture.container, "确认导入").disabled).toBe(true);
+            await click(button(fixture.container, "关闭"));
+            await chooseLibrary(fixture.container);
+            await click(button(fixture.container, "确认导入"));
+            expect(writes).toHaveLength(1);
+            expect(writes[0].input).toEqual({ expectedRevision: 12, episodeId: "episode-2", libraryAssetId: "library-hero", libraryVersionId: "version-7", replaceText: false, includeVoice: false });
+            await fixture.update({ episodeId: "episode-3" });
+            expect(fixture.container.querySelector('[role="dialog"]')).toBeNull();
+            await act(async () => {
+                if (outcome === "success") writes[0].pending.resolve({ cast: castOf() });
+                else writes[0].pending.reject(new Error("旧集导入失败"));
+                await settle();
+            });
+            expect(fixture.changed).toEqual([]);
+            expect(notices).toEqual([]);
+            expect(fixture.container.textContent).not.toContain("旧集导入失败");
+        } finally {
+            await fixture.dispose();
+        }
     }
 });
 

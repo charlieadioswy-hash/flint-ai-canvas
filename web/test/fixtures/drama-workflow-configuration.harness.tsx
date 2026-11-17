@@ -157,7 +157,7 @@ test("本集可直接修改制作参数，完整长提示词按统一Unicode上�
     const prompt = "🎨".repeat(DRAMA_STYLE_PROMPT_MAX_LENGTH);
     const view = await mount({ ...baseSettings, stylePrompt: prompt }, {}, false, "episode");
     try {
-        expect(parameterSections(view.host).map((item) => item.open)).toEqual([false, false]);
+        expect(parameterSections(view.host).map((item) => item.open)).toEqual([true, false]);
         expect(view.host.textContent).toContain("绘图配置（本集）");
         const language = view.host.querySelector<HTMLSelectElement>('[aria-label="对白语言"]')!;
         expect(language.disabled).toBe(false);

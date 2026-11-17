@@ -82,6 +82,6 @@ func (r *Repository) DramaHasProductionContent(projectID string) (bool, error) {
 		}
 	}
 	var count int64
-	err := r.db.Model(&model.DramaEpisode{}).Where("project_id = ? AND (stage <> ? OR final_resource_id <> '' OR synopsis <> '' OR hook <> '' OR cliffhanger <> '')", projectID, model.DramaEpisodeQueued).Count(&count).Error
+	err := r.db.Model(&model.DramaEpisode{}).Where("project_id = ? AND (stage NOT IN ? OR final_resource_id <> '' OR synopsis <> '' OR hook <> '' OR cliffhanger <> '')", projectID, []string{model.DramaEpisodeDraft, model.DramaEpisodeQueued}).Count(&count).Error
 	return count > 0, err
 }

@@ -349,7 +349,7 @@ export type DramaSourceFormat = "novel" | "script" | "storyboard";
 /** 分集方式：auto 由模型把小说章节规划成集；chapter 每章一集，适合逐集制作。 */
 export type DramaEpisodeMode = "auto" | "chapter";
 
-export type DramaEpisodeStage = "queued" | "script" | "prompts" | "review" | "video" | "render" | "done";
+export type DramaEpisodeStage = "draft" | "queued" | "script" | "prompts" | "review" | "video" | "render" | "done";
 
 export type DramaMediaStatus = "" | "draft" | "queued" | "running" | "ready" | "failed" | "stale" | "skipped";
 
@@ -467,6 +467,8 @@ export type DramaEpisode = {
     hook: string;
     cliffhanger: string;
     chapterIdsJson: string;
+    /** 本集提取或手工新增的资产，不依赖分镜是否已编排。 */
+    assetIdsJson?: string;
     /** 旧集为空串，按小说处理。 */
     sourceFormat: DramaSourceFormat | "";
     stage: DramaEpisodeStage;
@@ -532,6 +534,8 @@ export type DramaChapterRef = { id: string; title: string; position: number; wor
 
 export type DramaEpisodeDetail = {
     episode: DramaEpisode;
+    /** 本集原文明确提及的已有作品资产。 */
+    sourceAssetIds?: string[];
     shots: DramaShot[];
     /** 剧情段是视频生成单位：一段一次调用视频模型，对白与音效由视频模型生成。 */
     segments: DramaSegment[];
@@ -833,7 +837,7 @@ export function confirmDramaGuide(projectId: string, input: { expectedStep: Dram
 }
 
 /** 仅查漏选定种类；保留已有资产文字、图片和历史。 */
-export function extractDramaCast(projectId: string, input: { expectedRevision: number; kind: "character" | "scene" | "prop"; episodeIds?: string[]; chapterIds?: string[] }) {
+export function extractDramaCast(projectId: string, input: { expectedRevision: number; kind: "character" | "scene" | "prop"; allChapters?: boolean; episodeIds?: string[]; chapterIds?: string[] }) {
     return http.post<{ job: DramaJob; revision: number }>(`${base(projectId)}/cast/extract`, input);
 }
 
@@ -969,7 +973,9 @@ export type DramaCastImageStyle = Pick<DramaCast, "imageStyleId" | "imageStyleNa
 export type DramaCastPatch = Partial<Pick<DramaCast, "name" | "appearance" | "description" | "voiceInstructions" | "locked" | "imagePrompt">> &
     DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number; expectedCastRevision?: number; imageOptions?: DramaCastImageOptions; episodeId?: string };
 
-export type DramaCastCreateInput = Pick<DramaCast, "kind" | "name"> & Partial<Pick<DramaCast, "appearance" | "description" | "voiceInstructions" | "imagePrompt">> & DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number };
+export type DramaCastCreateInput = Pick<DramaCast, "kind" | "name"> &
+    Partial<Pick<DramaCast, "appearance" | "description" | "voiceInstructions" | "imagePrompt">> &
+    DramaCastImageStyle & { aliases?: string[]; expectedRevision?: number; episodeId?: string };
 export type CreateDramaCastInput = DramaCastCreateInput;
 
 /** 新增文字资产；参考图由用户另行生成。 */
@@ -981,7 +987,7 @@ export function createDramaCast(projectId: string, input: DramaCastCreateInput) 
 export function deleteDramaCast(projectId: string, castId: string, expectedRevision: number) {
     return http.deleteWithBody<{ deleted: boolean; castId: string }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}`, { expectedRevision });
 }
-export function importDramaCast(projectId: string, input: { sourceProjectId: string; castIds: string[]; matchByName: boolean; replaceExisting: boolean }) {
+export function importDramaCast(projectId: string, input: { sourceProjectId: string; castIds: string[]; matchByName: boolean; replaceExisting: boolean; episodeId?: string }) {
     return http.post<{ imported: number; skipped: number; cast: DramaCast[] }>(`${base(projectId)}/cast/import`, input);
 }
 
@@ -1016,7 +1022,7 @@ export function clearDramaCastVoice(projectId: string, castId: string, restyleSe
 }
 
 /** 保存造型草稿，不自动生图；imagePrompt 留空按外观描述生成，章节从 1 起，0 不限。 */
-export function addDramaCastLook(projectId: string, castId: string, input: DramaCastImageStyle & { lookName: string; appearance: string; imagePrompt?: string; fromChapter?: number; toChapter?: number }) {
+export function addDramaCastLook(projectId: string, castId: string, input: DramaCastImageStyle & { lookName: string; appearance: string; imagePrompt?: string; fromChapter?: number; toChapter?: number; episodeId?: string }) {
     return http.post<{ look: DramaCast }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/looks`, input);
 }
 

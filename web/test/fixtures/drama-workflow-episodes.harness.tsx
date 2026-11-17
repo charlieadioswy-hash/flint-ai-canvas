@@ -172,7 +172,7 @@ afterAll(() => {
 async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 0));
 }
-async function mount(initial = summaryOf(), onPickChapters?: () => void) {
+async function mount(initial = summaryOf()) {
     const container = document.createElement("div");
     document.body.append(container);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -198,7 +198,6 @@ async function mount(initial = summaryOf(), onPickChapters?: () => void) {
                             opened.push(id);
                             openedSteps.push({ id, step });
                         },
-                        onPickChapters,
                         onDirtyChange: (dirty, busy = false) => dirtyStates.push([dirty, busy]),
                     }),
                 ),
@@ -267,7 +266,7 @@ test("选择分集才读取对应剧情段，筛选与排序不会把批次换�
     }
 });
 
-test("分集卡展示真实类型更新时间和三项进度，四状态筛选与继续选章复用现有入口", async () => {
+test("分集卡展示真实类型更新时间和三项进度，没有继续选章入口", async () => {
     const data = summaryOf("project-a", [
         episodeOf("e1", 1, { updatedAt: "2026-11-13T01:00:00Z" }),
         episodeOf("e2", 2, { updatedAt: "2026-11-15T01:00:00Z", stats: { segments: 2, promptReady: 2, promptSucceeded: 2, videoReady: 0, videoGenerated: 0, failed: 0 } }),
@@ -276,26 +275,24 @@ test("分集卡展示真实类型更新时间和三项进度，四状态筛选�
     data.production.settings.dramaType = "live_action";
     data.production.chapterCount = 1;
     data.production.reservedChapterCount = 8;
-    let picks = 0;
-    const view = await mount(data, () => picks++);
+    const view = await mount(data);
     try {
         expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 2 集");
         expect(view.container.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-15T01:00:00Z");
         expect(view.container.textContent).toContain("真人剧");
         expect(view.container.textContent).toContain("暂无图片");
-        expect(view.container.textContent).toContain("原文 9 章 · 制作 3 集 · 待制作 8 章");
+        expect(view.container.textContent).toContain("共 3 集");
+        expect(view.container.textContent).not.toContain("继续选章");
         expect(view.container.querySelectorAll(".drama-workflow-episode-card dl > div")).toHaveLength(9);
         expect(view.container.querySelector('[data-status="unknown"]')?.textContent).toContain("勾选后检查");
         expect(view.container.querySelector(".drama-workflow-episode-card dl > div:last-child")?.getAttribute("data-status")).toBe("idle");
         expect(view.container.querySelector('[aria-label="第 2 集更多操作"]')).not.toBeNull();
-        await click(button(view.container, "继续选章"));
-        expect(picks).toBe(1);
         await click(view.container.querySelector<HTMLInputElement>('[aria-label="选择第 2 集"]')!);
         await click(button(view.container, "批量制作提交中"));
-        expect(button(view.container, "继续选章").disabled).toBe(true);
+        expect(button(view.container, "新建分集").disabled).toBe(true);
         expect(view.dirtyStates.at(-1)).toEqual([false, true]);
         await click(button(view.container, "结束批量制作"));
-        expect(button(view.container, "继续选章").disabled).toBe(false);
+        expect(button(view.container, "新建分集").disabled).toBe(false);
         await click(button(view.container, "失败分集"));
         expect(view.container.querySelectorAll(".drama-workflow-episode-card")).toHaveLength(1);
         expect(view.container.querySelector(".drama-workflow-episode-open")?.getAttribute("aria-label")).toBe("打开第 3 集");
@@ -314,10 +311,10 @@ test("新建分集草稿与提交回传保护状态，成功后保留管理页�
     const data = summaryOf();
     data.production.chapterCount = 1;
     data.production.reservedChapterCount = 8;
-    const view = await mount(data, () => {});
+    const view = await mount(data);
     try {
         await click(button(view.container, "新建分集"));
-        expect(button(view.container, "继续选章").disabled).toBe(true);
+        expect(button(view.container, "新建分集").disabled).toBe(true);
         await click(button(view.container, "编辑新增正文"));
         expect(view.dirtyStates.at(-1)).toEqual([true, false]);
         await click(button(view.container, "新增正文提交中"));

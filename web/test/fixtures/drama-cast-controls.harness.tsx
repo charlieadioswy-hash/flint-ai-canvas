@@ -68,12 +68,12 @@ afterAll(() => {
     }
 });
 
-async function renderLooks(looks = [look], onChanged = () => {}) {
+async function renderLooks(looks = [look], onChanged = () => {}, episodeId?: string) {
     await act(async () =>
         root.render(
             <QueryClientProvider client={client}>
                 <App>
-                    <CastLooks projectId="project" character={character} looks={looks} restyle={false} onChanged={onChanged} />
+                    <CastLooks projectId="project" episodeId={episodeId} character={character} looks={looks} restyle={false} onChanged={onChanged} />
                 </App>
             </QueryClientProvider>,
         ),
@@ -166,6 +166,23 @@ test("new appearance requires confirmation and saves a custom prompt without gen
         fromChapter: 0,
         toChapter: 0,
     });
+    expect(generate).not.toHaveBeenCalled();
+});
+
+test("本集新增造型携带当前集并在保存成功后刷新，切集后不沿用上一集", async () => {
+    const add = spyOn(api, "addDramaCastLook").mockResolvedValue({ look });
+    const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
+    const changed = mock();
+    for (const [index, episodeId] of ["episode-1", "episode-2"].entries()) {
+        await renderLooks([], changed, episodeId);
+        await click("添加造型");
+        await fillLookField("造型名", "晚宴");
+        await fillLookField("造型外观", "黑色礼服");
+        await click("确认保存");
+        await settleUntil(() => changed.mock.calls.length === index + 1);
+        expect(add.mock.calls[index]).toEqual(["project", "hero", expect.objectContaining({ episodeId, lookName: "晚宴", appearance: "黑色礼服" })]);
+        expect(host.querySelector(".drama-look-form")).toBeNull();
+    }
     expect(generate).not.toHaveBeenCalled();
 });
 

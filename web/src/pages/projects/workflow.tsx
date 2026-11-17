@@ -17,7 +17,6 @@ import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaProjectTopbar } from "./studio/project-topbar";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
-import { ChapterPickerModal } from "./studio/chapter-picker";
 import { DramaMediaActionDialog } from "./studio/drama-media-action-dialog";
 import { useDramaMediaAction } from "./studio/use-drama-media-action";
 import { DramaMediaActionProvider } from "./studio/drama-media-action-context";
@@ -69,9 +68,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const failedConfiguration = useRef("");
     const [editingCast, setEditingCast] = useState<string>();
     const [sourceEditorState, setSourceEditorState] = useState({ dirty: false, busy: false, automatic: false });
-    const [chapterPickerState, setChapterPickerState] = useState({ dirty: false, busy: false });
-    const sourceState = useMemo(() => ({ dirty: sourceEditorState.dirty || chapterPickerState.dirty, busy: sourceEditorState.busy || chapterPickerState.busy }), [sourceEditorState, chapterPickerState]);
-    const [chapterPickerOpen, setChapterPickerOpen] = useState(false);
+    const sourceState = sourceEditorState;
     const [modeOpen, setModeOpen] = useState(false);
     const [modeConfigurationPending, setModeConfigurationPending] = useState(false);
     const modeGenerationFlush = useRef<(() => Promise<boolean>) | null>(null);
@@ -85,7 +82,6 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
         (dirty: boolean, busy = false, automatic = false) => setSourceEditorState((current) => (current.dirty === dirty && current.busy === busy && current.automatic === automatic ? current : { dirty, busy, automatic })),
         [],
     );
-    const chapterPickerChanged = useCallback((dirty: boolean, busy = false) => setChapterPickerState((current) => (current.dirty === dirty && current.busy === busy ? current : { dirty, busy })), []);
     const operation = useDramaOperationScope(projectId);
     const media = useDramaMediaAction({
         projectId,
@@ -367,15 +363,6 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const canConfirm =
         Boolean(summary?.guide?.canConfirm) && !episodeConfigurationBusy && !settingsStale && !generationDirty && !confirm.isPending && !saveStyle.isPending && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
     const blocking = (stage === "assets" && active === "assets") || (stage === "story" && active === "story") ? summary?.guide?.blockingReason : undefined;
-    const chapterPickerBusy = confirm.isPending || saveStyle.isPending || retryText.isPending || media.state.submitting || sourceEditorState.busy;
-    const openChapterPicker = () => {
-        if (!summary?.production.reservedChapterCount || chapterPickerBusy) return;
-        if (settingsDirty || sourceEditorState.dirty) {
-            message.info(generationDirty && !otherSettingsDirty && !sourceEditorState.dirty ? "生成配置正在同步，请稍候再继续选章" : "请先保存或放弃当前修改，再继续选章");
-            return;
-        }
-        setChapterPickerOpen(true);
-    };
     const footerStatus = configurationSyncError ? (
         <span role="alert">
             {configurationSyncError}
@@ -408,7 +395,20 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     ) : sourceState.dirty ? (
         <span>当前内容尚未保存</span>
     ) : null;
-    const hasFooterAction = active === "style" || active === "source" || (active === "review" && (managing || Boolean(routeEpisodeId) || stage !== "configuring")) || (stage === "story" && active === "story");
+    const hasFooterAction = active === "style" || active === "source" || (active === "review" && (managing || Boolean(routeEpisodeId) || stage !== "configuring"));
+    const storyHeaderActions =
+        active === "story" && (footerStatus || stage === "story") ? (
+            <>
+                {footerStatus}
+                {settingsStale ? (
+                    <Button onClick={() => setSettingsDraft(null)}>重新载入配置</Button>
+                ) : stage === "story" ? (
+                    <Button type="primary" disabled={!canConfirm} loading={confirm.isPending} onClick={() => confirm.mutate({ expectedStep: "story", ticket: operation.capture() })}>
+                        完成分镜编排
+                    </Button>
+                ) : null}
+            </>
+        ) : undefined;
 
     return (
         <DramaMediaActionProvider controller={media} projectId={projectId} revision={summary?.production.revision} episodeId={routeEpisodeId}>
@@ -485,7 +485,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                 {summaryQuery.isError ? <WorkspaceErrorState title="短剧暂时无法读取" description={summaryQuery.error instanceof Error ? summaryQuery.error.message : "请重试"} onRetry={refresh} /> : null}
                 {summary && settings ? (
                     <>
-                        <div className="drama-workflow-body app-workspace-scroll">
+                        <div className={`drama-workflow-body app-workspace-scroll${!episodesView && (active === "story" || active === "preview") ? " is-production" : ""}`}>
                             {episodeStyleId && episodeStyleQuery.isError ? (
                                 <WorkspaceErrorState compact title="本集配置读取失败" description="请重新读取后再编辑或生成。" onRetry={() => void episodeStyleQuery.refetch()} />
                             ) : episodeConfigurationBusy ? (
@@ -494,10 +494,9 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                             {episodesView ? (
                                 <WorkflowEpisodes
                                     summary={summary}
-                                    busy={chapterPickerOpen || confirm.isPending || saveStyle.isPending}
+                                    busy={confirm.isPending || saveStyle.isPending}
                                     onChanged={refresh}
                                     onDirtyChange={sourceChanged}
-                                    onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
                                     onOpenEpisode={(episodeId, step = "review") => navigate(`/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(episodeId)}?step=${step}`)}
                                 />
                             ) : null}
@@ -508,7 +507,13 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     episodeId={episodeStyleId}
                                     busy={confirm.isPending}
                                     onChanged={refresh}
-                                    onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
+                                    onStoryboardStarted={() => {
+                                        const params = new URLSearchParams(searchParams);
+                                        params.delete("manage");
+                                        params.set("step", "story");
+                                        confirmedNavigation.current = `?${params}`;
+                                        setSearchParams(params, { replace: true });
+                                    }}
                                     onDirtyChange={sourceChanged}
                                     onContinue={() => {
                                         const params = new URLSearchParams(searchParams);
@@ -593,7 +598,6 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         error={castQuery.error}
                                         onRetry={() => void castQuery.refetch()}
                                         onChanged={refresh}
-                                        onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
                                         onGenerate={(cast, selectedId) => {
                                             if (!episodeConfigurationBusy) media.requestCastImage(cast, selectedId || episodeStyleId);
                                         }}
@@ -608,9 +612,9 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                 <WorkflowProduction
                                     summary={episodeSummary!}
                                     step={active}
+                                    headerActions={storyHeaderActions}
                                     onChanged={refresh}
-                                    onPickChapters={summary.production.reservedChapterCount ? openChapterPicker : undefined}
-                                    busy={chapterPickerState.busy || confirm.isPending || saveStyle.isPending || episodeConfigurationBusy}
+                                    busy={confirm.isPending || saveStyle.isPending || episodeConfigurationBusy}
                                     onDirtyChange={sourceChanged}
                                     onAllowMediaNavigation={(next) => {
                                         confirmedMediaNavigation.current = next;
@@ -628,7 +632,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                 />
                             ) : null}
                         </div>
-                        {!episodesView && (footerStatus || hasFooterAction) ? (
+                        {!episodesView && active !== "story" && (footerStatus || hasFooterAction) ? (
                             <footer className="drama-workflow-footer" aria-label="制作流程引导">
                                 {footerStatus}
                                 {settingsStale ? (
@@ -661,10 +665,6 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     <Button type="primary" disabled={!canConfirm || Boolean(configIssue)} loading={confirm.isPending} onClick={() => confirm.mutate({ expectedStep: "configuring", ticket: operation.capture() })}>
                                         下一步：角色场景
                                     </Button>
-                                ) : stage === "assets" && active === "assets" ? null : stage === "story" && active === "story" ? (
-                                    <Button type="primary" disabled={!canConfirm} loading={confirm.isPending} onClick={() => confirm.mutate({ expectedStep: "story", ticket: operation.capture() })}>
-                                        完成分镜编排
-                                    </Button>
                                 ) : null}
                                 {active === "style" && (initialConfiguration || episodeStyleId) && configIssue ? (
                                     <span role="alert">
@@ -680,20 +680,6 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                     </>
                 ) : null}
                 {episodeSummary && editingCast ? <CastEditorDialog summary={episodeSummary} cast={castQuery.cast} castId={editingCast} episodeId={episodeStyleId} onClose={() => setEditingCast(undefined)} onChanged={refresh} /> : null}
-                {summary && chapterPickerOpen ? (
-                    <ChapterPickerModal
-                        open
-                        summary={summary}
-                        blockedReason={stage === "configuring" ? "请先在剧本格式中选择制作范围并确认风格" : !summary.production.planDone ? "前面的章节还在分集规划，完成后再加入" : undefined}
-                        busy={chapterPickerBusy}
-                        onClose={() => setChapterPickerOpen(false)}
-                        onDirtyChange={chapterPickerChanged}
-                        onProduced={async () => {
-                            setChapterPickerOpen(false);
-                            await queryClient.invalidateQueries({ queryKey: ["drama", projectId] });
-                        }}
-                    />
-                ) : null}
                 {summary ? (
                     <WorkflowModeDialog
                         open={modeOpen}

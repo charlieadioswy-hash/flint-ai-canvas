@@ -16,6 +16,7 @@ const normalizeCastName = (value: string) => value.toLowerCase().replace(/[\p{Wh
 
 type CastProjectImportProps = {
     projectId: string;
+    episodeId?: string;
     currentCast: DramaCast[];
     kind?: DramaCast["kind"];
     disabled?: boolean;
@@ -27,10 +28,10 @@ type CastProjectImportProps = {
 export function CastProjectImport(props: CastProjectImportProps) {
     const userId = useUserStore((state) => state.user?.id);
     const accountScope = getActiveUserScope();
-    return <CastProjectImportSession key={JSON.stringify([props.projectId, props.kind, userId, accountScope])} {...props} userId={userId} accountScope={accountScope} />;
+    return <CastProjectImportSession key={JSON.stringify([props.projectId, props.episodeId, props.kind, userId, accountScope])} {...props} userId={userId} accountScope={accountScope} />;
 }
 
-function CastProjectImportSession({ projectId, currentCast, kind, disabled = false, onClose, onImported, onStateChange, userId, accountScope }: CastProjectImportProps & { userId?: string; accountScope: string }) {
+function CastProjectImportSession({ projectId, episodeId, currentCast, kind, disabled = false, onClose, onImported, onStateChange, userId, accountScope }: CastProjectImportProps & { userId?: string; accountScope: string }) {
     const { message } = App.useApp();
     const operation = useDramaOperationScope(projectId);
     const mutationLock = useRef(false);
@@ -86,7 +87,7 @@ function CastProjectImportSession({ projectId, currentCast, kind, disabled = fal
         const ticket = operation.capture();
         if (!projectId || blocked || !sessionIsActive() || mutationLock.current || !sourceReady || !picked.length || !operation.isCurrent(ticket)) return;
         mutationLock.current = true;
-        importAssets.mutate({ ticket, payload: { sourceProjectId, castIds: picked.map((item) => item.id), matchByName, replaceExisting } });
+        importAssets.mutate({ ticket, payload: { sourceProjectId, castIds: picked.map((item) => item.id), matchByName, replaceExisting, ...(episodeId ? { episodeId } : {}) } });
     };
     const changeSource = (id: string) => {
         if (blocked || mutationLock.current) return;
@@ -132,7 +133,7 @@ function CastProjectImportSession({ projectId, currentCast, kind, disabled = fal
             <div className="drama-cast-form">
                 <p className="drama-editor-note">
                     {kind
-                        ? `从其他作品选择${CAST_KIND_LABEL[kind]}导入当前作品。参考图直接复用，不重新生成；导入后可独立编辑，来源作品保持不变。`
+                        ? `从其他作品选择${CAST_KIND_LABEL[kind]}导入${episodeId ? "当前集" : "当前作品"}。参考图直接复用，不重新生成；导入后可独立编辑，来源作品保持不变。`
                         : "选择第一季或其他作品的角色、场景、道具；角色造型会一并带入。参考图直接复用，不重新生成。新作品可独立编辑，原作品保持不变。"}
                 </p>
                 <Select
