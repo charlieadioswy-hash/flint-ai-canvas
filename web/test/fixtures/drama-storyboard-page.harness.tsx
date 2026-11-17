@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaEpisodeDetail, DramaGenerationConfigurationPatch, DramaModelChoice, DramaModelOption, DramaSettings, DramaShot, DramaSummary } from "@/services/api/drama";
+import type { DramaEpisodeDetail, DramaEpisodeStyle, DramaGenerationConfigurationPatch, DramaModelChoice, DramaModelOption, DramaSettings, DramaShot, DramaSummary, UpdateDramaEpisodeStyleRequest } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/p?step=story" });
 for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, HTMLElement: browser.HTMLElement, Element: browser.Element, Node: browser.Node, Event: browser.Event, IS_REACT_ACT_ENVIRONMENT: true }))
@@ -88,6 +88,8 @@ mock.module("@/pages/projects/drama-model-picker", () => ({
 }));
 const inserted: string[] = [];
 const generationWrites: Array<{ expectedRevision?: number; generation?: DramaGenerationConfigurationPatch }> = [];
+const episodeWrites: Array<{ projectId: string; episodeId: string; input: UpdateDramaEpisodeStyleRequest }> = [];
+let episodeWriteFailure = false;
 let generationFailure = false;
 let generationHold: Promise<void> | undefined;
 let generationBase: DramaSummary | undefined;
@@ -95,6 +97,11 @@ mock.module("@/services/api/drama", () => ({
     insertDramaShot: async (_projectId: string, shotId: string) => {
         inserted.push(shotId);
         return { shot: { ...shots[0], id: "inserted", position: 3 } };
+    },
+    updateDramaEpisodeStyle: async (projectId: string, episodeId: string, input: UpdateDramaEpisodeStyleRequest): Promise<DramaEpisodeStyle> => {
+        episodeWrites.push({ projectId, episodeId, input: structuredClone(input) });
+        if (episodeWriteFailure) throw new Error("本集配置写入失败");
+        return { projectId, episodeId, revision: input.expectedRevision + 1, episodeRevision: input.expectedEpisodeRevision, settings: input.settings };
     },
     updateDramaSettings: async (_projectId: string, input: { expectedRevision?: number; generation?: DramaGenerationConfigurationPatch }) => {
         generationWrites.push(structuredClone(input));
@@ -432,12 +439,13 @@ test("筛选下轮询使当前段状态变化时，已打开的宫格保留原�
     }
 });
 
-test("四模式同窗切换并统一提交实际设置，模式选择本身不调用生成", async () => {
+test("首次编排弹窗只展示参考生视频，旧模式也要确认后才切换", async () => {
     const saved: DramaSettings[] = [];
+    const value = { ...summary, production: { ...summary.production, settings: { ...settings, storyboard: { ...settings.storyboard, generationMode: "smart_director" as const, directorTemplate: "smart_drama" as const } } } };
     const view = await mount(
         <WorkflowModeDialog
             open
-            summary={summary}
+            summary={value}
             onCancel={() => undefined}
             onConfirm={async (value) => {
                 saved.push(value);
@@ -445,21 +453,13 @@ test("四模式同窗切换并统一提交实际设置，模式选择本身不�
         />,
     );
     try {
-        expect(view.host.querySelectorAll("nav[aria-label='分镜生成默认模式'] button")).toHaveLength(4);
-        const options = view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label='分镜生成默认模式'] button");
-        await act(async () => {
-            options[1].click();
-            await settle();
-        });
-        expect(view.host.textContent).toContain("当前无额外配置项");
+        expect(view.host.textContent).toContain("参考生视频模式");
+        for (const mode of ["宫格图模式", "智能导演模式", "故事板模式"]) expect(view.host.textContent).not.toContain(mode);
+        expect(view.host.querySelector("[aria-label='分镜视频与生图比例']")).toBeTruthy();
         expect(saved).toHaveLength(0);
-        await act(async () => {
-            options[2].click();
-            await settle();
-        });
         await click(view.host, "确认并进入漫剧分镜");
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ aspectRatio: "16:9", videoResolution: "720p", models: settings.models, storyboard: { generationMode: "smart_director", directorTemplate: "smart_drama" } });
+        expect(saved[0]).toMatchObject({ aspectRatio: "16:9", videoResolution: "720p", models: settings.models, storyboard: { generationMode: "reference_video", directorTemplate: "" } });
     } finally {
         await view.close();
     }
@@ -575,7 +575,7 @@ test("分镜模式更换视频模型协调分辨率与衔接，保留比例并�
     }
 });
 
-test("模式窗口的图片与视频配置自动生效，模式与镜头数量仍待确认", async () => {
+test("参考生视频窗口的生成配置自动生效，镜头数量仍待确认", async () => {
     generationWrites.length = 0;
     const saved: DramaSettings[] = [];
     const view = await mount(
@@ -589,23 +589,113 @@ test("模式窗口的图片与视频配置自动生效，模式与镜头数量�
         />,
     );
     try {
-        await act(async () => {
-            view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label='分镜生成默认模式'] button")[3].click();
-            await settle();
-        });
         await choose(view.host, "分镜数量方式", "fixed");
-        await click(view.host, "选择分镜图片模型");
+        await click(view.host, "选择分镜视频模型");
         await choose(view.host, "分镜视频与生图比例", "9:16");
         await choose(view.host, "分镜视频衔接", "parallel");
         await waitGeneration();
         expect(generationWrites).toHaveLength(1);
-        expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: { modelKey: "image-new" }, video: settings.models.video }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
+        expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: settings.models.image, video: { modelKey: "video-new" } }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
         expect(saved).toHaveLength(0);
         expect(view.host.textContent).not.toContain("作品设置已有更新");
         await click(view.host, "确认并进入漫剧分镜");
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "storyboard", directorTemplate: "storyboard_detail", shotCountMode: "fixed", targetShotCount: 24 }, models: { image: { modelKey: "image-new" } }, aspectRatio: "9:16" });
+        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "reference_video", directorTemplate: "", shotCountMode: "fixed", targetShotCount: 24 }, models: { video: { modelKey: "video-new" } }, aspectRatio: "9:16" });
     } finally {
+        await view.close();
+    }
+});
+
+test("重编窗口带入本集参数，媒体自动保存时保留旧模式，确认后才切换", async () => {
+    generationWrites.length = 0;
+    episodeWrites.length = 0;
+    const episodeStyle: DramaEpisodeStyle = {
+        projectId: "p",
+        episodeId: "e",
+        revision: 2,
+        episodeRevision: 8,
+        settings: {
+            ...settings,
+            aspectRatio: "9:16",
+            videoResolution: "1080p",
+            videoContinuity: "parallel",
+            models: { ...settings.models, image: { modelKey: "episode-image" }, video: { modelKey: "episode-video" } },
+            storyboard: { ...settings.storyboard, generationMode: "storyboard", directorTemplate: "storyboard_detail", shotCountMode: "fixed", targetShotCount: 32 },
+        },
+    };
+    const confirmed: Array<{ writes: number; settings: DramaSettings }> = [];
+    const view = await mount(
+        <WorkflowModeDialog
+            open
+            summary={summary}
+            episodeStyle={episodeStyle}
+            onCancel={() => undefined}
+            onConfirm={(value) => {
+                confirmed.push({ writes: episodeWrites.length, settings: value });
+            }}
+        />,
+    );
+    try {
+        expect(view.host.textContent).toContain("参考生视频模式");
+        expect(view.host.textContent).not.toContain("故事板模式");
+        expect(episodeWrites).toHaveLength(0);
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜数量方式']")?.value).toBe("fixed");
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='目标镜头数']")?.value).toBe("32");
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频与生图比例']")?.value).toBe("9:16");
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")?.value).toBe("1080p");
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频衔接']")?.value).toBe("parallel");
+        await click(view.host, "选择分镜视频模型");
+        await choose(view.host, "分镜数量方式", "smart");
+        await waitGeneration();
+        expect(generationWrites).toHaveLength(0);
+        expect(episodeWrites).toEqual([{ projectId: "p", episodeId: "e", input: { expectedRevision: 2, expectedEpisodeRevision: 8, settings: { ...episodeStyle.settings, models: { ...episodeStyle.settings.models, video: { modelKey: "video-new" } } } } }]);
+        expect(confirmed).toHaveLength(0);
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(episodeWrites).toHaveLength(2);
+        expect(episodeWrites[1]).toMatchObject({
+            projectId: "p",
+            episodeId: "e",
+            input: { expectedRevision: 3, expectedEpisodeRevision: 8, settings: { storyboard: { generationMode: "reference_video", directorTemplate: "", shotCountMode: "smart", targetShotCount: 32 } } },
+        });
+        expect(confirmed).toEqual([{ writes: 2, settings: episodeWrites[1].input.settings }]);
+        expect(generationWrites).toHaveLength(0);
+    } finally {
+        await view.close();
+    }
+});
+
+test("重编设置写入失败时不编排，成功后编排失败可直接重试", async () => {
+    episodeWrites.length = 0;
+    episodeWriteFailure = true;
+    let attempts = 0;
+    const episodeStyle: DramaEpisodeStyle = { projectId: "p", episodeId: "e", revision: 2, episodeRevision: 8, settings };
+    const view = await mount(
+        <WorkflowModeDialog
+            open
+            summary={summary}
+            episodeStyle={episodeStyle}
+            onCancel={() => undefined}
+            onConfirm={() => {
+                attempts++;
+                if (attempts === 1) throw new Error("重编暂时失败");
+            }}
+        />,
+    );
+    try {
+        await choose(view.host, "分镜数量方式", "fixed");
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(view.host.textContent).toContain("本集配置写入失败");
+        expect(attempts).toBe(0);
+        episodeWriteFailure = false;
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(view.host.textContent).toContain("重编暂时失败");
+        expect(attempts).toBe(1);
+        expect(episodeWrites).toHaveLength(2);
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(attempts).toBe(2);
+        expect(episodeWrites).toHaveLength(2);
+    } finally {
+        episodeWriteFailure = false;
         await view.close();
     }
 });

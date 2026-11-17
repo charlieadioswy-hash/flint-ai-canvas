@@ -263,20 +263,30 @@ mock.module("@/pages/projects/workflow-mode-dialog", () => ({
     WorkflowModeDialog: ({
         open,
         summary,
+        episodeStyle,
+        onCancel,
         onConfirm,
         onGenerationStateChange,
         registerGenerationFlush,
     }: {
         open: boolean;
         summary: DramaSummary;
+        episodeStyle?: DramaEpisodeStyle;
+        onCancel: () => void;
         onConfirm: (settings: DramaSettings) => Promise<unknown>;
         onGenerationStateChange: (pending: boolean) => void;
         registerGenerationFlush: (flush: (() => Promise<boolean>) | null) => void;
     }) => {
         const [pending, setPending] = useState(false);
+        const [submitting, setSubmitting] = useState(false);
+        const [error, setError] = useState("");
+        const settings = episodeStyle?.settings || summary.production.settings;
         useEffect(() => {
             onGenerationStateChange(open && pending);
         }, [open, pending, onGenerationStateChange]);
+        useEffect(() => {
+            if (!open) setError("");
+        }, [open]);
         useEffect(() => {
             if (!open) return;
             registerGenerationFlush(async () => {
@@ -293,8 +303,25 @@ mock.module("@/pages/projects/workflow-mode-dialog", () => ({
         }, [open, registerGenerationFlush, onGenerationStateChange]);
         return open ? (
             <div role="dialog" aria-label="选择分镜生成默认模式">
+                <output aria-label="分镜模式设置范围">{episodeStyle?.episodeId || "作品"}</output>
+                <output aria-label="分镜模式当前画幅">{settings.aspectRatio}</output>
                 <button onClick={() => setPending(true)}>修改模式窗口视频配置</button>
-                <button onClick={() => void onConfirm(summary.production.settings).catch(noop)}>确认分镜模式</button>
+                <button disabled={submitting} onClick={onCancel}>
+                    取消分镜模式
+                </button>
+                <button
+                    disabled={submitting}
+                    onClick={() => {
+                        setSubmitting(true);
+                        setError("");
+                        void onConfirm(settings)
+                            .catch((reason) => setError(String(reason instanceof Error ? reason.message : reason)))
+                            .finally(() => setSubmitting(false));
+                    }}
+                >
+                    确认分镜模式
+                </button>
+                {error ? <p role="alert">{error}</p> : null}
             </div>
         ) : null;
     },
@@ -858,6 +885,10 @@ test("第二集角色场景确认携带当前集，进入分镜时保持选集�
             { id: "episode-b", number: 2, title: "第二集" },
         ] as DramaSummary["episodes"];
         summaries.set("project-a", assets);
+        const selected = makeEpisodeStyle("project-a", "episode-b");
+        selected.settings.aspectRatio = "16:9";
+        selected.settings.storyboard = { ...selected.settings.storyboard, targetShotCount: 17 };
+        episodeStyles.set("project-a:episode-b", selected);
         await act(async () => {
             mounted.query.setQueryData(summaryKey("project-a"), assets);
             await settle();
@@ -865,9 +896,12 @@ test("第二集角色场景确认携带当前集，进入分镜时保持选集�
         await act(settle);
         expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("episode-b");
         await click(button(mounted.host, "编排剧本"));
+        expect(mounted.host.querySelector('[aria-label="分镜模式设置范围"]')?.textContent).toBe("episode-b");
+        expect(mounted.host.querySelector('[aria-label="分镜模式当前画幅"]')?.textContent).toBe("16:9");
         await click(button(mounted.host, "确认分镜模式"));
         expect(confirms).toHaveLength(1);
-        expect(confirms[0]).toMatchObject({ projectId: "project-a", input: { expectedStep: "assets", expectedRevision: 2, episodeId: "episode-b" } });
+        expect(confirms[0]).toMatchObject({ projectId: "project-a", input: { expectedStep: "assets", expectedRevision: 2, episodeId: "episode-b", settings: { aspectRatio: "16:9", storyboard: { targetShotCount: 17 } } } });
+        expect(episodeStyleSaves).toHaveLength(0);
         const next = { ...assets, guide: { step: "story" as const, canConfirm: true }, production: { ...assets.production, guideStep: "story" as const, revision: 3 } };
         summaries.set("project-a", next);
         await act(async () => {
@@ -886,7 +920,7 @@ test("第二集角色场景确认携带当前集，进入分镜时保持选集�
     }
 });
 
-test("已编排集从角色场景可再次编排当前集，不受其他集未就绪影响", async () => {
+test("每次编排先打开设置窗口并带入当前集配置，确认后才编排当前集", async () => {
     for (const stage of ["story", "completed"] as const) {
         const mounted = await mount("/projects/project-a/e/episode-b?step=assets&scope=all", false, stage);
         try {
@@ -898,6 +932,9 @@ test("已编排集从角色场景可再次编排当前集，不受其他集未�
             ] as DramaSummary["episodes"];
             const detail = { episode: { id: "episode-b", projectId: "project-a", stage: "script", revision: 4 }, shots: [], segments: [], chapters: [], jobs: [] } as unknown as DramaEpisodeDetail;
             summaries.set("project-a", current);
+            const selectedStyle = makeEpisodeStyle("project-a", "episode-b");
+            selectedStyle.settings.aspectRatio = "16:9";
+            episodeStyles.set("project-a:episode-b", selectedStyle);
             await act(async () => {
                 mounted.query.setQueryData(summaryKey("project-a"), current);
                 mounted.query.setQueryDefaults(["drama", "project-a", "episode"], { gcTime: Infinity });
@@ -908,10 +945,21 @@ test("已编排集从角色场景可再次编排当前集，不受其他集未�
             await act(settle);
             expect(button(mounted.host, "编排剧本").disabled).toBe(false);
             await click(button(mounted.host, "编排剧本"));
+            expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).not.toBeNull();
+            expect(mounted.host.querySelector('[aria-label="分镜模式设置范围"]')?.textContent).toBe("episode-b");
+            expect(mounted.host.querySelector('[aria-label="分镜模式当前画幅"]')?.textContent).toBe("16:9");
+            expect(rescripts).toHaveLength(0);
+            expect(confirms).toHaveLength(0);
+            expect(configurationSaves).toHaveLength(0);
+            expect(episodeStyleSaves).toHaveLength(0);
+            await click(button(mounted.host, "取消分镜模式"));
+            expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).toBeNull();
+            expect(rescripts).toHaveLength(0);
+            await click(button(mounted.host, "编排剧本"));
+            await click(button(mounted.host, "确认分镜模式"));
             expect(rescripts).toHaveLength(1);
             expect(rescripts[0]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
             expect(confirms).toHaveLength(0);
-            expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
             const styleKey = ["drama-episode-style", "user-a", "project-a", "episode-b", 2];
             expect(mounted.query.getQueryData<DramaEpisodeStyle>(styleKey)?.episodeRevision).toBe(3);
             const styleReadCount = episodeStyleReads.length;
@@ -928,8 +976,12 @@ test("已编排集从角色场景可再次编排当前集，不受其他集未�
             expect(new URLSearchParams(mounted.router.state.location.search).has("scope")).toBe(false);
             expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-b"])).toEqual(detail);
             expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-a"])).toEqual({ untouched: true });
+            expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).toBeNull();
             await mounted.go("/projects/project-a/e/episode-b?step=assets");
             await click(button(mounted.host, "编排剧本"));
+            expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"]')).not.toBeNull();
+            expect(rescripts).toHaveLength(1);
+            await click(button(mounted.host, "确认分镜模式"));
             expect(rescripts).toHaveLength(2);
             expect(rescripts[1]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
         } finally {
@@ -950,21 +1002,24 @@ test("重新编排提交期间阻止重复点击与导航，失败后留在当�
         });
         await act(settle);
         await click(button(mounted.host, "编排剧本"));
+        await click(button(mounted.host, "确认分镜模式"));
         expect(button(mounted.host, "编排剧本").disabled).toBe(true);
         expect(button(mounted.host, "漫剧分镜").disabled).toBe(true);
+        expect(button(mounted.host, "确认分镜模式").disabled).toBe(true);
         await click(button(mounted.host, "编排剧本"));
         await click(button(mounted.host, "漫剧分镜"));
+        await click(button(mounted.host, "确认分镜模式"));
         expect(rescripts).toHaveLength(1);
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
         await act(async () => {
             rescripts[0].pending.reject(new Error("编排服务暂时不可用"));
             await settle();
         });
-        expect(notices).toContainEqual({ kind: "error", text: "编排服务暂时不可用" });
+        expect(mounted.host.querySelector('[role="dialog"][aria-label="选择分镜生成默认模式"] [role="alert"]')?.textContent).toBe("编排服务暂时不可用");
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
         expect(new URLSearchParams(mounted.router.state.location.search).get("episode")).toBe("episode-b");
-        expect(button(mounted.host, "编排剧本").disabled).toBe(false);
-        await click(button(mounted.host, "编排剧本"));
+        expect(button(mounted.host, "确认分镜模式").disabled).toBe(false);
+        await click(button(mounted.host, "确认分镜模式"));
         expect(rescripts).toHaveLength(2);
         expect(rescripts[1]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
     } finally {
@@ -987,6 +1042,7 @@ test("切换作品或账号后迟到的重新编排回执不导航也不更新�
             });
             await act(settle);
             await click(button(mounted.host, "编排剧本"));
+            await click(button(mounted.host, "确认分镜模式"));
             expect(rescripts).toHaveLength(1);
             if (target === "project") {
                 await mounted.go("/projects/project-b/guide?step=style");

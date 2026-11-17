@@ -252,11 +252,19 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 		return DramaSummary{}, err
 	}
 	settings := parseDramaSettings(p.SettingsJSON)
+	selectedEpisodeID := strings.TrimSpace(req.EpisodeID)
 	if req.Settings != nil {
 		switch req.ExpectedStep {
 		case model.DramaGuideConfiguring:
 			settings = *req.Settings
 		case model.DramaGuideAssets:
+			if selectedEpisodeID != "" {
+				episode, err := s.repo.DramaEpisode(projectID, selectedEpisodeID)
+				if err != nil {
+					return DramaSummary{}, dramaLookupError(err)
+				}
+				settings = dramaEpisodeSettings(settings, *episode)
+			}
 			// 模式弹窗与编排剧本统一提交，只接收本页负责的生成参数。
 			settings.Storyboard.GenerationMode = req.Settings.Storyboard.GenerationMode
 			settings.Storyboard.DirectorTemplate = req.Settings.Storyboard.DirectorTemplate
@@ -333,7 +341,15 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 			fields["initial_settings_json"] = encodeDramaSettings(settings)
 			fields["guide_step"] = model.DramaGuideAssets
 		case model.DramaGuideAssets:
-			if req.Settings != nil {
+			if req.Settings != nil && selectedEpisodeID != "" {
+				episode, err := tx.DramaEpisode(projectID, selectedEpisodeID)
+				if err != nil {
+					return dramaLookupError(err)
+				}
+				if err := tx.UpdateDramaEpisodeSettings(projectID, episode.ID, episode.Revision, encodeDramaSettings(settings)); err != nil {
+					return err
+				}
+			} else if req.Settings != nil {
 				fields["settings_json"] = encodeDramaSettings(settings)
 				previous := parseDramaSettings(dramaInitialEpisodeSettingsJSON(*current))
 				nextInitial := dramaGuideEpisodeInitialSettings(previous, previous, settings)
@@ -353,7 +369,7 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 					}
 				}
 			}
-			if err := s.startDramaGuideStoryboard(tx, current, req.EpisodeID); err != nil {
+			if err := s.startDramaGuideStoryboard(tx, current, selectedEpisodeID); err != nil {
 				return err
 			}
 			fields["guide_step"] = model.DramaGuideStory

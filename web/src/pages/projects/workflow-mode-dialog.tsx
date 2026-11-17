@@ -7,7 +7,7 @@ import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
 import { shotTarget } from "@/lib/drama/storyboard";
-import { updateDramaSettings, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import { updateDramaEpisodeStyle, updateDramaSettings, type DramaEpisodeStyle, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
@@ -18,6 +18,8 @@ type GenerationMode = "reference_video" | "grid_image" | "smart_director" | "sto
 type Props = {
     open: boolean;
     summary: DramaSummary;
+    episodeStyle?: DramaEpisodeStyle;
+    saveStoryboardOnConfirm?: boolean;
     onCancel: () => void;
     onConfirm: (settings: DramaSettings) => void | Promise<unknown>;
     onGenerationStateChange?: (pending: boolean) => void;
@@ -29,10 +31,11 @@ const MODES: Array<{ value: GenerationMode; title: string; detail: string; seque
     { value: "smart_director", title: "智能导演模式", detail: "按空间、动作与反应组织分镜，结合主体参考生成视频。", sequence: ["导演分镜", "主体参考", "镜头视频"] },
     { value: "storyboard", title: "故事板模式", detail: "细化构图和动作，先生成故事板，再将所选画面用于镜头视频。", sequence: ["详细故事板", "镜头图片", "镜头视频"] },
 ];
+const AVAILABLE_MODES = MODES.filter((item) => item.value === "reference_video");
 
 export function WorkflowModeDialog(props: Props) {
     const userId = useUserStore((state) => state.user?.id || "");
-    return props.open ? <WorkflowModeSession key={`${userId}:${props.summary.project.id}`} {...props} /> : null;
+    return props.open ? <WorkflowModeSession key={`${userId}:${props.summary.project.id}:${props.episodeStyle?.episodeId || ""}`} {...props} /> : null;
 }
 
 function generationConfiguration(settings: DramaSettings) {
@@ -43,20 +46,30 @@ function applyGenerationConfiguration(draft: DramaSettings, saved: DramaSettings
     return { ...draft, aspectRatio: saved.aspectRatio, videoResolution: saved.videoResolution, videoContinuity: saved.videoContinuity, models: { ...draft.models, image: saved.models.image, video: saved.models.video } };
 }
 
-function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateChange, registerGenerationFlush }: Props) {
+function storyboardConfiguration(settings: DramaSettings) {
+    const { generationMode = "reference_video", directorTemplate = "", shotCountMode = "smart", targetShotCount = 0 } = settings.storyboard;
+    return { generationMode, directorTemplate, shotCountMode, targetShotCount };
+}
+
+function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = true, onCancel, onConfirm, onGenerationStateChange, registerGenerationFlush }: Props) {
     const queryClient = useQueryClient();
     const operation = useDramaOperationScope(summary.project.id);
-    const [draft, setDraft] = useState<DramaSettings>(() => structuredClone(summary.production.settings));
-    const [revision, setRevision] = useState(summary.production.revision);
-    const baseline = useRef(summary.production.settings);
+    const userId = useUserStore((state) => state.user?.id);
+    const initialSettings = episodeStyle?.settings || summary.production.settings;
+    const [draft, setDraft] = useState<DramaSettings>(() => structuredClone(initialSettings));
+    const [revision, setRevision] = useState(episodeStyle?.revision ?? summary.production.revision);
+    const [episodeRevision, setEpisodeRevision] = useState(episodeStyle?.episodeRevision);
+    const baseline = useRef(initialSettings);
     const latestDraft = useRef(draft);
     const latestSummary = useRef(summary);
     latestSummary.current = summary;
+    const latestEpisodeStyle = useRef(episodeStyle);
+    latestEpisodeStyle.current = episodeStyle;
     const write = useRef<Promise<boolean> | null>(null);
     const failedGeneration = useRef("");
     const [mediaSaving, setMediaSaving] = useState(false);
     const [mediaError, setMediaError] = useState("");
-    const [mode, setMode] = useState<GenerationMode>(draft.storyboard.generationMode || "reference_video");
+    const [mode, setMode] = useState<GenerationMode>(() => AVAILABLE_MODES.find((item) => item.value === draft.storyboard.generationMode)?.value ?? "reference_video");
     const [busy, setBusy] = useState(false);
     const locked = useRef(false);
     const [error, setError] = useState("");
@@ -65,7 +78,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
     const sample = DRAMA_STYLES.find((item) => item.name === draft.styleName && item.prompt === draft.stylePrompt)?.cover || "/short-drama-styles/chinese-2d.jpg";
     const videoOptions = catalog.data?.options.video || [];
     const videoModel = videoOptions.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.models.video));
-    const stale = revision < summary.production.revision;
+    const stale = revision < summary.production.revision || Boolean(episodeStyle && episodeRevision !== undefined && episodeRevision < episodeStyle.episodeRevision);
     const generationKey = JSON.stringify(generationConfiguration(draft));
     const generationDirty = generationKey !== JSON.stringify(generationConfiguration(baseline.current));
     const hasVideo = mode !== "grid_image";
@@ -85,6 +98,37 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
             setMediaError("");
         }
     };
+    const persistEpisode = async (target: DramaSettings, ticket: ReturnType<typeof operation.capture>) => {
+        if (!episodeStyle || episodeRevision === undefined || stale) throw new Error("本集设置已有更新，请关闭后重新打开以载入最新参数。");
+        const { projectId, episodeId } = episodeStyle;
+        const saved = await updateDramaEpisodeStyle(projectId, episodeId, { expectedRevision: revision, expectedEpisodeRevision: episodeRevision, settings: target });
+        if (!operation.isCurrent(ticket)) return;
+        const summaryKey = dramaKeys.summary(projectId);
+        const cached = queryClient.getQueryData<DramaSummary>(summaryKey);
+        const latest = latestEpisodeStyle.current;
+        if (
+            saved.projectId !== projectId ||
+            saved.episodeId !== episodeId ||
+            Math.max(cached?.production.revision ?? 0, latestSummary.current.production.revision, latest?.revision ?? 0) > saved.revision ||
+            (latest?.episodeRevision ?? 0) > saved.episodeRevision
+        ) {
+            throw new Error("本集设置已有更新，请关闭后重新打开以载入最新参数。");
+        }
+        baseline.current = saved.settings;
+        setRevision(saved.revision);
+        setEpisodeRevision(saved.episodeRevision);
+        queryClient.setQueryData(["drama-episode-style", userId, projectId, episodeId, saved.revision], saved);
+        queryClient.setQueryData<DramaSummary>(summaryKey, (current) => {
+            if (!current || current.production.revision > saved.revision) return current;
+            return {
+                ...current,
+                production: { ...current.production, revision: saved.revision },
+                episodes: current.episodes.map((episode) => (episode.id === episodeId ? { ...episode, revision: saved.episodeRevision } : episode)),
+            };
+        });
+        void queryClient.invalidateQueries({ queryKey: ["drama", projectId] });
+        return saved.settings;
+    };
     const persistGeneration = () => {
         if (write.current) return write.current;
         if (JSON.stringify(generationConfiguration(latestDraft.current)) === JSON.stringify(generationConfiguration(baseline.current))) return Promise.resolve(true);
@@ -95,6 +139,14 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
         const pending = (async () => {
             try {
                 if (stale) throw new Error("作品设置已有更新，请关闭后重新打开以载入最新参数。");
+                if (episodeStyle) {
+                    const saved = await persistEpisode(applyGenerationConfiguration(baseline.current, target), ticket);
+                    if (!saved) return false;
+                    latestDraft.current = applyGenerationConfiguration(latestDraft.current, saved);
+                    setDraft(latestDraft.current);
+                    failedGeneration.current = "";
+                    return true;
+                }
                 const saved = await updateDramaSettings(summary.project.id, { expectedRevision: revision, generation: generationConfiguration(target) });
                 if (!operation.isCurrent(ticket)) return false;
                 const cached = queryClient.getQueryData<DramaSummary>(dramaKeys.summary(summary.project.id));
@@ -152,7 +204,16 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
         setBusy(true);
         setError("");
         try {
-            await onConfirm({ ...draft, storyboard: { ...draft.storyboard, generationMode: mode, directorTemplate: mode === "smart_director" ? "smart_drama" : mode === "storyboard" ? "storyboard_detail" : "" } });
+            const next: DramaSettings = { ...draft, storyboard: { ...draft.storyboard, generationMode: mode, directorTemplate: mode === "smart_director" ? "smart_drama" : mode === "storyboard" ? "storyboard_detail" : "" } };
+            if (saveStoryboardOnConfirm && episodeStyle && JSON.stringify(storyboardConfiguration(next)) !== JSON.stringify(storyboardConfiguration(baseline.current))) {
+                const saved = await persistEpisode(next, ticket);
+                if (!saved || !operation.isCurrent(ticket)) return;
+                latestDraft.current = saved;
+                setDraft(saved);
+                await onConfirm(saved);
+            } else {
+                await onConfirm(next);
+            }
         } catch (reason) {
             if (operation.isCurrent(ticket)) setError(reason instanceof Error ? reason.message : "保存分镜模式失败，请重试");
         } finally {
@@ -166,7 +227,7 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
                 <div className="drama-workflow-mode-layout">
                     <div className="drama-workflow-mode-controls thin-scrollbar">
                         <nav aria-label="分镜生成默认模式" className="drama-workflow-mode-options">
-                            {MODES.map((item) => (
+                            {AVAILABLE_MODES.map((item) => (
                                 <button
                                     type="button"
                                     key={item.value}

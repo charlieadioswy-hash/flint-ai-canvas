@@ -71,6 +71,9 @@ func (s *Service) EnsureDramaEpisodeStoryboard(userID, projectID, episodeID stri
 		if resumeErr != nil {
 			return resumeErr
 		}
+		if err := deferUnstartedDramaStoryboards(tx, p, episodeID); err != nil {
+			return err
+		}
 		if resumeFields == nil {
 			resumeFields = map[string]any{}
 		}
@@ -158,11 +161,41 @@ func (s *Service) startDramaGuideStoryboard(tx *repository.Repository, p *model.
 	if episodeID == "" {
 		episodeID = episodes[0].ID
 	}
-	if _, err := tx.DramaEpisode(p.ProjectID, episodeID); err != nil {
+	selected, err := tx.DramaEpisode(p.ProjectID, episodeID)
+	if err != nil {
 		return err
 	}
+	if err := validateDramaEpisodeStoryboardSource(tx, p.ProjectID, selected); err != nil {
+		return err
+	}
+	if err := deferUnstartedDramaStoryboards(tx, p, selected.ID); err != nil {
+		return err
+	}
+	return resetDramaEpisodeStoryboard(tx, selected)
+}
+
+// Legacy guided catalogs queued every episode before the user chose one. In automatic productions,
+// queued episodes are already scheduled for the whole work, even before script jobs exist.
+func deferUnstartedDramaStoryboards(tx *repository.Repository, p *model.DramaProduction, selectedEpisodeID string) error {
+	if p.GuideStep == "" {
+		return nil
+	}
+	episodes, err := tx.DramaEpisodes(p.ProjectID)
+	if err != nil {
+		return err
+	}
+	jobs, err := tx.DramaJobsByStatus(p.ProjectID, model.DramaJobQueued, model.DramaJobRunning)
+	if err != nil {
+		return err
+	}
+	active := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		if job.Kind == model.DramaJobScript {
+			active[job.EpisodeID] = true
+		}
+	}
 	for _, episode := range episodes {
-		if episode.Stage != model.DramaEpisodeQueued {
+		if episode.ID == selectedEpisodeID || episode.Stage != model.DramaEpisodeQueued || episode.ScriptRequested || active[episode.ID] {
 			continue
 		}
 		shots, err := tx.DramaShots(episode.ID)
@@ -186,14 +219,7 @@ func (s *Service) startDramaGuideStoryboard(tx *repository.Repository, p *model.
 			return repository.ErrDramaGuideChanged
 		}
 	}
-	selected, err := tx.DramaEpisode(p.ProjectID, episodeID)
-	if err != nil {
-		return err
-	}
-	if err := validateDramaEpisodeStoryboardSource(tx, p.ProjectID, selected); err != nil {
-		return err
-	}
-	return resetDramaEpisodeStoryboard(tx, selected)
+	return nil
 }
 
 // Explicit arrangement replaces the selected episode; navigation keeps using the idempotent ensure path.

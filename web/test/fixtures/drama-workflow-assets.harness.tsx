@@ -1903,6 +1903,45 @@ function extractionJob(kind: DramaCastKind, status: DramaJob["status"] = "queued
     };
 }
 
+test("首次资产提取时当前集三个按钮持续转圈，任务结束后停止", async () => {
+    resetFixture();
+    const initialJob = { ...extractionJob("character"), id: "initial-assets", assetKind: undefined, label: "首次资产提取：第 1 集" };
+    projectJobs.set("project-a", [initialJob]);
+    const summary = summaryOf("project-a", 4);
+    summary.production.status = "running";
+    summary.jobCounts = { queued: 1 };
+    const view = await mount(summary, [], { episodeId: "episode-1" });
+    const expectSpinners = (busy: boolean) => {
+        for (const label of ["角色", "场景", "道具"]) {
+            const trigger = button(view.container, `提取全部${label}`);
+            expect(trigger.getAttribute("aria-busy")).toBe(String(busy));
+            expect(Boolean(trigger.querySelector('[class~="motion-safe:animate-spin"]'))).toBe(busy);
+            if (busy) expect(trigger.disabled).toBe(true);
+        }
+    };
+    const updateJob = async (status: DramaJob["status"]) => {
+        projectJobs.set("project-a", [{ ...initialJob, status }]);
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama", "project-a", "jobs"] });
+            await settle();
+        });
+    };
+    try {
+        expectSpinners(true);
+        await updateJob("running");
+        expectSpinners(true);
+        await view.update({ episodeId: "episode-2" });
+        expectSpinners(false);
+        await view.update({ episodeId: "episode-1" });
+        expectSpinners(true);
+        await updateJob("failed");
+        expectSpinners(false);
+        expect(extractCalls).toHaveLength(0);
+    } finally {
+        await view.dispose();
+    }
+});
+
 test("单集三类资产直接按当前集提取，空列表可提交且在途不重复、不清空已有资产", async () => {
     for (const [kind, label] of [
         ["character", "角色"],
@@ -1925,6 +1964,7 @@ test("单集三类资产直接按当前集提取，空列表可提交且在途�
             expect(extractCalls).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, kind, episodeIds: [targetEpisodeId] } }]);
             expect(view.container.querySelector('[role="dialog"]')).toBeNull();
             expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+            expect(button(view.container, `提取全部${label}`).querySelector('[class~="motion-safe:animate-spin"]')).not.toBeNull();
             for (const other of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${other}`).disabled).toBe(other === label);
             expect(view.container.querySelector('[aria-label="character:林夏"]')).not.toBeNull();
             const job = { ...extractionJob(kind), sourceEpisodeIds: [targetEpisodeId] };
@@ -1935,6 +1975,7 @@ test("单集三类资产直接按当前集提取，空列表可提交且在途�
             });
             expect(view.changed).toEqual(["project-a"]);
             expect(button(view.container, `提取全部${label}`).textContent).toContain(`正在提取${label}`);
+            expect(button(view.container, `提取全部${label}`).querySelector('[class~="motion-safe:animate-spin"]')).not.toBeNull();
             for (const other of ["角色", "场景", "道具"]) expect(button(view.container, `提取全部${other}`).disabled).toBe(other === label);
             expect(extractCalls).toHaveLength(1);
             expect(createCalls).toHaveLength(0);

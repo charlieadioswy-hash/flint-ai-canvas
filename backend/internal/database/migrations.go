@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 119
+const CurrentSchemaVersion int64 = 120
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -402,6 +402,12 @@ var schemaMigrations = []migration{
 			return nil
 		}
 		return tx.Migrator().AddColumn(&model.DramaSegment{}, "VideoRevision")
+	}},
+	{version: 120, name: "drama_episode_script_requested", checksum: "sha256:drama-episode-script-requested-v120", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasTable(&model.DramaEpisode{}) || tx.Migrator().HasColumn(&model.DramaEpisode{}, "ScriptRequested") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaEpisode{}, "ScriptRequested")
 	}},
 }
 

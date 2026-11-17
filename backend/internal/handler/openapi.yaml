@@ -252,7 +252,7 @@ paths:
                 episodeId: {type: string, description: 当前选中的单集，必须属于当前短剧；configuring 按原集号映射重建后的集并锁定首次资产来源，assets 仅启动该集缺失分镜；省略取第一集}
                 settings:
                   type: object
-                  description: 复用现有 DramaSettings；引导固定 mediaMode=manual，校验模式、导演模板、模型能力与制作范围。dramaType 仅可在 configuring 设置，assets 只读取模式页拥有的生成参数。
+                  description: 复用现有 DramaSettings；引导固定 mediaMode=manual，校验模式、导演模板、模型能力与制作范围。dramaType 仅可在 configuring 设置，assets 只读取模式页拥有的生成参数；指定 episodeId 时仅设置该集，与开始编排在同一事务提交，省略时更新首次默认配置。
                   properties:
                     dramaType: {type: string, enum: ["", comic, live_action, narration]}
                     storyboard:

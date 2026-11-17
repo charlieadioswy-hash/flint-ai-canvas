@@ -393,10 +393,16 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 				return err
 			}
 		}
+		if err := deferUnstartedDramaStoryboards(tx, currentProduction, episodeID); err != nil {
+			return err
+		}
 		if err := resetDramaEpisodeStoryboard(tx, current); err != nil {
 			return err
 		}
 		if resumeFields != nil {
+			if dramaGuideActive(currentProduction) {
+				return tx.UpdateDramaGuideDraftFields(projectID, resumeFields)
+			}
 			return tx.UpdateDramaProduction(projectID, resumeFields)
 		}
 		return nil

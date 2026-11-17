@@ -141,7 +141,7 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
     );
 }
 
-function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse, autoCollapse }: { collapsed: boolean; onNavigate: () => void; onExpand: () => void; onCollapse: () => void; autoCollapse: boolean }) {
+function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onExpand: () => void; onCollapse: () => void }) {
     const appearance = useAppearanceStore((state) => state.appearance);
     const { t } = useTranslation();
     // 未上传自定义 Logo 时用内置取景框字形（与欢迎页、登录框、加载页同一个 /logo.svg），放在墨色实底方块里；
@@ -160,17 +160,17 @@ function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse, autoCo
                 {mark}
                 {!collapsed ? <span className="app-workspace-brand-wordmark truncate">{appearance.brandName}</span> : null}
             </Link>
-            {!autoCollapse ? (
-                <button
-                    type="button"
-                    className="product-icon-button app-workspace-brand-toggle"
-                    aria-label={t(collapsed ? "shell.expandSidebarMenu" : "shell.collapseSidebar")}
-                    title={t(collapsed ? "shell.expandSidebarMenu" : "shell.collapseSidebar")}
-                    onClick={collapsed ? onExpand : onCollapse}
-                >
-                    {collapsed ? <PanelLeftOpen aria-hidden /> : <PanelLeftClose aria-hidden />}
-                </button>
-            ) : null}
+            <button
+                type="button"
+                className="product-icon-button app-workspace-brand-toggle"
+                data-workspace-sidebar-toggle
+                aria-expanded={!collapsed}
+                aria-label={t(collapsed ? "shell.expandSidebarMenu" : "shell.collapseSidebar")}
+                title={t(collapsed ? "shell.expandSidebarMenu" : "shell.collapseSidebar")}
+                onClick={collapsed ? onExpand : onCollapse}
+            >
+                {collapsed ? <PanelLeftOpen aria-hidden /> : <PanelLeftClose aria-hidden />}
+            </button>
         </div>
     );
 }
@@ -354,21 +354,7 @@ export function workspaceNavActiveId(pathname: string, section?: string | null) 
     return slug === "settings" && section ? `settings:${section}` : slug;
 }
 
-export function WorkspaceSidebarNav({
-    collapsed,
-    onNavigate,
-    onOpenSearch,
-    onExpand,
-    onCollapse,
-    autoCollapse = false,
-}: {
-    collapsed: boolean;
-    onNavigate: () => void;
-    onOpenSearch: () => void;
-    onExpand: () => void;
-    onCollapse: () => void;
-    autoCollapse?: boolean;
-}) {
+export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onOpenSearch: () => void; onExpand: () => void; onCollapse: () => void }) {
     const { pathname } = useLocation();
     const [searchParams] = useSearchParams();
     const features = useUserStore((state) => state.features);
@@ -403,7 +389,7 @@ export function WorkspaceSidebarNav({
 
     return (
         <div className={cn("app-workspace-sidebar-nav flex h-full shrink-0 flex-col", collapsed && "is-collapsed")}>
-            <WorkspaceSwitcher collapsed={collapsed} onNavigate={onNavigate} onExpand={onExpand} onCollapse={onCollapse} autoCollapse={autoCollapse} />
+            <WorkspaceSwitcher collapsed={collapsed} onNavigate={onNavigate} onExpand={onExpand} onCollapse={onCollapse} />
 
             <LayoutGroup id="workspace-sidebar-nav">
                 <div

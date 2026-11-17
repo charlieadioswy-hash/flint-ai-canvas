@@ -55,11 +55,16 @@ async function advance(ms: number) {
 }
 
 function Probe({ pathname }: { pathname: string }) {
-    const { collapsed, enabled, interactionProps } = useProjectSidebarIdle(pathname);
+    const { collapsed, enabled, setManuallyCollapsed, interactionProps } = useProjectSidebarIdle(pathname);
     return (
         <>
             <aside {...interactionProps} data-collapsed={collapsed} data-enabled={enabled}>
                 <button type="button">短剧制作</button>
+                <div className="app-workspace-sidebar-brand-row">
+                    <button type="button" data-workspace-sidebar-toggle onClick={() => setManuallyCollapsed(!collapsed)}>
+                        {collapsed ? "展开菜单" : "收起菜单"}
+                    </button>
+                </div>
                 <input aria-label="菜单搜索" />
             </aside>
             <button type="button" data-outside>
@@ -193,6 +198,59 @@ test("离开项目清理计时器，进入另一个项目恢复展开", async ()
     } finally {
         await view.close();
         expect(timers.size).toBe(0);
+    }
+});
+
+test("手动收起不被悬停和键盘打断，同一作品切换分集保留选择", async () => {
+    const view = await fixture();
+    try {
+        const toggle = view.rail.querySelector<HTMLButtonElement>("[data-workspace-sidebar-toggle]")!;
+        const nav = view.rail.querySelector("button")!;
+        await act(() => toggle.click());
+        await act(() => {
+            nav.dispatchEvent(new browser.MouseEvent("mouseover", { bubbles: true }));
+            nav.focus();
+            nav.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, key: "Tab" }));
+        });
+        await view.update("/projects/project/e/second");
+        expect(view.collapsed()).toBe(true);
+        await view.resize(390);
+        expect(view.collapsed()).toBe(false);
+        await view.resize(1440);
+        expect(view.collapsed()).toBe(true);
+        await view.update("/projects/another");
+        expect(view.collapsed()).toBe(false);
+        await view.update("/projects/project");
+        expect(view.collapsed()).toBe(false);
+    } finally {
+        await view.close();
+    }
+});
+
+test("自动收起后操作开关不会先自动展开，手动展开后不再超时收起", async () => {
+    const view = await fixture();
+    try {
+        const toggle = view.rail.querySelector<HTMLButtonElement>("[data-workspace-sidebar-toggle]")!;
+        await advance(10_000);
+        await act(() => toggle.parentElement!.dispatchEvent(new browser.MouseEvent("mouseover", { bubbles: true })));
+        expect(view.collapsed()).toBe(true);
+        await act(() => {
+            toggle.dispatchEvent(new browser.MouseEvent("mouseover", { bubbles: true }));
+            toggle.focus();
+            toggle.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+        });
+        expect(view.collapsed()).toBe(true);
+        await act(() => toggle.click());
+        expect(view.collapsed()).toBe(false);
+        await act(() => {
+            toggle.dispatchEvent(new browser.MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body }));
+            view.host.querySelector<HTMLButtonElement>("[data-outside]")!.focus();
+        });
+        await advance(30_000);
+        expect(view.collapsed()).toBe(false);
+        expect(timers.size).toBe(0);
+    } finally {
+        await view.close();
     }
 });
 

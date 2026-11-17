@@ -45,7 +45,7 @@
     grid-area: project;
 }
 
-.app-user-workspace .app-workspace-shell.is-project-workspace .drama-project-topbar-controls {
+.app-user-workspace .app-workspace-shell.is-project-workspace .drama-project-topbar > .drama-project-topbar-controls {
     grid-area: navigation;
 }
 
@@ -86,5 +86,41 @@
     .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.drama-project-topbar) .app-workspace-topbar-actions {
         padding-left: 0;
         border-left: 0;
+    }
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.has-inline-controls) {
+    grid-template-areas: "project system";
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-block: 0;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension:has(.has-inline-controls) {
+    display: flex;
+    grid-area: project;
+    container: drama-workflow-topbar / inline-size;
+}
+
+.app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension > .has-inline-controls {
+    display: block;
+}
+
+@media (max-width: 1023px) {
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.has-inline-controls) {
+        grid-template-areas: "menu project system";
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        column-gap: var(--space-2);
+    }
+}
+
+@media (max-width: 640px) {
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.has-inline-controls) .app-workspace-topbar-actions {
+        max-inline-size: 23vw;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar:has(.has-inline-controls) .app-workspace-topbar-actions > * {
+        flex-shrink: 0;
     }
 }

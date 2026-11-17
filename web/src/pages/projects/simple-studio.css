@@ -13,6 +13,54 @@
     min-width: 0;
     min-height: var(--space-8);
 }
+.drama-project-topbar-identity {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+.has-inline-controls .drama-project-topbar-main {
+    display: grid;
+    grid-template-columns: minmax(var(--space-8), 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+}
+.has-inline-controls .drama-workflow-steps {
+    padding-block: var(--space-2);
+    scrollbar-width: none;
+}
+.drama-workflow-step-picker {
+    display: none;
+    min-height: var(--space-8);
+    align-items: center;
+    gap: var(--space-1);
+    padding-inline: var(--space-1);
+    border-radius: var(--button-radius);
+    color: var(--text-primary);
+    font-size: var(--fs-ui);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.drama-workflow-step-picker > svg {
+    width: var(--space-3);
+    height: var(--space-3);
+    flex: none;
+}
+.drama-workflow-step-picker:hover,
+.drama-workflow-step-picker[aria-expanded="true"] {
+    background: var(--button-ghost-hover-bg);
+}
+.drama-workflow-step-picker:focus-visible {
+    outline: var(--focus-ring-width) solid var(--ring);
+    outline-offset: -2px;
+}
+@container drama-workflow-topbar (max-width: 868px) {
+    .has-inline-controls .drama-workflow-steps {
+        display: none;
+    }
+    .has-inline-controls .drama-workflow-step-picker {
+        display: inline-flex;
+    }
+}
 .drama-project-topbar h1 {
     flex: 1 1 0;
     min-width: 0;
@@ -80,6 +128,35 @@
     white-space: nowrap;
     font-size: var(--fs-label);
     font-weight: 600;
+}
+@media (max-width: 1100px) {
+    .has-inline-controls .drama-project-topbar-main {
+        grid-template-columns: minmax(var(--space-8), 1fr) minmax(0, max-content) auto;
+    }
+    .has-inline-controls :is(.drama-project-mode, .drama-project-action-label) {
+        display: none;
+    }
+}
+@media (max-width: 680px) {
+    .has-inline-controls .drama-project-topbar-main {
+        grid-template-columns: minmax(var(--space-8), 14vw) minmax(0, 1fr) auto;
+        gap: var(--space-1);
+    }
+    .has-inline-controls .drama-project-topbar-identity {
+        gap: 0;
+    }
+}
+@media (max-width: 380px) {
+    .has-inline-controls .drama-project-topbar-main {
+        grid-template-columns: var(--space-6) minmax(0, 1fr) auto;
+    }
+    .has-inline-controls .drama-project-back {
+        width: var(--space-6);
+    }
+    .has-inline-controls .drama-project-topbar-actions .ant-btn {
+        width: var(--space-7);
+        padding-inline: 0;
+    }
 }
 .drama-simple {
     height: 100%;

@@ -160,9 +160,11 @@ type DramaEpisode struct {
 	StyleName   string `json:"-" gorm:"size:60;not null;default:''"`
 	StylePrompt string `json:"-" gorm:"type:text;not null;default:''"`
 	Stage       string `json:"stage" gorm:"index;size:16"`
-	Error       string `json:"error" gorm:"type:text"`
-	ShotCount   int    `json:"shotCount"`
-	DurationMs  int64  `json:"durationMs"`
+	// ScriptRequested distinguishes an explicit queue entry from an old guided catalog entry before dispatch.
+	ScriptRequested bool   `json:"-" gorm:"not null;default:false"`
+	Error           string `json:"error" gorm:"type:text"`
+	ShotCount       int    `json:"shotCount"`
+	DurationMs      int64  `json:"durationMs"`
 	// Approved 表示用户已确认本集视频提示词（逐集确认模式下的审阅关口）。
 	Approved bool `json:"approved"`
 	// MediaReleased 为 true 后才为本集生成视频；手动模式下由用户确认剧本与提示词后打开。

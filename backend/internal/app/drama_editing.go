@@ -60,6 +60,7 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 	now := time.Now()
 	chapter := model.ProjectUnit{ID: newID(), ProjectID: project.ID, Kind: model.ProjectUnitKindChapter, Title: title, SourceText: text, WordCount: runes, Status: model.ProjectUnitStatusReady, CreatedAt: now, UpdatedAt: now}
 	episode := newDramaChapterEpisode(project.ID, 0, chapter, production.NormalizeSourceFormat(req.SourceFormat), now)
+	episode.ScriptRequested = true
 	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
 		current, err := tx.DramaProduction(project.ID)
 		if err != nil {
@@ -303,6 +304,9 @@ func (s *Service) ProduceDramaChapters(userID, projectID string, req ProduceDram
 		episodes, err := groupDramaChapterEpisodes(project.ID, 0, chosen, perEpisode, format, time.Now())
 		if err != nil {
 			return err
+		}
+		for i := range episodes {
+			episodes[i].ScriptRequested = true
 		}
 		initializeDramaEpisodeSettings(episodes, dramaInitialEpisodeSettingsJSON(*current))
 		ids := make([]string, 0, len(chosen))

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
-import { ArrowRight, ChevronRight, FolderKanban, MoreHorizontal } from "lucide-react";
+import { ArrowRight, FolderKanban, MoreHorizontal } from "lucide-react";
 import { useBlocker, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
@@ -28,6 +28,7 @@ import {
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaProjectTopbar } from "./studio/project-topbar";
+import { WorkflowStepNav } from "./studio/workflow-step-nav";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { DramaMediaActionDialog } from "./studio/drama-media-action-dialog";
 import { useDramaMediaAction } from "./studio/use-drama-media-action";
@@ -81,7 +82,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const [editingCast, setEditingCast] = useState<string>();
     const [sourceEditorState, setSourceEditorState] = useState({ dirty: false, busy: false, automatic: false });
     const sourceState = sourceEditorState;
-    const [modeOpen, setModeOpen] = useState(false);
+    const [modeTarget, setModeTarget] = useState<{ episodeId?: string; initial: boolean }>();
     const [modeConfigurationPending, setModeConfigurationPending] = useState(false);
     const modeGenerationFlush = useRef<(() => Promise<boolean>) | null>(null);
     const modeNavigationPending = useRef(false);
@@ -125,6 +126,10 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const resolvedStep = summary ? resolveWorkflowStep(summary, requested, selectedEpisodeId) : "review";
     const active = managing ? (managementTab === "script" ? "review" : managementTab === "style" ? "style" : managementTab === "assets" ? "assets" : "story") : routeEpisodeId && resolvedStep === "source" ? "review" : resolvedStep;
     const steps = routeEpisodeId ? EPISODE_WORKFLOW_STEPS : WORKFLOW_STEPS;
+    const modeOpen = Boolean(modeTarget && !managing && active === "assets" && modeTarget.episodeId === selectedEpisodeId && modeTarget.initial === (stage === "assets"));
+    useEffect(() => {
+        if (modeTarget && !modeOpen) setModeTarget(undefined);
+    }, [modeTarget, modeOpen]);
 
     const revision = summary?.production.revision || 0;
     const episodeStyleId = managing || stage === "configuring" ? undefined : routeEpisodeId || searchParams.get("episode") || (["assets", "story", "preview"].includes(active) ? selectedEpisodeId : undefined);
@@ -237,7 +242,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
         onSuccess: async (next, { ticket, expectedStep, episodeId, episodeNumber }) => {
             if (!operation.isCurrent(ticket)) return;
             setSettingsDraft(null);
-            setModeOpen(false);
+            setModeTarget(undefined);
             queryClient.setQueryData(dramaKeys.summary(projectId), next);
             const params = new URLSearchParams(searchParams);
             params.delete("manage");
@@ -363,6 +368,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
         },
         onSuccess: (detail, { episodeId, ticket }) => {
             if (!operation.isCurrent(ticket)) return;
+            setModeTarget(undefined);
             queryClient.setQueryData(dramaKeys.episode(ticket.projectId, episodeId), detail);
             const params = new URLSearchParams(searchParams);
             for (const key of ["manage", "scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
@@ -489,6 +495,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                 <DramaProjectTopbar
                     name={summary?.project.name || "短剧制作"}
                     stage={managing ? "作品管理" : routeEpisodeId ? "单集创作" : "短剧创作"}
+                    inlineControls={!managing}
                     controls={
                         managing ? (
                             <nav className="drama-workflow-management-tabs" aria-label="作品管理">
@@ -504,25 +511,19 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                 ))}
                             </nav>
                         ) : (
-                            <nav className="drama-workflow-steps" aria-label="短剧制作步骤">
-                                {steps.map((step, index) => {
-                                    const allowed = summary ? isWorkflowStepAllowed(summary, step.key, { manualPreview: step.key === "preview", episodeId: selectedEpisodeId }) : false;
-                                    const passed = index < steps.findIndex((item) => item.key === active);
-                                    return (
-                                        <div key={step.key} className="drama-workflow-step-item">
-                                            {index ? <ChevronRight aria-hidden="true" /> : null}
-                                            <button type="button" aria-current={active === step.key ? "step" : undefined} data-passed={passed || undefined} disabled={!allowed || workflowBusy} onClick={() => openStep(step.key)}>
-                                                {step.title}
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </nav>
+                            <WorkflowStepNav
+                                active={active}
+                                steps={steps.map((step) => ({
+                                    ...step,
+                                    disabled: workflowBusy || !summary || !isWorkflowStepAllowed(summary, step.key, { manualPreview: step.key === "preview", episodeId: selectedEpisodeId }),
+                                }))}
+                                onSelect={openStep}
+                            />
                         )
                     }
                 >
-                    <Button type="text" icon={<FolderKanban className="size-4" />} disabled={workflowBusy} onClick={() => openManagement("episodes")}>
-                        {managing ? "选择分集" : "作品管理"}
+                    <Button type="text" icon={<FolderKanban className="size-4" />} disabled={workflowBusy} aria-label={managing ? "选择分集" : "作品管理"} title={managing ? "选择分集" : "作品管理"} onClick={() => openManagement("episodes")}>
+                        <span className="drama-project-action-label">{managing ? "选择分集" : "作品管理"}</span>
                     </Button>
                     <Dropdown
                         trigger={["click"]}
@@ -549,8 +550,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                             ],
                         }}
                     >
-                        <Button type="text" icon={<MoreHorizontal className="size-4" />} disabled={workflowBusy} aria-label="更多操作">
-                            更多
+                        <Button type="text" icon={<MoreHorizontal className="size-4" />} disabled={workflowBusy} aria-label="更多操作" title="更多操作">
+                            <span className="drama-project-action-label">更多</span>
                         </Button>
                     </Dropdown>
                 </DramaProjectTopbar>
@@ -678,9 +679,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         onContinue={
                                             !managing
                                                 ? () => {
-                                                      if (!canArrange) return;
-                                                      if (stage === "assets") setModeOpen(true);
-                                                      else if (selectedEpisodeId) rescript.mutate({ episodeId: selectedEpisodeId, ticket: operation.capture() });
+                                                      if (canArrange) setModeTarget({ episodeId: selectedEpisodeId, initial: stage === "assets" });
                                                   }
                                                 : undefined
                                         }
@@ -766,12 +765,20 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                     </>
                 ) : null}
                 {episodeSummary && editingCast ? <CastEditorDialog summary={episodeSummary} cast={castQuery.cast} castId={editingCast} episodeId={episodeStyleId} onClose={() => setEditingCast(undefined)} onChanged={refresh} /> : null}
-                {summary ? (
+                {summary && modeTarget && (!modeTarget.episodeId || episodeStyle?.episodeId === modeTarget.episodeId) ? (
                     <WorkflowModeDialog
                         open={modeOpen}
                         summary={summary}
-                        onCancel={() => setModeOpen(false)}
-                        onConfirm={(modeSettings) => confirm.mutateAsync({ expectedStep: "assets", ticket: operation.capture(), modeSettings, episodeId: selectedEpisodeId })}
+                        episodeStyle={episodeStyle}
+                        saveStoryboardOnConfirm={!modeTarget.initial}
+                        onCancel={() => setModeTarget(undefined)}
+                        onConfirm={(modeSettings) => {
+                            if (!modeOpen || confirm.isPending || rescript.isPending) throw new Error("当前操作已变化，请关闭后重新打开设置");
+                            const ticket = operation.capture();
+                            if (modeTarget.initial) return confirm.mutateAsync({ expectedStep: "assets", ticket, modeSettings, episodeId: modeTarget.episodeId });
+                            if (!modeTarget.episodeId || episodeStyle?.episodeId !== modeTarget.episodeId) throw new Error("本集配置尚未读取，请重新打开设置");
+                            return rescript.mutateAsync({ episodeId: modeTarget.episodeId, ticket });
+                        }}
                         onGenerationStateChange={modeGenerationChanged}
                         registerGenerationFlush={registerModeGenerationFlush}
                     />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Select } from "antd";
-import { ArrowRight, ChevronLeft, ChevronRight, Gem, MapPinned, Plus, ScanText, UsersRound } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Gem, LoaderCircle, MapPinned, Plus, ScanText, UsersRound } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { createDramaCast, deleteDramaCast, extractDramaCast, getDramaEpisodeStyle, listDramaJobs, type DramaCast, type DramaCastKind, type DramaJob, type DramaSummary } from "@/services/api/drama";
@@ -111,11 +111,12 @@ function WorkflowAssetsSession({
     const extractionJobs = useQuery({
         queryKey: dramaKeys.jobs(projectId),
         queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal),
-        enabled: !extractionStageBlocked,
+        enabled: !extractionStageBlocked || guideStep === "assets",
         refetchInterval: (query) => (query.state.status === "error" || query.state.data?.jobs.some((job) => job.status === "queued" || job.status === "running") || summary.jobCounts.queued || summary.jobCounts.running ? 2_500 : false),
     });
     const activeTextJobs = (extractionJobs.data?.jobs || []).filter((job) => ["bible", "plan", "script", "segment_prompt"].includes(job.kind) && (job.status === "queued" || job.status === "running"));
     const otherTextJobs = activeTextJobs.filter((job) => job.kind !== "bible" || !job.assetKind);
+    const initialExtractionActive = otherTextJobs.some((job) => job.kind === "bible" && (variant === "library" || !job.sourceEpisodeIds?.length || job.sourceEpisodeIds.includes(selectedEpisodeId)));
     useEffect(() => {
         if (created && cast.some((item) => item.id === created.id && item.projectId === projectId)) setCreated(undefined);
     }, [cast, created, projectId]);
@@ -133,7 +134,7 @@ function WorkflowAssetsSession({
         if (!extractionJobs.data || extractionJobs.isError) return;
         let finished = false;
         for (const job of extractionJobs.data.jobs) {
-            if (job.kind !== "bible" || !job.assetKind) continue;
+            if (job.kind !== "bible") continue;
             if (job.status === "queued" || job.status === "running") activeExtractionIds.current.add(job.id);
             else if (activeExtractionIds.current.delete(job.id)) finished = true;
         }
@@ -279,7 +280,7 @@ function WorkflowAssetsSession({
         extractionJobs.isPending ||
         extractionJobs.isError ||
         otherTextJobs.length > 0;
-    const kindExtracting = (kind: DramaCastKind) => Boolean(extractingKinds[kind]) || activeTextJobs.some((job) => job.kind === "bible" && job.assetKind === kind);
+    const kindExtracting = (kind: DramaCastKind) => initialExtractionActive || Boolean(extractingKinds[kind]) || activeTextJobs.some((job) => job.kind === "bible" && job.assetKind === kind);
     const submitExtraction = (kind: DramaCastKind) => {
         if (extractionBlocked || mutationLock.current || extractionLocks.current.has(kind) || kindExtracting(kind)) return;
         extractionLocks.current.add(kind);
@@ -288,28 +289,31 @@ function WorkflowAssetsSession({
     };
     const renderExtraction = (kind: DramaCastKind) => {
         const extracting = kindExtracting(kind);
+        const label = `提取全部${CAST_KIND_LABEL[kind]}`;
+        const progressLabel = `正在提取${CAST_KIND_LABEL[kind]}`;
         return (
             <Button
                 size="small"
-                icon={<ScanText className="size-3.5" aria-hidden />}
-                aria-label={`提取全部${CAST_KIND_LABEL[kind]}`}
+                icon={extracting ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden /> : <ScanText className="size-3.5" aria-hidden />}
+                aria-label={label}
                 aria-busy={extracting}
                 title={
-                    extractionStageBlocked
-                        ? "请先完成首次资产提取"
-                        : extractionJobs.isError
-                          ? "任务状态暂时读取失败，正在自动更新"
-                          : otherTextJobs.length
-                            ? "请等待当前文字任务完成"
-                            : variant === "episode"
-                              ? `从当前集原文提取全部${CAST_KIND_LABEL[kind]}，保留已有资产设定和图片`
-                              : `从作品全部原文提取${CAST_KIND_LABEL[kind]}，保留已有资产设定和图片`
+                    extracting
+                        ? progressLabel
+                        : extractionStageBlocked
+                          ? "请先完成首次资产提取"
+                          : extractionJobs.isError
+                            ? "任务状态暂时读取失败，正在自动更新"
+                            : otherTextJobs.length
+                              ? "请等待当前文字任务完成"
+                              : variant === "episode"
+                                ? `从当前集原文提取全部${CAST_KIND_LABEL[kind]}，保留已有资产设定和图片`
+                                : `从作品全部原文提取${CAST_KIND_LABEL[kind]}，保留已有资产设定和图片`
                 }
-                loading={extracting}
                 disabled={extractionBlocked || extracting}
                 onClick={() => submitExtraction(kind)}
             >
-                {extracting ? `正在提取${CAST_KIND_LABEL[kind]}…` : `提取全部${CAST_KIND_LABEL[kind]}`}
+                {extracting ? progressLabel : label}
             </Button>
         );
     };
