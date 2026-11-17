@@ -931,7 +931,7 @@ function CastEditorForm({
                             (dirty && (!summary.data || typeof baselineCast.revision !== "number"))
                         }
                         title={!parentReady ? "请先生成或上传角色本体图" : imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : undefined)}
-                        loading={regenerate.isPending || regenerationGuard.busy}
+                        loading={regenerate.isPending || regenerationGuard.busy || mediaBusy(cast.imageStatus)}
                         onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
                     >
                         {generationLabel("生成图片", imageQuote.data, imageQuote.isFetching)}
