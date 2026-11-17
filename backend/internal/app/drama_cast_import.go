@@ -225,6 +225,9 @@ func (s *Service) ImportDramaCast(userID, projectID string, req ImportDramaCastR
 				if err := repo.UpdateDramaCastFields(current.ID, fields); err != nil {
 					return err
 				}
+				if _, err := restyleDramaCastWorkspaceSegments(repo, projectID, current.ID); err != nil {
+					return err
+				}
 			}
 			if src.ImageResourceID != "" && (current == nil || current.ImageResourceID != src.ImageResourceID) {
 				take := &model.DramaTake{ID: newID(), ProjectID: projectID, OwnerID: copy.ID, Kind: "cast", ResourceID: src.ImageResourceID, Prompt: "从其他作品导入参考图", CreatedAt: now}

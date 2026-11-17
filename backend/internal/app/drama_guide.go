@@ -31,6 +31,7 @@ type ConfirmDramaGuideRequest struct {
 	ExpectedStep     string         `json:"expectedStep"`
 	ExpectedRevision int64          `json:"expectedRevision"`
 	Settings         *DramaSettings `json:"settings,omitempty"`
+	EpisodeID        string         `json:"episodeId,omitempty"`
 }
 
 func dramaGuideActive(p *model.DramaProduction) bool {
@@ -259,6 +260,7 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 			// 模式弹窗与编排剧本统一提交，只接收本页负责的生成参数。
 			settings.Storyboard.GenerationMode = req.Settings.Storyboard.GenerationMode
 			settings.Storyboard.DirectorTemplate = req.Settings.Storyboard.DirectorTemplate
+			settings.Storyboard.ShotCountMode = req.Settings.Storyboard.ShotCountMode
 			settings.Storyboard.TargetShotCount = req.Settings.Storyboard.TargetShotCount
 			settings.Models.Image, settings.Models.Video = req.Settings.Models.Image, req.Settings.Models.Video
 			settings.AspectRatio, settings.VideoResolution = req.Settings.AspectRatio, req.Settings.VideoResolution
@@ -295,6 +297,14 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 		fields := map[string]any{}
 		switch current.GuideStep {
 		case model.DramaGuideConfiguring:
+			selectedNumber := 0
+			if req.EpisodeID != "" {
+				selected, err := tx.DramaEpisode(projectID, req.EpisodeID)
+				if err != nil {
+					return dramaLookupError(err)
+				}
+				selectedNumber = selected.Number
+			}
 			chapters, err := tx.DramaChapters(projectID)
 			if err != nil {
 				return err
@@ -306,7 +316,7 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 			var episodes []model.DramaEpisode
 			cursor, done := 0, false
 			if settings.EpisodeMode == DramaEpisodeModeChapter {
-				episodes, err = groupDramaChapterEpisodes(projectID, 1, chapters, settings.ChaptersPerEpisode, format, time.Now())
+				episodes, err = groupDramaChapterEpisodesForStage(projectID, 1, chapters, settings.ChaptersPerEpisode, format, time.Now(), model.DramaEpisodeDraft)
 				if err != nil {
 					return err
 				}
@@ -314,6 +324,9 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 			}
 			initializeDramaEpisodeSettings(episodes, encodeDramaSettings(settings))
 			if err := tx.ResetDramaGuideEpisodes(projectID, format, episodes, cursor, done); err != nil {
+				return err
+			}
+			if err := enqueueDramaInitialAssets(tx, projectID, chapters, episodes, selectedNumber); err != nil {
 				return err
 			}
 			fields["settings_json"], fields["status"], fields["pause_reason"] = encodeDramaSettings(settings), model.DramaStatusRunning, ""
@@ -339,6 +352,9 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 						return err
 					}
 				}
+			}
+			if err := s.startDramaGuideStoryboard(tx, current, req.EpisodeID); err != nil {
+				return err
 			}
 			fields["guide_step"] = model.DramaGuideStory
 			fields["status"], fields["pause_reason"] = model.DramaStatusRunning, ""
@@ -469,7 +485,7 @@ func prepareDramaSource(projectID string, input []DramaChapterInput, selectedInp
 	if settings.EpisodeMode != DramaEpisodeModeChapter {
 		return chapters, nil, 0, false, nil
 	}
-	episodes, err := groupDramaChapterEpisodes(projectID, 1, produced, settings.ChaptersPerEpisode, format, now)
+	episodes, err := groupDramaChapterEpisodesForStage(projectID, 1, produced, settings.ChaptersPerEpisode, format, now, model.DramaEpisodeDraft)
 	initializeDramaEpisodeSettings(episodes, encodeDramaSettings(settings))
 	return chapters, episodes, len(produced), true, err
 }

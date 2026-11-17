@@ -5,7 +5,17 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
-当前代码结构版本为 **118**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订；116 增加单集独立风格与默认继承，117 保存首次配置及各集完整独立配置，118 保存单集资产归属。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
+当前代码结构版本为 **119**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订；116 增加单集独立风格与默认继承，117 保存首次配置及各集完整独立配置，118 保存单集资产归属，119 增加剧情段独立视频来源版本。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
+
+## 剧情段文字与视频来源版本（Schema 119）
+
+版本 119 `drama_segment_video_revision` 为 `drama_segments` 增加 `video_revision`（bigint、非空、默认 0）。存量段从 0 开始，只加列，不改写段稿、媒体、任务、费用或过期状态。
+
+`drama_segments.revision` 保护段稿与剧情来源，独立 `video_revision` 保护实际视频输入。资产外观、参考图、声线或声音样本更新时，保留 `video_prompt`、`video_prompt_override` 及当前撰写状态，只更新受影响的视频来源版本与已有下游媒体状态；剧情、台词、镜头结构或时长变化仍按文字版本使段稿失效。
+
+段视频作业在已有 `payload_json` 中记录文字与视频来源版本，派发、恢复与产物采用核对对应快照。资产变更后的旧付费视频可登记历史 Take，但不能覆盖新版本的当前视频或尾帧；旧媒体和账单保留，不因版本变化自动重发任务。历史任务缺少 `videoRevision` 时按 0 校验，资产变化使当前版本推进后不能再以旧任务覆盖。迁移不批量把已有 `prompt_status=stale` 改成 `ready`，因为历史过期可能来自真实改稿。
+
+新的段素材稿和 AI 写作规则不再内嵌资产长期外观与固定声线；名称与参考图编号仍在正文中。视频生成时从资产当前行解析最新图片、外观、声线及可用声音样本；剧情中的临时换装、伤情、道具接触和情绪表演仍归段稿所有。不会自动清洗或覆盖历史手写正文。
 
 ## 单集资产归属（Schema 118）
 
@@ -212,7 +222,7 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 引导中的文字修改复用 `drama_productions.revision` 做页面级并发校验，并保留设定、单集和剧情段原有 revision 的异步结果保护。配置期替换正文在同一事务同步尚未启动的分集、章节引用和规划游标。图片状态不递增文字总版本；过期图片不能以旧结果覆盖新设定。引导完成只记录文字审阅通过并保留手动媒体生成，不把作品状态改成成片完成。
 
-从角色场景进入漫剧分镜仍使用 `guide_step=assets → story`，不增加模式阶段或新列。确认请求在同一制作版本 CAS 下仅接收模式页拥有的 `storyboard.generationMode/directorTemplate/targetShotCount`、`models.image/video`、`aspectRatio`、`videoResolution` 与 `videoContinuity`，其余设置从当前记录保留。真实模型能力、镜数和预算在保存前校验；确认默认模式不创建图片或视频任务。
+从角色场景进入漫剧分镜仍使用 `guide_step=assets → story`，不增加模式阶段或新列。确认请求在同一制作版本 CAS 下仅接收模式页拥有的 `storyboard.generationMode/directorTemplate/shotCountMode/targetShotCount`、`models.image/video`、`aspectRatio`、`videoResolution` 与 `videoContinuity`，其余设置从当前记录保留。真实模型能力、镜数和预算在保存前校验；确认默认模式不创建图片或视频任务。
 
 ## Agent 记忆文件列补齐（Schema 83）
 
@@ -388,7 +398,7 @@ Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_re
 | `drama_casts` | 全剧设定：角色（`kind=character`，含别名、外貌与声线 `voice_instructions`）、关键道具（`kind=prop`）和场景（`kind=scene`），当前参考图 `image_resource_id` 与状态 | 作品圣经建档；剧本里首次出现的人物、道具或地点即时建档，按标准名与别名归并；锁定后不再重新生成 |
 | `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、独立制作配置 `settings_json`（Schema 117）、本集资产归属 `asset_ids_json`（Schema 118）、阶段（待制作 `draft`，显式开工后 queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；内容修改递增 `revision`，调度写入以它为条件；配置保存只递增作品制作控制版本；提取资产归属合并不改变版本 |
 | `drama_shots` | 镜头脚本：剧情段 `segment_index` / `segment_title`、场景与场景设定 `scene_cast_id`、出场角色 `cast_ids_json`、关键道具 `prop_ids_json`、说话人、台词、动作、景别、运镜、转场 `transition`、时长、起幅画面 `image_prompt`、运动描述 `video_prompt`、原文出处 | 供段提示词及独立镜头媒体读取；独立产物保存于 `drama_shot_media`，不写回脚本列。修改使所在段提示词/视频及对应逐镜媒体来源过期 |
-| `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、`revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；结果按 `revision` 条件写入，过期结果作废；某段视频变化会让后续已生成的段过期（它们承接的是旧最后一帧） |
+| `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、文字版本 `revision` 与独立视频来源版本 `video_revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；文字结果按 `revision` 校验，视频结果同时校验文字与视频来源版本，旧付费产物保留历史但不覆盖当前结果。资产变化不使段稿过期；尾帧续接时某段视频变化仍会让承接旧尾帧的后续视频过期 |
 | `drama_takes` | 历史版本：设定参考图（`cast`）、独立视图（`cast_view`）、镜头图片/视频/音频（`shot_image/shot_video/shot_audio`）、剧情段视频（`video`，`owner_id` 为段 ID）与单集成片（`final`）；资产 AI 辅助使用其对应 kind | `(owner_id, kind)` 内递增 `version`；版本始终入库，当前采用与历史版本分开 |
 | `drama_jobs` | 调度队列：类型（bible/plan/cast_image/script/segment_prompt/segment_video/render）、目标、优先级、关联任务、重试次数、历次提交 `attempts_json`、错误、实际花费 | 任务在派发时才创建；`segment_prompt` / `segment_video` 的 `shot_id` 存放 `drama_segments.id` |
 
@@ -406,7 +416,7 @@ Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_re
 
 `settings_json` 另有以下可选键，不改表结构，旧作品缺省时按括号里的默认处理：`videoResolution`（剧情段视频分辨率，取自视频模型声明的档位；空为模型默认）、`bibleSkill` / `scriptSkill`（资产提取、分镜拆分的写作技能，格式同 `promptSkill`；空为内置规则）、`storyboard.performance` 与 `storyboard.cameraMotion`（1–10 整数，缺省或 0 按 5）、`assets.propResolution` / `assets.sceneResolution`（道具、场景参考图分辨率；`assets.resolution` 只用于角色参考图，旧作品的道具、场景改为按模型默认档位）、`models.bibleText` / `scriptText` / `promptText` / `characterImage` / `propImage` / `sceneImage`（按步骤或参考图类型单独指定的模型，空为沿用 `models.text` / `models.image`）。剧情段工作的 `payload_json` 增加 `maxChars`（撰写时的正文字符上限）与 `condensed`（本次已自动精简次数），只在调度内部使用。
 
-`settings_json.dramaType` 为可选 `comic/live_action/narration`（旧作品为空），配置确认后禁止改类型；仅持久化类型不代表自动按类型筛风格或切换供应商。`settings_json.storyboard.generationMode` 为可选 `reference_video/grid_image/smart_director/storyboard`（旧作品为空），`directorTemplate/targetShotCount` 复用现有导演规则，未知值拒绝；这些均为 JSON 设置，不增加 Schema 版本。
+`settings_json.dramaType` 为可选 `comic/live_action/narration`（旧作品为空），配置确认后禁止改类型；仅持久化类型不代表自动按类型筛风格或切换供应商。`settings_json.storyboard.generationMode` 为可选 `reference_video/grid_image/smart_director/storyboard`（旧作品为空），`directorTemplate` 复用现有导演规则，未知值拒绝。`storyboard.shotCountMode` 为 `smart/fixed`，缺省智能；`targetShotCount` 在智能模式下为参考值，0 表示按时长与节奏估算，实际镜数可增减；固定模式下必须为 1–240，并对模型结果做精确镜数校验。首次配置与各集独立快照保存同一结构，模式和数值作为一次选择合并，保留各集已独立修改的值；用户已有分镜不受目标镜数限制。这些均为 JSON 设置，不增加 Schema 版本。
 
 Schema 72 `drama_segment_production` 是历史迁移：从当时的逐镜流程迁到剧情段流程，先把镜头上已有的配音/首帧/视频资源归档为历史版本，再删除 `drama_shots` 的 `video_model_json`、`speaker_cast_id`、`frame_prompt_override`、`video_prompt_override`、`audio_*`、`frame_*`、`video_resource_id`、`video_status`、`approved`、`locked`、`error`，删除 `drama_casts.voice_key` 与 `drama_episodes.frames_approved`，新增 `drama_episodes.approved`、`drama_shots.prop_ids_json` 与 `drama_segments` 的视频列。存在旧逐镜数据时，未完成的集回到剧本阶段、作品暂停并提示重新改编，排队中的旧工作取消，不会自动重发收费任务。Schema 67–71 是同一功能的中间版本（剧情段字段、工作历次提交、手动放行、转场、剧情段表）；后续独立镜头媒体以 Schema 111 的新槽位合同实现。
 

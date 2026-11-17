@@ -64,3 +64,37 @@ func TestDramaInitialSettingsMergeKeepsModelChoicesAtomic(t *testing.T) {
 		})
 	}
 }
+
+func TestDramaInitialSettingsMergeKeepsShotCountChoiceAtomic(t *testing.T) {
+	for _, test := range []struct {
+		name                          string
+		previousMode, currentMode     string
+		nextMode, wantMode            string
+		previous, current, next, want int
+	}{
+		{name: "local smart estimate", previousMode: "fixed", currentMode: "smart", nextMode: "fixed", wantMode: "smart", previous: 27, current: 0, next: 29, want: 0},
+		{name: "local reference", previousMode: "smart", currentMode: "smart", nextMode: "fixed", wantMode: "smart", previous: 27, current: 17, next: 29, want: 17},
+		{name: "unchanged choice", previousMode: "smart", currentMode: "smart", nextMode: "fixed", wantMode: "fixed", previous: 27, current: 27, next: 29, want: 29},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previous, current, next := DramaSettings{}, DramaSettings{}, DramaSettings{}
+			previous.Storyboard.ShotCountMode, previous.Storyboard.TargetShotCount = test.previousMode, test.previous
+			current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount = test.currentMode, test.current
+			next.Storyboard.ShotCountMode, next.Storyboard.TargetShotCount = test.nextMode, test.next
+			for _, merge := range []struct {
+				name string
+				fn   func(DramaSettings, DramaSettings, DramaSettings) DramaSettings
+			}{
+				{name: "guide", fn: dramaGuideEpisodeInitialSettings},
+				{name: "draft", fn: mergeDramaInitialSettings},
+			} {
+				t.Run(merge.name, func(t *testing.T) {
+					got := merge.fn(current, previous, next)
+					if got.Storyboard.ShotCountMode != test.wantMode || got.Storyboard.TargetShotCount != test.want {
+						t.Fatalf("shot count mode and reference were mixed: %+v", got.Storyboard)
+					}
+				})
+			}
+		})
+	}
+}

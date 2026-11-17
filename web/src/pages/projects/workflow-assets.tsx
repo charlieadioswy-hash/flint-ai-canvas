@@ -187,7 +187,9 @@ function WorkflowAssetsSession({
     const extract = useMutation({
         mutationFn: async (input: { kind: DramaCastKind; expectedRevision: number; episodeId?: string; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
-            return extractDramaCast(input.ticket.projectId, { expectedRevision: input.expectedRevision, kind: input.kind, ...(input.episodeId ? { episodeIds: [input.episodeId] } : { allChapters: true }) });
+            const source = variant === "library" ? { allChapters: true } : input.episodeId && episodes.some((episode) => episode.id === input.episodeId) ? { episodeIds: [input.episodeId] } : null;
+            if (!source) throw new Error("请先选择有效剧集，再提取本集资产");
+            return extractDramaCast(input.ticket.projectId, { expectedRevision: input.expectedRevision, kind: input.kind, ...source });
         },
         onSuccess: async (result, input) => {
             if (!operation.isCurrent(input.ticket)) return;

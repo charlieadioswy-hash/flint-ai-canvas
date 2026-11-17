@@ -35,6 +35,10 @@ func TestDramaBiblePreservesDefinedCharacterAndExtractsOthers(t *testing.T) {
 	definition := dramaDefinedCharacter + "\n补充经历：" + strings.Repeat("秦子文带弟弟寻找物资。", 100) + "保留结尾原句。"
 	draft := createGuidedDrama(t, svc, DramaChapterInput{Title: "人物与第一集", Text: definition + "\n\n第一集\n秦子明穿着蓝色校服来到哥哥身边。"})
 	assets := confirmGuide(t, svc, draft)
+	// 本例直接采用固定 Bible 结果，不保留尚未派发的初次任务阻塞后面的真实编辑验证。
+	if err := svc.repo.CancelQueuedDramaJobs(draft.Project.ID, nil); err != nil {
+		t.Fatal(err)
+	}
 	row, err := svc.repo.DramaProduction(draft.Project.ID)
 	if err != nil {
 		t.Fatal(err)

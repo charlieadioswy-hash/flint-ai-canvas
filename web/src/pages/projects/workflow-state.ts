@@ -19,6 +19,7 @@ export function episodeWorkflowEntryStep(episode: Pick<DramaEpisodeRow, "shotCou
 }
 
 const STEP_INDEX = new Map(WORKFLOW_STEPS.map((step, index) => [step.key, index]));
+type WorkflowStepOptions = { manualPreview?: boolean; episodeId?: string };
 
 export function workflowStepTitle(step: WorkflowStep) {
     return WORKFLOW_STEPS[STEP_INDEX.get(step) ?? 0].title;
@@ -34,18 +35,22 @@ export function isLegacyDramaWorkflow(summary: DramaSummary) {
 }
 
 /**
- * 当前阶段允许浏览的步骤。configuring 只到风格配置；之后可回看前步，不能跳到未就绪阶段。
+ * 当前阶段允许浏览的步骤。configuring 只到风格配置；资产阶段允许回看当前集已有的分镜。
  * completed 与传统项目可到分镜；预览不作为恢复落点，但到达分镜后可手动进入。
  */
-export function allowedWorkflowSteps(summary: DramaSummary, options: { manualPreview?: boolean } = {}): WorkflowStep[] {
+export function allowedWorkflowSteps(summary: DramaSummary, options: WorkflowStepOptions = {}): WorkflowStep[] {
     const stage = guideStep(summary);
     const preview = options.manualPreview ? (["preview"] as const) : [];
     if (!stage || stage === "completed" || stage === "story") return ["source", "review", "style", "assets", "story", ...preview];
-    if (stage === "assets") return ["source", "review", "style", "assets"];
+    if (stage === "assets") {
+        const episode = options.episodeId ? summary.episodes?.find((item) => item.id === options.episodeId) : summary.episodes?.toSorted((left, right) => left.number - right.number)[0];
+        const existingStoryboard = Boolean(episode && (episode.shotCount > 0 || episode.stats?.segments > 0));
+        return ["source", "review", "style", "assets", ...(existingStoryboard ? (["story"] as const) : [])];
+    }
     return ["source", "review", "style"];
 }
 
-export function isWorkflowStepAllowed(summary: DramaSummary, step: WorkflowStep, options?: { manualPreview?: boolean }) {
+export function isWorkflowStepAllowed(summary: DramaSummary, step: WorkflowStep, options?: WorkflowStepOptions) {
     return allowedWorkflowSteps(summary, options).includes(step);
 }
 
@@ -58,8 +63,8 @@ export function defaultWorkflowStep(summary: DramaSummary): WorkflowStep {
 }
 
 /** 只接受当前阶段允许的步骤；地址栏里的未就绪步骤回到默认步骤。 */
-export function resolveWorkflowStep(summary: DramaSummary, requested?: string | null): WorkflowStep {
+export function resolveWorkflowStep(summary: DramaSummary, requested?: string | null, episodeId?: string): WorkflowStep {
     const step = WORKFLOW_STEPS.find((item) => item.key === requested)?.key;
-    if (step && isWorkflowStepAllowed(summary, step, { manualPreview: true })) return step;
+    if (step && isWorkflowStepAllowed(summary, step, { manualPreview: true, episodeId })) return step;
     return defaultWorkflowStep(summary);
 }

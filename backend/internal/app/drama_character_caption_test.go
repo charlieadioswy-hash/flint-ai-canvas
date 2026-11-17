@@ -73,6 +73,10 @@ func TestDramaBibleCharacterCaptionDoesNotOverwriteManualAsset(t *testing.T) {
 	svc, _ := newDramaTestService(t)
 	draft := createGuidedDrama(t, svc, DramaChapterInput{Title: "第一集", Text: dramaCaptionScript})
 	assets := confirmGuide(t, svc, draft)
+	// 本例直接采用固定 Bible 结果；撤销自动入队夹具后再测试人工编辑，保留真实文字任务门禁。
+	if err := svc.repo.CancelQueuedDramaJobs(draft.Project.ID, nil); err != nil {
+		t.Fatal(err)
+	}
 	manual, err := svc.CreateDramaCast("usr-drama", draft.Project.ID, CreateDramaCastRequest{
 		ExpectedRevision: &assets.Production.Revision, Kind: "character", Name: "陆承明",
 		Description: "用户确认的人物说明", Appearance: "用户确认的服装", VoiceInstructions: "用户确认的声线",

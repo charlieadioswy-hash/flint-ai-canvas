@@ -187,13 +187,16 @@ export function VideoResolutionField({ option, value, onChange, options }: { opt
     const fallback = option?.defaultVideoResolution || "";
     const supported = dramaVideoResolutionValue(option, value);
     const ignored = Boolean(value) && Boolean(option) && !supported;
+    const fallbackKey = videoResolutionComparisonKey(fallback);
+    const usesDefault = !value || ignored || (Boolean(supported) && videoResolutionComparisonKey(supported) === fallbackKey);
+    const explicitTiers = tiers.filter((tier) => videoResolutionComparisonKey(tier) !== fallbackKey);
     return (
         <div className="drama-step-field">
             <div className="drama-tabs drama-res-tabs" role="radiogroup" aria-label="视频分辨率">
-                <button type="button" role="radio" className="drama-tab" aria-checked={!value || ignored} onClick={() => onChange(undefined)}>
+                <button type="button" role="radio" className="drama-tab" aria-checked={usesDefault} onClick={() => onChange(undefined)}>
                     默认{fallback ? ` · ${formatVideoResolutionLabel(fallback)}` : ""}
                 </button>
-                {tiers.map((tier) => {
+                {explicitTiers.map((tier) => {
                     const actual = dramaVideoResolutionValue(option, tier);
                     const active = Boolean(value) && Boolean(supported) && videoResolutionComparisonKey(value) === videoResolutionComparisonKey(tier);
                     return (

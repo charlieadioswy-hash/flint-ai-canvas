@@ -118,7 +118,7 @@ func (r *Repository) CompleteDramaGuideEpisodes(projectID string) error {
 }
 
 func (r *Repository) UpdateDramaCastImageRevision(id string, revision int64, allowed []string, fields map[string]any) (bool, error) {
-	fields["updated_at"] = time.Now()
-	result := r.db.Model(&model.DramaCast{}).Where("id = ? AND revision = ? AND image_status IN ?", id, revision, allowed).Updates(fields)
-	return result.RowsAffected == 1, result.Error
+	return r.updateDramaCastMediaConditional(id, fields, func(db *gorm.DB) *gorm.DB {
+		return db.Where("revision = ? AND image_status IN ?", revision, allowed)
+	})
 }

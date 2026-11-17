@@ -176,7 +176,7 @@ func TestDramaLookUsesRenamedParentWithoutChangingManualPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	segments, _ := svc.repo.DramaSegments(episode.ID)
-	if len(segments) != 1 || segments[0].VideoPromptOverride != manual || segments[0].PromptStatus != model.DramaMediaStale || segments[0].VideoStatus != model.DramaMediaStale {
+	if len(segments) != 1 || segments[0].VideoPromptOverride != manual || segments[0].PromptStatus != model.DramaMediaReady || segments[0].VideoStatus != model.DramaMediaStale {
 		t.Fatalf("identity edit must preserve manual text while invalidating generated context: %+v", segments)
 	}
 	// Automatic prompt compilation also handles an old copied name in a caller's snapshot.

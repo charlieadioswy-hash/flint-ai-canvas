@@ -282,8 +282,12 @@ func ScriptPrompt(ctx ScriptContext) string {
 	default:
 		fmt.Fprintf(&b, "输出约 %d 个镜头：\n", shotTarget)
 	}
-	if settings.Storyboard.TargetShotCount > 0 && format != SourceStoryboard {
-		fmt.Fprintf(&b, "用户指定镜头总数：必须恰好输出 %d 镜，在此数量内完整保留情节与台词，不能省略内容凑数。\n", settings.Storyboard.TargetShotCount)
+	if format != SourceStoryboard {
+		if settings.Storyboard.HasFixedShotCount() {
+			fmt.Fprintf(&b, "用户指定镜头总数：必须恰好输出 %d 镜，在此数量内完整保留情节与台词，不能省略内容凑数。\n", settings.Storyboard.TargetShotCount)
+		} else {
+			b.WriteString("智能分镜：上述镜头数仅作参考，不是强制数量；以完整保留本集剧情、台词及动作连续性为优先，可根据内容增加或减少镜头，不为凑数删减情节、台词或新增内容。\n")
+		}
 	}
 	b.WriteString("以下是唯一的输出结构，所有镜头写入同一个 shots 数组，cast 与需要的 episode 是同一根对象内的字段。按本集原文填写完整最终稿，不复述示例，不先给部分镜头后再补一份，不在根对象闭合后追加其他 JSON 对象。\n")
 	b.WriteString(`{`)

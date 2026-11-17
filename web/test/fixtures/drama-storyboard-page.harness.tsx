@@ -121,6 +121,7 @@ const { WorkflowModeDialog } = await import("@/pages/projects/workflow-mode-dial
 afterAll(() => browser.happyDOM.abort());
 
 const settings = {
+    episodeSeconds: 60,
     aspectRatio: "16:9",
     videoResolution: "720p",
     models: { text: {}, image: { modelKey: "image" }, video: { modelKey: "video" } },
@@ -592,7 +593,7 @@ test("模式窗口的图片与视频配置自动生效，模式与镜头数量�
             view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label='分镜生成默认模式'] button")[3].click();
             await settle();
         });
-        await choose(view.host, "分镜数量方式", "custom");
+        await choose(view.host, "分镜数量方式", "fixed");
         await click(view.host, "选择分镜图片模型");
         await choose(view.host, "分镜视频与生图比例", "9:16");
         await choose(view.host, "分镜视频衔接", "parallel");
@@ -603,7 +604,47 @@ test("模式窗口的图片与视频配置自动生效，模式与镜头数量�
         expect(view.host.textContent).not.toContain("作品设置已有更新");
         await click(view.host, "确认并进入漫剧分镜");
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "storyboard", directorTemplate: "storyboard_detail", targetShotCount: 24 }, models: { image: { modelKey: "image-new" } }, aspectRatio: "9:16" });
+        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "storyboard", directorTemplate: "storyboard_detail", shotCountMode: "fixed", targetShotCount: 24 }, models: { image: { modelKey: "image-new" } }, aspectRatio: "9:16" });
+    } finally {
+        await view.close();
+    }
+});
+
+test("已有参考镜头数默认智能，切换固定再切回智能仍保留参考值", async () => {
+    const saved: DramaSettings[] = [];
+    const value = { ...summary, production: { ...summary.production, settings: { ...settings, storyboard: { ...settings.storyboard, targetShotCount: 27 } } } };
+    const view = await mount(<WorkflowModeDialog open summary={value} onCancel={() => undefined} onConfirm={(draft) => saved.push(draft)} />);
+    try {
+        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜数量方式']")!.value).toBe("smart");
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!.value).toBe("27");
+        expect(view.host.textContent).toContain("镜头数仅供参考");
+        await choose(view.host, "分镜数量方式", "fixed");
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='目标镜头数']")!.value).toBe("27");
+        await choose(view.host, "分镜数量方式", "smart");
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!.value).toBe("27");
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(saved[0].storyboard).toMatchObject({ shotCountMode: "smart", targetShotCount: 27 });
+    } finally {
+        await view.close();
+    }
+});
+
+test("智能参考数清空后自动估算，切到固定按当前时长和节奏填入", async () => {
+    const saved: DramaSettings[] = [];
+    const value = { ...summary, production: { ...summary.production, settings: { ...settings, episodeSeconds: 120, storyboard: { ...settings.storyboard, pacing: "relaxed" as const, targetShotCount: 18 } } } };
+    const view = await mount(<WorkflowModeDialog open summary={value} onCancel={() => undefined} onConfirm={(draft) => saved.push(draft)} />);
+    try {
+        await act(async () => {
+            const input = view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!;
+            input.value = "";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+        });
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!.placeholder).toBe("自动估算 27 镜");
+        await choose(view.host, "分镜数量方式", "fixed");
+        expect(view.host.querySelector<HTMLInputElement>("[aria-label='目标镜头数']")!.value).toBe("27");
+        await click(view.host, "确认并进入漫剧分镜");
+        expect(saved[0].storyboard).toMatchObject({ shotCountMode: "fixed", targetShotCount: 27 });
     } finally {
         await view.close();
     }

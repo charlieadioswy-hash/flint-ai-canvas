@@ -12,7 +12,16 @@ func (s StoryboardSettings) ValidateDirector() error {
 		return fmt.Errorf("不支持的分镜生成模式")
 	}
 	if s.TargetShotCount < 0 || s.TargetShotCount > MaxScriptShots {
-		return fmt.Errorf("自定义镜头数需为 1 到 %d，0 表示智能", MaxScriptShots)
+		return fmt.Errorf("镜头数需为 1 到 %d，0 表示自动估算", MaxScriptShots)
+	}
+	switch s.ShotCountMode {
+	case "", ShotCountSmart:
+	case ShotCountFixed:
+		if s.TargetShotCount == 0 {
+			return fmt.Errorf("固定镜头数需为 1 到 %d", MaxScriptShots)
+		}
+	default:
+		return fmt.Errorf("不支持的镜头数量模式")
 	}
 	switch s.DirectorTemplate {
 	case "", "smart_drama", "storyboard_detail":

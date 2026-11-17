@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"yingce/backend/internal/kernel"
@@ -885,9 +886,9 @@ func (r *Repository) UpdateDramaEpisodeUser(id string, fields map[string]any) er
 // UpdateDramaShotIf 只在槽位状态仍为 allowed 之一时写入，防止旧任务结果覆盖用户刚发起的重做。
 
 func (r *Repository) UpdateDramaCastIf(id string, allowed []string, fields map[string]any) (bool, error) {
-	fields["updated_at"] = time.Now()
-	result := r.db.Model(&model.DramaCast{}).Where("id = ? AND image_status IN ?", id, allowed).Updates(fields)
-	return result.RowsAffected == 1, result.Error
+	return r.updateDramaCastMediaConditional(id, fields, func(db *gorm.DB) *gorm.DB {
+		return db.Where("image_status IN ?", allowed)
+	})
 }
 
 // ApplyDramaScript 写入一集的新镜头；revision 不为 nil 时要求集版本未变。
@@ -940,6 +941,29 @@ func (r *Repository) ApplyDramaScript(episodeID string, revision *int64, fields 
 
 func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var cast model.DramaCast
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cast, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if name, ok := fields["name"].(string); ok && name != cast.Name && strings.TrimSpace(cast.Name) != "" {
+			aliasesJSON := cast.AliasesJSON
+			if raw, ok := fields["aliases_json"].(string); ok {
+				aliasesJSON = raw
+			}
+			var aliases []string
+			_ = json.Unmarshal([]byte(aliasesJSON), &aliases)
+			seen := map[string]bool{name: true}
+			merged := make([]string, 0, len(aliases)+1)
+			for _, alias := range append(aliases, cast.Name) {
+				alias = strings.TrimSpace(alias)
+				if alias != "" && !seen[alias] {
+					seen[alias] = true
+					merged = append(merged, alias)
+				}
+			}
+			raw, _ := json.Marshal(merged)
+			fields["aliases_json"] = string(raw)
+		}
 		fields["updated_at"] = time.Now()
 		fields["revision"] = gorm.Expr("revision + 1")
 		// 任何版本变更都会拒绝旧图片结果，待生成槽位也必须退出等待，避免永久显示运行中。
@@ -956,48 +980,139 @@ func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) err
 		if err := tx.Model(&model.DramaCast{}).Where("id = ?", id).Updates(fields).Error; err != nil {
 			return err
 		}
-		// Textual cast changes invalidate prompt inputs. Lock-only edits do not invalidate downstream prompts.
-		changed, contentChanged := false, false
-		for _, key := range []string{"name", "appearance", "description", "voice_instructions", "aliases_json"} {
-			if _, ok := fields[key]; ok {
+		// Asset definitions are attached when submitting video, rather than baked into segment drafts.
+		changed := false
+		for key, previous := range map[string]string{"name": cast.Name, "appearance": cast.Appearance, "description": cast.Description, "voice_instructions": cast.VoiceInstructions, "voice_profile_id": cast.VoiceProfileID, "voice_sample_resource_id": cast.VoiceSampleResourceID, "aliases_json": cast.AliasesJSON} {
+			if value, ok := fields[key]; ok && value != previous {
 				changed = true
-				if key != "name" && key != "aliases_json" {
-					contentChanged = true
-				}
 			}
 		}
-		if !changed {
+		if !changed && !dramaCastVideoImageChanged(cast, fields) {
 			return nil
 		}
-		var cast model.DramaCast
-		if err := tx.First(&cast, "id = ?", id).Error; err != nil {
-			return err
+		return invalidateDramaCastAssetVideos(tx, cast, changed)
+	})
+}
+
+func dramaCastVideoImageChanged(cast model.DramaCast, fields map[string]any) bool {
+	resourceID := cast.ImageResourceID
+	if value, ok := fields["image_resource_id"].(string); ok {
+		if value != resourceID {
+			return true
 		}
-		shots, err := (&Repository{db: tx}).DramaShotsReferencingCast(cast.ProjectID, id)
+		resourceID = value
+	}
+	return fields["image_status"] == model.DramaMediaReady && cast.ImageStatus != model.DramaMediaReady && resourceID != ""
+}
+
+func (r *Repository) updateDramaCastMediaConditional(id string, fields map[string]any, condition func(*gorm.DB) *gorm.DB) (bool, error) {
+	fields["updated_at"] = time.Now()
+	if _, imageResource := fields["image_resource_id"]; !imageResource && fields["image_status"] != model.DramaMediaReady {
+		result := condition(r.db.Model(&model.DramaCast{}).Where("id = ?", id)).Updates(fields)
+		return result.RowsAffected == 1, result.Error
+	}
+	applied := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var cast model.DramaCast
+		err := condition(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id)).First(&cast).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		seen := map[string]bool{}
-		for _, shot := range shots {
-			key := shot.EpisodeID + ":" + fmt.Sprint(shot.SegmentIndex)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			var seg model.DramaSegment
-			if err := tx.Where("episode_id = ? AND segment_index = ?", shot.EpisodeID, shot.SegmentIndex).First(&seg).Error; err != nil {
-				return err
-			}
-			segmentFields := map[string]any{"prompt_status": promptStatusAfterInputChange(seg.PromptStatus)}
-			if contentChanged {
-				segmentFields["video_prompt_override"] = ""
-			}
-			if err := invalidateDramaSegment(tx, seg, segmentFields, true); err != nil {
-				return err
-			}
+		result := condition(tx.Model(&model.DramaCast{}).Where("id = ?", id)).Updates(fields)
+		if result.Error != nil {
+			return result.Error
+		}
+		applied = result.RowsAffected == 1
+		if applied && dramaCastVideoImageChanged(cast, fields) {
+			return invalidateDramaCastAssetVideos(tx, cast, false)
 		}
 		return nil
 	})
+	return applied, err
+}
+
+func invalidateDramaCastAssetVideos(tx *gorm.DB, cast model.DramaCast, staleReady bool) error {
+	shots, err := (&Repository{db: tx}).DramaShotsReferencingCast(cast.ProjectID, cast.ID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, shot := range shots {
+		key := shot.EpisodeID + ":" + fmt.Sprint(shot.SegmentIndex)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var segment model.DramaSegment
+		if err := tx.Where("episode_id = ? AND segment_index = ?", shot.EpisodeID, shot.SegmentIndex).First(&segment).Error; err != nil {
+			return err
+		}
+		if _, err := invalidateDramaSegmentAssetVideo(tx, segment, staleReady); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Asset updates leave the segment draft and its revision intact, including in-flight writing.
+// Running video jobs remain active for billing and history; VideoRevision prevents stale adoption.
+func invalidateDramaSegmentAssetVideo(tx *gorm.DB, segment model.DramaSegment, staleReady bool) (bool, error) {
+	cascade, err := dramaSegmentVideoCascades(tx, segment.EpisodeID)
+	if err != nil {
+		return false, err
+	}
+	segments := tx.Model(&model.DramaSegment{}).Where("episode_id = ?", segment.EpisodeID)
+	if cascade {
+		segments = segments.Where("segment_index >= ?", segment.SegmentIndex)
+	} else {
+		segments = segments.Where("id = ?", segment.ID)
+	}
+	var affected []model.DramaSegment
+	if err := segments.Find(&affected).Error; err != nil {
+		return false, err
+	}
+	ids, marked := make([]string, 0, len(affected)), false
+	for _, current := range affected {
+		ids = append(ids, current.ID)
+		if current.VideoStatus == model.DramaMediaRunning || staleReady && (current.VideoStatus != "" || current.VideoResourceID != "") {
+			marked = true
+		}
+	}
+	staleStatuses := []string{model.DramaMediaRunning}
+	if staleReady {
+		staleStatuses = append(staleStatuses, model.DramaMediaReady)
+	}
+	if err := tx.Model(&model.DramaSegment{}).Where("id IN ?", ids).Updates(map[string]any{
+		"video_status":   gorm.Expr("CASE WHEN video_status IN ? THEN ? ELSE video_status END", staleStatuses, model.DramaMediaStale),
+		"video_revision": gorm.Expr("video_revision + 1"),
+		"updated_at":     time.Now(),
+	}).Error; err != nil {
+		return false, err
+	}
+	jobs := tx.Model(&model.DramaJob{}).Where("episode_id = ? AND status = ?", segment.EpisodeID, model.DramaJobQueued)
+	if marked {
+		jobs = jobs.Where("(kind = ? AND shot_id IN ?) OR kind = ?", model.DramaJobSegmentVideo, ids, model.DramaJobRender)
+	} else {
+		jobs = jobs.Where("kind = ? AND shot_id IN ?", model.DramaJobSegmentVideo, ids)
+	}
+	if err := jobs.Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error; err != nil {
+		return false, err
+	}
+	if !marked {
+		return false, nil
+	}
+	if err := tx.Model(&model.DramaEpisode{}).Where("id = ?", segment.EpisodeID).Updates(map[string]any{
+		"stage":       gorm.Expr("CASE WHEN stage IN ? THEN ? ELSE stage END", []string{model.DramaEpisodeRender, model.DramaEpisodeDone}, model.DramaEpisodeVideo),
+		"final_stale": true,
+		"revision":    gorm.Expr("revision + 1"),
+		"updated_at":  time.Now(),
+	}).Error; err != nil {
+		return false, err
+	}
+	return marked, nil
 }
 
 // promptStatusAfterInputChange 决定撰写素材变化后的提示词状态：写好的才标记过期、等用户确认重写；
@@ -1012,9 +1127,9 @@ func promptStatusAfterInputChange(current string) string {
 	return ""
 }
 func (r *Repository) UpdateDramaCastRevision(id string, revision int64, fields map[string]any) (bool, error) {
-	fields["updated_at"] = time.Now()
-	result := r.db.Model(&model.DramaCast{}).Where("id = ? AND revision = ?", id, revision).Updates(fields)
-	return result.RowsAffected > 0, result.Error
+	return r.updateDramaCastMediaConditional(id, fields, func(db *gorm.DB) *gorm.DB {
+		return db.Where("revision = ?", revision)
+	})
 }
 
 // UpdateDramaEpisodeMeta 修改不影响已生成内容的集字段（标题、素材类型），不递增版本，避免打断调度写入。
@@ -1130,19 +1245,8 @@ func (r *Repository) MarkDramaSegmentVideoStale(episodeID string, index int) (bo
 		if err := tx.Where("episode_id = ? AND segment_index = ?", episodeID, index).First(&segment).Error; err != nil {
 			return err
 		}
-		if segment.VideoStatus != model.DramaMediaReady && segment.VideoStatus != model.DramaMediaRunning {
-			return nil
-		}
-		fields := map[string]any{"video_status": model.DramaMediaStale, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}
-		// 版本递增会让撰写中的提示词结果作废，退回待撰写由调度重写。
-		if segment.PromptStatus == model.DramaMediaRunning {
-			fields["prompt_status"] = ""
-		}
-		if err := tx.Model(&model.DramaSegment{}).Where("id = ?", segment.ID).Updates(fields).Error; err != nil {
-			return err
-		}
-		marked = true
-		_, err := markLaterSegmentsStale(tx, segment.EpisodeID, segment.SegmentIndex)
+		var err error
+		marked, err = invalidateDramaSegmentAssetVideo(tx, segment, true)
 		return err
 	})
 	return marked, err
@@ -1214,10 +1318,60 @@ func (r *Repository) DeleteDramaCastLook(projectID, lookID string) error {
 
 func (r *Repository) DramaShotsReferencingCast(projectID string, castID string) ([]model.DramaShot, error) {
 	var shots []model.DramaShot
-	pattern := "%\"" + castID + "\"%"
-	segments := r.db.Model(&model.DramaSegment{}).Select("1").Where("drama_segments.episode_id = drama_shots.episode_id AND drama_segments.segment_index = drama_shots.segment_index AND (reference_cast_ids_json LIKE ? OR audio_cast_ids_json LIKE ?)", pattern, pattern)
-	err := r.db.Where("project_id = ? AND (scene_cast_id = ? OR cast_ids_json LIKE ? OR prop_ids_json LIKE ? OR look_cast_ids_json LIKE ? OR EXISTS (?))", projectID, castID, pattern, pattern, pattern, segments).Find(&shots).Error
-	return shots, err
+	var related []model.DramaCast
+	if err := r.db.Where("project_id = ? AND (id = ? OR parent_id = ?)", projectID, castID, castID).Find(&related).Error; err != nil {
+		return nil, err
+	}
+	ids, names := []string{castID}, map[string]bool{}
+	for _, cast := range related {
+		if cast.ID != castID {
+			ids = append(ids, cast.ID)
+		} else if cast.Kind == "character" && cast.ParentID == "" {
+			var aliases []string
+			_ = json.Unmarshal([]byte(cast.AliasesJSON), &aliases)
+			for _, name := range append(aliases, cast.Name) {
+				if key := dramaCastSpeakerKey(name); key != "" {
+					names[key] = true
+				}
+			}
+		}
+	}
+	references := r.db.Where("scene_cast_id = ?", castID)
+	for _, id := range ids {
+		pattern := "%\"" + id + "\"%"
+		segments := r.db.Model(&model.DramaSegment{}).Select("1").Where("drama_segments.episode_id = drama_shots.episode_id AND drama_segments.segment_index = drama_shots.segment_index AND (reference_cast_ids_json LIKE ? OR audio_cast_ids_json LIKE ?)", pattern, pattern)
+		references = references.Or("cast_ids_json LIKE ? OR prop_ids_json LIKE ? OR look_cast_ids_json LIKE ? OR EXISTS (?)", pattern, pattern, pattern, segments)
+	}
+	if err := r.db.Where("project_id = ?", projectID).Where(references).Find(&shots).Error; err != nil {
+		return nil, err
+	}
+	if len(names) > 0 {
+		var voiced []model.DramaShot
+		if err := r.db.Where("project_id = ? AND TRIM(dialogue) <> '' AND TRIM(speaker) <> ''", projectID).Find(&voiced).Error; err != nil {
+			return nil, err
+		}
+		seen := make(map[string]bool, len(shots))
+		for _, shot := range shots {
+			seen[shot.ID] = true
+		}
+		for _, shot := range voiced {
+			key := dramaCastSpeakerKey(shot.Speaker)
+			if key != "旁白" && key != "narrator" && key != "画外音" && names[key] && !seen[shot.ID] {
+				shots = append(shots, shot)
+			}
+		}
+	}
+	return shots, nil
+}
+
+func dramaCastSpeakerKey(value string) string {
+	var key strings.Builder
+	for _, char := range strings.ToLower(strings.TrimSpace(value)) {
+		if !unicode.IsSpace(char) && !unicode.IsPunct(char) {
+			key.WriteRune(char)
+		}
+	}
+	return key.String()
 }
 
 // DramaSegmentStat 是集列表进度使用的剧情段聚合计数；PromptSucceeded 排除提示词或视频失败的已就绪提示词；VideoGenerated 是持有视频的段（含已过期的旧视频）。
@@ -1270,18 +1424,22 @@ func (r *Repository) UpdateDramaSegmentRevision(id string, revision int64, field
 	return result.RowsAffected > 0, result.Error
 }
 
+func (r *Repository) UpdateDramaSegmentVideoRevision(id string, revision, videoRevision int64, fields map[string]any) (bool, error) {
+	fields["updated_at"] = time.Now()
+	result := r.db.Model(&model.DramaSegment{}).Where("id = ? AND revision = ? AND video_revision = ?", id, revision, videoRevision).Updates(fields)
+	return result.RowsAffected > 0, result.Error
+}
+
 // SetDramaSegmentTail 写入后台抽好的尾帧：只在段版本未变、段视频仍是抽取的那一条且尚无尾帧时生效，
 // 迟到的旧视频尾帧不会落到新视频上。
-func (r *Repository) SetDramaSegmentTail(id string, revision int64, videoResourceID string, tailResourceID string) (bool, error) {
+func (r *Repository) SetDramaSegmentTail(id string, revision, videoRevision int64, videoResourceID string, tailResourceID string) (bool, error) {
 	result := r.db.Model(&model.DramaSegment{}).
-		Where("id = ? AND revision = ? AND video_resource_id = ? AND tail_frame_resource_id = ''", id, revision, videoResourceID).
+		Where("id = ? AND revision = ? AND video_revision = ? AND video_resource_id = ? AND tail_frame_resource_id = ''", id, revision, videoRevision, videoResourceID).
 		Updates(map[string]any{"tail_frame_resource_id": tailResourceID, "updated_at": time.Now()})
 	return result.RowsAffected > 0, result.Error
 }
 
-// markLaterSegmentsStale returns whether later segments depend on the edited
-// segment. Independent videos keep their revisions and in-flight result slots.
-func markLaterSegmentsStale(tx *gorm.DB, episodeID string, index int) (bool, error) {
+func dramaSegmentVideoCascades(tx *gorm.DB, episodeID string) (bool, error) {
 	var episodeSettings struct {
 		SettingsJSON string
 	}
@@ -1301,6 +1459,16 @@ func markLaterSegmentsStale(tx *gorm.DB, episodeID string, index int) (bool, err
 	}
 	if settings.VideoContinuity == "parallel" {
 		return false, nil
+	}
+	return true, nil
+}
+
+// markLaterSegmentsStale returns whether later segments depend on the edited
+// segment. Independent videos keep their revisions and in-flight result slots.
+func markLaterSegmentsStale(tx *gorm.DB, episodeID string, index int) (bool, error) {
+	cascade, err := dramaSegmentVideoCascades(tx, episodeID)
+	if err != nil || !cascade {
+		return cascade, err
 	}
 	// Queued descendants remain requested, but receive a new revision and wait for the new tail.
 	// The new revision also voids running prompt jobs, so those segments go back to pending instead of staying "running".
@@ -1485,11 +1653,24 @@ func (r *Repository) retryDramaResultJobs(projectID string, jobIDs []string) err
 		}
 		// 不合格产物保留为失败历史，由业务槽位重新排队生成；可用产物的登记失败才重放原任务。
 		var candidates []model.DramaJob
-		if err := jobs().Where("task_id IN (?)", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Find(&candidates).Error; err != nil {
+		if err := jobs().Clauses(clause.Locking{Strength: "UPDATE"}).Where("task_id IN (?)", tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).Order("id").Find(&candidates).Error; err != nil {
 			return err
 		}
 		replayIDs := make([]string, 0, len(candidates))
 		for _, job := range candidates {
+			if job.Kind == model.DramaJobSegmentVideo {
+				var segment model.DramaSegment
+				err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND project_id = ? AND episode_id = ?", job.ShotID, job.ProjectID, job.EpisodeID).First(&segment).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if !dramaVideoJobMatchesSegment(job, segment) {
+					continue
+				}
+			}
 			if !job.ResultUnusable() {
 				replayIDs = append(replayIDs, job.ID)
 			}
@@ -1609,6 +1790,26 @@ func (r *Repository) RetryDramaEpisodeRender(projectID, episodeID string) (int, 
 func (r *Repository) ReopenDramaSegmentVideoJob(jobID, segmentID string) (bool, error) {
 	reopened := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var job model.DramaJob
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND shot_id = ? AND kind = ? AND status = ? AND task_id IN (?)", jobID, segmentID, model.DramaJobSegmentVideo, model.DramaJobFailed, tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).First(&job).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var current model.DramaSegment
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND project_id = ? AND episode_id = ? AND video_status = ?", segmentID, job.ProjectID, job.EpisodeID, model.DramaMediaFailed).First(&current).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !dramaVideoJobMatchesSegment(job, current) {
+			return nil
+		}
 		now := time.Now()
 		result := tx.Model(&model.DramaJob{}).
 			Where("id = ? AND shot_id = ? AND kind = ? AND status = ? AND task_id IN (?)", jobID, segmentID, model.DramaJobSegmentVideo, model.DramaJobFailed, tx.Model(&model.Task{}).Select("id").Where("status = ?", model.TaskStatusSucceeded)).
@@ -1616,7 +1817,7 @@ func (r *Repository) ReopenDramaSegmentVideoJob(jobID, segmentID string) (bool, 
 		if result.Error != nil || result.RowsAffected == 0 {
 			return result.Error
 		}
-		segment := tx.Model(&model.DramaSegment{}).Where("id = ? AND video_status = ?", segmentID, model.DramaMediaFailed).Updates(map[string]any{"video_status": model.DramaMediaRunning, "video_error": "", "updated_at": now})
+		segment := tx.Model(&model.DramaSegment{}).Where("id = ? AND revision = ? AND video_revision = ? AND video_status = ?", segmentID, current.Revision, current.VideoRevision, model.DramaMediaFailed).Updates(map[string]any{"video_status": model.DramaMediaRunning, "video_error": "", "updated_at": now})
 		if segment.Error != nil {
 			return segment.Error
 		}
@@ -1631,6 +1832,14 @@ func (r *Repository) ReopenDramaSegmentVideoJob(jobID, segmentID string) (bool, 
 		return false, nil
 	}
 	return reopened, err
+}
+
+func dramaVideoJobMatchesSegment(job model.DramaJob, segment model.DramaSegment) bool {
+	var payload struct {
+		Revision      int64 `json:"revision"`
+		VideoRevision int64 `json:"videoRevision"`
+	}
+	return json.Unmarshal([]byte(job.PayloadJSON), &payload) == nil && payload.Revision == segment.Revision && payload.VideoRevision == segment.VideoRevision
 }
 
 var errReopenRaced = errors.New("drama segment changed during reopen")

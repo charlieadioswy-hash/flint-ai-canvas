@@ -102,6 +102,7 @@ func TestShortDramaFeatureGateKeepsSharedLibraries(t *testing.T) {
 			for _, route := range []struct{ method, path, body string }{
 				{http.MethodPut, "/dramas/missing/guide/source", `{"expectedRevision":1,"chapters":[{"title":"第一章","text":"故事正文"}]}`},
 				{http.MethodPost, "/dramas/missing/guide/confirm", `{"expectedStep":"configuring","expectedRevision":1}`},
+				{http.MethodPost, "/dramas/missing/episodes/missing/storyboard/ensure", ""},
 				{http.MethodPost, "/dramas/missing/cast", `{"expectedRevision":1,"kind":"character","name":"角色"}`},
 				{http.MethodDelete, "/dramas/missing/cast/missing", `{"expectedRevision":1}`},
 			} {

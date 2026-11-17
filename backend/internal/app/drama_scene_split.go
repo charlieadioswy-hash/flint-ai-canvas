@@ -170,6 +170,7 @@ func (s *Service) prepareDramaSceneSplit(repo *repository.Repository, userID, pr
 	}
 	rules := settings.Storyboard
 	rules.DirectorTemplate, rules.TargetShotCount = req.DirectorTemplate, req.TargetShotCount
+	rules.ShotCountMode = production.ShotCountFixed
 	settings.Storyboard = rules
 	cast, err := repo.DramaCasts(projectID)
 	if err != nil {

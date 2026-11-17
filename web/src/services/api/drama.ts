@@ -291,6 +291,8 @@ export type DramaStoryboardSettings = {
     /** 运镜动感 1–10（1 静态、5 有动机的运镜、10 强烈冲击）。 */
     cameraMotion: number;
     directorTemplate?: "" | "smart_drama" | "storyboard_detail";
+    /** 智能模式的镜头数仅作参考；仅固定模式要求精确数量，缺省为智能。 */
+    shotCountMode?: "smart" | "fixed";
     targetShotCount?: number;
 };
 
@@ -832,7 +834,7 @@ export function saveDramaGuideSource(projectId: string, input: { expectedRevisio
     return http.put<DramaSummary>(`${base(projectId)}/guide/source`, input);
 }
 
-export function confirmDramaGuide(projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }) {
+export function confirmDramaGuide(projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings; episodeId?: string }) {
     return http.post<DramaSummary>(`${base(projectId)}/guide/confirm`, input);
 }
 
@@ -942,6 +944,10 @@ export function approveDramaEpisode(projectId: string, episodeId: string) {
 
 export function rescriptDramaEpisode(projectId: string, episodeId: string) {
     return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/rescript`);
+}
+
+export function ensureDramaEpisodeStoryboard(projectId: string, episodeId: string) {
+    return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/ensure`);
 }
 
 export type DramaShotPatch = Partial<Pick<DramaShot, "speaker" | "dialogue" | "action" | "shotSize" | "camera" | "imagePrompt" | "videoPrompt">> & { transition?: DramaTransition; durationSeconds?: number; expectedRevision?: number };

@@ -5,7 +5,7 @@ import { Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, rescriptDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
+import { ensureDramaEpisodeStoryboard, getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
@@ -74,6 +74,17 @@ function readyVideos(detail?: DramaEpisodeDetail) {
     return (detail?.segments || []).filter((segment) => segment.videoStatus === "ready" && segment.videoResourceId && (segment.videoSeconds || 0) > 0).length;
 }
 
+function needsStoryboard(detail: DramaEpisodeDetail) {
+    return (
+        !detail.shots.length &&
+        !detail.segments.length &&
+        !detail.episode.error &&
+        !["queued", "running", "failed"].includes(detail.scriptJob?.status || "") &&
+        ["draft", "done"].includes(detail.episode.stage) &&
+        !detail.jobs.some((job) => job.kind === "script" && (job.status === "queued" || job.status === "running"))
+    );
+}
+
 export function WorkflowProduction({ summary, step, onChanged, headerActions, embedded = false, busy = false, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
     const projectId = summary.project.id;
     const userId = useUserStore((state) => state.user?.id || "");
@@ -125,8 +136,8 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
     const media = useDramaMediaAction({ projectId, revision: summary.production.revision, refreshKey: JSON.stringify(summary.jobCounts), onChanged: refresh });
     const episodes = summary.episodes;
     const queryEpisodeId = search.get("episode");
-    const activeEpisodeId = selectedEpisodeId(routeEpisodeId, queryEpisodeId);
-    const all = search.get("scope") === "all" || !activeEpisodeId;
+    const activeEpisodeId = selectedEpisodeId(routeEpisodeId, queryEpisodeId) || (step === "story" ? episodes.toSorted((left, right) => left.number - right.number)[0]?.id || "" : "");
+    const all = step === "preview" && (search.get("scope") === "all" || !activeEpisodeId);
     const castSelectionOwner = JSON.stringify([userId, projectId, activeEpisodeId, all]);
     useEffect(() => setCastSelection(undefined), [castSelectionOwner]);
     const visibleEpisodes = all ? episodes : episodes.filter((episode) => episode.id === activeEpisodeId);
@@ -174,13 +185,14 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
     const guideStep = summary.guide?.step || summary.production.guideStep;
     const textConfirmed = guideStep === "completed" || !guideStep;
     const canStartStoryboard = textConfirmed || guideStep === "story";
+    const automaticallyStarted = useRef(new Set<string>());
     const storyboard = useMutation({
         mutationFn: ({ episodeId, ticket }: { episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
             if (!canStartStoryboard || busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy) throw new Error("请先完成当前操作再生成分镜");
-            const current = queries.find((query) => query.data?.episode.id === episodeId)?.data?.episode;
-            if (current?.stage !== "draft") throw new Error("本集状态已更新，请刷新后再操作");
-            return rescriptDramaEpisode(ticket.projectId, episodeId);
+            const current = queries.find((query) => query.data?.episode.id === episodeId);
+            if (!current?.data || current.isError || !needsStoryboard(current.data)) throw new Error("本集状态已更新，请刷新后再操作");
+            return ensureDramaEpisodeStoryboard(ticket.projectId, episodeId);
         },
         onSuccess: (detail, { episodeId, ticket }) => {
             if (!operation.isCurrent(ticket)) return;
@@ -192,6 +204,31 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
             if (operation.isCurrent(ticket)) message.error(error instanceof Error ? error.message : "分镜生成未能提交");
         },
     });
+    const activeEpisodeQuery = queries[episodes.findIndex((episode) => episode.id === activeEpisodeId)];
+    useEffect(() => {
+        if (step !== "story" || !userId || !canStartStoryboard || busy || storyboard.isPending || retry.isPending || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy) return;
+        if (!activeEpisodeQuery?.data || activeEpisodeQuery.isError || activeEpisodeQuery.isFetching || !needsStoryboard(activeEpisodeQuery.data)) return;
+        const key = JSON.stringify([selectionOwner, activeEpisodeId]);
+        if (automaticallyStarted.current.has(key)) return;
+        automaticallyStarted.current.add(key);
+        storyboard.mutate({ episodeId: activeEpisodeId, ticket: operation.capture() });
+    }, [
+        step,
+        userId,
+        canStartStoryboard,
+        busy,
+        storyboard.isPending,
+        storyboard.mutate,
+        retry.isPending,
+        media.state.submitting,
+        mediaEditingState,
+        activeEpisodeQuery?.data,
+        activeEpisodeQuery?.isError,
+        activeEpisodeQuery?.isFetching,
+        selectionOwner,
+        activeEpisodeId,
+        operation,
+    ]);
     const readiness = useQuery({
         queryKey: ["drama", projectId, "workflow-readiness", userId, summary.production.revision],
         queryFn: ({ signal }) => getDramaWorkflowReadiness(projectId, signal),
@@ -398,7 +435,7 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                     aria-label="选择集数"
                                     disabled={busy}
                                     value={all ? "all" : activeEpisodeId}
-                                    options={[{ value: "all", label: "全部集" }, ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title || "未命名"}` }))]}
+                                    options={[...(step === "preview" ? [{ value: "all", label: "全部集" }] : []), ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title || "未命名"}` }))]}
                                     onChange={(id: string) =>
                                         replaceQuery(id === "all" ? undefined : id, (next) => {
                                             next.delete("segment");
@@ -527,13 +564,16 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                           {detail && !detail.segments.length && !current.error && !scriptError ? (
                                               <div className="drama-workflow-production-empty">
                                                   <p>
-                                                      {current.stage === "draft"
-                                                          ? "本集待制作，点击生成分镜开始。"
+                                                      {needsStoryboard(detail)
+                                                          ? storyboard.isError && storyboard.variables?.episodeId === episode.id
+                                                              ? "本集分镜未能开始，可重新生成。"
+                                                              : "正在准备本集分镜…"
                                                           : detail.jobs.some((job) => job.status === "queued" || job.status === "running")
                                                             ? "正在准备本集剧本与分镜，完成后自动显示"
                                                             : "本集还没有分镜"}
                                                   </p>
-                                                  {current.stage === "draft" ? (
+                                                  {storyboard.isError && storyboard.variables?.episodeId === episode.id ? <p role="alert">{storyboard.error instanceof Error ? storyboard.error.message : "分镜生成未能提交"}</p> : null}
+                                                  {needsStoryboard(detail) ? (
                                                       <Button
                                                           type="primary"
                                                           loading={storyboard.isPending && storyboard.variables?.episodeId === episode.id}

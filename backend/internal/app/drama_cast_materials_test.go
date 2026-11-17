@@ -435,7 +435,7 @@ func TestDramaCastImportReplacementAndAtomicConflicts(t *testing.T) {
 		t.Fatalf("old take no longer protects its resource: %+v %v", refs, err)
 	}
 	segments, _ := svc.repo.DramaSegments(episode.ID)
-	if segments[0].VideoStatus != model.DramaMediaStale || segments[0].PromptStatus != model.DramaMediaStale {
+	if segments[0].VideoStatus != model.DramaMediaStale || segments[0].PromptStatus != model.DramaMediaReady {
 		t.Fatalf("manual references must be invalidated: %+v", segments)
 	}
 	bad := createDramaMaterial(t, svc, source, "prop", "坏道具")

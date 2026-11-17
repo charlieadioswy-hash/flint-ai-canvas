@@ -80,8 +80,8 @@ func TestDramaGuideBriefToWorkbenchWithoutMedia(t *testing.T) {
 	story := confirmGuide(t, svc, assets)
 	runDramaTicks(t, svc, projectID, 20)
 	story = guideSummary(t, svc, projectID)
-	if story.Guide == nil || !story.Guide.CanConfirm || fake.byKind["script"] != 2 || fake.byKind["segment_prompt"] == 0 {
-		t.Fatalf("all scripts and prompts must be ready for final confirmation: %+v %v", story.Guide, fake.byKind)
+	if story.Guide == nil || !story.Guide.CanConfirm || fake.byKind["script"] != 1 || fake.byKind["segment_prompt"] == 0 {
+		t.Fatalf("only the initial episode must be ready for final confirmation: %+v %v", story.Guide, fake.byKind)
 	}
 	completed := confirmGuide(t, svc, story)
 	runDramaTicks(t, svc, projectID, 4)
@@ -90,6 +90,12 @@ func TestDramaGuideBriefToWorkbenchWithoutMedia(t *testing.T) {
 	}
 	for _, episode := range completed.Episodes {
 		row, err := svc.repo.DramaEpisode(projectID, episode.ID)
+		if episode.Number != 1 {
+			if err != nil || row.Stage != model.DramaEpisodeDraft || row.Approved {
+				t.Fatalf("unstarted episodes must remain drafts: %+v %v", row, err)
+			}
+			continue
+		}
 		if err != nil || !row.Approved || row.MediaReleased || row.Stage != model.DramaEpisodeReview {
 			t.Fatalf("workbench entry must keep media held: %+v %v", row, err)
 		}

@@ -21,8 +21,9 @@ import (
 )
 
 type dramaRevisionPayload struct {
-	Revision int64 `json:"revision"`
-	Seconds  int   `json:"seconds,omitempty"`
+	Revision      int64 `json:"revision"`
+	VideoRevision int64 `json:"videoRevision,omitempty"`
+	Seconds       int   `json:"seconds,omitempty"`
 	// MaxChars 是段提示词正文的字符上限：视频模型提示词上限减去撰写时的参考图说明；0 表示不限。
 	MaxChars int `json:"maxChars,omitempty"`
 	// Condensed 是本次撰写已做的自动精简次数。
@@ -223,7 +224,7 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 			}
 			header = append(header, line)
 		} else {
-			header = append(header, reference.Label+"（"+reference.Name+"）未附图，请依据文字设定："+firstNonEmpty(cast.Appearance, cast.Description))
+			header = append(header, reference.Label+"（"+reference.Name+"）未附图，请依据下方最新文字设定")
 			ready := cast.ImageStatus == model.DramaMediaReady && cast.ImageResourceID != ""
 			switch {
 			case !ready:
@@ -240,9 +241,10 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 	if err != nil {
 		return request, nil, nil, err
 	}
+	header = append(header, dramaSegmentLatestAssets(draft, request, casts)...)
 	for _, reference := range request.AudioReferences {
 		if reference.Sent {
-			header = append(header, reference.Label+"："+reference.Name+"的声音（本段"+reference.Name+"的对白音色、语气与说话方式以此为准）")
+			header = append(header, reference.Label+"："+reference.Name+"的声音（固定音色以此为准；情绪、语速与音量按本段表演要求）")
 		}
 	}
 	if request.Warning == "" {
@@ -309,6 +311,8 @@ func (s *Service) dramaSegmentAudioReferences(request *DramaSegmentRequest, prof
 		switch {
 		case cast.VoiceSampleResourceID == "":
 			reference.Note = "角色尚未绑定声音样本"
+		case profile.video != nil && !request.GenerateAudio:
+			reference.Note = "本次生成无声视频，不发送声音样本"
 		case profile.MaxAudios <= 0:
 			reference.Note = "所选视频模型不支持参考音频，按声线描述生成"
 		case request.Operation == "image_to_video":
@@ -407,7 +411,8 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	job.PayloadJSON = encodeDramaRevision(segment.Revision)
+	initialPayload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, VideoRevision: segment.VideoRevision})
+	job.PayloadJSON = string(initialPayload)
 	if segment.VideoStatus != "" && segment.VideoStatus != model.DramaMediaQueued {
 		return nil, true, nil
 	}
@@ -432,7 +437,11 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 		return nil, false, err
 	}
 	casts := map[string]model.DramaCast{}
-	for _, cast := range r.casts {
+	latestCasts, err := r.s.repo.DramaCasts(r.project.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, cast := range latestCasts {
 		casts[cast.ID] = cast
 	}
 	var previous *model.DramaSegment
@@ -475,16 +484,9 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 		dramaVideoScreen{Size: request.Size, Resolution: request.Resolution}.apply(config)
 		prompt := strings.TrimSpace(request.Header + "\n\n" + firstNonEmpty(segment.VideoPromptOverride, segment.VideoPrompt))
 		if chars := utf8.RuneCountInString(prompt); request.PromptMaxChars > 0 && chars > request.PromptMaxChars {
-			if strings.TrimSpace(segment.VideoPromptOverride) != "" {
-				return nil, false, fmt.Errorf("手动改写的视频提示词加上开头的参考图说明共 %d 个字符，超过所选视频模型上限 %d 个字符；请精简改写内容，或恢复模型版本后按上限重新撰写", chars, request.PromptMaxChars)
-			}
-			// 模型撰写的版本放不下（换了上限更小的模型，或参考图说明变长）：退回待撰写，按当前上限重写后再提交，不截断。
-			if _, err := r.s.repo.UpdateDramaSegmentRevision(segment.ID, segment.Revision, map[string]any{"prompt_status": "", "prompt_error": ""}); err != nil {
-				return nil, false, err
-			}
-			return nil, true, nil
+			return nil, false, fmt.Errorf("段提示词与最新资产说明共 %d 个字符，超过所选视频模型上限 %d 个字符；请精简资产描述或提示词，或换用上限更大的模型。原段稿已保留，不会自动重写", chars, request.PromptMaxChars)
 		}
-		payload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, Seconds: request.Seconds})
+		payload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, VideoRevision: segment.VideoRevision, Seconds: request.Seconds})
 		job.PayloadJSON = string(payload)
 		input := map[string]any{"config": config, "referenceImages": refs, "metadata": metadata}
 		if len(audios) > 0 {
@@ -509,7 +511,7 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	current := err == nil && segment.Revision == payload.Revision
+	current := err == nil && segment.Revision == payload.Revision && segment.VideoRevision == payload.VideoRevision
 	// 抽尾帧在后台进行，本函数每轮都会重入：段视频已是这条结果时说明版本记录与入库已经做过。
 	if !current || segment.VideoResourceID != resourceID {
 		if err := r.s.repo.CreateDramaTake(&model.DramaTake{ID: newID(), ProjectID: r.project.ID, OwnerID: job.ShotID, Kind: "video", ResourceID: resourceID, TaskID: task.ID, Prompt: task.Prompt, DurationMs: int64(payload.Seconds) * 1000, CreatedAt: time.Now()}); err != nil {
@@ -522,8 +524,10 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 	if segment.VideoResourceID != resourceID {
 		// Persist the paid output before local post-processing. Retrying only reopens this task's result.
 		// 换成新视频时清掉旧尾帧，旧尾帧不能当作新视频的最后一帧。
-		if _, err := r.s.repo.UpdateDramaSegmentRevision(segment.ID, payload.Revision, map[string]any{"video_resource_id": resourceID, "video_seconds": payload.Seconds, "tail_frame_resource_id": ""}); err != nil {
+		if applied, err := r.s.repo.UpdateDramaSegmentVideoRevision(segment.ID, payload.Revision, payload.VideoRevision, map[string]any{"video_resource_id": resourceID, "video_seconds": payload.Seconds, "tail_frame_resource_id": ""}); err != nil {
 			return err
+		} else if !applied {
+			return nil
 		}
 		segment.VideoResourceID, segment.TailFrameResourceID = resourceID, ""
 	}
@@ -531,13 +535,13 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 		if err := r.s.takeDramaTailFailure(resourceID); err != nil {
 			return err
 		}
-		s, userID, segmentID, revision := r.s, r.project.UserID, segment.ID, payload.Revision
+		s, userID, segmentID, revision, videoRevision := r.s, r.project.UserID, segment.ID, payload.Revision, payload.VideoRevision
 		s.startDramaTail(resourceID, func() error {
 			tail, err := s.extractDramaTailFrame(userID, resourceID)
 			if err != nil {
 				return err
 			}
-			_, err = s.repo.SetDramaSegmentTail(segmentID, revision, resourceID, tail)
+			_, err = s.repo.SetDramaSegmentTail(segmentID, revision, videoRevision, resourceID, tail)
 			return err
 		})
 		// 后台执行器可能已同步跑完（测试），或上一轮已抽好：重读一次，抽完就在本轮收尾。
@@ -546,7 +550,7 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 		} else if err != nil {
 			return err
 		}
-		if segment.Revision != payload.Revision || segment.VideoResourceID != resourceID {
+		if segment.Revision != payload.Revision || segment.VideoRevision != payload.VideoRevision || segment.VideoResourceID != resourceID {
 			return nil
 		}
 		if segment.TailFrameResourceID == "" {
@@ -556,7 +560,7 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 			return &dramaSyncDeferred{err: &dramaPendingTail{resourceID: resourceID}}
 		}
 	}
-	_, err = r.s.repo.UpdateDramaSegmentRevision(segment.ID, payload.Revision, map[string]any{"video_status": model.DramaMediaReady, "video_error": ""})
+	_, err = r.s.repo.UpdateDramaSegmentVideoRevision(segment.ID, payload.Revision, payload.VideoRevision, map[string]any{"video_status": model.DramaMediaReady, "video_error": ""})
 	return err
 }
 
@@ -574,6 +578,11 @@ func dramaVideoJobReplayable(job model.DramaJob) bool {
 		}
 	}
 	return false
+}
+
+func dramaVideoJobReplayableForSegment(job model.DramaJob, segment model.DramaSegment) bool {
+	var payload dramaRevisionPayload
+	return dramaVideoJobReplayable(job) && json.Unmarshal([]byte(job.PayloadJSON), &payload) == nil && payload.Revision == segment.Revision && payload.VideoRevision == segment.VideoRevision
 }
 
 // ReprocessDramaSegmentVideo 重新处理一段已生成、但后处理失败的视频：只重放原任务结果，不重新生成、不重复扣费。
@@ -615,7 +624,7 @@ func (s *Service) ReprocessDramaSegmentVideo(userID, projectID, episodeID string
 			continue
 		}
 		// 只看最近一次视频作业：更早的结果已被后续生成取代，不能拿来重放。
-		if !dramaVideoJobReplayable(job) {
+		if !dramaVideoJobReplayableForSegment(job, *segment) {
 			break
 		}
 		reopened, err := s.repo.ReopenDramaSegmentVideoJob(job.ID, segment.ID)

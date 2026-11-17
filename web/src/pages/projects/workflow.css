@@ -290,6 +290,11 @@
     overflow-y: auto;
 }
 
+.drama-workflow-body:has(> .drama-source-page.is-review) {
+    overflow: hidden;
+    scrollbar-gutter: auto;
+}
+
 .drama-workflow-body.is-production {
     gap: 0;
     padding: 0;

@@ -204,6 +204,7 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 		b.WriteString(rules + "。")
 	}
 	b.WriteString("画面不出现字幕、水印和界面元素。\n")
+	b.WriteString("资产外观与固定声线以随请求提供的最新资产设定为准，本段只描述剧情状态与表演。\n")
 	for _, ref := range in.References {
 		if ref.Kind == "image" {
 			fmt.Fprintf(&b, "补充参考：%s（%s），结合本段剧情使用该图的视觉信息，不凭图片名称增加角色或台词。\n", ref.Name, ref.Label)
@@ -214,11 +215,7 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	scenes := []string{}
 	for _, ref := range in.References {
 		if ref.Kind == "scene" {
-			line := withRef(ref.Name)
-			if detail := strings.TrimSpace(ref.Detail); detail != "" {
-				line += "：" + detail
-			}
-			scenes = append(scenes, line)
+			scenes = append(scenes, withRef(ref.Name))
 		}
 	}
 	if len(scenes) == 0 {
@@ -247,37 +244,20 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	if len(characters) > 0 {
 		b.WriteString("\n【角色与参考图】\n")
 		for _, ref := range characters {
-			line := withRef(ref.Name)
-			if detail := strings.TrimSpace(ref.Detail); detail != "" {
-				line += "：" + detail
-			}
-			b.WriteString(line + "。外貌、服装与发型严格以参考图为准。\n")
+			b.WriteString(withRef(ref.Name) + "。\n")
 		}
 	}
 
 	if len(props) > 0 {
 		b.WriteString("\n【道具与参考图】\n")
 		for _, ref := range props {
-			line := withRef(ref.Name)
-			if detail := strings.TrimSpace(ref.Detail); detail != "" {
-				line += "：" + detail
-			}
-			b.WriteString(line + "。外形与材质以参考图为准。\n")
+			b.WriteString(withRef(ref.Name) + "。\n")
 		}
 	}
 
-	voices := []string{}
-	for _, ref := range characters {
-		if voice := strings.TrimSpace(ref.Voice); voice != "" {
-			voices = append(voices, ref.Name+"："+voice)
-		}
-	}
 	b.WriteString("\n【光源与声音】\n")
 	b.WriteString("光线方向与色温在本段内保持连续。")
 	b.WriteString("对白使用" + language + "，口型与台词同步，台词带情绪与语气，环境音随画面动作。\n")
-	for _, voice := range voices {
-		b.WriteString(voice + "\n")
-	}
 
 	var cursor int64
 	for index, shot := range in.Shots {

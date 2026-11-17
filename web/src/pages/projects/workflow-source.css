@@ -11,6 +11,31 @@
     margin-inline: auto;
 }
 
+.drama-source-page.is-review {
+    min-height: 0;
+    flex: 1;
+    overflow: hidden;
+}
+
+.drama-source-page.is-review > :not(.drama-source-review-layout) {
+    flex: none;
+}
+
+.drama-source-page.is-review > .drama-source-review-settings {
+    min-height: 0;
+    max-height: 45%;
+    flex: 0 1 auto;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+
+.drama-source-review-settings > .drama-source-scope {
+    position: sticky;
+    bottom: 0;
+    margin-top: var(--space-2);
+    background: var(--surface);
+}
+
 .drama-source-page.is-review > .drama-source-heading {
     padding-bottom: var(--space-5);
     border-bottom: 1px solid var(--border);
@@ -309,18 +334,21 @@
 
 .drama-source-review-layout {
     display: grid;
-    min-height: 540px;
+    min-height: 0;
+    flex: 1;
     grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     align-items: stretch;
-    gap: 0;
+    gap: var(--space-4);
+    overflow: hidden;
 }
 
 .drama-source-chapter-list {
     min-width: 0;
-    max-height: 720px;
+    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
     padding: var(--space-2) var(--space-3) var(--space-2) 0;
-    border-right: 1px solid var(--border);
 }
 
 .drama-source-chapter-list > p {
@@ -386,23 +414,44 @@
 .drama-source-editor {
     display: flex;
     min-width: 0;
+    min-height: 0;
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4) var(--space-6);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
 }
 
 .drama-source-edit-fields {
     display: flex;
+    min-height: 0;
     flex: 1;
     flex-direction: column;
     gap: var(--space-3);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+
+.drama-source-edit-fields > :not(textarea) {
+    flex: none;
 }
 
 .drama-source-edit-fields[hidden] {
     display: none;
 }
 
+.drama-source-reading {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+}
+
 .drama-source-reading h3 {
+    flex: none;
     margin: 0 0 var(--space-3);
     color: var(--text-primary);
     font-size: var(--fs-body);
@@ -410,7 +459,11 @@
     line-height: var(--lh-body);
 }
 
-.drama-source-reading > div {
+.drama-source-reading-content {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
     color: var(--text-primary);
     font-size: var(--fs-body);
     line-height: 1.95;
@@ -432,9 +485,11 @@
 }
 
 .drama-source-editor textarea {
-    min-height: 400px;
-    flex: 1;
-    resize: vertical;
+    min-height: 160px;
+    flex: 1 0 160px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    resize: none;
     font-size: var(--fs-body);
     line-height: var(--lh-body);
 }
@@ -678,6 +733,8 @@
 
 .drama-source-upload-zone:focus-visible,
 .drama-source-format-options summary:focus-visible,
+.drama-source-review-settings:focus-visible,
+.drama-source-reading-content:focus-visible,
 .drama-source-chapter-item > button:focus-visible,
 .drama-source-page input[type="checkbox"]:focus-visible,
 .drama-source-ratio-option:focus-within,
@@ -705,6 +762,10 @@
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .drama-source-review-layout {
+        grid-template-rows: minmax(0, min(20dvh, 160px)) minmax(0, 1fr);
+    }
+
     .drama-source-heading.is-upload {
         padding-block: var(--space-2);
     }
@@ -715,14 +776,8 @@
     }
 
     .drama-source-chapter-list {
-        max-height: 240px;
         padding-right: 0;
-        border-right: 0;
         border-bottom: 1px solid var(--border);
-    }
-
-    .drama-source-editor textarea {
-        min-height: 320px;
     }
 
     .drama-source-type-cards {

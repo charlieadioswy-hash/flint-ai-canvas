@@ -61,7 +61,9 @@ func updateDramaInitialValue[T comparable](current *T, previous, next T) {
 func dramaGuideEpisodeInitialSettings(current, previous, next DramaSettings) DramaSettings {
 	updateDramaInitialValue(&current.Storyboard.GenerationMode, previous.Storyboard.GenerationMode, next.Storyboard.GenerationMode)
 	updateDramaInitialValue(&current.Storyboard.DirectorTemplate, previous.Storyboard.DirectorTemplate, next.Storyboard.DirectorTemplate)
-	updateDramaInitialValue(&current.Storyboard.TargetShotCount, previous.Storyboard.TargetShotCount, next.Storyboard.TargetShotCount)
+	if current.Storyboard.ShotCountMode == previous.Storyboard.ShotCountMode && current.Storyboard.TargetShotCount == previous.Storyboard.TargetShotCount {
+		current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount = next.Storyboard.ShotCountMode, next.Storyboard.TargetShotCount
+	}
 	updateDramaInitialValue(&current.Models.Image, previous.Models.Image, next.Models.Image)
 	updateDramaInitialValue(&current.Models.Video, previous.Models.Video, next.Models.Video)
 	updateDramaInitialValue(&current.AspectRatio, previous.AspectRatio, next.AspectRatio)
@@ -72,6 +74,8 @@ func dramaGuideEpisodeInitialSettings(current, previous, next DramaSettings) Dra
 
 // 正式开工前的配置定稿按字段三方合并，保留用户已经修改过的本集值。
 func mergeDramaInitialSettings(current, previous, next DramaSettings) DramaSettings {
+	shotCountMode, targetShotCount := current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount
+	keepShotCount := shotCountMode != previous.Storyboard.ShotCountMode || targetShotCount != previous.Storyboard.TargetShotCount
 	var merge func(reflect.Value, reflect.Value, reflect.Value)
 	merge = func(target, old, replacement reflect.Value) {
 		// 渠道、型号与展示信息组成一次模型选择，不能分别从本集和默认值拼接。
@@ -86,6 +90,10 @@ func mergeDramaInitialSettings(current, previous, next DramaSettings) DramaSetti
 		}
 	}
 	merge(reflect.ValueOf(&current).Elem(), reflect.ValueOf(previous), reflect.ValueOf(next))
+	// 镜数模式与参考值组成一次选择，避免把本集的智能估算与新默认的固定模式拼接。
+	if keepShotCount {
+		current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount = shotCountMode, targetShotCount
+	}
 	return current
 }
 

@@ -143,14 +143,12 @@ func TestDramaGuideSourceSelectionSwitchesFormatWithoutLosingChapters(t *testing
 		t.Fatalf("configuration confirmation lost catalog episodes: %+v", confirmed.Episodes)
 	}
 	runDramaTicks(t, svc, projectID, 2)
-	completeSourceRead := false
-	for _, request := range fake.requests {
-		if strings.Contains(request.Prompt, "甲原文") && strings.Contains(request.Prompt, "乙原文") && strings.Contains(request.Prompt, "丙原文") {
-			completeSourceRead = true
-		}
+	if len(fake.requests) != 1 || fake.byKind["bible"] != 1 {
+		t.Fatalf("configuration confirmation must enqueue one initial extraction: %+v", fake.byKind)
 	}
-	if !completeSourceRead {
-		t.Fatal("asset extraction must read all catalog source after explicit confirmation")
+	prompt := fake.requests[0].Prompt
+	if !strings.Contains(prompt, "甲原文") || strings.Contains(prompt, "乙原文") || strings.Contains(prompt, "丙原文") {
+		t.Fatal("initial extraction must read only the default selected episode while keeping the full catalog")
 	}
 }
 

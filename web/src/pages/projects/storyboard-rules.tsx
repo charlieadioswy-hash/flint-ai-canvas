@@ -309,28 +309,25 @@ export function StoryboardRules({
             <div className="drama-sbrules-row">
                 <span className="drama-sbrules-label">镜头数量</span>
                 <div className="drama-sbrules-segment">
-                    <Segmented
+                    <Segmented<"smart" | "fixed">
                         label="镜头数量"
-                        value={rules.targetShotCount ? "custom" : "auto"}
+                        value={rules.shotCountMode || "smart"}
                         options={[
-                            { value: "auto", label: "智能" },
-                            { value: "custom", label: "自定义" },
+                            { value: "smart", label: "智能" },
+                            { value: "fixed", label: "固定" },
                         ]}
-                        onChange={(value) => set({ targetShotCount: value === "auto" ? 0 : shotTarget(rules, episodeSeconds) })}
+                        onChange={(shotCountMode) => set({ shotCountMode, targetShotCount: shotCountMode === "fixed" ? shotTarget(rules, episodeSeconds) : rules.targetShotCount })}
                     />
-                    {rules.targetShotCount ? (
-                        <InputNumber
-                            aria-label="目标镜头数"
-                            min={1}
-                            max={240}
-                            precision={0}
-                            value={rules.targetShotCount}
-                            onChange={(value) => {
-                                if (typeof value === "number") set({ targetShotCount: value });
-                            }}
-                        />
-                    ) : null}
-                    <span className="drama-sbrules-hint">自定义约束新生成的镜头数量；导入已有分镜保留原镜数，已有成果不自动重写。</span>
+                    <InputNumber
+                        aria-label={rules.shotCountMode === "fixed" ? "目标镜头数" : "参考镜头数"}
+                        min={rules.shotCountMode === "fixed" ? 1 : 0}
+                        max={240}
+                        precision={0}
+                        placeholder={`自动估算 ${shotTarget({ ...rules, targetShotCount: 0 }, episodeSeconds)} 镜`}
+                        value={rules.targetShotCount || undefined}
+                        onChange={(value) => set({ targetShotCount: typeof value === "number" ? value : rules.shotCountMode === "fixed" ? 1 : 0 })}
+                    />
+                    <span className="drama-sbrules-hint">{rules.shotCountMode === "fixed" ? "固定模式要求生成指定数量；导入已有分镜保留原镜数。" : "镜头数仅供参考，按剧情和台词完整拆分；留空或填 0 自动估算。"}</span>
                 </div>
             </div>
             {onEpisodeSecondsChange ? (

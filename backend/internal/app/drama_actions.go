@@ -174,26 +174,34 @@ func (s *Service) SetDramaRunning(userID string, projectID string, running bool)
 	return s.DramaSummary(userID, projectID)
 }
 
-// resumeDrama 校验模型与预算后把制作切回运行；“继续制作”和所有显式生成请求共用这一入口。
-func (s *Service) resumeDrama(productionRow *model.DramaProduction) error {
+func (s *Service) prepareDramaResume(productionRow *model.DramaProduction) (DramaSettings, map[string]any, error) {
 	settings := parseDramaSettings(productionRow.SettingsJSON)
 	models, err := s.resolveDramaModels(productionRow.UserID, settings)
 	if err != nil {
-		return err
+		return settings, nil, err
 	}
 	if missing := missingDramaCapabilities(models); len(missing) > 0 {
-		return BadAuthRequest("还没有可用的" + strings.Join(missing, "、") + "模型")
+		return settings, nil, BadAuthRequest("还没有可用的" + strings.Join(missing, "、") + "模型")
 	}
 	if exhausted, err := s.dramaBudgetExhausted(productionRow); err != nil {
-		return err
+		return settings, nil, err
 	} else if exhausted {
-		return BadAuthRequest("已达到预算上限（含画布精修花费），请先提高预算")
+		return settings, nil, BadAuthRequest("已达到预算上限（含画布精修花费），请先提高预算")
 	}
 	settings.Models = models
 	// 开工后草稿表单不再使用，清掉避免长期保存第二份原文。
 	fields := map[string]any{"status": model.DramaStatusRunning, "pause_reason": "", "settings_json": encodeDramaSettings(settings), "draft_json": ""}
 	if productionRow.Status == model.DramaStatusCompleted {
 		fields["stage"] = model.DramaStageProduce
+	}
+	return settings, fields, nil
+}
+
+// resumeDrama 校验模型与预算后把制作切回运行；“继续制作”和所有显式生成请求共用这一入口。
+func (s *Service) resumeDrama(productionRow *model.DramaProduction) error {
+	settings, fields, err := s.prepareDramaResume(productionRow)
+	if err != nil {
+		return err
 	}
 	if err := s.repo.Transaction(func(tx *repository.Repository) error {
 		current, err := tx.DramaProductionForUpdate(productionRow.ProjectID)
@@ -337,7 +345,16 @@ func (s *Service) ApproveDramaEpisode(userID, projectID, episodeID string) (Dram
 
 // RescriptDramaEpisode 重新改编一集；旧镜头的产物版本保留在版本库中。
 func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeID string) (DramaEpisodeDetail, error) {
-	project, productionRow, err := s.dramaForUser(userID, projectID)
+	project, _, err := s.dramaForUser(userID, projectID)
+	if err != nil {
+		return DramaEpisodeDetail{}, err
+	}
+	release, err := s.lockDramaSchedule(projectID)
+	if err != nil {
+		return DramaEpisodeDetail{}, err
+	}
+	defer release()
+	productionRow, err := s.repo.DramaProduction(projectID)
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
@@ -348,49 +365,45 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 	if err != nil {
 		return DramaEpisodeDetail{}, err
 	}
-	fields := map[string]any{"stage": model.DramaEpisodeScript, "shot_count": 0, "approved": false, "error": ""}
-	if episode.FinalResourceID != "" {
-		fields["final_stale"] = true
+	var resumeFields map[string]any
+	if productionRow.Status == model.DramaStatusPaused || productionRow.Status == model.DramaStatusCompleted {
+		_, resumeFields, err = s.prepareDramaResume(productionRow)
+		if err != nil {
+			return DramaEpisodeDetail{}, err
+		}
 	}
 	var expected *int64
 	if dramaGuideActive(productionRow) {
 		expected = &productionRow.Revision
 	}
 	if err := s.withDramaGuideEdit(projectID, expected, false, func(tx *repository.Repository) error {
+		currentProduction, err := tx.DramaProductionForUpdate(projectID)
+		if err != nil {
+			return err
+		}
+		if currentProduction.Revision != productionRow.Revision || currentProduction.Status != productionRow.Status || currentProduction.SettingsJSON != productionRow.SettingsJSON || currentProduction.GuideStep != productionRow.GuideStep || currentProduction.BudgetMicrocredits != productionRow.BudgetMicrocredits {
+			return repository.ErrDramaGuideChanged
+		}
 		current, err := tx.DramaEpisode(project.ID, episode.ID)
 		if err != nil {
 			return err
 		}
 		if current.Stage == model.DramaEpisodeDraft {
-			chapters, err := tx.DramaChaptersByIDs(project.ID, decodeStringList(current.ChapterIDsJSON))
-			if err != nil {
+			if err := validateDramaEpisodeStoryboardSource(tx, project.ID, current); err != nil {
 				return err
 			}
-			if len(chapters) == 0 {
-				return BadAuthRequest("本集没有来源正文，请先补充原文")
-			}
-			sourceRunes := 0
-			for _, chapter := range chapters {
-				if chapter.WordCount > production.ScriptSourceChapterRunes {
-					return BadAuthRequest(fmt.Sprintf("第 %d 章原文 %d 字，单章不超过 %d 字，请先拆分原文", chapter.Position+1, chapter.WordCount, production.ScriptSourceChapterRunes))
-				}
-				sourceRunes += chapter.WordCount
-			}
-			if sourceRunes > dramaEpisodeSourceRunes {
-				return BadAuthRequest(fmt.Sprintf("本集原文合计 %d 字，每集原文不超过 %d 字，请先拆分原文", sourceRunes, dramaEpisodeSourceRunes))
-			}
 		}
-		if err := tx.CancelQueuedDramaJobs(project.ID, func(db *gorm.DB) *gorm.DB { return db.Where("episode_id = ?", episode.ID) }); err != nil {
+		if err := resetDramaEpisodeStoryboard(tx, current); err != nil {
 			return err
 		}
-		_, err = tx.ApplyDramaScript(episode.ID, nil, fields, nil)
-		return err
+		if resumeFields != nil {
+			return tx.UpdateDramaProduction(projectID, resumeFields)
+		}
+		return nil
 	}); err != nil {
 		return DramaEpisodeDetail{}, err
 	}
-	if err := s.requestDramaWork(productionRow); err != nil {
-		return DramaEpisodeDetail{}, err
-	}
+	s.wakeDramaScheduler()
 	return s.DramaEpisodeDetail(userID, projectID, episodeID)
 }
 

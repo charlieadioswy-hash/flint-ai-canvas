@@ -12,7 +12,19 @@ import { dramaDrawingConfiguration } from "@/lib/drama/drawing-configuration";
 import { applyDramaGenerationConfiguration, dramaGenerationConfiguration } from "@/lib/drama/generation-configuration";
 import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import { ApiError } from "@/services/api/request";
-import { confirmDramaGuide, getDramaEpisodeStyle, listDramaJobs, retryDramaProjectText, updateDramaEpisodeStyle, updateDramaSettings, updateDramaWorkflowStyle, type DramaGuideStep, type DramaSettings, type DramaSummary } from "@/services/api/drama";
+import {
+    confirmDramaGuide,
+    getDramaEpisodeStyle,
+    listDramaJobs,
+    rescriptDramaEpisode,
+    retryDramaProjectText,
+    updateDramaEpisodeStyle,
+    updateDramaSettings,
+    updateDramaWorkflowStyle,
+    type DramaGuideStep,
+    type DramaSettings,
+    type DramaSummary,
+} from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaProjectTopbar } from "./studio/project-topbar";
@@ -109,12 +121,13 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const managing = management !== null || Boolean(summary && summary.episodes.length > 0 && stage !== "configuring" && !summary.production.hasDraftForm && !routeEpisodeId && !searchParams.has("step") && !searchParams.has("episode"));
     const managementTab = ["script", "style", "assets", "episodes"].includes(management || "") ? management : "episodes";
     const episodesView = managing && managementTab === "episodes";
-    const resolvedStep = summary ? resolveWorkflowStep(summary, requested) : "review";
+    const selectedEpisodeId = routeEpisodeId || searchParams.get("episode") || summary?.episodes.toSorted((left, right) => left.number - right.number)[0]?.id;
+    const resolvedStep = summary ? resolveWorkflowStep(summary, requested, selectedEpisodeId) : "review";
     const active = managing ? (managementTab === "script" ? "review" : managementTab === "style" ? "style" : managementTab === "assets" ? "assets" : "story") : routeEpisodeId && resolvedStep === "source" ? "review" : resolvedStep;
     const steps = routeEpisodeId ? EPISODE_WORKFLOW_STEPS : WORKFLOW_STEPS;
 
     const revision = summary?.production.revision || 0;
-    const episodeStyleId = managing ? undefined : routeEpisodeId || searchParams.get("episode") || undefined;
+    const episodeStyleId = managing || stage === "configuring" ? undefined : routeEpisodeId || searchParams.get("episode") || (["assets", "story", "preview"].includes(active) ? selectedEpisodeId : undefined);
     const initialConfiguration = stage === "configuring" && !episodeStyleId;
     const episodeStyleKey = ["drama-episode-style", userId, projectId, episodeStyleId, revision];
     const episodeStyleQuery = useQuery({ queryKey: episodeStyleKey, queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeStyleId!, signal), enabled: Boolean(summary && episodeStyleId), placeholderData: keepPreviousData });
@@ -129,12 +142,12 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const generationDirty = Boolean(settingsDraft && generationKey !== JSON.stringify(dramaGenerationConfiguration(settingsDraft.baseline)));
     const otherSettingsDirty = Boolean(settingsDraft && !sameSettings(settingsDraft.value, applyDramaGenerationConfiguration(settingsDraft.baseline, settingsDraft.value)));
     const confirmedNavigation = useRef<string | undefined>(undefined);
-    const confirmedMediaNavigation = useRef<{ pathname: string; search: string } | undefined>(undefined);
+    const confirmedPathNavigation = useRef<{ pathname: string; search: string } | undefined>(undefined);
     const blocker = useBlocker(({ currentLocation, nextLocation }) => {
-        const mediaNavigation = confirmedMediaNavigation.current;
-        if (mediaNavigation) {
-            confirmedMediaNavigation.current = undefined;
-            if (mediaNavigation.pathname === nextLocation.pathname && mediaNavigation.search === nextLocation.search) return false;
+        const pathNavigation = confirmedPathNavigation.current;
+        if (pathNavigation) {
+            confirmedPathNavigation.current = undefined;
+            if (pathNavigation.pathname === nextLocation.pathname && pathNavigation.search === nextLocation.search) return false;
         }
         if (currentLocation.pathname === nextLocation.pathname && confirmedNavigation.current === nextLocation.search) {
             confirmedNavigation.current = undefined;
@@ -181,23 +194,25 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
         void castQuery.refetch();
     };
     const openStep = (step: WorkflowStep) => {
-        if (confirm.isPending || saveStyle.isPending) return;
+        if (workflowBusy) return;
         if (managing) {
             openManagement(step === "review" ? "script" : step === "style" ? "style" : step === "assets" ? "assets" : "episodes");
             return;
         }
-        if (!summary || !isWorkflowStepAllowed(summary, step, { manualPreview: true })) return;
+        if (!summary || !isWorkflowStepAllowed(summary, step, { manualPreview: true, episodeId: selectedEpisodeId })) return;
         if (sourceState.dirty || (sourceState.busy && !sourceEditorState.automatic) || (otherSettingsDirty && !initialConfiguration)) {
             message.info("请先保存或放弃当前修改，再切换步骤");
             return;
         }
         const next = new URLSearchParams(searchParams);
         next.delete("manage");
+        if (!routeEpisodeId && selectedEpisodeId && stage !== "configuring") next.set("episode", selectedEpisodeId);
+        if (step === "story") next.delete("scope");
         next.set("step", step);
         setSearchParams(next, { replace: true });
     };
     const openManagement = (tab: string) => {
-        if (confirm.isPending || saveStyle.isPending) return;
+        if (workflowBusy) return;
         const next = new URLSearchParams(searchParams);
         for (const key of ["step", "episode", "segment", "shot", "media", "editor", "scope", "status"]) next.delete(key);
         next.set("manage", tab);
@@ -206,25 +221,45 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     };
 
     const confirm = useMutation({
-        mutationFn: async ({ expectedStep, ticket, modeSettings }: { expectedStep: DramaGuideStep; ticket: ReturnType<typeof operation.capture>; modeSettings?: DramaSettings }) => {
+        mutationFn: async ({ expectedStep, ticket, modeSettings, episodeId }: { expectedStep: DramaGuideStep; ticket: ReturnType<typeof operation.capture>; modeSettings?: DramaSettings; episodeId?: string; episodeNumber?: number }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或登录状态已变化，请重新操作");
             if (!summary || !settings) throw new Error("作品还没加载完成");
             if (sourceState.dirty || sourceState.busy) throw new Error("请先保存或放弃当前修改");
             if (settingsDirty && expectedStep !== "configuring") throw new Error("请先保存或放弃风格调整");
             if (settingsDraft && settingsDraft.revision !== summary.production.revision) throw new Error("配置已有更新，请重新载入后再确认");
-            return confirmDramaGuide(projectId, { expectedStep, expectedRevision: summary.production.revision, ...(expectedStep === "configuring" ? { settings } : modeSettings ? { settings: modeSettings } : {}) });
+            return confirmDramaGuide(projectId, {
+                expectedStep,
+                expectedRevision: summary.production.revision,
+                ...((expectedStep === "configuring" || expectedStep === "assets") && episodeId ? { episodeId } : {}),
+                ...(expectedStep === "configuring" ? { settings } : modeSettings ? { settings: modeSettings } : {}),
+            });
         },
-        onSuccess: async (next, { ticket }) => {
+        onSuccess: async (next, { ticket, expectedStep, episodeId, episodeNumber }) => {
             if (!operation.isCurrent(ticket)) return;
             setSettingsDraft(null);
             setModeOpen(false);
             queryClient.setQueryData(dramaKeys.summary(projectId), next);
             const params = new URLSearchParams(searchParams);
             params.delete("manage");
+            let confirmedEpisodeId = episodeId;
+            if (expectedStep === "configuring") {
+                confirmedEpisodeId = (episodeNumber === undefined ? next.episodes.toSorted((left, right) => left.number - right.number)[0] : next.episodes.find((episode) => episode.number === episodeNumber))?.id;
+            }
+            if (expectedStep === "configuring" || expectedStep === "assets") {
+                for (const key of ["scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
+                if (!routeEpisodeId && confirmedEpisodeId) params.set("episode", confirmedEpisodeId);
+            }
             params.set("step", resolveWorkflowStep(next));
             // 只放行服务端确认成功后的这一次内部推进，编辑/确认期间的离开保护继续生效。
-            confirmedNavigation.current = `?${params}`;
-            setSearchParams(params, { replace: true });
+            if (routeEpisodeId && confirmedEpisodeId && routeEpisodeId !== confirmedEpisodeId) {
+                const pathname = `/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(confirmedEpisodeId)}`;
+                params.delete("episode");
+                confirmedPathNavigation.current = { pathname, search: `?${params}` };
+                navigate(`${pathname}?${params}`, { replace: true });
+            } else {
+                confirmedNavigation.current = `?${params}`;
+                setSearchParams(params, { replace: true });
+            }
             void queryClient.invalidateQueries({ queryKey: ["drama", projectId] });
             message.success("已确认，进入下一步");
         },
@@ -320,6 +355,33 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
         },
     });
 
+    const rescript = useMutation({
+        mutationFn: ({ episodeId, ticket }: { episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
+            if (!operation.isCurrent(ticket)) throw new Error("作品或登录状态已变化，请重新操作");
+            if (stage === "assets" || !summary?.episodes.some((episode) => episode.id === episodeId)) throw new Error("本集状态已更新，请刷新后再编排剧本");
+            return rescriptDramaEpisode(ticket.projectId, episodeId);
+        },
+        onSuccess: (detail, { episodeId, ticket }) => {
+            if (!operation.isCurrent(ticket)) return;
+            queryClient.setQueryData(dramaKeys.episode(ticket.projectId, episodeId), detail);
+            const params = new URLSearchParams(searchParams);
+            for (const key of ["manage", "scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
+            if (!routeEpisodeId) params.set("episode", episodeId);
+            params.set("step", "story");
+            confirmedNavigation.current = `?${params}`;
+            setSearchParams(params, { replace: true });
+            void queryClient.invalidateQueries({ queryKey: ["drama", ticket.projectId] });
+            void queryClient.invalidateQueries({ queryKey: ["drama-episode-style", userId, ticket.projectId, episodeId] });
+            message.success("已开始重新编排本集剧本");
+        },
+        onError: (error, { ticket }) => {
+            if (!operation.isCurrent(ticket)) return;
+            message.error(error instanceof Error ? error.message : "本集剧本编排未能提交");
+            refresh();
+        },
+    });
+    const workflowBusy = confirm.isPending || saveStyle.isPending || rescript.isPending;
+
     const retryText = useMutation({
         mutationFn: (ticket: ReturnType<typeof operation.capture>) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或登录状态已变化，请重新操作");
@@ -350,7 +412,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                   : ""
             : "";
     useEffect(() => {
-        if (!generationDirty || !settingsDraft || settingsStale || episodeConfigurationBusy || confirm.isPending || saveStyle.isPending || configIssue || failedConfiguration.current === generationKey) return;
+        if (!generationDirty || !settingsDraft || settingsStale || episodeConfigurationBusy || workflowBusy || configIssue || failedConfiguration.current === generationKey) return;
         const timeout = window.setTimeout(
             () => {
                 setConfigurationSyncError("");
@@ -359,9 +421,20 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
             blocker.state === "blocked" && !otherSettingsDirty ? 0 : 350,
         );
         return () => window.clearTimeout(timeout);
-    }, [generationKey, generationDirty, settingsDraft, settingsStale, episodeConfigurationBusy, confirm.isPending, saveStyle.isPending, configIssue, blocker.state, otherSettingsDirty, configurationSyncError]);
-    const canConfirm =
-        Boolean(summary?.guide?.canConfirm) && !episodeConfigurationBusy && !settingsStale && !generationDirty && !confirm.isPending && !saveStyle.isPending && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
+    }, [generationKey, generationDirty, settingsDraft, settingsStale, episodeConfigurationBusy, workflowBusy, configIssue, blocker.state, otherSettingsDirty, configurationSyncError]);
+    const canConfirm = Boolean(summary?.guide?.canConfirm) && !episodeConfigurationBusy && !settingsStale && !generationDirty && !workflowBusy && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
+    const canArrange =
+        stage === "assets"
+            ? canConfirm
+            : Boolean(selectedEpisodeId && summary?.episodes.some((episode) => episode.id === selectedEpisodeId)) &&
+              !workflowBusy &&
+              !episodeConfigurationBusy &&
+              !settingsStale &&
+              !settingsDirty &&
+              !sourceState.dirty &&
+              !sourceState.busy &&
+              !media.state.submitting &&
+              !retryText.isPending;
     const blocking = (stage === "assets" && active === "assets") || (stage === "story" && active === "story") ? summary?.guide?.blockingReason : undefined;
     const footerStatus = configurationSyncError ? (
         <span role="alert">
@@ -425,7 +498,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     { key: "assets", label: "主体资产" },
                                     { key: "episodes", label: "分集管理" },
                                 ].map((tab) => (
-                                    <button key={tab.key} type="button" aria-current={managementTab === tab.key ? "page" : undefined} disabled={confirm.isPending || saveStyle.isPending} onClick={() => openManagement(tab.key)}>
+                                    <button key={tab.key} type="button" aria-current={managementTab === tab.key ? "page" : undefined} disabled={workflowBusy} onClick={() => openManagement(tab.key)}>
                                         {tab.label}
                                     </button>
                                 ))}
@@ -433,12 +506,12 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                         ) : (
                             <nav className="drama-workflow-steps" aria-label="短剧制作步骤">
                                 {steps.map((step, index) => {
-                                    const allowed = summary ? isWorkflowStepAllowed(summary, step.key, { manualPreview: step.key === "preview" }) : false;
+                                    const allowed = summary ? isWorkflowStepAllowed(summary, step.key, { manualPreview: step.key === "preview", episodeId: selectedEpisodeId }) : false;
                                     const passed = index < steps.findIndex((item) => item.key === active);
                                     return (
                                         <div key={step.key} className="drama-workflow-step-item">
                                             {index ? <ChevronRight aria-hidden="true" /> : null}
-                                            <button type="button" aria-current={active === step.key ? "step" : undefined} data-passed={passed || undefined} disabled={!allowed || confirm.isPending || saveStyle.isPending} onClick={() => openStep(step.key)}>
+                                            <button type="button" aria-current={active === step.key ? "step" : undefined} data-passed={passed || undefined} disabled={!allowed || workflowBusy} onClick={() => openStep(step.key)}>
                                                 {step.title}
                                             </button>
                                         </div>
@@ -448,7 +521,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                         )
                     }
                 >
-                    <Button type="text" icon={<FolderKanban className="size-4" />} disabled={confirm.isPending || saveStyle.isPending} onClick={() => openManagement("episodes")}>
+                    <Button type="text" icon={<FolderKanban className="size-4" />} disabled={workflowBusy} onClick={() => openManagement("episodes")}>
                         {managing ? "选择分集" : "作品管理"}
                     </Button>
                     <Dropdown
@@ -457,7 +530,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                             items: [
                                 {
                                     key: "advanced",
-                                    disabled: confirm.isPending || saveStyle.isPending,
+                                    disabled: workflowBusy,
                                     label: (
                                         <span className="drama-workflow-advanced-menu">
                                             <strong>高级制作台</strong>
@@ -465,7 +538,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         </span>
                                     ),
                                     onClick: () => {
-                                        if (confirm.isPending || saveStyle.isPending) return;
+                                        if (workflowBusy) return;
                                         if (otherSettingsDirty || sourceState.dirty || sourceState.busy) {
                                             message.info("请先保存或放弃当前修改，再打开高级制作台");
                                             return;
@@ -476,7 +549,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                             ],
                         }}
                     >
-                        <Button type="text" icon={<MoreHorizontal className="size-4" />} disabled={confirm.isPending || saveStyle.isPending} aria-label="更多操作">
+                        <Button type="text" icon={<MoreHorizontal className="size-4" />} disabled={workflowBusy} aria-label="更多操作">
                             更多
                         </Button>
                     </Dropdown>
@@ -583,7 +656,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     ) : null}
                                     <WorkflowAssets
                                         variant={managing ? "library" : "episode"}
-                                        episodeId={managing ? undefined : routeEpisodeId || searchParams.get("episode") || undefined}
+                                        episodeId={managing ? undefined : selectedEpisodeId}
                                         onEpisodeChange={(episodeId) => {
                                             const next = new URLSearchParams(searchParams);
                                             next.delete("episode");
@@ -593,7 +666,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         }}
                                         summary={episodeSummary!}
                                         cast={castQuery.cast}
-                                        busy={confirm.isPending || media.state.submitting || retryText.isPending || episodeConfigurationBusy}
+                                        busy={workflowBusy || media.state.submitting || retryText.isPending || episodeConfigurationBusy}
                                         loading={castQuery.isLoading}
                                         error={castQuery.error}
                                         onRetry={() => void castQuery.refetch()}
@@ -602,9 +675,17 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                             if (!episodeConfigurationBusy) media.requestCastImage(cast, selectedId || episodeStyleId);
                                         }}
                                         onDirtyChange={sourceChanged}
-                                        onContinue={stage === "assets" ? () => setModeOpen(true) : undefined}
-                                        continueDisabled={!canConfirm}
-                                        continuing={confirm.isPending}
+                                        onContinue={
+                                            !managing
+                                                ? () => {
+                                                      if (!canArrange) return;
+                                                      if (stage === "assets") setModeOpen(true);
+                                                      else if (selectedEpisodeId) rescript.mutate({ episodeId: selectedEpisodeId, ticket: operation.capture() });
+                                                  }
+                                                : undefined
+                                        }
+                                        continueDisabled={!canArrange}
+                                        continuing={confirm.isPending || rescript.isPending}
                                     />
                                 </div>
                             ) : null}
@@ -617,7 +698,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     busy={confirm.isPending || saveStyle.isPending || episodeConfigurationBusy}
                                     onDirtyChange={sourceChanged}
                                     onAllowMediaNavigation={(next) => {
-                                        confirmedMediaNavigation.current = next;
+                                        confirmedPathNavigation.current = next;
                                     }}
                                     embedded
                                 />
@@ -662,7 +743,12 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                         下一步：风格设置
                                     </Button>
                                 ) : stage === "configuring" && active === "style" ? (
-                                    <Button type="primary" disabled={!canConfirm || Boolean(configIssue)} loading={confirm.isPending} onClick={() => confirm.mutate({ expectedStep: "configuring", ticket: operation.capture() })}>
+                                    <Button
+                                        type="primary"
+                                        disabled={!canConfirm || Boolean(configIssue)}
+                                        loading={confirm.isPending}
+                                        onClick={() => confirm.mutate({ expectedStep: "configuring", ticket: operation.capture(), episodeId: selectedEpisodeId, episodeNumber: summary.episodes.find((episode) => episode.id === selectedEpisodeId)?.number })}
+                                    >
                                         下一步：角色场景
                                     </Button>
                                 ) : null}
@@ -685,7 +771,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                         open={modeOpen}
                         summary={summary}
                         onCancel={() => setModeOpen(false)}
-                        onConfirm={(modeSettings) => confirm.mutateAsync({ expectedStep: "assets", ticket: operation.capture(), modeSettings })}
+                        onConfirm={(modeSettings) => confirm.mutateAsync({ expectedStep: "assets", ticket: operation.capture(), modeSettings, episodeId: selectedEpisodeId })}
                         onGenerationStateChange={modeGenerationChanged}
                         registerGenerationFlush={registerModeGenerationFlush}
                     />

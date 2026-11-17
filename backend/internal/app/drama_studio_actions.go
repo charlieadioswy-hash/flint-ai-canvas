@@ -284,7 +284,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 		}
 		for _, job := range jobs {
 			if job.ShotID == segment.ID && job.Kind == model.DramaJobSegmentVideo {
-				v.Reprocessable = segment.VideoStatus == model.DramaMediaFailed && segment.VideoResourceID != "" && dramaVideoJobReplayable(job)
+				v.Reprocessable = segment.VideoStatus == model.DramaMediaFailed && segment.VideoResourceID != "" && dramaVideoJobReplayableForSegment(job, *segment)
 				plan.jobID = job.ID
 				snapshot = append(snapshot, job.ID, job.Status, job.TaskID)
 				if req.Action == "segment_video" && (job.Status == model.DramaJobQueued || job.Status == model.DramaJobRunning) {
@@ -371,6 +371,11 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 					snapshot = append(snapshot, draft.shots)
 					request, refs, audios, prepareErr := s.prepareDramaSegment(settings, draft, row, previous, castByID)
 					v.Request = &request
+					for _, reference := range request.AudioReferences {
+						if cast, ok := castByID[reference.CastID]; ok {
+							snapshot = append(snapshot, cast)
+						}
+					}
 					for _, reference := range draft.view.Request.References {
 						if cast, ok := castByID[reference.CastID]; ok {
 							snapshot = append(snapshot, cast)
@@ -398,7 +403,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 						blocked("等待上一段尾帧就绪")
 					}
 					if max := request.PromptMaxChars; max > 0 && utf8.RuneCountInString(strings.TrimSpace(request.Header+"\n\n"+firstNonEmpty(segment.VideoPromptOverride, segment.VideoPrompt))) > max {
-						blocked("视频提示词超过所选模型上限，请先重新撰写或精简提示词")
+						blocked("段提示词与最新资产说明超过所选模型上限，请精简资产描述或提示词，或换用上限更大的模型；原段稿已保留")
 					}
 					for _, ref := range append(refs, audios...) {
 						resourceID := strings.TrimPrefix(ref.(map[string]any)["storageKey"].(string), "resource:")

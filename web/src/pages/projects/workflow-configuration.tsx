@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ImageIcon, Maximize2, SlidersHorizontal } from "lucide-react";
 import { Button, Input, Select } from "antd";
@@ -58,7 +58,7 @@ export function WorkflowConfiguration({
     const [custom, setCustom] = useState(false);
     const [previewImage, setPreviewImage] = useState<string>();
     const [unavailableImages, setUnavailableImages] = useState<Set<string>>(() => new Set());
-    const [parametersOpen, setParametersOpen] = useState(true);
+    const [parametersOpen, setParametersOpen] = useState(false);
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const ratioField = useRef<HTMLDivElement>(null);
     const resolutionField = useRef<HTMLDivElement>(null);
@@ -128,115 +128,117 @@ export function WorkflowConfiguration({
         });
     };
 
+    const productionParameters = (
+        <details className="drama-workflow-more" open={parametersOpen} onToggle={(event) => setParametersOpen(event.currentTarget.open)}>
+            <summary>
+                <SlidersHorizontal aria-hidden="true" /> 制作参数
+            </summary>
+            <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly}>
+                <div ref={ratioField} className="drama-workflow-config-field">
+                    <span>画幅</span>
+                    <div className="drama-tabs" role="radiogroup" aria-label="画幅">
+                        {RATIOS.map((ratio) => (
+                            <button key={ratio.value} type="button" role="radio" className="drama-tab" aria-checked={settings.aspectRatio === ratio.value} disabled={disabled || styleOnly} onClick={() => patch({ aspectRatio: ratio.value })}>
+                                {ratio.label}
+                            </button>
+                        ))}
+                    </div>
+                    {ratioIssue ? (
+                        <small role="alert">
+                            当前视频模型{ratioIssue}
+                            <Button type="link" size="small" onClick={() => locate(ratioField)}>
+                                去修改
+                            </Button>
+                        </small>
+                    ) : null}
+                </div>
+                <div ref={resolutionField} className="drama-workflow-config-field">
+                    <span>视频分辨率</span>
+                    <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
+                    {resolutionIssue ? (
+                        <small role="alert">
+                            当前视频模型{resolutionIssue}
+                            <Button type="link" size="small" onClick={() => locate(resolutionField)}>
+                                去修改
+                            </Button>
+                        </small>
+                    ) : null}
+                </div>
+                <label>
+                    <span>单集时长</span>
+                    <EpisodeDurationInput value={settings.episodeSeconds} onChange={(episodeSeconds) => patch({ episodeSeconds })} />
+                </label>
+                {(["text", "image", "video"] as const).map((capability) => (
+                    <label key={capability}>
+                        <span>{capability === "text" ? "文本模型" : capability === "image" ? "图片模型" : "视频模型"}</span>
+                        <DramaModelPicker
+                            capability={capability}
+                            value={settings.models[capability]}
+                            aspectRatio={capability === "video" ? settings.aspectRatio : undefined}
+                            onChange={(choice) => {
+                                const next = capability === "video" ? catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(choice)) : undefined;
+                                const continuityPatch = next && !dramaVideoOptionFits(next, settings.aspectRatio, continuity) && dramaVideoOptionFits(next, settings.aspectRatio, "parallel") ? { videoContinuity: "parallel" as const } : {};
+                                patch({ models: { ...settings.models, [capability]: choice }, ...(next ? { videoResolution: dramaResolutionAfterModelChange(next, settings.videoResolution) } : {}), ...continuityPatch });
+                            }}
+                        />
+                    </label>
+                ))}
+                <details className="drama-workflow-more" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+                    <summary>更多参数</summary>
+                    <div ref={continuityField}>
+                        <label>
+                            <span>视频衔接</span>
+                            <Select
+                                aria-label="视频衔接"
+                                disabled={disabled || styleOnly}
+                                value={continuity}
+                                options={[
+                                    { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoOption && !videoOption.tailFrameChain) },
+                                    { value: "parallel", label: "各段独立生成" },
+                                ]}
+                                onChange={(videoContinuity) => patch({ videoContinuity })}
+                            />
+                            {continuityIssue ? (
+                                <small role="alert">
+                                    {continuityIssue}，请改成各段独立生成或更换模型。
+                                    <Button type="link" size="small" onClick={() => locate(continuityField)}>
+                                        去修改
+                                    </Button>
+                                </small>
+                            ) : null}
+                        </label>
+                    </div>
+                    <DramaTextSteps
+                        models={settings.models}
+                        onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })}
+                        textThinking={settings.textThinking || {}}
+                        onThinkingChange={(step, level) => patch({ textThinking: { ...settings.textThinking, [step]: level === "auto" ? undefined : level } })}
+                        skills={{ bible: settings.bibleSkill, script: settings.scriptSkill, prompt: settings.promptSkill }}
+                        onSkillChange={(step, value) => patch({ [step === "bible" ? "bibleSkill" : step === "script" ? "scriptSkill" : "promptSkill"]: value })}
+                    />
+                    <StoryboardRules value={settings.storyboard} onChange={(storyboard) => patch({ storyboard })} episodeSeconds={settings.episodeSeconds} maxVideoSeconds={videoOption?.maxVideoSeconds} videoModelLabel={videoOption?.label} />
+                    <DramaAssetImageModels models={settings.models} onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })} assets={settings.assets} onAssetsChange={(assets) => patch({ assets })} />
+                </details>
+            </fieldset>
+        </details>
+    );
+
     return (
         <section className="drama-workflow-configuration" aria-label="风格设置">
-            <div className="drama-workflow-config-form drama-workflow-production-form thin-scrollbar">
-                <details className="drama-workflow-more" open={parametersOpen} onToggle={(event) => setParametersOpen(event.currentTarget.open)}>
-                    <summary>
-                        <SlidersHorizontal aria-hidden="true" /> 制作参数
-                    </summary>
-                    <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly}>
-                        <label>
-                            <span>对白语言</span>
-                            <Select
-                                aria-label="对白语言"
-                                disabled={disabled || styleOnly}
-                                value={settings.language}
-                                options={[...new Set([...LANGUAGES, settings.language].filter(Boolean))].map((value) => ({ value, label: value }))}
-                                onChange={(language) => patch({ language })}
-                            />
-                        </label>
-                        <div ref={ratioField} className="drama-workflow-config-field">
-                            <span>画幅</span>
-                            <div className="drama-tabs" role="radiogroup" aria-label="画幅">
-                                {RATIOS.map((ratio) => (
-                                    <button key={ratio.value} type="button" role="radio" className="drama-tab" aria-checked={settings.aspectRatio === ratio.value} disabled={disabled || styleOnly} onClick={() => patch({ aspectRatio: ratio.value })}>
-                                        {ratio.label}
-                                    </button>
-                                ))}
-                            </div>
-                            {ratioIssue ? (
-                                <small role="alert">
-                                    当前视频模型{ratioIssue}
-                                    <Button type="link" size="small" onClick={() => locate(ratioField)}>
-                                        去修改
-                                    </Button>
-                                </small>
-                            ) : null}
-                        </div>
-                        <div ref={resolutionField} className="drama-workflow-config-field">
-                            <span>视频分辨率</span>
-                            <VideoResolutionField option={videoOption} value={settings.videoResolution} onChange={(videoResolution) => patch({ videoResolution })} />
-                            {resolutionIssue ? (
-                                <small role="alert">
-                                    当前视频模型{resolutionIssue}
-                                    <Button type="link" size="small" onClick={() => locate(resolutionField)}>
-                                        去修改
-                                    </Button>
-                                </small>
-                            ) : null}
-                        </div>
-                        <label>
-                            <span>单集时长</span>
-                            <EpisodeDurationInput value={settings.episodeSeconds} onChange={(episodeSeconds) => patch({ episodeSeconds })} />
-                        </label>
-                        {(["text", "image", "video"] as const).map((capability) => (
-                            <label key={capability}>
-                                <span>{capability === "text" ? "文本模型" : capability === "image" ? "图片模型" : "视频模型"}</span>
-                                <DramaModelPicker
-                                    capability={capability}
-                                    value={settings.models[capability]}
-                                    aspectRatio={capability === "video" ? settings.aspectRatio : undefined}
-                                    onChange={(choice) => {
-                                        const next = capability === "video" ? catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(choice)) : undefined;
-                                        const continuityPatch = next && !dramaVideoOptionFits(next, settings.aspectRatio, continuity) && dramaVideoOptionFits(next, settings.aspectRatio, "parallel") ? { videoContinuity: "parallel" as const } : {};
-                                        patch({ models: { ...settings.models, [capability]: choice }, ...(next ? { videoResolution: dramaResolutionAfterModelChange(next, settings.videoResolution) } : {}), ...continuityPatch });
-                                    }}
-                                />
-                            </label>
-                        ))}
-                        <details className="drama-workflow-more" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
-                            <summary>更多参数</summary>
-                            <div ref={continuityField}>
-                                <label>
-                                    <span>视频衔接</span>
-                                    <Select
-                                        aria-label="视频衔接"
-                                        disabled={disabled || styleOnly}
-                                        value={continuity}
-                                        options={[
-                                            { value: "tail_frame", label: "尾帧续接", disabled: Boolean(videoOption && !videoOption.tailFrameChain) },
-                                            { value: "parallel", label: "各段独立生成" },
-                                        ]}
-                                        onChange={(videoContinuity) => patch({ videoContinuity })}
-                                    />
-                                    {continuityIssue ? (
-                                        <small role="alert">
-                                            {continuityIssue}，请改成各段独立生成或更换模型。
-                                            <Button type="link" size="small" onClick={() => locate(continuityField)}>
-                                                去修改
-                                            </Button>
-                                        </small>
-                                    ) : null}
-                                </label>
-                            </div>
-                            <DramaTextSteps
-                                models={settings.models}
-                                onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })}
-                                textThinking={settings.textThinking || {}}
-                                onThinkingChange={(step, level) => patch({ textThinking: { ...settings.textThinking, [step]: level === "auto" ? undefined : level } })}
-                                skills={{ bible: settings.bibleSkill, script: settings.scriptSkill, prompt: settings.promptSkill }}
-                                onSkillChange={(step, value) => patch({ [step === "bible" ? "bibleSkill" : step === "script" ? "scriptSkill" : "promptSkill"]: value })}
-                            />
-                            <StoryboardRules value={settings.storyboard} onChange={(storyboard) => patch({ storyboard })} episodeSeconds={settings.episodeSeconds} maxVideoSeconds={videoOption?.maxVideoSeconds} videoModelLabel={videoOption?.label} />
-                            <DramaAssetImageModels models={settings.models} onModelsChange={(change) => patch({ models: { ...settings.models, ...change } })} assets={settings.assets} onAssetsChange={(assets) => patch({ assets })} />
-                        </details>
-                    </fieldset>
-                </details>
-            </div>
             <div className="drama-workflow-config-form drama-workflow-drawing-form thin-scrollbar">
-                <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields">
-                    <legend>{scope === "episode" ? "绘图配置（本集）" : "绘图配置（作品）"}</legend>
+                <fieldset disabled={disabled || styleOnly} inert={disabled || styleOnly}>
+                    <label>
+                        <span>对白语言</span>
+                        <Select
+                            aria-label="对白语言"
+                            disabled={disabled || styleOnly}
+                            value={settings.language}
+                            options={[...new Set([...LANGUAGES, settings.language].filter(Boolean))].map((value) => ({ value, label: value }))}
+                            onChange={(language) => patch({ language })}
+                        />
+                    </label>
+                </fieldset>
+                <fieldset disabled={disabled} inert={disabled} className="drama-workflow-drawing-fields" aria-label={scope === "episode" ? "本集绘图设置" : "作品绘图设置"}>
                     <label>
                         <span>绘图模型</span>
                         <DramaModelPicker capability="image" value={imageChoice} onChange={(choice) => patch({ models: { ...settings.models, image: choice, characterImage: choice, sceneImage: choice } })} />
@@ -328,6 +330,7 @@ export function WorkflowConfiguration({
                         </Button>
                     </div>
                 </fieldset>
+                {productionParameters}
             </div>
             <div className="drama-workflow-style-preview">
                 <header>
@@ -338,7 +341,7 @@ export function WorkflowConfiguration({
                     <span className="drama-workflow-sample-label">参考示意</span>
                 </header>
                 {previewImages.length ? (
-                    <div className="drama-workflow-style-gallery" style={{ "--workflow-style-sample-count": Math.min(previewImages.length, 6) } as CSSProperties}>
+                    <div className="drama-workflow-style-gallery">
                         {previewImages.map(({ url, label, illustrative }, index) => (
                             <button
                                 key={url}
@@ -371,7 +374,7 @@ export function WorkflowConfiguration({
                 )}
                 <div className="drama-workflow-style-description">
                     <h3>{settings.styleName || "尚未选择风格"}</h3>
-                    <p>{style?.description || libraryStyle?.description || "选择左侧风格，为角色、场景和镜头建立统一画风。"}</p>
+                    <p>{style?.description || libraryStyle?.description || "选择风格，为角色、场景和镜头建立统一画风。"}</p>
                     {settings.stylePrompt ? (
                         <details>
                             <summary>查看完整风格说明</summary>

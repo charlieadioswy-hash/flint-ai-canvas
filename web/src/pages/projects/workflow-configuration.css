@@ -1,10 +1,10 @@
 .drama-workflow-configuration {
     display: grid;
-    grid-template-columns: minmax(280px, 0.95fr) minmax(340px, 1.2fr) minmax(320px, 1fr);
+    grid-template-columns: minmax(280px, 1fr) minmax(0, 3fr);
     height: calc(100dvh - 230px);
     min-height: 440px;
     align-items: stretch;
-    gap: 0;
+    gap: var(--space-4);
 }
 
 .drama-workflow-config-form,
@@ -19,17 +19,11 @@
 }
 
 .drama-workflow-config-form {
-    padding-left: 0;
     border-right: 1px solid var(--border);
     overflow-y: auto;
 }
 
-.drama-workflow-drawing-form {
-    padding-left: var(--space-4);
-}
-
-.drama-workflow-production-form > .drama-workflow-more > summary {
-    padding-top: 0;
+.drama-workflow-drawing-form > .drama-workflow-more > summary {
     color: var(--text-primary);
     font-weight: 600;
 }
@@ -322,14 +316,18 @@
 .drama-workflow-style-options strong {
     position: absolute;
     bottom: 0;
+    display: -webkit-box;
     width: 100%;
-    padding: var(--space-2);
+    overflow: hidden;
+    padding: var(--space-1);
     background: color-mix(in srgb, var(--surface) 88%, transparent);
     color: var(--text-primary);
     font-size: var(--fs-label);
     font-weight: 500;
     text-align: center;
     overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .drama-workflow-style-placeholder {
@@ -339,13 +337,18 @@
     font-size: var(--fs-label);
 }
 
+.drama-workflow-style-placeholder > svg {
+    width: var(--space-4);
+    height: var(--space-4);
+}
+
 .drama-workflow-style-check {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 28px;
-    height: 28px;
+    width: var(--space-5);
+    height: var(--space-5);
     padding: var(--space-1);
     border-radius: 50%;
     background: var(--control-check-bg);
@@ -379,7 +382,7 @@
 
 .drama-workflow-style-preview {
     min-height: 0;
-    margin: var(--space-4) 0 var(--space-4) var(--space-4);
+    margin: 0;
     border-radius: var(--radius-lg);
     background: var(--surface-hover);
     overflow-y: auto;
@@ -403,10 +406,9 @@
 
 .drama-workflow-style-gallery {
     display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(110px, calc((100% - (var(--workflow-style-sample-count, 6) - 1) * var(--space-2)) / var(--workflow-style-sample-count, 6)));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+    flex-shrink: 0;
     gap: var(--space-2);
-    overflow-x: auto;
     align-items: start;
     padding-block: var(--space-1);
 }
@@ -494,32 +496,11 @@
     object-fit: contain;
 }
 
-@media (max-width: 1100px) {
-    .drama-workflow-configuration {
-        grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.2fr);
-        height: auto;
-        gap: var(--space-4) 0;
-    }
-
-    .drama-workflow-config-form {
-        max-height: max(440px, calc(100dvh - 230px));
-    }
-
-    .drama-workflow-drawing-form {
-        border-right: 0;
-    }
-
-    .drama-workflow-style-preview {
-        grid-column: 1 / -1;
-        max-height: max(440px, calc(100dvh - 230px));
-        margin: 0;
-    }
-}
-
 @media (max-width: 760px) {
     .drama-workflow-configuration {
         grid-template-columns: 1fr;
         height: auto;
+        gap: var(--space-4);
     }
 
     .drama-workflow-config-form {
@@ -527,10 +508,6 @@
         padding-inline: 0;
         border-right: 0;
         overflow-y: visible;
-    }
-
-    .drama-workflow-drawing-form {
-        border-top: 1px solid var(--border);
     }
 
     .drama-workflow-style-preview {

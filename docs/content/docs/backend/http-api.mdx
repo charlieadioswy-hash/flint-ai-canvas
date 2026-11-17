@@ -13,20 +13,30 @@ description: 信封、错误码与 OpenAPI
 
 单镜任务已失败或取消时，作品／本集生成配置可立即修改，无需先进入镜头页触发读取恢复。忙碌检查以当前绑定任务为准，历史失败任务不会解除新生成任务的配置保护。
 
-角色声音绑定、清除与辅助声音采用只更新声音字段和作品版本，不改变参考图版本或中断图片结果采用；显式要求更新下游时，同一事务内标记关联视频过期并保留已有资源。造型读取与自动提示词使用所属角色当前名称，单纯修改姓名或别名不覆盖手写提示词。
+角色声音绑定、清除与辅助声音采用不改变参考图版本或中断图片结果采用；声音输入变化会更新关联段的视频来源版本，保留段稿与已有视频资源。造型读取与自动提示词使用所属角色当前名称，单纯修改姓名或别名不覆盖手写提示词。
+
+### 段提示词与资产设定分离
+
+段提示词保存剧情、台词、动作、站位、运镜、时间码和当前情绪／说话方式，资产以名称与参考图编号关联。角色长期外观、固定服装、固定声线、场景陈设及道具材质不再复制进新撰写的段稿；剧情所需的换装、受伤、持物或破损等临时状态仍保留。
+
+修改同一资产的设定、参考图或角色声音后，不将原本就绪的段提示词标为过期，不清空人工改写，也不自动调用文字模型。预检和实际视频提交均读取当前资产，追加最新外观、声线描述及可发送的图片／声音样本；造型沿用角色本体的当前声音。声音样本仍受视频模型能力、生成方式、参考数量和时长限制，不能发送时明确说明，并使用当前声线文字，不承诺所有模型都能接收音频样本。
+
+资产变化与段稿变化分别校验：剧情、台词、镜头结构或时长改变仍需重新撰写段提示词；资产输入变化通过独立视频版本拒绝旧任务迟到覆盖。纯图片替换沿用是否更新下游的选择，已有就绪视频不强制更新；文字、声音或显式更新下游使关联视频待更新。已经付费生成的旧结果与 Take 历史继续保留，不自动再次生成或扣费。旧输入视频不能作为当前结果重新处理，避免槽位停在生成中。历史 `stale` 无法证明仅由资产变化引起，不在读取、升级或本次保存时一律恢复为就绪；已有手写稿中的剧情临时状态也不做机械删除。
 
 `POST /api/dramas` 增加可选 `guided`（默认 false）与 `brief`。仅 `guided=true` 创建引导草稿，固定 `start=false`、`settings.mediaMode=manual`；可先保存创作简述，之后补齐正式章节。省略 `guided` 的传统新建、上传、粘贴入口保持原启动方式，不增加文字暂停点。
 
 短剧概览的 `production` 增加 `revision`、`guideStep`、`guideConversationId` 和 `creativeBrief`。`guideConversationId` 仅保留历史只读值；`guideStep` 为空表示传统流程；引导项目依次为 `configuring`、`assets`、`story`、`completed`。概览的 `guide={step,canConfirm,blockingReason?}` 由服务端判断能否确认，不由浏览器根据任务数量推断。`completed` 只表示引导结束，不表示短剧已经出片。
 
-按章作品的剧集目录覆盖全部原文，不再由选章决定剧集是否存在。读取概览会在作品行锁与调度锁内补齐历史缺失剧集，并按原文顺序调整集号、同步任务标签，只递增制作控制版本；已有集 ID、正文版本、独立配置、资产与媒体保留，重复读取不重复建集。补出的 `draft` 集表示“待制作”，不占自动制作窗口，不阻断已开工集的文字确认，也不自动派发剧本、提示词或媒体任务；本集显式调用 `rescript` 才开始生成分镜。主动删除的集不会在后续读取时重建。
+引导首次资产建档只读取当前选中集的原文。配置确认可传 `episodeId`，先校验旧目录归属，再按该集号映射重建后的新集；省略才使用目录第一集，明确指定的集无效时拒绝确认，不改成其他集。初次 Bible 作业在同一事务内保存 `initialAssets/sourceChapterIds/sourceEpisodeIds` 来源快照，角色、场景与道具结果只关联该集；任务提交、采用及失败重试均复用快照，不随页面切集扩大范围。智能规划尚无目录时仅锁定首章，后续各集仍由各自资产页提取。历史无快照的已受理作业继续按原全剧来源回收，传统自动制作保持原全剧提取；不删除已有共享资产或重写关联。
+
+按章作品的剧集目录覆盖全部原文，不再由选章决定剧集是否存在。读取概览会在作品行锁与调度锁内补齐历史缺失剧集，并按原文顺序调整集号、同步任务标签，只递增制作控制版本；已有集 ID、正文版本、独立配置、资产与媒体保留，重复读取不重复建集。引导中新建和补出的 `draft` 集表示“待制作”，不占自动制作窗口，不阻断已开工集的文字确认，也不自动派发剧本、提示词或媒体任务。进入漫剧分镜时仅确保当前单集生成：已有结果保留，缺失时由本集 `storyboard/ensure` 启动；`rescript` 仍用于显式重新拆分。智能规划新建集同样保持 `draft`，等待逐集请求。主动删除的集不会在后续读取时重建。
 
 历史补集沿用原分集规则，即使合并正文超过文字制作上限，也能先保存为待制作目录；显式开工时校验单章不超过 1.2 万字、合计不超过 4 万字，超限保留待制作状态，不启动任务。并发请求补齐同一目录后，概览重新读取当前制作控制版本和游标，避免返回旧版本号。
 
 | 路径                                  | 请求与行为                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PUT /api/dramas/:id/guide/source` | `{expectedRevision,chapters?,sourceFormat?}`；仅配置阶段保存完整正文与素材类型。省略 `chapters` 时保留全部正文和章节 ID，替换正文不再要求 `selectedChapters`；历史选择字段不限制本次建集范围。`sourceFormat` 仅接受 `novel/script/storyboard`，剧本与分镜强制每章一集，小说保留分集规则。同事务按完整目录重建未开工分集并递增版本，旧版或有活跃文字任务返回 409；保存不启动生成 |
-| `POST /api/dramas/:id/guide/confirm`  | `{expectedStep,expectedRevision,settings?}`；配置确认可提交最终设置；资产确认可在同一次阶段/版本 CAS 中提交分镜模式默认值，仅复制 `storyboard.generationMode/directorTemplate/targetShotCount`、`models.image/video`、`aspectRatio`、`videoResolution`、`videoContinuity`，保留其他当前设置并校验真实模型和预算。依次放行资产提取、剧本文字链路、结束引导，返回概览；模式确认不启动收费图片或视频任务                                                                                              |
+| `POST /api/dramas/:id/guide/confirm`  | `{expectedStep,expectedRevision,settings?,episodeId?}`；配置确认可提交最终设置，并按当前选集锁定首次资产提取原文；目录重建按原集号映射新 ID。资产确认可在同一次阶段/版本 CAS 中提交分镜模式默认值，仅复制 `storyboard.generationMode/directorTemplate/shotCountMode/targetShotCount`、`models.image/video`、`aspectRatio`、`videoResolution`、`videoContinuity`，保留其他当前设置并校验真实模型和预算。进入分镜只启动 `episodeId` 指定集的缺失分镜，省略时选择第一集；其他未开工集保持 `draft`。智能规划尚无剧集时仅放行规划，目录生成后逐集确保。最后确认只要求已开工集文字就绪，返回概览；模式确认不启动收费图片或视频任务 |
 | `PATCH /api/dramas/:id/settings`      | 保存制作设置或预算；提交 `settings` 与 `expectedRevision` 时在事务内校验当前制作版本，适用于首次配置、已完成引导及普通制作，成功递增版本。活动引导的非配置阶段仍拒绝全量设置更新；纯预算更新保持原合同。提交已停用的 `guideConversationId` 写入返回 `400 / drama_agent_retired`，整次请求不写入                                                                                                                                                                                                    |
 | `POST /api/dramas/:id/cast`           | `{expectedRevision?,kind,name,aliases?,appearance?,description?,voiceInstructions?,imagePrompt?,imageStyleId?,imageStyleName?,imageStylePrompt?}`；引导项目仅 assets/story 阶段可新增且必须提供当前版本，普通制作台可省略版本；`kind` 为 `character/scene/prop`，返回 `{cast}`。允许仅名称草稿，不自动生图；未填写描述或图片提示词时，单图生成、段补图及旧重生入口均拒绝生成。assets/story 阶段可显式预检并生成单资产图片，不推进文字阶段                                                          |
 | `POST /api/dramas/:id/cast/extract`   | `{expectedRevision,kind,allChapters?,episodeIds?,chapterIds?}`；`kind` 严格为 `character/scene/prop`。`allChapters=true` 锁定作品全部原文章节（含预留章节），与 `episodeIds/chapterIds` 互斥，不将预留章节加入制作、不创建分集；省略或 false 时保持制作范围规则：两个显式范围互斥且空数组拒绝，均省略则锁定已加入制作的全部章节，跨项目或预留章节拒绝。首次资产建档后，可在 assets/story 或制作台按类提取。返回 `{job,revision}`，任务含 `assetKind/sourceChapterIds/sourceEpisodeIds`；只新增缺失同类资产，保留已有人工设定、图片与历史，不自动生图，不推进全局引导或覆盖作品圣经。复用原 Bible 模型、技能、计费、并发与失败结果恢复，重试保留来源范围 |
@@ -45,6 +55,8 @@ description: 信封、错误码与 OpenAPI
 角色、场景、道具提取按类型独立入队，可并行执行，仍遵守配置的文字任务并发数、账户限额及预算。同类型存在排队或运行任务时拒绝重复提交；首次建档、剧本等其他文字任务仍与提取互斥。请求继续严格校验当前 `expectedRevision`，提取入队和仅增量新增资产不递增原文／制作输入版本，避免不同类型相互造成版本冲突；正文或配置真实修改后的旧版本请求仍拒绝。前端从提取任务终态变化主动刷新资产，不依赖版本递增。
 
 制作设置接受可选 `dramaType= comic/live_action/narration`（旧作品可为空），离开 `configuring` 后不能改类型；`storyboard.generationMode` 接受空值或 `reference_video/grid_image/smart_director/storyboard`，未知类型、模式或导演模板返回 400。类型保存不隐式实现类型专用风格筛选。前端“创建剧集/单集”更新当前作品，顺序保存正文范围、使用新版本保存设置、更新名称与备注；它不是复制或导入任意其他剧本项目的接口。
+
+`storyboard.shotCountMode` 为 `smart/fixed`，省略时按智能处理。智能模式中的 `targetShotCount` 只作分镜参考，0 或省略时按单集时长与节奏估算；提示词明确优先完整剧情、台词及连续性，实际镜数可增减，结果不会因偏离参考数失败。固定模式须提供 1–240 的目标数，只有这一模式要求镜数精确一致；不合格结果保留失败历史，重试重新生成。用户导入的已有分镜始终保留原镜数。两种入口均提交模式和数值，首次配置复制到各集后，本集独立修改两者不影响其他集。
 
 普通制作台与活动引导均允许先保存仅名称的资产草稿，生成图片前必须补充描述或图片提示词。跨作品导入在首次引导的资产／剧本阶段及普通制作台开放，配置阶段或首次引导文字任务排队／运行时拒绝执行；导入成功会在同一事务递增制作版本并保留当前步骤，使此前读取的版本失效，全部跳过或导入失败不会递增。
 
@@ -1288,7 +1300,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 
 暂停或已完成的作品仍会回收已派发任务的结果（段视频入库、抽尾帧、参考图），只是不再派发新工作；抽尾帧前读取段视频超过 3 分钟按“后处理失败”处理，可调用 `reprocess`。
 
-显式要求产出的操作（`retry-failed`、`media/release`、`approve`、`rescript`、`segments/prompts`、`segments/generate`、`cast/:castId/regenerate`）在作品暂停或已完成时会按 `start` 的同一套校验（模型可用、预算未超）恢复制作；校验不通过返回 400，已写入的请求保留，处理后点继续即可。只改内容的操作（改镜头脚本、改设定文字）不恢复暂停中的制作。
+显式要求产出的操作（`retry-failed`、`media/release`、`approve`、`rescript`、`segments/prompts`、`segments/generate`、`cast/:castId/regenerate`，以及实际开始缺失分镜的 `storyboard/ensure`）在作品暂停或已完成时会按 `start` 的同一套校验（模型可用、预算未超）恢复制作；校验不通过返回 400。`storyboard/ensure` 会同时回滚本次开工意图，修正配置后可再次进入生成；其他操作已写入的请求保留，处理后点继续即可。只改内容的操作（改镜头脚本、改设定文字）不恢复暂停中的制作。
 | `GET /dramas/:id/jobs?limit` | 最近的调度工作（类型、状态、错误、实际花费、重试次数、入队/开始/结束时间） |
 | `GET /dramas/:id/jobs/:jobId` | 单项工作详情：历次提交（最新在前），每次含任务状态、模型、请求参数白名单（尺寸、时长、是否同步生成声音等，不含渠道配置）、提示词、错误、花费与产出资源；只限作品所有者 |
 | `GET /dramas/:id/episodes/:episodeId` | 单集详情：镜头脚本、剧情段、改编来源章节、进行中的工作与 `scriptJob`。有镜头且原文章节不与其他集共用时附 `dialogueCheck`（`sourceLines` 原文台词句数、`missingCount`、`missing` 最多 30 句没有逐字出现在镜头台词里的原文台词；只比较文字与数字，按标点拆到多个镜头不算缺失）。每个剧情段含 `videoPrompt`（生效内容，手动改写优先）、`generated`、`custom`、`promptStatus`、`videoStatus`、`videoResourceId`、`tailFrameResourceId`、`videoModel`、`promptJob` / `videoJob`，以及 `request`：生成本段视频时实际发送的生成方式 `operation`、秒数、模型上限、作品画幅 `aspectRatio` 与实际画面参数（`size` 或 `resolution`，见“剧情段视频画面”）、是否同步生成声音 `generateAudio`、首帧（`firstFrameResourceId`，上一段未生成时 `firstFramePending=true`）、参考图列表（编号、类型、名称、资源、是否随请求发送）、追加在提示词开头的 `header` 与限制说明 `warning`（模型不支持参考图生视频、退到文生视频时写明“只按文字设定”；给不出作品画幅时写明原因）；与提交时同一函数计算 |
@@ -1296,6 +1308,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 | `DELETE /dramas/:id/episodes/:episodeId?confirm` | 删除一集：镜头、剧情段、段视频与成片的版本记录和本集调度作业一并删除，后续集号前移一位（默认标题与作业标签同步改号）；只属于这一集的章节退回预留状态（原文保留，可在原著目录重新加入制作），规划游标按已加入制作的章节数重算。本集生成过视频（成片、当前段视频、段视频或成片的历史版本、成功的段视频或合成作业）时 `confirm` 必须是“第 N 集”（不计空白），缺少或不一致返回 409 `drama_episode_confirm_required`，`details.confirmText` 是当前应输入的文字。仍有已提交的生成任务在进行时返回 409；作品只剩这一集或仍有章节在分集规划时返回 400。删除期间持有调度租约，规则同插入。返回 `{ deleted: true }` |
 | `PATCH /dramas/:id/episodes/:episodeId` | `{ title?, sourceFormat? }` 修改集标题或素材类型；素材类型在下次重新改编时生效，不递增集版本 |
 | `POST /dramas/:id/episodes/:episodeId/approve` · `/rescript` | 确认本集提示词（样片模式下确认第 1 集样片）/ 重新改编本集 |
+| `POST /dramas/:id/episodes/:episodeId/storyboard/ensure` | 无请求体，返回 `DramaEpisodeDetail`。仅缺失结果的 `draft` 或空 `done` 集进入 `script`；已有镜头、剧情段、活跃剧本作业或 `queued/script` 阶段直接返回，不删除结果、不重复提交、不改变暂停状态。失败集返回 409，需用户显式重试。本次新启动沿用模型/预算校验恢复调度；恢复校验失败返回 400，集阶段与制作状态保持原值，修正后可再次确保生成。作品行锁与集版本 CAS 防止重复开工 |
 | `POST /dramas/:id/episodes/:episodeId/render` | `{ expectedRevision }` 必填本集当前版本，合成完整已采用段或逐镜视频，来源规则见“简易流程逐集推进与影响提示”。缺段/缺镜、脚本过期、未就绪、采用记录不一致、资源或时长无效、配置/资产阶段或本集有相关文字/段视频任务时拒绝；版本变化返回 409。不生成图片或视频，不恢复暂停作品，不要求模型配置、生成积分或剩余生成预算，仍受任务数与存储配额限制；活动引导保持精确媒体限制。返回 `{ jobs }`，新合成/失败重试/重新合成为 1，同版本已有受理合成为 0；旧成片在替代版本完成前保留。仅使用本地 FFmpeg，沿用成片版本回写和任务进度。与调度共用作品租约，等待超过 10 秒返回 409 |
 | `POST /dramas/:id/episodes/:episodeId/segments/prompts` | `{ segments: number[] }` 让文本模型（重新）撰写这些剧情段的完整视频提示词，正在撰写的段跳过；返回 `{ queued }` |
 | `PATCH /dramas/:id/episodes/:episodeId/segments/:index` | 保存剧情段视频提示词改写 `{ videoPromptOverride }`，最多 12000 字，空串恢复为模型撰写的版本；正文里的参考图引用统一写作“参考图N”（“@参考图N”“参考图 N”保存时归一，模型撰写的提示词同样归一）。段视图 `request.unknownReferences` 列出正文里编号超出本段参考图数量的引用，此时 `request.warning` 说明原因，生成本段视频被拒绝；本段与后续已生成的段视频标记过期。也可以 `{ referenceCastIds: string[] }` 手动指定本段参考图（本作品的设定 ID，最多 20 个，顺序即“参考图N”编号，空数组表示不发参考图），或 `{ autoReferences: true }` 恢复按镜头自动取；参考图变化时模型撰写的提示词标记过期、视频过期。段视图的 `referenceMode` 为 auto/custom，`request` 附 `referenceCapacity`（本段最多发送张数，已扣除首帧并受每段上限约束）、`modelMaxImages` 与 `referenceLimited` |

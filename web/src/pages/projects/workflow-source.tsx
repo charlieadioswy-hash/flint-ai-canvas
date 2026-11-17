@@ -368,6 +368,35 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
         }
     };
 
+    const metadataActions =
+        configuring && !episodeId && metadata && (scopeOpen || metadataDirty) ? (
+            <div className="drama-source-bar drama-source-scope">
+                <span>{metadataDirty ? "素材类型有未保存的修改。" : `全部 ${totalChapters} 章已加入分集列表。`}</span>
+                {metadata.revision !== revision && metadataDirty ? (
+                    <Button
+                        disabled={working}
+                        onClick={() => {
+                            setMetadata(null);
+                            void chapters.refetch();
+                        }}
+                    >
+                        重新载入素材类型
+                    </Button>
+                ) : (
+                    <div className="drama-source-actions">
+                        {metadataDirty ? (
+                            <Button disabled={working} onClick={() => setMetadata(null)}>
+                                还原素材类型
+                            </Button>
+                        ) : null}
+                        <Button disabled={working || !metadataDirty || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim())} loading={saveMetadata.isPending} onClick={() => saveMetadata.mutate(metadata)}>
+                            保存素材类型
+                        </Button>
+                    </div>
+                )}
+            </div>
+        ) : null;
+
     return (
         <section className={`drama-source-page ${step === "source" ? "is-source" : "is-review"} ${scopeOpen || metadataDirty ? "is-scope-adjustment" : ""}`} aria-label={step === "source" ? "上传剧本" : "剧本格式"}>
             <header className={`drama-source-heading ${step === "source" ? "is-upload" : ""}`}>
@@ -539,42 +568,19 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                     </aside>
                 </div>
             ) : configuring && !episodeId ? (
-                <details className="drama-source-format-options drama-source-review-options" open={scopeOpen || metadataDirty} onToggle={(event) => setScopeOpen(event.currentTarget.open)}>
-                    <summary>
-                        素材类型<span>{metadataDirty ? "有未保存修改" : SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].title}</span>
-                    </summary>
-                    <SourceFormatPicker value={metadata?.format || serverFormat} disabled={!metadata || working || Boolean(replacement)} row onChange={(format) => setMetadata((old) => (old ? { ...old, format } : old))} />
-                </details>
+                <div className="drama-source-review-settings thin-scrollbar" role="region" aria-label="素材类型设置" tabIndex={0}>
+                    <details className="drama-source-format-options drama-source-review-options" open={scopeOpen || metadataDirty} onToggle={(event) => setScopeOpen(event.currentTarget.open)}>
+                        <summary>
+                            素材类型<span>{metadataDirty ? "有未保存修改" : SOURCE_FORMAT_LABEL[metadata?.format || serverFormat].title}</span>
+                        </summary>
+                        <SourceFormatPicker value={metadata?.format || serverFormat} disabled={!metadata || working || Boolean(replacement)} row onChange={(format) => setMetadata((old) => (old ? { ...old, format } : old))} />
+                    </details>
+                    {metadataActions}
+                </div>
             ) : (
                 <p className="drama-source-note">{episodeId ? "保存只写入当前章节；已生成的剧本与镜头需单独重新生成。" : "配置已确认。保存单章正文不会自动重新改编已有剧本。"}</p>
             )}
-            {configuring && !episodeId && metadata && (scopeOpen || metadataDirty) ? (
-                <div className="drama-source-bar drama-source-scope">
-                    <span>{metadataDirty ? "素材类型有未保存的修改。" : `全部 ${totalChapters} 章已加入分集列表。`}</span>
-                    {metadata.revision !== revision && metadataDirty ? (
-                        <Button
-                            disabled={working}
-                            onClick={() => {
-                                setMetadata(null);
-                                void chapters.refetch();
-                            }}
-                        >
-                            重新载入素材类型
-                        </Button>
-                    ) : (
-                        <div className="drama-source-actions">
-                            {metadataDirty ? (
-                                <Button disabled={working} onClick={() => setMetadata(null)}>
-                                    还原素材类型
-                                </Button>
-                            ) : null}
-                            <Button disabled={working || !metadataDirty || chapterDraftDirty || Boolean(replacement) || Boolean(pasteText.trim())} loading={saveMetadata.isPending} onClick={() => saveMetadata.mutate(metadata)}>
-                                保存素材类型
-                            </Button>
-                        </div>
-                    )}
-                </div>
-            ) : null}
+            {step === "source" ? metadataActions : null}
             {replacement ? (
                 <div className="drama-source-replacement" aria-label="替换正文预览">
                     <h3>替换预览：{replacement.fileName}</h3>
@@ -641,7 +647,9 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                                 {!editing ? (
                                     <article className="drama-source-reading" aria-label="章节预览">
                                         <h3>{draft.title}</h3>
-                                        <div>{draft.text}</div>
+                                        <div key={chapterId} className="drama-source-reading-content thin-scrollbar" role="region" aria-label="章节正文预览" tabIndex={0}>
+                                            {draft.text}
+                                        </div>
                                         {chapterDirty ? <p className="drama-source-note">本章有未保存修改，点击手动编辑继续。</p> : null}
                                         {stale ? (
                                             <p className="drama-source-note" role="alert">

@@ -16,6 +16,9 @@ const (
 	PacingRelaxed  = "relaxed"
 	PacingSlow     = "slow"
 
+	ShotCountSmart = "smart"
+	ShotCountFixed = "fixed"
+
 	// DefaultTransitionMs 是转场时长的默认值，也是可设的下限。
 	DefaultTransitionMs = 150
 
@@ -83,6 +86,7 @@ type StoryboardSettings struct {
 	// CameraMotion 是运镜动感 1–10（1 静态、5 有动机的运镜、10 强烈冲击）。
 	CameraMotion     int    `json:"cameraMotion"`
 	DirectorTemplate string `json:"directorTemplate,omitempty"`
+	ShotCountMode    string `json:"shotCountMode,omitempty"`
 	TargetShotCount  int    `json:"targetShotCount,omitempty"`
 }
 
@@ -109,6 +113,9 @@ func clampInt(value, low, high int) int {
 }
 
 func (s StoryboardSettings) Normalized() StoryboardSettings {
+	if s.ShotCountMode != ShotCountFixed {
+		s.ShotCountMode = ShotCountSmart
+	}
 	switch s.SegmentMode {
 	case SegmentFixed, SegmentRange:
 	default:
@@ -284,6 +291,11 @@ func (s StoryboardSettings) ShotTarget(episodeSeconds int) int {
 		return s.TargetShotCount
 	}
 	return clampInt(int(math.Round(float64(episodeSeconds)/s.AverageShotSeconds())), 4, MaxScriptShots)
+}
+
+// HasFixedShotCount 只有用户明确选择固定数量时，才要求生成结果与目标镜数一致。
+func (s StoryboardSettings) HasFixedShotCount() bool {
+	return s.ShotCountMode == ShotCountFixed && s.TargetShotCount > 0
 }
 
 // LineTarget 是一集至少应有的台词与旁白条数。

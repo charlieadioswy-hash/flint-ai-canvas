@@ -311,6 +311,9 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/dramas/:id/episodes/:episodeId/rescript", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.RescriptDramaEpisode(userID, c.Param("id"), c.Param("episodeId"))
 	}))
+	r.POST("/dramas/:id/episodes/:episodeId/storyboard/ensure", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.EnsureDramaEpisodeStoryboard(userID, c.Param("id"), c.Param("episodeId"))
+	}))
 	r.POST("/dramas/:id/episodes/:episodeId/render", dramaRoute(svc, 4<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.RenderDramaEpisodeRequest
 		if err := bindDramaJSON(c, &req); err != nil {

@@ -171,9 +171,13 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	}
 	var episodes []model.DramaEpisode
 	if perChapter {
-		// 按章分组直接建集，分集规划视为已完成；建档后各集按窗口依次写剧本。游标只数加入制作的章节。
+		// 引导目录等待用户逐集开工；传统自动制作仍按窗口依次写剧本。
 		productionRow.PlanCursor, productionRow.PlanDone = len(produced), true
-		episodes, err = groupDramaChapterEpisodes(project.ID, 1, produced, settings.ChaptersPerEpisode, format, now)
+		stage := model.DramaEpisodeQueued
+		if req.Guided {
+			stage = model.DramaEpisodeDraft
+		}
+		episodes, err = groupDramaChapterEpisodesForStage(project.ID, 1, produced, settings.ChaptersPerEpisode, format, now, stage)
 		if err != nil {
 			return nil, err
 		}
@@ -631,6 +635,8 @@ func dramaJobView(job model.DramaJob) DramaJobView {
 	view := DramaJobView{ID: job.ID, Kind: job.Kind, Status: job.Status, Label: job.Label, Error: job.Error, EpisodeID: job.EpisodeID, ShotID: job.ShotID, TaskID: job.TaskID, CostMicrocredits: job.CostMicrocredits, Attempt: job.Attempt, CreatedAt: job.CreatedAt.Format(time.RFC3339), UpdatedAt: job.UpdatedAt.Format(time.RFC3339)}
 	if scope, _ := dramaAssetExtraction(&job); scope != nil {
 		view.AssetKind, view.SourceChapterIDs, view.SourceEpisodeIDs = scope.AssetKind, scope.SourceChapterIDs, scope.SourceEpisodeIDs
+	} else if initial, _ := dramaInitialAssets(&job); initial != nil {
+		view.SourceChapterIDs, view.SourceEpisodeIDs = initial.SourceChapterIDs, initial.SourceEpisodeIDs
 	}
 	if job.StartedAt != nil {
 		view.StartedAt = job.StartedAt.Format(time.RFC3339)
@@ -895,6 +901,10 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 	if err != nil {
 		return err
 	}
+	rowsByID := make(map[string]model.DramaSegment, len(rows))
+	for _, row := range rows {
+		rowsByID[row.ID] = row
+	}
 	for i := range detail.Segments {
 		view := &detail.Segments[i]
 		for _, job := range jobs {
@@ -907,7 +917,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 			}
 			if job.Kind == model.DramaJobSegmentVideo && view.VideoJob == nil {
 				view.VideoJob = &j
-				view.VideoReprocessable = view.VideoStatus == model.DramaMediaFailed && view.VideoResourceID != "" && dramaVideoJobReplayable(job)
+				view.VideoReprocessable = view.VideoStatus == model.DramaMediaFailed && view.VideoResourceID != "" && dramaVideoJobReplayableForSegment(job, rowsByID[view.ID])
 			}
 		}
 	}

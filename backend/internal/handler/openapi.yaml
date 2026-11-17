@@ -235,7 +235,7 @@ paths:
     post:
       tags: [dramas]
       summary: 确认当前引导阶段并放行下一段文字流程
-      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings；assets 等待作品圣经落库，可同时保存默认分镜模式、导演模板、镜数、图片/视频模型、比例、分辨率和连续性，其余设置保持当前值；story 等待全部选定范围文字就绪。模式保存不创建收费媒体任务。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
+      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings 与当前 episodeId；确认前校验该集属于当前作品，目录重建后按原集号映射新集，只从其原文建立首次角色、场景和道具，来源快照与初次任务在同一事务入队，省略时取当前目录第一集；智能规划尚无目录时仅取首章。首次作业重试沿用固定来源，旧无来源快照作业仍按原全剧范围回收。assets 等待作品圣经落库，可同时保存默认分镜模式、导演模板、镜数、图片/视频模型、比例、分辨率和连续性，其余设置保持当前值，并只启动 episodeId 指定集的缺失分镜，省略时选择第一集；其余未开工集保持 draft。智能规划尚无剧集时仅放行规划，新集等待逐集 ensure。story 等待已开工集的文字就绪。模式保存不创建收费媒体任务。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
       parameters:
         - {in: path, name: id, required: true, schema: {type: string}}
       requestBody:
@@ -249,6 +249,7 @@ paths:
               properties:
                 expectedStep: {type: string, enum: [configuring, assets, story]}
                 expectedRevision: {type: integer, minimum: 1}
+                episodeId: {type: string, description: 当前选中的单集，必须属于当前短剧；configuring 按原集号映射重建后的集并锁定首次资产来源，assets 仅启动该集缺失分镜；省略取第一集}
                 settings:
                   type: object
                   description: 复用现有 DramaSettings；引导固定 mediaMode=manual，校验模式、导演模板、模型能力与制作范围。dramaType 仅可在 configuring 设置，assets 只读取模式页拥有的生成参数。
@@ -259,7 +260,8 @@ paths:
                       properties:
                         generationMode: {type: string, enum: ["", reference_video, grid_image, smart_director, storyboard]}
                         directorTemplate: {type: string}
-                        targetShotCount: {type: integer, minimum: 0, maximum: 240}
+                        shotCountMode: {type: string, enum: [smart, fixed], default: smart, description: 智能模式镜头数仅作参考；固定模式必须填写目标数并严格匹配}
+                        targetShotCount: {type: integer, minimum: 0, maximum: 240, description: 智能模式为参考镜头数，0 表示按时长和节奏估算；固定模式需为 1 至 240}
       responses:
         "200": {$ref: "#/components/responses/Envelope"}
         "400": {$ref: "#/components/responses/Error"}
@@ -4617,6 +4619,20 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/episodes/{episodeId}/storyboard/ensure:
+    post:
+      tags: [dramas]
+      summary: 仅在所选单集缺少分镜时开始生成
+      description: 无请求体，返回 DramaEpisodeDetail。已有镜头、剧情段或活跃剧本作业，以及 queued/script 阶段均直接返回，不删除结果、不重复提交或恢复暂停。仅未开工 draft 或确实无结果的 done 集进入 script 并唤醒调度；制作已完成或暂停时沿用模型与预算校验恢复，恢复校验失败返回 400 且不改变本集阶段或制作状态，修正后可再次确保生成。失败集返回 409，等待用户显式重试；引导尚未进入 story 时拒绝生成。以作品行锁与集版本守卫串行校验，不能启动其他未开工剧集。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+        - {in: path, name: episodeId, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /dramas/{id}/episodes/{episodeId}/render:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -5815,7 +5831,8 @@ components:
             performance: { type: integer }
             cameraMotion: { type: integer }
             directorTemplate: { type: string }
-            targetShotCount: { type: integer }
+            shotCountMode: { type: string, enum: [smart, fixed], default: smart, description: 智能模式仅参考镜头数，固定模式严格匹配目标数 }
+            targetShotCount: { type: integer, minimum: 0, maximum: 240, description: 智能模式下 0 表示自动估算，正数仅参考；固定模式需为正数 }
         textThinking:
           type: object
           properties:

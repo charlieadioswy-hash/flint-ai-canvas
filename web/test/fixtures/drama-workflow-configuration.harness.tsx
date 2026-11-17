@@ -153,21 +153,26 @@ test("分辨率错误只展开外层，错误旁定位到对应分辨率控件",
     }
 });
 
-test("本集可直接修改制作参数，完整长提示词按统一Unicode上限计数", async () => {
+test("本集对白语言置顶且制作参数默认收起，完整长提示词按统一Unicode上限计数", async () => {
     const prompt = "🎨".repeat(DRAMA_STYLE_PROMPT_MAX_LENGTH);
     const view = await mount({ ...baseSettings, stylePrompt: prompt }, {}, false, "episode");
     try {
-        expect(parameterSections(view.host).map((item) => item.open)).toEqual([true, false]);
-        expect(view.host.textContent).toContain("绘图配置（本集）");
+        const [parameters] = parameterSections(view.host);
+        expect(parameterSections(view.host).map((item) => item.open)).toEqual([false, false]);
+        expect(view.host.textContent).not.toContain("绘图配置（本集）");
+        expect(view.host.textContent).not.toContain("绘图配置（作品）");
         const language = view.host.querySelector<HTMLSelectElement>('[aria-label="对白语言"]')!;
         expect(language.disabled).toBe(false);
-        expect(language.closest("fieldset")?.disabled).toBe(false);
+        expect(view.host.querySelector(".drama-workflow-drawing-form label")?.contains(language)).toBe(true);
+        expect(parameters.contains(language)).toBe(false);
         await act(async () => {
             language.value = "日语";
             language.dispatchEvent(new Event("change", { bubbles: true }));
             await settle();
         });
         expect(view.changes.at(-1)?.language).toBe("日语");
+        await click(parameters.querySelector<HTMLElement>("summary")!);
+        expect(parameters.open).toBe(true);
         const ratio = view.host.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="false"]')!;
         expect(ratio.disabled).toBe(false);
         await click(ratio);

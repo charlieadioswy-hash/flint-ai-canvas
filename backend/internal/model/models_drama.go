@@ -116,7 +116,7 @@ type DramaCast struct {
 	// 导入只保留来源关联，编辑目标记录不会回写来源作品。
 	SourceProjectID string `json:"sourceProjectId,omitempty" gorm:"size:36"`
 	SourceCastID    string `json:"sourceCastId,omitempty" gorm:"size:36;index:idx_drama_cast_source,unique,priority:2,where:source_cast_id <> ''"`
-	// VoiceInstructions 是声线描述（音色、语速、情绪），写进视频提示词，由视频模型同步生成对白。
+	// VoiceInstructions 是声线描述（音色、语速、情绪），提交视频时动态附带，由视频模型同步生成对白。
 	VoiceInstructions string `json:"voiceInstructions" gorm:"type:text"`
 	// VoiceProfileID 是用户为角色指定的声音（声音库条目）；VoiceSampleResourceID 是它的样本音频，
 	// 视频模型支持参考音频时随该角色说话的剧情段一起发送。空串表示只按声线描述生成。
@@ -218,8 +218,10 @@ type DramaShot struct {
 // DramaSegment 是视频生成单位：一段一次调用视频模型，台词、音效与镜头切换都由视频模型在一个视频里完成。
 // 段由镜头的 SegmentIndex 决定，重新改编剧本时随镜头一起重建。
 type DramaSegment struct {
-	PromptSeconds int    `json:"promptSeconds"`
-	Revision      int64  `json:"revision"`
+	PromptSeconds int   `json:"promptSeconds"`
+	Revision      int64 `json:"revision"`
+	// VideoRevision tracks dynamic asset inputs without invalidating the segment draft.
+	VideoRevision int64  `json:"videoRevision" gorm:"not null;default:0"`
 	ID            string `json:"id" gorm:"primaryKey;size:36"`
 	ProjectID     string `json:"projectId" gorm:"index;size:36"`
 	EpisodeID     string `json:"episodeId" gorm:"size:36;uniqueIndex:idx_drama_segments_episode_index,priority:1"`

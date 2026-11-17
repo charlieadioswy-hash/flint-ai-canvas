@@ -612,7 +612,7 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 	if err != nil {
 		return nil, err
 	}
-	if kind == "image" || config.PromptSourceHash == nil || *config.PromptSourceHash == "" {
+	if kind == "image" {
 		instructions, err := dramaShotReferenceSubjectInstructions(repo, shot.ProjectID, config)
 		if err != nil {
 			return nil, err
@@ -621,12 +621,25 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 			prompt = instructions + "\n\n" + prompt
 		}
 	}
+	var audios []any
 	if kind == "video" {
+		instructions, references, err := s.dramaShotVideoAssetInstructions(repo, userID, shot, config)
+		if err != nil {
+			return nil, err
+		}
+		if instructions != "" {
+			prompt = instructions + "\n\n" + prompt
+		}
+		audios = references
 		if rule := production.CameraPresetRule(shot.Camera); rule != "" {
 			prompt += "\n运镜要求：" + rule
 		}
 	}
-	return map[string]any{"mode": kind, "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}, nil
+	input := map[string]any{"mode": kind, "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}
+	if len(audios) > 0 {
+		input["referenceAudios"] = audios
+	}
+	return input, nil
 }
 
 // BuildCreate is a local protocol translation, not an upstream request. This

@@ -7,6 +7,7 @@ export const MIN_EPISODE_SECONDS = 30;
 export const MAX_EPISODE_SECONDS = 1200;
 
 export const DEFAULT_STORYBOARD: DramaStoryboardSettings = {
+    shotCountMode: "smart",
     segmentMode: "auto",
     segmentSeconds: 10,
     segmentMinSeconds: 8,
@@ -86,6 +87,7 @@ export function normalizeStoryboard(input?: Partial<DramaStoryboardSettings>): D
         performance: directionLevel(value.performance, DEFAULT_STORYBOARD.performance),
         cameraMotion: directionLevel(value.cameraMotion, DEFAULT_STORYBOARD.cameraMotion),
         directorTemplate: value.directorTemplate === "smart_drama" || value.directorTemplate === "storyboard_detail" ? value.directorTemplate : "",
+        shotCountMode: value.shotCountMode === "fixed" ? "fixed" : "smart",
         targetShotCount: clamp(Math.round(value.targetShotCount || 0), 0, 240),
     };
 }

@@ -6,6 +6,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
+import { shotTarget } from "@/lib/drama/storyboard";
 import { updateDramaSettings, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -195,32 +196,34 @@ function WorkflowModeSession({ summary, onCancel, onConfirm, onGenerationStateCh
                                     <div className="drama-workflow-mode-fields">
                                         <label>
                                             <span>分镜数量</span>
-                                            <Select
+                                            <Select<"smart" | "fixed">
                                                 aria-label="分镜数量方式"
                                                 disabled={disabled}
-                                                value={draft.storyboard.targetShotCount ? "custom" : "auto"}
+                                                value={draft.storyboard.shotCountMode === "fixed" ? "fixed" : "smart"}
                                                 options={[
-                                                    { value: "auto", label: "智能推荐" },
-                                                    { value: "custom", label: "自定义" },
+                                                    { value: "smart", label: "智能" },
+                                                    { value: "fixed", label: "固定" },
                                                 ]}
-                                                onChange={(value) => update({ storyboard: { ...draft.storyboard, targetShotCount: value === "custom" ? 24 : undefined } })}
+                                                onChange={(shotCountMode) =>
+                                                    update({ storyboard: { ...draft.storyboard, shotCountMode, targetShotCount: shotCountMode === "fixed" ? shotTarget(draft.storyboard, draft.episodeSeconds) : draft.storyboard.targetShotCount } })
+                                                }
                                             />
                                         </label>
-                                        {draft.storyboard.targetShotCount ? (
-                                            <label>
-                                                <span>目标镜头数</span>
-                                                <InputNumber
-                                                    aria-label="目标镜头数"
-                                                    disabled={disabled}
-                                                    min={1}
-                                                    max={240}
-                                                    precision={0}
-                                                    value={draft.storyboard.targetShotCount}
-                                                    onChange={(value) => update({ storyboard: { ...draft.storyboard, targetShotCount: typeof value === "number" ? value : 1 } })}
-                                                />
-                                            </label>
-                                        ) : null}
+                                        <label>
+                                            <span>{draft.storyboard.shotCountMode === "fixed" ? "目标镜头数" : "参考镜头数"}</span>
+                                            <InputNumber
+                                                aria-label={draft.storyboard.shotCountMode === "fixed" ? "目标镜头数" : "参考镜头数"}
+                                                disabled={disabled}
+                                                min={draft.storyboard.shotCountMode === "fixed" ? 1 : 0}
+                                                max={240}
+                                                precision={0}
+                                                placeholder={`自动估算 ${shotTarget({ ...draft.storyboard, targetShotCount: 0 }, draft.episodeSeconds)} 镜`}
+                                                value={draft.storyboard.targetShotCount || undefined}
+                                                onChange={(value) => update({ storyboard: { ...draft.storyboard, targetShotCount: typeof value === "number" ? value : draft.storyboard.shotCountMode === "fixed" ? 1 : 0 } })}
+                                            />
+                                        </label>
                                     </div>
+                                    <p className="drama-workflow-mode-intro">{draft.storyboard.shotCountMode === "fixed" ? "固定模式要求生成指定数量；导入已有分镜保留原镜数。" : "镜头数仅供参考，按剧情和台词完整拆分；留空或填 0 自动估算。"}</p>
                                     {hasImage ? (
                                         <label>
                                             <span>生图模型</span>

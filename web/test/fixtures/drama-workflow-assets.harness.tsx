@@ -1946,6 +1946,43 @@ test("单集三类资产直接按当前集提取，空列表可提交且在途�
     }
 }, 10_000);
 
+test("单集提取默认按集号选首集，目录倒序仍只发送本集来源", async () => {
+    resetFixture();
+    const summary = extractionSummary();
+    summary.episodes.reverse();
+    const view = await mount(summary);
+    try {
+        expect(view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')?.value).toBe("episode-1");
+        await click(button(view.container, "提取全部角色"));
+        expect(extractCalls).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, kind: "character", episodeIds: ["episode-1"] } }]);
+        expect(extractCalls[0].input.allChapters).toBeUndefined();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("单集缺失或选择已失效时不回退全剧提取，恢复有效选集后只提取该集", async () => {
+    for (const episodeId of ["", "removed-episode"] as const) {
+        resetFixture();
+        const summary = extractionSummary();
+        const view = await mount(episodeId ? summary : { ...summary, episodes: [] }, projectCast(), { episodeId });
+        try {
+            expect(view.container.querySelector('[aria-label="资产卡片"]')).toBeNull();
+            for (const trigger of view.container.querySelectorAll<HTMLButtonElement>('[aria-label^="提取全部"]')) {
+                expect(trigger.disabled).toBe(true);
+                await click(trigger);
+            }
+            expect(extractCalls).toHaveLength(0);
+            await view.update({ summary, episodeId: "episode-2" });
+            await click(button(view.container, "提取全部场景"));
+            expect(extractCalls).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, kind: "scene", episodeIds: ["episode-2"] } }]);
+            expect(extractCalls[0].input.allChapters).toBeUndefined();
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
 test("作品资产库只展示当前分类的提取入口，提交对应种类而非当前集", async () => {
     resetFixture();
     const view = await mount(extractionSummary(), projectCast(), { variant: "library" });

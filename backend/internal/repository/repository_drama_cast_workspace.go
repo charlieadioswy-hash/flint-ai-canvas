@@ -47,13 +47,18 @@ func (r *Repository) resolveDramaCastParentName(cast *model.DramaCast) error {
 
 // 声音不参与参考图版本；独立写入避免取消图片任务或拒绝它的已付费结果。
 func (r *Repository) UpdateDramaCastVoice(projectID, castID, profileID, sampleID string) error {
-	result := r.db.Model(&model.DramaCast{}).Where("project_id = ? AND id = ? AND kind = ? AND parent_id = ?", projectID, castID, "character", "").
-		Updates(map[string]any{"voice_profile_id": profileID, "voice_sample_resource_id": sampleID, "updated_at": time.Now()})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var cast model.DramaCast
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND id = ? AND kind = ? AND parent_id = ?", projectID, castID, "character", "").First(&cast).Error; err != nil {
+			return err
+		}
+		if cast.VoiceProfileID == profileID && cast.VoiceSampleResourceID == sampleID {
+			return nil
+		}
+		if err := tx.Model(&model.DramaCast{}).Where("id = ?", cast.ID).
+			Updates(map[string]any{"voice_profile_id": profileID, "voice_sample_resource_id": sampleID, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		return invalidateDramaCastAssetVideos(tx, cast, true)
+	})
 }

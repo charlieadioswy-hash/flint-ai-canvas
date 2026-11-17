@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, StrictMode, useEffect, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaDrawingConfiguration, DramaEpisodeStyle, DramaGuideStep, DramaModelOption, DramaSettings, DramaSourceFormat, DramaSummary, UpdateDramaEpisodeStyleRequest } from "@/services/api/drama";
+import type { DramaDrawingConfiguration, DramaEpisodeDetail, DramaEpisodeStyle, DramaGuideStep, DramaModelOption, DramaSettings, DramaSourceFormat, DramaSummary, UpdateDramaEpisodeStyleRequest } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/project-a/guide" });
 for (const [key, value] of Object.entries({
@@ -44,7 +44,8 @@ function deferred<T>(): Deferred<T> {
 }
 const summaries = new Map<string, DramaSummary>();
 const notices: Array<{ kind: string; text: string }> = [];
-const confirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
+const confirms: Array<{ projectId: string; input: { expectedStep: DramaGuideStep; expectedRevision: number; episodeId?: string; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
+const rescripts: Array<{ projectId: string; episodeId: string; pending: Deferred<DramaEpisodeDetail> }> = [];
 const sourceSaves: Array<{ projectId: string; chapterId: string; pending: Deferred<{ chapter: { id: string; title: string; sourceText: string } }> }> = [];
 const styleSaves: Array<{ projectId: string; input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }; pending: Deferred<DramaSummary> }> = [];
 const configurationSaves: Array<{ projectId: string; input: { expectedRevision?: number; settings?: DramaSettings }; pending: Deferred<DramaSummary> }> = [];
@@ -343,9 +344,14 @@ mock.module("@/pages/projects/studio/use-studio", () => ({
 const dramaApi = await import("@/services/api/drama");
 mock.module("@/services/api/drama", () => ({
     ...dramaApi,
-    confirmDramaGuide: (projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings }) => {
+    confirmDramaGuide: (projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; episodeId?: string; settings?: DramaSettings }) => {
         const pending = deferred<DramaSummary>();
         confirms.push({ projectId, input: structuredClone(input), pending });
+        return pending.promise;
+    },
+    rescriptDramaEpisode: (projectId: string, episodeId: string) => {
+        const pending = deferred<DramaEpisodeDetail>();
+        rescripts.push({ projectId, episodeId, pending });
         return pending.promise;
     },
     listDramaChapters: async (projectId: string) => ({ chapters: chapterTitles.map((title, index) => ({ id: `${projectId}-chapter${index ? `-${index + 1}` : ""}`, title, wordCount: 4, position: index + 1, reserved: false })) }),
@@ -437,9 +443,10 @@ function makeEpisodeStyle(projectId: string, episodeId: string): DramaEpisodeSty
     };
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
-async function mount(path = "/projects/project-a/guide?step=review", strict = false) {
+async function mount(path = "/projects/project-a/guide?step=review", strict = false, stage: DramaGuideStep = "configuring") {
     notices.length = 0;
     confirms.length = 0;
+    rescripts.length = 0;
     sourceSaves.length = 0;
     styleSaves.length = 0;
     configurationSaves.length = 0;
@@ -456,7 +463,7 @@ async function mount(path = "/projects/project-a/guide?step=review", strict = fa
     chapterReads = 0;
     videoOptions = [];
     summaries.clear();
-    summaries.set("project-a", makeSummary("project-a"));
+    summaries.set("project-a", makeSummary("project-a", stage));
     summaries.set("project-b", makeSummary("project-b"));
     userStore.setState({ user: { id: "user-a" } });
     const host = document.createElement("div");
@@ -647,7 +654,7 @@ test("确认配置复用 CAS 并进入资产步骤，不触发媒体生成", asy
             await settle();
         });
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
-        expect(new URLSearchParams(mounted.router.state.location.search).get("scope")).toBe("all");
+        expect(new URLSearchParams(mounted.router.state.location.search).has("scope")).toBe(false);
         expect(mounted.host.textContent).toContain("主体资产列表");
     } finally {
         await mounted.close();
@@ -667,6 +674,118 @@ test("配置确认进行中点击回看正文，不应把成功推进误拦成�
         });
         expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
         expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("首次配置未选集时确认后选择新目录首集，不保留全剧范围", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style&scope=all");
+    try {
+        await click(button(mounted.host, "下一步：角色场景"));
+        expect(confirms).toHaveLength(1);
+        expect(confirms[0].input).toMatchObject({ expectedStep: "configuring", expectedRevision: 1 });
+        expect(confirms[0].input).not.toHaveProperty("episodeId");
+        const next = makeSummary("project-a", "assets", 2);
+        next.episodes = [
+            { id: "new-episode-b", number: 2, title: "第二集" },
+            { id: "new-episode-a", number: 1, title: "第一集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", next);
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
+        await act(settle);
+        const search = new URLSearchParams(mounted.router.state.location.search);
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+        expect(search.get("step")).toBe("assets");
+        expect(search.get("episode")).toBe("new-episode-a");
+        expect(search.has("scope")).toBe(false);
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("new-episode-a");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("首次配置通过 query 选择第二集，重建目录后按集号进入第二集资产", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=style&episode=old-episode-b&scope=all");
+    try {
+        const configuring = makeSummary("project-a");
+        configuring.episodes = [
+            { id: "old-episode-a", number: 1, title: "第一集" },
+            { id: "old-episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", configuring);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), configuring);
+            await settle();
+        });
+        expect(mounted.host.querySelector('[aria-label="风格配置"]')?.getAttribute("data-scope")).toBe("project");
+        expect(episodeStyleReads).toHaveLength(0);
+        await click(button(mounted.host, "下一步：角色场景"));
+        expect(confirms).toHaveLength(1);
+        expect(confirms[0]).toMatchObject({ projectId: "project-a", input: { expectedStep: "configuring", expectedRevision: 1, episodeId: "old-episode-b" } });
+        const next = makeSummary("project-a", "assets", 2);
+        next.episodes = [
+            { id: "new-episode-a", number: 1, title: "第一集" },
+            { id: "new-episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", next);
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
+        await act(settle);
+        const search = new URLSearchParams(mounted.router.state.location.search);
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+        expect(search.get("step")).toBe("assets");
+        expect(search.get("episode")).toBe("new-episode-b");
+        expect(search.has("scope")).toBe(false);
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("new-episode-b");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("首次配置通过单集路径选择第二集，重建目录后更换路径并保留当前集", async () => {
+    const mounted = await mount("/projects/project-a/e/old-episode-b?step=style&scope=all");
+    try {
+        const configuring = makeSummary("project-a");
+        configuring.episodes = [
+            { id: "old-episode-a", number: 1, title: "第一集" },
+            { id: "old-episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", configuring);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), configuring);
+            await settle();
+        });
+        await fill(mounted.host, "风格配置", "确认后的作品画风");
+        await click(button(mounted.host, "下一步：角色场景"));
+        expect(confirms).toHaveLength(1);
+        expect(confirms[0]).toMatchObject({ projectId: "project-a", input: { expectedStep: "configuring", expectedRevision: 1, episodeId: "old-episode-b", settings: { styleName: "确认后的作品画风" } } });
+        const next = makeSummary("project-a", "assets", 2);
+        next.episodes = [
+            { id: "new-episode-a", number: 1, title: "第一集" },
+            { id: "new-episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", next);
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
+        await act(settle);
+        const search = new URLSearchParams(mounted.router.state.location.search);
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/e/new-episode-b");
+        expect(search.get("step")).toBe("assets");
+        expect(search.has("episode")).toBe(false);
+        expect(search.has("scope")).toBe(false);
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("new-episode-b");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(episodeStyleSaves).toHaveLength(0);
     } finally {
         await mounted.close();
     }
@@ -695,6 +814,240 @@ test("资产确认时子组件回报父层忙状态，不应拦截确认成功�
         expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
     } finally {
         await mounted.close();
+    }
+});
+
+test("角色场景未显式选集时使用首集主体与本集配置", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets");
+    try {
+        const assets = makeSummary("project-a", "assets", 2);
+        assets.episodes = [
+            { id: "episode-b", number: 2, title: "第二集" },
+            { id: "episode-a", number: 1, title: "第一集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", assets);
+        const first = makeEpisodeStyle("project-a", "episode-a");
+        first.settings.styleName = "首集独立画风";
+        first.settings.language = "粤语";
+        episodeStyles.set("project-a:episode-a", first);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        await act(settle);
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("episode-a");
+        expect(mounted.host.querySelector('[aria-label="主体页本集配置"]')?.textContent).toBe("首集独立画风 · 粤语");
+        expect(mounted.host.querySelector('[aria-label="主体页配置忙状态"]')?.textContent).toBe("false");
+        expect(episodeStyleReads).toEqual(["user-a:project-a:episode-a"]);
+        await click(button(mounted.host, "生成页面所属主体"));
+        expect(castImageRequests).toEqual([{ castId: "shared-cast", episodeId: "episode-a" }]);
+        expect(confirms).toHaveLength(0);
+        expect(styleSaves).toHaveLength(0);
+        expect(episodeStyleSaves).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("第二集角色场景确认携带当前集，进入分镜时保持选集并清除全剧范围", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets&episode=episode-b&scope=all");
+    try {
+        const assets = makeSummary("project-a", "assets", 2);
+        assets.episodes = [
+            { id: "episode-a", number: 1, title: "第一集" },
+            { id: "episode-b", number: 2, title: "第二集" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", assets);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), assets);
+            await settle();
+        });
+        await act(settle);
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("episode-b");
+        await click(button(mounted.host, "编排剧本"));
+        await click(button(mounted.host, "确认分镜模式"));
+        expect(confirms).toHaveLength(1);
+        expect(confirms[0]).toMatchObject({ projectId: "project-a", input: { expectedStep: "assets", expectedRevision: 2, episodeId: "episode-b" } });
+        const next = { ...assets, guide: { step: "story" as const, canConfirm: true }, production: { ...assets.production, guideStep: "story" as const, revision: 3 } };
+        summaries.set("project-a", next);
+        await act(async () => {
+            confirms[0].pending.resolve(next);
+            await settle();
+        });
+        const search = new URLSearchParams(mounted.router.state.location.search);
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+        expect(search.get("step")).toBe("story");
+        expect(search.get("episode")).toBe("episode-b");
+        expect(search.has("scope")).toBe(false);
+        expect(mounted.host.textContent).toContain("分镜制作 project-a");
+        expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("已编排集从角色场景可再次编排当前集，不受其他集未就绪影响", async () => {
+    for (const stage of ["story", "completed"] as const) {
+        const mounted = await mount("/projects/project-a/e/episode-b?step=assets&scope=all", false, stage);
+        try {
+            const current = makeSummary("project-a", stage, 2);
+            current.guide = { step: stage, canConfirm: false, blockingReason: "第 1 集剧本与分镜尚未就绪" };
+            current.episodes = [
+                { id: "episode-a", number: 1, title: "第一集", stage: "script", error: "尚未就绪" },
+                { id: "episode-b", number: 2, title: "第二集", stage: "prompts", shotCount: 6, stats: { segments: 2 } },
+            ] as DramaSummary["episodes"];
+            const detail = { episode: { id: "episode-b", projectId: "project-a", stage: "script", revision: 4 }, shots: [], segments: [], chapters: [], jobs: [] } as unknown as DramaEpisodeDetail;
+            summaries.set("project-a", current);
+            await act(async () => {
+                mounted.query.setQueryData(summaryKey("project-a"), current);
+                mounted.query.setQueryDefaults(["drama", "project-a", "episode"], { gcTime: Infinity });
+                mounted.query.setQueryData(["drama", "project-a", "episode", "episode-a"], { untouched: true });
+                mounted.query.setQueryData(["drama", "project-a", "episode", "episode-b"], { old: true });
+                await settle();
+            });
+            await act(settle);
+            expect(button(mounted.host, "编排剧本").disabled).toBe(false);
+            await click(button(mounted.host, "编排剧本"));
+            expect(rescripts).toHaveLength(1);
+            expect(rescripts[0]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
+            expect(confirms).toHaveLength(0);
+            expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+            const styleKey = ["drama-episode-style", "user-a", "project-a", "episode-b", 2];
+            expect(mounted.query.getQueryData<DramaEpisodeStyle>(styleKey)?.episodeRevision).toBe(3);
+            const styleReadCount = episodeStyleReads.length;
+            episodeStyles.set("project-a:episode-b", { ...episodeStyles.get("project-a:episode-b")!, episodeRevision: 4 });
+            await act(async () => {
+                rescripts[0].pending.resolve(detail);
+                await settle();
+            });
+            expect(mounted.query.getQueryData<DramaSummary>(summaryKey("project-a"))?.production.revision).toBe(2);
+            expect(episodeStyleReads.length).toBeGreaterThan(styleReadCount);
+            expect(mounted.query.getQueryData<DramaEpisodeStyle>(styleKey)?.episodeRevision).toBe(4);
+            expect(mounted.router.state.location.pathname).toBe("/projects/project-a/e/episode-b");
+            expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("story");
+            expect(new URLSearchParams(mounted.router.state.location.search).has("scope")).toBe(false);
+            expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-b"])).toEqual(detail);
+            expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-a"])).toEqual({ untouched: true });
+            await mounted.go("/projects/project-a/e/episode-b?step=assets");
+            await click(button(mounted.host, "编排剧本"));
+            expect(rescripts).toHaveLength(2);
+            expect(rescripts[1]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("重新编排提交期间阻止重复点击与导航，失败后留在当前集可重试", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=assets&episode=episode-b&scope=all", false, "completed");
+    try {
+        const current = makeSummary("project-a", "completed", 2);
+        current.episodes = [{ id: "episode-b", number: 2, title: "第二集", stage: "prompts", shotCount: 6, stats: { segments: 2 } }] as DramaSummary["episodes"];
+        summaries.set("project-a", current);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), current);
+            await settle();
+        });
+        await act(settle);
+        await click(button(mounted.host, "编排剧本"));
+        expect(button(mounted.host, "编排剧本").disabled).toBe(true);
+        expect(button(mounted.host, "漫剧分镜").disabled).toBe(true);
+        await click(button(mounted.host, "编排剧本"));
+        await click(button(mounted.host, "漫剧分镜"));
+        expect(rescripts).toHaveLength(1);
+        expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
+        await act(async () => {
+            rescripts[0].pending.reject(new Error("编排服务暂时不可用"));
+            await settle();
+        });
+        expect(notices).toContainEqual({ kind: "error", text: "编排服务暂时不可用" });
+        expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("assets");
+        expect(new URLSearchParams(mounted.router.state.location.search).get("episode")).toBe("episode-b");
+        expect(button(mounted.host, "编排剧本").disabled).toBe(false);
+        await click(button(mounted.host, "编排剧本"));
+        expect(rescripts).toHaveLength(2);
+        expect(rescripts[1]).toMatchObject({ projectId: "project-a", episodeId: "episode-b" });
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("切换作品或账号后迟到的重新编排回执不导航也不更新新会话缓存", async () => {
+    for (const target of ["project", "account"] as const) {
+        const mounted = await mount("/projects/project-a/e/episode-b?step=assets", false, "completed");
+        try {
+            const current = makeSummary("project-a", "completed", 2);
+            current.episodes = [{ id: "episode-b", number: 2, title: "第二集", stage: "prompts", shotCount: 6, stats: { segments: 2 } }] as DramaSummary["episodes"];
+            summaries.set("project-a", current);
+            await act(async () => {
+                mounted.query.setQueryData(summaryKey("project-a"), current);
+                mounted.query.setQueryDefaults(["drama", "project-a", "episode"], { gcTime: Infinity });
+                mounted.query.setQueryData(["drama", "project-a", "episode", "episode-b"], { untouched: true });
+                await settle();
+            });
+            await act(settle);
+            await click(button(mounted.host, "编排剧本"));
+            expect(rescripts).toHaveLength(1);
+            if (target === "project") {
+                await mounted.go("/projects/project-b/guide?step=style");
+                expect(mounted.host.querySelector('[role="dialog"]')).not.toBeNull();
+                await click(button(mounted.host, "放弃修改并离开"));
+                expect(mounted.router.state.location.pathname).toBe("/projects/project-b/guide");
+            } else {
+                await act(async () => {
+                    userStore.setState({ user: { id: "user-b" } });
+                    await settle();
+                });
+            }
+            const location = { pathname: mounted.router.state.location.pathname, search: mounted.router.state.location.search };
+            const count = notices.length;
+            await act(async () => {
+                rescripts[0].pending.resolve({ episode: { id: "episode-b", projectId: "project-a", stage: "script", revision: 4 }, shots: [], segments: [], chapters: [], jobs: [] } as unknown as DramaEpisodeDetail);
+                await settle();
+            });
+            expect(mounted.router.state.location.pathname).toBe(location.pathname);
+            expect(mounted.router.state.location.search).toBe(location.search);
+            expect(mounted.query.getQueryData(["drama", "project-a", "episode", "episode-b"])).toEqual({ untouched: true });
+            expect(notices).toHaveLength(count);
+        } finally {
+            await mounted.close();
+        }
+    }
+});
+
+test("角色场景顶部切到分镜时保留默认或显式选集并清除全剧范围", async () => {
+    for (const [query, episodeId, stage] of [
+        ["?step=assets&scope=all", "episode-a", "story"],
+        ["?step=assets&episode=episode-b&scope=all", "episode-b", "story"],
+        ["?step=assets&episode=episode-b&scope=all", "episode-b", "assets"],
+    ] as const) {
+        const mounted = await mount(`/projects/project-a/guide${query}`);
+        try {
+            const current = makeSummary("project-a", stage, 2);
+            current.episodes = [
+                { id: "episode-a", number: 1, title: "第一集", shotCount: stage === "assets" ? 0 : 6, stats: { segments: stage === "assets" ? 0 : 2 } },
+                { id: "episode-b", number: 2, title: "第二集", shotCount: 6, stats: { segments: 2 } },
+            ] as DramaSummary["episodes"];
+            summaries.set("project-a", current);
+            await act(async () => {
+                mounted.query.setQueryData(summaryKey("project-a"), current);
+                await settle();
+            });
+            await act(settle);
+            expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe(episodeId);
+            await click(button(mounted.host, "漫剧分镜"));
+            const search = new URLSearchParams(mounted.router.state.location.search);
+            expect(mounted.router.state.location.pathname).toBe("/projects/project-a/guide");
+            expect(search.get("step")).toBe("story");
+            expect(search.get("episode")).toBe(episodeId);
+            expect(search.has("scope")).toBe(false);
+            expect(mounted.host.textContent).toContain("分镜制作 project-a");
+            expect(confirms).toHaveLength(0);
+            expect(rescripts).toHaveLength(0);
+            expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
+        } finally {
+            await mounted.close();
+        }
     }
 });
 
@@ -850,6 +1203,8 @@ test("已有集默认进入分集管理，显式步骤单集链接与未确认�
         await mounted.go("/projects/project-a?step=assets");
         expect(mounted.host.textContent).toContain("主体资产列表");
         expect(mounted.host.textContent).not.toContain("分集管理列表");
+        await act(settle);
+        expect(mounted.host.querySelector('[aria-label="主体页配置忙状态"]')?.textContent).toBe("false");
         await mounted.go("/projects/project-a/e/episode-a");
         expect(mounted.host.textContent).toContain("分镜制作 project-a");
         expect(mounted.host.querySelector(".drama-workflow-body")?.classList.contains("is-production")).toBe(true);
@@ -1300,8 +1655,8 @@ test("本集直接编辑配置，双版本保存后只进入本集角色场景",
     }
 });
 
-test("作品仍在配置时本集保存失败保留草稿并保护切步", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+test("进入制作后本集保存失败保留草稿并保护切步", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "风格配置", "失败后保留的本集风格");
         await click(button(mounted.host, "保存并继续"));
@@ -1324,7 +1679,7 @@ test("作品仍在配置时本集保存失败保留草稿并保护切步", async
 });
 
 test("本集完整配置随双版本一次保存，允许清空画风并修改模型和制作参数", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=review");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=review", false, "assets");
     try {
         const saved = makeEpisodeStyle("project-a", "episode-a");
         saved.settings.styleName = "本集旧风格";
@@ -1358,7 +1713,7 @@ test("本集完整配置随双版本一次保存，允许清空画风并修改�
 });
 
 test("本集绘图模板修改后自动同步，作品和其他集配置保持不变", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         expect(mounted.host.querySelector<HTMLSelectElement>('[aria-label="角色绘图模板"]')?.disabled).toBe(false);
         expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.disabled).toBe(false);
@@ -1373,7 +1728,7 @@ test("本集绘图模板修改后自动同步，作品和其他集配置保持�
         const input = episodeStyleSaves[0].input;
         expect(input).toMatchObject({ expectedRevision: 1, expectedEpisodeRevision: 3, settings: { styleName: "原始风格", stylePrompt: "原始提示", assets: { mode: "closeup_fullbody" } } });
         expect(input.settings.models).toEqual({ text: {}, image: {}, video: {} });
-        const next = makeSummary("project-a", "configuring", 2);
+        const next = makeSummary("project-a", "assets", 2);
         summaries.set("project-a", next);
         const saved = { ...makeEpisodeStyle("project-a", "episode-a"), episodeRevision: 4, settings: input.settings };
         episodeStyles.set("project-a:episode-a", saved);
@@ -1398,7 +1753,7 @@ test("本集绘图模板修改后自动同步，作品和其他集配置保持�
 });
 
 test("本集整组配置保存失败保留所有字段，并可继续修改", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "角色绘图模板", "closeup_fullbody");
         await fill(mounted.host, "风格配置", "待保存的本集风格");
@@ -1479,7 +1834,7 @@ test("首次配置的视频参数自动保存，不推进流程或顺便提交�
 });
 
 test("本集生成参数自动保存保留文字草稿，后续文字保存使用同步后的双版本", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "风格配置", "仍在编辑的风格");
         await fill(mounted.host, "视频模型", "episode-video-new");
@@ -1491,7 +1846,7 @@ test("本集生成参数自动保存保留文字草稿，后续文字保存使�
         expect(episodeStyleSaves[0].input.settings).toMatchObject({ styleName: "原始风格", models: { video: { logicalModelId: "episode-video-new" } } });
         const saved = { ...makeEpisodeStyle("project-a", "episode-a"), revision: 2, episodeRevision: 4, settings: episodeStyleSaves[0].input.settings };
         episodeStyles.set("project-a:episode-a", saved);
-        summaries.set("project-a", makeSummary("project-a", "configuring", 2));
+        summaries.set("project-a", makeSummary("project-a", "assets", 2));
         await act(async () => {
             episodeStyleSaves[0].pending.resolve(saved);
             await settle();
@@ -1505,7 +1860,7 @@ test("本集生成参数自动保存保留文字草稿，后续文字保存使�
 });
 
 test("只有生成参数变化时离开会先自动同步，不弹出放弃确认", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "角色绘图模板", "closeup_fullbody");
         await mounted.go("/outside");
@@ -1514,7 +1869,7 @@ test("只有生成参数变化时离开会先自动同步，不弹出放弃确�
         expect(episodeStyleSaves).toHaveLength(1);
         const saved = { ...makeEpisodeStyle("project-a", "episode-a"), revision: 2, episodeRevision: 4, settings: episodeStyleSaves[0].input.settings };
         episodeStyles.set("project-a:episode-a", saved);
-        summaries.set("project-a", makeSummary("project-a", "configuring", 2));
+        summaries.set("project-a", makeSummary("project-a", "assets", 2));
         await act(async () => {
             episodeStyleSaves[0].pending.resolve(saved);
             await settle();
@@ -1526,7 +1881,7 @@ test("只有生成参数变化时离开会先自动同步，不弹出放弃确�
 });
 
 test("无效的生成配置不会卡住离开，允许继续编辑或明确放弃", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         videoOptions = [{ choice: { logicalModelId: "horizontal-only" }, videoRatios: ["16:9"], tailFrameChain: true } as DramaModelOption];
         await fill(mounted.host, "视频模型", "horizontal-only");
@@ -1546,7 +1901,7 @@ test("无效的生成配置不会卡住离开，允许继续编辑或明确放�
 });
 
 test("尚未修正的风格文字不阻止合法的生成参数自动同步", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "风格配置", "字".repeat(61));
         await fill(mounted.host, "视频模型", "episode-video-new");
@@ -1606,7 +1961,7 @@ test("后续作品风格页自动同步图片模板，失败保留草稿后可�
 });
 
 test("切集与切账号重新读取各自风格，旧账号保存回执不能推进", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         await fill(mounted.host, "风格配置", "第一集草稿");
         await mounted.go("/projects/project-a/e/episode-b?step=style");
@@ -1659,7 +2014,7 @@ test("后续风格没有修改直接继续，管理页进入主体资产且不�
 });
 
 test("同路径query切集时已还原的配置草稿不覆盖新集配置", async () => {
-    const mounted = await mount("/projects/project-a/guide?step=style&episode=episode-a");
+    const mounted = await mount("/projects/project-a/guide?step=style&episode=episode-a", false, "assets");
     try {
         const second = makeEpisodeStyle("project-a", "episode-b");
         second.settings.styleName = "第二集风格";
@@ -1680,7 +2035,7 @@ test("同路径query切集时已还原的配置草稿不覆盖新集配置", asy
 });
 
 test("本集配置读取失败只提供重读，不能编辑或提交作品默认", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=review");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=review", false, "assets");
     try {
         episodeStyleReader = async () => {
             throw new Error("读取失败");
@@ -1702,7 +2057,7 @@ test("本集配置读取失败只提供重读，不能编辑或提交作品默�
 });
 
 test("作品默认更新不覆盖已有两集各自的完整配置", async () => {
-    const mounted = await mount("/projects/project-a/e/episode-a?step=style");
+    const mounted = await mount("/projects/project-a/e/episode-a?step=style", false, "assets");
     try {
         const second = makeEpisodeStyle("project-a", "episode-b");
         second.settings.styleName = "第二集风格";

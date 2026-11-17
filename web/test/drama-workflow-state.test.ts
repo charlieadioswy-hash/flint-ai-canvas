@@ -35,6 +35,23 @@ describe("短剧简易工作台步骤", () => {
         expect(resolveWorkflowStep(current, "preview")).toBe("assets");
     });
 
+    test("资产阶段已有分镜的当前集可直接查看，不能借用其他集解锁", () => {
+        const current = summary("assets");
+        current.episodes = [
+            { id: "empty", number: 1, shotCount: 0, stats: { segments: 0 } },
+            { id: "shots", number: 2, shotCount: 3, stats: { segments: 0 } },
+            { id: "segments", number: 3, shotCount: 0, stats: { segments: 1 } },
+        ] as DramaSummary["episodes"];
+        expect(resolveWorkflowStep(current, "story")).toBe("assets");
+        expect(resolveWorkflowStep(current, "story", "empty")).toBe("assets");
+        expect(resolveWorkflowStep(current, "story", "missing")).toBe("assets");
+        for (const episodeId of ["shots", "segments"]) {
+            expect(isWorkflowStepAllowed(current, "story", { episodeId })).toBe(true);
+            expect(resolveWorkflowStep(current, "story", episodeId)).toBe("story");
+            expect(resolveWorkflowStep(current, "preview", episodeId)).toBe("assets");
+        }
+    });
+
     test("分镜阶段可回看，也能恢复用户已选择的预览页", () => {
         const current = summary("story");
         expect(allowedWorkflowSteps(current)).toEqual(["source", "review", "style", "assets", "story"]);

@@ -443,7 +443,7 @@ func (r *dramaRun) failJob(job *model.DramaJob, reason string) error {
 	case model.DramaJobSegmentVideo:
 		var payload dramaRevisionPayload
 		_ = json.Unmarshal([]byte(job.PayloadJSON), &payload)
-		_, err := r.s.repo.UpdateDramaSegmentRevision(job.ShotID, payload.Revision, map[string]any{"video_status": model.DramaMediaFailed, "video_error": truncateRunes(reason, 500)})
+		_, err := r.s.repo.UpdateDramaSegmentVideoRevision(job.ShotID, payload.Revision, payload.VideoRevision, map[string]any{"video_status": model.DramaMediaFailed, "video_error": truncateRunes(reason, 500)})
 		return err
 	}
 	return nil
@@ -986,7 +986,7 @@ func (r *dramaRun) markRunning(job *model.DramaJob) error {
 	case model.DramaJobSegmentVideo:
 		var payload dramaRevisionPayload
 		_ = json.Unmarshal([]byte(job.PayloadJSON), &payload)
-		_, err = r.s.repo.UpdateDramaSegmentRevision(job.ShotID, payload.Revision, map[string]any{"video_status": model.DramaMediaRunning})
+		_, err = r.s.repo.UpdateDramaSegmentVideoRevision(job.ShotID, payload.Revision, payload.VideoRevision, map[string]any{"video_status": model.DramaMediaRunning})
 	}
 	return err
 }
@@ -1028,7 +1028,7 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 }
 
 func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
-	scope, err := dramaAssetExtraction(job)
+	source, err := r.loadBibleSource(job)
 	if err != nil {
 		return err
 	}
@@ -1036,19 +1036,9 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 	if err != nil {
 		return err
 	}
-	var sourceIDs []string
-	if scope != nil {
-		sourceIDs = scope.SourceChapterIDs
-	}
-	chapters, err := r.loadChapters(sourceIDs)
-	if err != nil {
-		return err
-	}
+	scope, chapters := source.extraction, source.chapters
 	var bible production.Bible
 	if scope != nil {
-		if len(chapters) != len(scope.SourceChapterIDs) {
-			return errors.New("资产提取来源正文已变化，请刷新后重新查漏")
-		}
 		bible, err = production.ParseBibleForKind(text, scope.AssetKind, chapters...)
 	} else {
 		bible, err = production.ParseBible(text, chapters...)
@@ -1072,13 +1062,35 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 			return tx.MergeDramaEpisodeAssets(r.project.ID, scope.SourceEpisodeIDs, ids)
 		})
 	}
-	if _, err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
+	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
+	if source.initial != nil {
+		if err := r.s.repo.Transaction(func(tx *repository.Repository) error {
+			if _, err := tx.DramaProductionForUpdate(r.project.ID); err != nil {
+				return err
+			}
+			ids, err := r.applyBibleCasts(tx, bible, false)
+			if err != nil {
+				return err
+			}
+			if err := tx.MergeDramaEpisodeAssets(r.project.ID, source.initial.SourceEpisodeIDs, ids); err != nil {
+				return err
+			}
+			if err := tx.UpdateDramaProduction(r.project.ID, map[string]any{"bible_json": string(meta), "stage": model.DramaStageProduce}); err != nil {
+				return err
+			}
+			return tx.AdvanceDramaGuideRevision(r.project.ID)
+		}); err != nil {
+			return err
+		}
+	} else if _, err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
 		return err
 	}
-	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
 	r.production.BibleJSON = string(meta)
 	r.meta = parseDramaBibleMeta(string(meta))
 	r.production.Stage = model.DramaStageProduce
+	if source.initial != nil {
+		return nil
+	}
 	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
 }
 
@@ -1262,13 +1274,17 @@ func (r *dramaRun) applyPlan(job *model.DramaJob, task *model.Task) error {
 	}
 	now := time.Now()
 	episodes := make([]model.DramaEpisode, 0, len(planned))
+	stage := model.DramaEpisodeQueued
+	if r.production.GuideStep != "" {
+		stage = model.DramaEpisodeDraft
+	}
 	for _, item := range planned {
 		next++
 		ids := make([]string, 0, len(item.Chapters))
 		for _, index := range item.Chapters {
 			ids = append(ids, chapters[index-1].ID)
 		}
-		episodes = append(episodes, model.DramaEpisode{ID: newID(), ProjectID: r.project.ID, Number: next, Title: truncateRunes(item.Title, 60), Synopsis: truncateRunes(item.Synopsis, 1000), Hook: truncateRunes(item.Hook, 300), Cliffhanger: truncateRunes(item.Cliffhanger, 300), ChapterIDsJSON: encodeStringList(ids), SourceFormat: model.DramaSourceNovel, Stage: model.DramaEpisodeQueued, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		episodes = append(episodes, model.DramaEpisode{ID: newID(), ProjectID: r.project.ID, Number: next, Title: truncateRunes(item.Title, 60), Synopsis: truncateRunes(item.Synopsis, 1000), Hook: truncateRunes(item.Hook, 300), Cliffhanger: truncateRunes(item.Cliffhanger, 300), ChapterIDsJSON: encodeStringList(ids), SourceFormat: model.DramaSourceNovel, Stage: stage, Revision: 1, CreatedAt: now, UpdatedAt: now})
 	}
 	initializeDramaEpisodeSettings(episodes, dramaInitialEpisodeSettingsJSON(*r.production))
 	expected := r.production.PlanCursor
@@ -1286,7 +1302,11 @@ func (r *dramaRun) groupRemainingChapters(chapters []model.ProjectUnit) error {
 	if err != nil {
 		return err
 	}
-	episodes, err := groupDramaChapterEpisodes(r.project.ID, next+1, chapters[r.production.PlanCursor:], r.settings.ChaptersPerEpisode, model.DramaSourceNovel, time.Now())
+	stage := model.DramaEpisodeQueued
+	if r.production.GuideStep != "" {
+		stage = model.DramaEpisodeDraft
+	}
+	episodes, err := groupDramaChapterEpisodesForStage(r.project.ID, next+1, chapters[r.production.PlanCursor:], r.settings.ChaptersPerEpisode, model.DramaSourceNovel, time.Now(), stage)
 	if err != nil {
 		r.production.Status, r.production.PauseReason = model.DramaStatusPaused, "分集失败："+err.Error()
 		return nil
@@ -1318,7 +1338,14 @@ func (r *dramaRun) applyScript(job *model.DramaJob, task *model.Task) error {
 	if episode.Stage != model.DramaEpisodeScript || episode.Revision != payload.Revision {
 		return nil
 	}
-	return r.applyScriptShots(episode, scripted, production.ParseScriptCast(text), production.ParseScriptEpisode(text), false)
+	applyErr := r.applyScriptShots(episode, scripted, production.ParseScriptCast(text), production.ParseScriptEpisode(text), false)
+	var issue *dramaResultIssue
+	if errors.As(applyErr, &issue) {
+		if err := job.MarkResultUnusable(task.ID); err != nil {
+			return err
+		}
+	}
+	return applyErr
 }
 
 // applyDirectStoryboard 用户上传的分镜能直接解析时跳过文本模型，镜头与台词原样入库。返回是否已处理。
@@ -1349,8 +1376,8 @@ func (r *dramaRun) applyDirectStoryboard(e *model.DramaEpisode) (bool, error) {
 // imported 表示镜头来自用户分镜：写明的时长照写执行，只有模型写的剧本才按镜头节奏夹紧。
 func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []production.ScriptShot, hints []production.ScriptCast, info production.ScriptEpisode, imported bool) error {
 	settings := dramaEpisodeSettings(r.settings, *episode)
-	if target := settings.Storyboard.TargetShotCount; !imported && target > 0 && len(scripted) != target {
-		return fmt.Errorf("模型返回 %d 镜，未满足指定的 %d 镜；请调整镜头数或重试", len(scripted), target)
+	if target := settings.Storyboard.TargetShotCount; !imported && production.NormalizeSourceFormat(episode.SourceFormat) != production.SourceStoryboard && settings.Storyboard.HasFixedShotCount() && len(scripted) != target {
+		return &dramaResultIssue{message: fmt.Sprintf("模型返回 %d 镜，未满足固定的 %d 镜；请调整镜头数或重试", len(scripted), target)}
 	}
 	shotMs := settings.Storyboard.ShotMs
 	if imported {
@@ -1777,7 +1804,7 @@ const dramaPromptCondenseAttempts = 2
 const dramaMinPromptBudget = 300
 
 // segmentPromptBudget 是本段提示词正文的字符上限：视频模型提示词上限减去提交时加在开头的参考图说明。
-// 参考图说明按当前参考图状态预演；之后参考图状态变化导致超长时，提交视频前会退回重写（见 submitSegmentVideo）。返回 0 表示不限。
+// 按当前动态资产说明预留空间；之后资产变化导致超长时仅阻止提交并保留段稿。返回 0 表示不限。
 func (r *dramaRun) segmentPromptBudget(settings DramaSettings, profile dramaVideoProfile, draft dramaSegmentDraft, segment *model.DramaSegment, rows []model.DramaSegment, casts map[string]model.DramaCast) (int, error) {
 	if profile.PromptMaxChars <= 0 {
 		return 0, nil
@@ -1963,21 +1990,11 @@ func (r *dramaRun) loadChapters(ids []string) ([]production.Chapter, error) {
 }
 
 func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
-	scope, err := dramaAssetExtraction(job)
+	source, err := r.loadBibleSource(job)
 	if err != nil {
 		return nil, false, err
 	}
-	var sourceIDs []string
-	if scope != nil {
-		sourceIDs = scope.SourceChapterIDs
-	}
-	chapters, err := r.loadChapters(sourceIDs)
-	if err != nil {
-		return nil, false, err
-	}
-	if scope != nil && len(chapters) != len(scope.SourceChapterIDs) {
-		return nil, false, errors.New("资产提取来源正文已变化，请刷新后重新查漏")
-	}
+	scope, chapters := source.extraction, source.chapters
 	skill, err := r.s.dramaWritingSkill(r.project.UserID, r.settings.BibleSkill, "资产提取")
 	if err != nil {
 		return nil, false, err

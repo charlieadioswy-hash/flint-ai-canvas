@@ -35,10 +35,12 @@ const calls = {
     episodes: [] as string[],
     renders: [] as Array<[string, number]>,
     storyboards: [] as string[],
+    ensured: [] as Array<[string, string]>,
     allowedMediaNavigation: [] as Array<{ pathname: string; search: string }>,
 };
 let episodeOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | undefined;
 let readinessOverride: (() => Promise<DramaWorkflowReadiness>) | undefined;
+let ensureOverride: ((episodeId: string) => Promise<DramaEpisodeDetail>) | undefined;
 const userStore = create(() => ({ user: { id: "user" } }));
 const subject = { id: "cast-1", projectId: "project", kind: "character", name: "林夏" } as DramaCast;
 mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
@@ -96,9 +98,11 @@ beforeEach(() => {
     calls.episodes = [];
     calls.renders = [];
     calls.storyboards = [];
+    calls.ensured = [];
     calls.allowedMediaNavigation = [];
     episodeOverride = undefined;
     readinessOverride = undefined;
+    ensureOverride = undefined;
     details.clear();
     for (const [id, value] of initialDetails) details.set(id, value);
 });
@@ -135,6 +139,14 @@ mock.module("@/services/api/drama", () => ({
         return { jobs: 1 };
     },
     getDramaWorkflowReadiness: async () => (readinessOverride ? readinessOverride() : workflowReadiness()),
+    ensureDramaEpisodeStoryboard: async (projectId: string, episodeId: string) => {
+        calls.ensured.push([projectId, episodeId]);
+        if (ensureOverride) return ensureOverride(episodeId);
+        const current = details.get(episodeId)!;
+        const next = { ...current, episode: { ...current.episode, stage: "script" as const }, jobs: [{ id: `script-${episodeId}`, status: "queued" }] as DramaEpisodeDetail["jobs"] };
+        details.set(episodeId, next);
+        return next;
+    },
     rescriptDramaEpisode: async (_projectId: string, episodeId: string) => {
         calls.storyboards.push(episodeId);
         const current = details.get(episodeId)!;
@@ -321,6 +333,10 @@ function detail(row: DramaEpisodeRow, segments: DramaSegment[]): DramaEpisodeDet
         chapters: [],
         jobs: [],
     };
+}
+
+function draftEpisode(id: string, number: number) {
+    return episode(id, number, { stage: "draft", shotCount: 0, stats: { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 } });
 }
 
 const failed = episode("ep-failed", 2, { stage: "script", error: "分镜模型超时", shotCount: 0, stats: { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 1 } });
@@ -511,21 +527,23 @@ async function select(host: ParentNode, label: string, value: string) {
 }
 
 test("失败且没有分镜的集保留错误和重试本集文字", async () => {
-    const view = await renderProduction("story", summary("story", [failed, ready]));
+    const view = await renderProduction("story", summary("story", [failed, ready]), "/projects/project/guide?step=story&episode=ep-failed");
     try {
         expect(view.host.textContent).toContain("分镜模型超时");
         expect(view.host.textContent).toContain("重试本集文字");
         await click(view.host, "重试本集文字");
         expect(calls.retried).toEqual([["ep-failed", "text"]]);
         expect(view.host.textContent).toContain("1 集剧本失败（第 2 集）");
-        expect(view.host.textContent).toContain("剧本与分镜：1/2 集就绪");
+        expect(view.host.textContent).toContain("剧本与分镜：0/1 集就绪");
+        expect(calls.ensured).toEqual([]);
+        expect(calls.storyboards).toEqual([]);
         expect(view.host.textContent).not.toContain("AI 交流");
     } finally {
         await view.dispose();
     }
 });
 
-test("选集保留全部真实分集，状态筛选不隐藏标题引导或固定队列", async () => {
+test("分镜默认选中首集并保留真实分集选项，状态筛选不隐藏标题引导或固定队列", async () => {
     const data = summary("story", [failed, ready]);
     data.production.chapterCount = 2;
     data.production.reservedChapterCount = 7;
@@ -550,7 +568,9 @@ test("选集保留全部真实分集，状态筛选不隐藏标题引导或固�
         expect(queue?.parentElement?.classList.contains("drama-workflow-production")).toBe(true);
         expect(queue?.closest(".drama-workflow-production-scroll")).toBeNull();
         const options = [...view.host.querySelectorAll('[aria-label="选择集数"] option')].map((option) => option.getAttribute("value"));
-        expect(options).toEqual(["all", failed.id, ready.id]);
+        expect(options).toEqual([failed.id, ready.id]);
+        expect(view.host.querySelector<HTMLSelectElement>('[aria-label="选择集数"]')?.value).toBe(ready.id);
+        expect(view.host.querySelector('[aria-label="第 2 集"]')).toBeNull();
         expect(calls.actions).toHaveLength(0);
         expect(calls.retried).toHaveLength(0);
     } finally {
@@ -558,19 +578,183 @@ test("选集保留全部真实分集，状态筛选不隐藏标题引导或固�
     }
 });
 
-test("补齐的待制作集不会自动开工，点击生成分镜只提交当前集", async () => {
-    const draft = episode("ep-draft", 9, { stage: "draft", shotCount: 0, stats: { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 } });
-    details.set(draft.id, { episode: draft, segments: [], shots: [], jobs: [], chapters: [] } as unknown as DramaEpisodeDetail);
+test("继承选中的待制作集，载入详情后自动确保本集分镜且不调用重新生成", async () => {
+    const draft = draftEpisode("ep-draft", 9);
+    details.set(draft.id, detail(draft, []));
     const view = await renderProduction("story", summary("story", [ready, draft]), "/projects/project/guide?step=story&episode=ep-draft");
     try {
-        expect(calls.storyboards).toHaveLength(0);
-        expect(view.host.textContent).toContain("本集待制作");
-        await click(view.host, "生成分镜");
-        expect(calls.storyboards).toEqual([draft.id]);
+        await waitFor(() => calls.ensured.length === 1);
+        expect([...new Set(calls.episodes)]).toEqual([draft.id]);
+        expect(calls.ensured).toEqual([["project", draft.id]]);
+        expect(calls.storyboards).toEqual([]);
         expect(calls.changed).toBe(1);
         expect(calls.retried).toHaveLength(0);
         expect(calls.actions).toHaveLength(0);
         expect(view.host.textContent).toContain("正在准备本集剧本与分镜");
+        expect(view.host.querySelector<HTMLSelectElement>('[aria-label="选择集数"]')?.value).toBe(draft.id);
+        await settle();
+        expect(calls.ensured).toHaveLength(1);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("已完成集实际没有镜头或段时自动确保分镜，旧镜头计数不阻止启动", async () => {
+    const emptyDone = episode("ep-empty-done", 4, { stage: "done", shotCount: 7 });
+    details.set(emptyDone.id, detail(emptyDone, []));
+    const view = await renderProduction("story", summary("story", [emptyDone]));
+    try {
+        await waitFor(() => calls.ensured.length === 1);
+        expect(calls.ensured).toEqual([["project", emptyDone.id]]);
+        expect(calls.storyboards).toEqual([]);
+        expect(calls.retried).toEqual([]);
+        expect(view.host.textContent).toContain("正在准备本集剧本与分镜");
+        await settle();
+        expect(calls.ensured).toHaveLength(1);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("分镜继承路由或查询集，旧全部集范围仍只显示当前集", async () => {
+    for (const [path, expectedId] of [
+        ["/projects/project/guide?step=story&episode=ep-preview", preview.id],
+        ["/projects/project/e/ep-preview?step=story&episode=ep-ready&scope=all", preview.id],
+        ["/projects/project/guide?step=story&scope=all", ready.id],
+    ]) {
+        const view = await renderProduction("story", summary("completed", [ready, preview]), path);
+        try {
+            expect(view.host.querySelector<HTMLSelectElement>('[aria-label="选择集数"]')?.value).toBe(expectedId);
+            expect(view.host.querySelectorAll(".drama-workflow-production-episode")).toHaveLength(1);
+            expect(view.host.querySelector(`[aria-label="第 ${expectedId === ready.id ? 1 : 3} 集"]`)).toBeTruthy();
+            expect(view.host.querySelector('[aria-label="选择集数"] option[value="all"]')).toBeNull();
+            expect(calls.ensured).toEqual([]);
+            expect(calls.storyboards).toEqual([]);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("明确指定的集失效时显示不存在，不自动切到其他空集开工", async () => {
+    const draft = draftEpisode("ep-draft", 4);
+    details.set(draft.id, detail(draft, []));
+    for (const path of ["/projects/project/e/deleted?step=story&episode=ep-draft", "/projects/project/guide?step=story&episode=deleted"]) {
+        const view = await renderProduction("story", summary("story", [draft]), path);
+        try {
+            expect(view.host.textContent).toContain("所选集不存在");
+            expect(calls.ensured).toEqual([]);
+            expect(calls.storyboards).toEqual([]);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("分镜等待详情读取后才启动，迟到详情不启动旧集且切集只启动当前集", async () => {
+    const first = draftEpisode("ep-first", 4);
+    const second = draftEpisode("ep-second", 5);
+    const firstDetail = detail(first, []);
+    details.set(first.id, firstDetail);
+    details.set(second.id, detail(second, []));
+    const pending = deferred<DramaEpisodeDetail>();
+    episodeOverride = async (episodeId) => (episodeId === first.id ? pending.promise : details.get(episodeId)!);
+    const view = await renderProduction("story", summary("story", [first, second]), undefined, false);
+    try {
+        expect(calls.ensured).toEqual([]);
+        await select(view.host, "选择集数", second.id);
+        await waitFor(() => calls.ensured.length === 1);
+        expect(calls.ensured).toEqual([["project", second.id]]);
+        await act(async () => pending.resolve(firstDetail));
+        await settle();
+        expect(calls.ensured).toHaveLength(1);
+        await select(view.host, "选择集数", first.id);
+        await waitFor(() => calls.ensured.length === 2);
+        expect(calls.ensured).toEqual([
+            ["project", second.id],
+            ["project", first.id],
+        ]);
+        await select(view.host, "选择集数", second.id);
+        await settle();
+        expect(calls.ensured).toHaveLength(2);
+        expect(calls.storyboards).toEqual([]);
+    } finally {
+        pending.resolve(firstDetail);
+        await view.dispose();
+    }
+});
+
+test("已有镜头或段、正在处理、失败及异常空状态的集均不自动生成分镜", async () => {
+    const draft = draftEpisode("ep-draft", 4);
+    const onlyShots = detail(draft, []);
+    onlyShots.shots = [shot("existing-shot", 0)];
+    const onlySegments = detail(draft, [segment("existing-segment", 0)]);
+    onlySegments.shots = [];
+    const queued = detail(draft, []);
+    queued.jobs = [{ id: "script-queued", kind: "script", status: "queued" }] as DramaEpisodeDetail["jobs"];
+    const running = detail(draft, []);
+    running.scriptJob = { id: "script-running", kind: "script", status: "running" } as NonNullable<DramaEpisodeDetail["scriptJob"]>;
+    const failedJob = detail(draft, []);
+    failedJob.scriptJob = { id: "script-failed", kind: "script", status: "failed", error: "分镜模型失败" } as NonNullable<DramaEpisodeDetail["scriptJob"]>;
+    const failedEpisode = detail({ ...draft, error: "本集编排失败" }, []);
+    const processing = (["queued", "script", "render", "prompts", "review", "video"] as const).map((stage) => detail({ ...draft, stage }, []));
+    for (const value of [onlyShots, onlySegments, queued, running, failedJob, failedEpisode, ...processing]) {
+        details.set(draft.id, value);
+        const view = await renderProduction("story", summary("story", [draft]));
+        try {
+            await settle();
+            expect(calls.ensured).toEqual([]);
+            expect(calls.storyboards).toEqual([]);
+            expect(calls.retried).toEqual([]);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("自动启动失败不循环提交，可手动只重试当前集的非破坏性确保接口", async () => {
+    const draft = draftEpisode("ep-draft", 4);
+    details.set(draft.id, detail(draft, []));
+    ensureOverride = async () => {
+        throw new Error("分镜提交失败，请重试");
+    };
+    const view = await renderProduction("story", summary("story", [draft, ready]), "/projects/project/guide?step=story&episode=ep-draft");
+    try {
+        await waitFor(() => calls.ensured.length === 1 && actionButton(view.host, "生成分镜")?.disabled === false);
+        await settle();
+        await click(view.host, "刷新制作进度");
+        await settle();
+        expect(calls.ensured).toEqual([["project", draft.id]]);
+        ensureOverride = undefined;
+        await click(view.host, "生成分镜");
+        await waitFor(() => calls.ensured.length === 2);
+        expect(calls.ensured).toEqual([
+            ["project", draft.id],
+            ["project", draft.id],
+        ]);
+        expect(calls.storyboards).toEqual([]);
+        expect(calls.retried).toEqual([]);
+        expect(view.host.textContent).toContain("正在准备本集剧本与分镜");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("视频预览保留全部集浏览，空集载入和切集均不自动生成分镜", async () => {
+    const first = draftEpisode("ep-first", 4);
+    const second = draftEpisode("ep-second", 5);
+    details.set(first.id, detail(first, []));
+    details.set(second.id, detail(second, []));
+    const view = await renderProduction("preview", summary("preview", [first, second]));
+    try {
+        expect(view.host.querySelector<HTMLSelectElement>('[aria-label="选择集数"]')?.value).toBe("all");
+        expect(view.host.querySelector('[aria-label="选择集数"] option[value="all"]')).toBeTruthy();
+        expect(view.host.querySelectorAll("[data-final]")).toHaveLength(2);
+        await select(view.host, "选择集数", second.id);
+        expect(view.host.querySelectorAll("[data-final]")).toHaveLength(1);
+        expect(view.host.querySelector(`[data-final="${second.id}"]`)).toBeTruthy();
+        expect(calls.ensured).toEqual([]);
+        expect(calls.storyboards).toEqual([]);
     } finally {
         await view.dispose();
     }
@@ -601,13 +785,19 @@ test("主工作区编辑真实段，段生成传真实目标且不重复展示�
     }
 });
 
-test("全部集分镜打开主体使用镜头所属集，切集或切账号后关闭旧主体窗口", async () => {
+test("分镜逐集打开主体使用镜头所属集，切集或切账号后关闭旧主体窗口", async () => {
     for (const row of [ready, preview]) {
         const current = details.get(row.id)!;
         details.set(row.id, { ...current, shots: current.shots.map((item) => ({ ...item, castIdsJson: JSON.stringify([subject.id]) })) });
     }
     const view = await renderProduction("story", summary("completed", [ready, preview]), "/projects/project/e/ep-ready?step=story&scope=all");
     try {
+        expect(view.host.querySelector('[aria-label="第 3 集"]')).toBeNull();
+        await click(view.host.querySelector('[aria-label="第 1 集"]')!, subject.name);
+        expect(view.host.querySelector("[aria-label='资产设定']")?.getAttribute("data-episode")).toBe(ready.id);
+        await select(view.host, "选择集数", preview.id);
+        expect(view.host.querySelector("[aria-label='资产设定']")).toBeNull();
+        await waitFor(() => view.host.querySelector('[aria-label="第 3 集"]')?.textContent?.includes(subject.name) === true);
         await click(view.host.querySelector('[aria-label="第 3 集"]')!, subject.name);
         expect(view.host.querySelector("[aria-label='资产设定']")?.getAttribute("data-episode")).toBe(preview.id);
         await select(view.host, "选择集数", ready.id);
@@ -642,7 +832,8 @@ test("story 中就绪集可直接请求视频和编辑器生成，不等待另�
     try {
         expect(actionButton(view.host, "生成本段视频")?.disabled).toBe(false);
         expect(view.host.textContent).toContain("本集文字已就绪，可独立生成视频");
-        expect(view.host.textContent).toContain("分镜模型超时");
+        expect(view.host.textContent).not.toContain("分镜模型超时");
+        expect(calls.episodes).toEqual([ready.id]);
         expect(view.host.querySelector("[data-batch-actions]")?.getAttribute("data-batch-actions")).toContain("segment_video");
         await click(view.host, "生成本段视频");
         await click(view.host, "编辑本段");
@@ -729,6 +920,8 @@ test("跨集批量选择使用真实段 ID，切筛选与集数保留选择，�
         expect(list).not.toBeNull();
         expect(Boolean(batch!.compareDocumentPosition(list!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
         await check("选择第 1 集第 2 段");
+        await select(view.host, "选择集数", preview.id);
+        await waitFor(() => Boolean(view.host.querySelector('input[aria-label="选择第 3 集第 2 段"]')));
         await check("选择第 3 集第 2 段");
         expect(batchTargets()).toBe("preview-2,segment-2");
         await select(view.host, "筛选段状态", "ready");
@@ -830,6 +1023,8 @@ test("读取失败在预览和文字进度中均可见", async () => {
     try {
         expect(view.host.textContent).toContain("1 集读取失败");
         expect(view.host.textContent).toContain("本集内容读取失败");
+        expect(calls.ensured).toEqual([]);
+        expect(calls.storyboards).toEqual([]);
         await click(view.host, "视频预览");
         expect(view.host.textContent).toContain("本集内容读取失败");
         expect(view.host.querySelector("[data-segment-id]")).toBeNull();
@@ -917,17 +1112,18 @@ test("队列定位的迟到详情不能覆盖用户新选中的集", async () =>
     }
 });
 
-test("URL段仅定位，侧栏选段保留全部集范围，编辑关闭后仍停在原段", async () => {
+test("URL段仅定位，旧全部集范围收敛为选中单集，编辑关闭后仍停在原段", async () => {
     const view = await renderProduction("story", summary("completed", [ready, preview]), "/projects/project/guide?step=story&scope=all&episode=ep-ready&segment=1");
     try {
         const selected = () => view.host.querySelector("[aria-label='第 1 集段列表'] [aria-pressed='true']")?.getAttribute("aria-label");
         expect(selected()).toBe("查看第 2 段：场景2");
+        expect(view.host.querySelector("[aria-label='第 3 集段列表']")).toBeNull();
         expect(view.host.querySelector("[data-editor]")).toBeNull();
         await click(view.host.querySelector("[aria-label='第 1 集段列表']")!, "查看第 1 段");
         expect(selected()).toBe("查看第 1 段：场景1");
         expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("segment=0");
-        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("scope=all");
-        expect(view.host.querySelector("[aria-label='第 3 集段列表']")).toBeTruthy();
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).not.toContain("scope=all");
+        expect(view.host.querySelector("[aria-label='第 3 集段列表']")).toBeNull();
         expect(view.host.querySelector("[data-editor]")).toBeNull();
         await click(view.host, "编辑本段");
         expect(view.host.querySelector("[data-editor]")?.getAttribute("data-editor")).toBe("ep-ready:0");
