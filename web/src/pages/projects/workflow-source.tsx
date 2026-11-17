@@ -27,7 +27,13 @@ const DRAMA_TYPES = [
     { value: "live_action" as const, label: "真人剧", cover: "/short-drama-types/live-action.jpg" },
     { value: "narration" as const, label: "解说漫", cover: "/short-drama-types/narration.jpg" },
 ];
-const VIDEO_RATIOS = ["16:9", "4:3", "1:1", "9:16", "3:4"];
+const VIDEO_RATIOS = [
+    { value: "16:9", width: 20, height: 11.25 },
+    { value: "4:3", width: 20, height: 15 },
+    { value: "1:1", width: 20, height: 20 },
+    { value: "9:16", width: 11.25, height: 20 },
+    { value: "3:4", width: 15, height: 20 },
+];
 
 function staleMessage(error: unknown) {
     return error instanceof ApiError && (error.reason === "conflict" || error.status === 409);
@@ -791,18 +797,22 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                             </div>
                             <p>全部章节已加入分集列表，集数沿用当前拆集设置，可逐集制作。</p>
                         </div>
-                        <div className="drama-source-form-field">
-                            <label htmlFor={`drama-create-ratio-${projectId}`}>
+                        <fieldset className="drama-source-ratio-field" disabled={createEpisodes.isPending}>
+                            <legend>
                                 <span className="drama-source-required">*</span>视频比例
-                            </label>
-                            <select id={`drama-create-ratio-${projectId}`} aria-label="视频比例" value={creation.aspectRatio} disabled={createEpisodes.isPending} onChange={(event) => setCreation({ ...creation, aspectRatio: event.target.value })}>
-                                {VIDEO_RATIOS.map((ratio) => (
-                                    <option key={ratio} value={ratio}>
-                                        {ratio}
-                                    </option>
+                            </legend>
+                            <div className="drama-source-ratio-options">
+                                {VIDEO_RATIOS.map(({ value: ratio, width, height }) => (
+                                    <label key={ratio} className={`drama-source-ratio-option ${creation.aspectRatio === ratio ? "is-selected" : ""}`}>
+                                        <input type="radio" name={`drama-ratio-${projectId}`} value={ratio} checked={creation.aspectRatio === ratio} onChange={() => setCreation({ ...creation, aspectRatio: ratio })} />
+                                        <svg className="drama-source-ratio-preview" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                            <rect x={(24 - width) / 2} y={(24 - height) / 2} width={width} height={height} rx={1} fill="none" stroke="currentColor" strokeWidth={1.5} />
+                                        </svg>
+                                        <span>{ratio}</span>
+                                    </label>
                                 ))}
-                            </select>
-                        </div>
+                            </div>
+                        </fieldset>
                         <div className="drama-source-form-field">
                             <label htmlFor={`drama-create-description-${projectId}`}>备注</label>
                             <Input.TextArea

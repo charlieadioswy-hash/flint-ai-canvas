@@ -929,9 +929,7 @@ test("新建单集保留全部原文章节，类型比例备注真实写入且�
         await edit(field(view.container, "剧集备注"), "以解说推进剧情");
         await act(async () => {
             view.container.querySelector<HTMLInputElement>('input[type="radio"][value="narration"]')!.click();
-            const ratio = view.container.querySelector<HTMLSelectElement>('[aria-label="视频比例"]')!;
-            ratio.value = "16:9";
-            ratio.dispatchEvent(new Event("change", { bubbles: true }));
+            view.container.querySelector<HTMLInputElement>('input[type="radio"][value="16:9"]')!.click();
             await settle();
         });
         await act(async () => {

@@ -458,28 +458,32 @@
 }
 
 .drama-source-form-field > label,
-.drama-source-type-field > legend {
+.drama-source-type-field > legend,
+.drama-source-ratio-field > legend {
     color: var(--text-primary);
     font-size: var(--fs-body);
     font-weight: 400;
 }
 
 .drama-source-form-field > label > span,
-.drama-source-type-field > legend > span {
+.drama-source-type-field > legend > span,
+.drama-source-ratio-field > legend > span {
     margin-left: var(--space-1);
     color: var(--text-secondary);
     font-size: var(--fs-label);
     font-weight: 400;
 }
 
-.drama-source-type-field {
+.drama-source-type-field,
+.drama-source-ratio-field {
     min-width: 0;
     margin: 0;
     padding: 0;
     border: 0;
 }
 
-.drama-source-type-field > legend {
+.drama-source-type-field > legend,
+.drama-source-ratio-field > legend {
     margin-bottom: var(--space-2);
 }
 
@@ -490,7 +494,8 @@
 }
 
 .drama-source-form-field > label > .drama-source-required,
-.drama-source-type-field > legend > .drama-source-required {
+.drama-source-type-field > legend > .drama-source-required,
+.drama-source-ratio-field > legend > .drama-source-required {
     margin: 0 var(--space-1) 0 0;
     color: var(--danger);
     font-size: var(--fs-body);
@@ -522,7 +527,8 @@
     background: var(--control-selected-bg);
 }
 
-.drama-source-type-card input {
+.drama-source-type-card input,
+.drama-source-ratio-option input {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -596,15 +602,67 @@
     line-height: var(--lh-body);
 }
 
-.drama-source-form-field select {
-    width: 100%;
+.drama-source-ratio-options {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-2);
+}
+
+.drama-source-ratio-option {
+    position: relative;
+    display: flex;
+    min-width: 0;
     min-height: var(--space-10);
-    padding-inline: var(--space-3);
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-1);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
     color: var(--text-primary);
     font-size: var(--fs-body);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.drama-source-ratio-preview {
+    width: var(--space-6);
+    height: var(--space-6);
+    flex-shrink: 0;
+}
+
+.drama-source-ratio-field:not(:disabled) .drama-source-ratio-option:hover {
+    border-color: var(--control-selected-border);
+}
+
+.drama-source-ratio-option.is-selected {
+    border-color: var(--control-selected-border);
+    background: var(--control-selected-bg);
+    color: var(--control-selected-fg);
+    font-weight: 600;
+}
+
+.drama-source-ratio-field:disabled .drama-source-ratio-option {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+    .drama-source-ratio-options {
+        gap: var(--space-1);
+    }
+
+    .drama-source-ratio-option {
+        gap: var(--space-1);
+        padding-inline: 0;
+        font-size: var(--fs-label);
+    }
+
+    .drama-source-ratio-preview {
+        width: var(--space-3);
+        height: var(--space-3);
+    }
 }
 
 .drama-source-create-error {
@@ -622,7 +680,7 @@
 .drama-source-format-options summary:focus-visible,
 .drama-source-chapter-item > button:focus-visible,
 .drama-source-page input[type="checkbox"]:focus-visible,
-.drama-source-form-field select:focus-visible,
+.drama-source-ratio-option:focus-within,
 .drama-source-type-card:focus-within {
     outline: var(--focus-ring-width) solid var(--control-selected-fg);
     outline-offset: var(--space-1);
