@@ -112,6 +112,7 @@ test("头部名称单击编辑，Enter只提交一次，Escape取消且不触发
     try {
         const title = f.host.querySelector<HTMLButtonElement>('[aria-label="编辑分镜组名称：新房初见"]')!;
         expect(title.closest(".canvas-frame-header")).not.toBeNull();
+        expect(title.closest(".canvas-frame-shell")).toBeNull();
         await act(async () => title.dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true, button: 0 }) as unknown as Event));
         await act(async () => title.click());
         const input = f.host.querySelector<HTMLInputElement>('[aria-label="分镜组名称"]')!;
@@ -175,14 +176,15 @@ test("锁定与只读分镜组不允许改名或选择底色", async () => {
     }
 });
 
-test("低精度预览与壳层仍将名称留在头部", async () => {
+test("低精度预览与壳层仍将名称留在边框上方", async () => {
     for (const renderLOD of ["preview", "shell"] as const) {
         const f = await componentFixture({ renderLOD });
         try {
             const title = f.host.querySelector<HTMLElement>('[title="新房初见"]')!;
             const header = title.closest(".canvas-frame-header")!;
             expect(header).not.toBeNull();
-            expect(header.classList.contains("top-0")).toBe(true);
+            expect(header.classList.contains("bottom-full")).toBe(true);
+            expect(header.closest(".canvas-frame-shell")).toBeNull();
             expect(f.host.querySelector("[data-node-lod]")?.getAttribute("data-node-lod")).toBe(renderLOD);
         } finally {
             await f.dispose();

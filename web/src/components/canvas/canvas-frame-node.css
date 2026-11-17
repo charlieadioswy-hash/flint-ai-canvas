@@ -34,6 +34,20 @@
     border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
 }
 
+.canvas-frame-heading {
+    min-block-size: calc(var(--fs-body) * 3);
+    border-bottom: 0;
+}
+
+.canvas-frame-heading .canvas-frame-title {
+    font-size: calc(var(--fs-body) * 2);
+    line-height: 1.25;
+}
+
+.canvas-frame-heading input.canvas-frame-title {
+    block-size: calc(var(--fs-body) * 3);
+}
+
 .canvas-frame-colors {
     border: 1px solid;
     opacity: 0;

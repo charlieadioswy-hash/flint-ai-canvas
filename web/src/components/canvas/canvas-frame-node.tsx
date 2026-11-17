@@ -170,6 +170,73 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     const frameColor = data.metadata?.frame?.color;
     const editable = !readOnly && !data.metadata?.locked;
     const frameLabel = folder ? "文件夹" : data.metadata?.workflowKind === "storyboard" ? "分镜组" : "背板";
+    const header = (
+        <div
+            className={`canvas-frame-header pointer-events-auto absolute inset-x-0 z-10 flex items-center gap-2 px-2 ${folder ? "top-0" : "canvas-frame-heading bottom-full mb-2"}`}
+            style={{ height: folder ? FRAME_HEADER_HEIGHT : undefined, color: theme.node.text }}
+        >
+            {fullDetail ? (
+                <>
+                    <button
+                        type="button"
+                        className="grid size-8 shrink-0 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:bg-white/10"
+                        style={{ outlineColor: theme.frame.activeStroke }}
+                        aria-label={collapsed ? t("canvasB.frameNode.expandBoard") : t("canvasB.frameNode.collapseBoard")}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleCollapsed(data.id);
+                        }}
+                    >
+                        {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
+                    </button>
+                    {editing ? (
+                        <input
+                            autoFocus
+                            className="canvas-frame-title h-7 min-w-0 flex-1 rounded border bg-transparent px-2 text-sm font-semibold outline-none"
+                            style={{ borderColor: theme.frame.activeStroke, color: theme.node.text }}
+                            value={title}
+                            aria-label={`${frameLabel}名称`}
+                            onChange={(event) => setTitle(event.target.value)}
+                            onBlur={commitTitle}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === "Enter") event.currentTarget.blur();
+                                if (event.key === "Escape") {
+                                    setTitle(data.title);
+                                    setEditing(false);
+                                }
+                            }}
+                        />
+                    ) : (
+                        <button
+                            type="button"
+                            className="canvas-frame-title flex min-w-0 items-center gap-1 rounded text-left text-sm font-semibold focus-visible:outline focus-visible:outline-2"
+                            title={data.title}
+                            aria-label={editable ? `编辑${frameLabel}名称：${data.title}` : undefined}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                if (!editable) return;
+                                setEditing(true);
+                            }}
+                        >
+                            <span className="min-w-0 truncate">{data.title}</span>
+                            {editable ? <Pencil className="size-3 shrink-0 opacity-60" /> : null}
+                        </button>
+                    )}
+                </>
+            ) : (
+                <span className="canvas-frame-title min-w-0 flex-1 truncate text-sm font-semibold" title={data.title}>
+                    {data.title}
+                </span>
+            )}
+            <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
+                {childNodes.length}
+            </span>
+        </div>
+    );
 
     return (
         <div
@@ -214,6 +281,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                 onHoverEnd?.(data.id);
             }}
         >
+            {!folder ? header : null}
             {/* 帧节点同样禁用指针跟随 3D 位移，hover 使用 CSS 静态抬升 */}
             <CometCard
                 containerClassName="h-full w-full"
@@ -227,15 +295,8 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     boxShadow: !fullDetail || (folder && collapsed) ? "none" : isSelected ? `0 0 0 ${1 / Math.max(scale, 0.05)}px ${theme.frame.activeStroke}33, 0 24px 72px ${theme.spatial.shadow}` : `0 18px 54px ${theme.spatial.shadow}`,
                 }}
             >
-                {!fullDetail ? (
-                    <div className="canvas-frame-header absolute inset-x-0 top-0 flex items-center gap-2 px-3" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
-                        <span className="min-w-0 flex-1 truncate text-sm font-semibold" title={data.title}>
-                            {data.title}
-                        </span>
-                        <span className="shrink-0 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
-                            {childNodes.length}
-                        </span>
-                    </div>
+                {folder && !fullDetail ? (
+                    header
                 ) : folder && collapsed ? (
                     // 素材库目录是单一事实源；画布节点只负责浏览和调用，避免本地改名后被同步结果覆盖。
                     <CanvasFolderPreview
@@ -249,66 +310,11 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                         onStyleChange={onFolderStyleChange}
                         onThemeChange={onFolderThemeChange}
                     />
-                ) : (
-                    <>
-                        <div className="canvas-frame-header pointer-events-auto absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-2" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
-                            <button
-                                type="button"
-                                className="grid size-8 shrink-0 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:bg-white/10"
-                                style={{ outlineColor: theme.frame.activeStroke }}
-                                aria-label={collapsed ? t("canvasB.frameNode.expandBoard") : t("canvasB.frameNode.collapseBoard")}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    onToggleCollapsed(data.id);
-                                }}
-                            >
-                                {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
-                            </button>
-                            {editing ? (
-                                <input
-                                    autoFocus
-                                    className="h-7 min-w-0 flex-1 rounded border bg-transparent px-2 text-sm font-semibold outline-none"
-                                    style={{ borderColor: theme.frame.activeStroke, color: theme.node.text }}
-                                    value={title}
-                                    aria-label={`${frameLabel}名称`}
-                                    onChange={(event) => setTitle(event.target.value)}
-                                    onBlur={commitTitle}
-                                    onMouseDown={(event) => event.stopPropagation()}
-                                    onKeyDown={(event) => {
-                                        event.stopPropagation();
-                                        if (event.key === "Enter") event.currentTarget.blur();
-                                        if (event.key === "Escape") {
-                                            setTitle(data.title);
-                                            setEditing(false);
-                                        }
-                                    }}
-                                />
-                            ) : (
-                                <button
-                                    type="button"
-                                    className="flex min-w-0 items-center gap-1 rounded text-left text-sm font-semibold focus-visible:outline focus-visible:outline-2"
-                                    title={data.title}
-                                    aria-label={editable ? `编辑${frameLabel}名称：${data.title}` : undefined}
-                                    onMouseDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        if (!editable) return;
-                                        setEditing(true);
-                                    }}
-                                >
-                                    <span className="min-w-0 truncate">{data.title}</span>
-                                    {editable ? <Pencil className="size-3 shrink-0 opacity-60" /> : null}
-                                </button>
-                            )}
-                            <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
-                                {childNodes.length}
-                            </span>
-                        </div>
-
-                        {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} /> : null}
-                    </>
-                )}
+                ) : folder ? (
+                    header
+                ) : fullDetail && collapsed ? (
+                    <FramePreview nodes={childNodes} frame={data} theme={theme} />
+                ) : null}
             </CometCard>
             {!folder && editable && onFrameColorChange && fullDetail ? (
                 <div
