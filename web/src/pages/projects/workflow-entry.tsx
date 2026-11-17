@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, type InputRef } from "antd";
-import { ArrowLeft, BookOpen, Check, ChevronRight, Clapperboard, FileText, Mic, PencilLine, ScrollText, Upload, Video } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Clapperboard, FileText, PencilLine, ScrollText, Upload } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -31,10 +31,10 @@ const FORMATS: Array<{ value: DramaSourceFormat; icon: typeof ScrollText }> = [
 const SOURCE_START = { novel: "从小说开始", script: "从剧本开始", storyboard: "从分镜开始" };
 const SOURCE_DETAIL = { novel: "上传小说，改编创作漫剧", script: "上传已有剧本创作漫剧", storyboard: "直接从分镜开始创作漫剧" };
 const WORKFLOW_TITLES = ["上传剧本", "剧本格式", "风格设置", "角色场景", "漫剧分镜", "视频预览"];
-const DRAMA_TYPES: Array<{ value: NonNullable<DramaSettings["dramaType"]>; label: string; detail: string; icon: typeof BookOpen; cover: string }> = [
-    { value: "comic", label: "精品漫", detail: "以漫剧形式呈现故事", icon: BookOpen, cover: "/short-drama-styles/isekai-anime.jpg" },
-    { value: "live_action", label: "真人剧", detail: "以真人影像形式创作", icon: Video, cover: "/short-drama-styles/urban-live-action.jpg" },
-    { value: "narration", label: "漫剧解说", detail: "以旁白讲述推进故事", icon: Mic, cover: "/short-drama-styles/wuxia-swordsman.jpg" },
+const DRAMA_TYPES: Array<{ value: NonNullable<DramaSettings["dramaType"]>; label: string; detail: string; cover: string }> = [
+    { value: "comic", label: "精品漫", detail: "以漫剧形式呈现故事", cover: "/short-drama-types/comic.jpg" },
+    { value: "live_action", label: "真人剧", detail: "以真人影像形式创作", cover: "/short-drama-types/live-action.jpg" },
+    { value: "narration", label: "漫剧解说", detail: "以旁白讲述推进故事", cover: "/short-drama-types/narration.jpg" },
 ];
 type EntryMode = "script" | "series" | "canvas";
 
@@ -374,7 +374,7 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
             </div>
             <div id={`${entryId}-content`} role="tabpanel" aria-labelledby={`${entryId}-${entryMode}`} className="drama-entry-content">
                 <div className="drama-entry-types" role="radiogroup" aria-label="剧集类型" data-active={entryMode === "series" && !seriesSource} aria-hidden={entryMode !== "series" || seriesSource} inert={entryMode !== "series" || seriesSource}>
-                    {DRAMA_TYPES.map(({ value, label, detail, icon: Icon }) => (
+                    {DRAMA_TYPES.map(({ value, label, detail, cover }) => (
                         <button
                             key={value}
                             type="button"
@@ -387,9 +387,9 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
                                 setSourceChooser(true);
                             }}
                         >
+                            <img className="drama-entry-type-cover" src={cover} alt="" width={1024} height={512} draggable={false} />
                             <span className="drama-entry-type-label">{label}</span>
                             <span className="sr-only">{detail}</span>
-                            <Icon className="drama-entry-type-icon" aria-hidden="true" />
                         </button>
                     ))}
                 </div>

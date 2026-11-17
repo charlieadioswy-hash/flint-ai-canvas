@@ -2,8 +2,8 @@
     width: 100%;
     max-width: 920px;
     margin: 0 auto;
-    padding: 28px 16px 24px;
-    gap: var(--space-4);
+    padding: var(--space-2) var(--space-4) var(--space-3);
+    gap: var(--space-2);
     border: 0;
     border-radius: 0;
     background: transparent;
@@ -59,6 +59,7 @@
 .drama-entry-home:not(.is-source-page) .drama-entry-content {
     display: grid;
     align-items: start;
+    grid-template-rows: auto;
     min-block-size: 280px;
 }
 
@@ -141,19 +142,29 @@
 }
 
 .drama-entry-type-label {
+    position: relative;
+    z-index: 1;
     color: var(--text-primary);
     font-size: var(--fs-heading);
     font-weight: 600;
 }
 
-.drama-entry-type-icon {
-    align-self: flex-end;
-    width: 64px;
-    height: 64px;
-    margin-top: auto;
-    color: var(--text-tertiary);
-    opacity: 0.55;
-    stroke-width: 1.1;
+.drama-entry-type-cover {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 35%;
+    pointer-events: none;
+}
+
+.drama-entry-types button::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--surface) 0%, color-mix(in srgb, var(--surface) 92%, transparent) 24%, color-mix(in srgb, var(--surface) 25%, transparent) 55%, transparent 75%);
+    content: "";
+    pointer-events: none;
 }
 
 .drama-entry-chooser {
@@ -353,17 +364,17 @@
 
 .drama-entry-home:not(.is-source-page) .drama-entry-import {
     gap: var(--space-2);
-    padding: var(--space-3);
+    padding: var(--space-2);
 }
 
 .drama-entry-home:not(.is-source-page) .drama-entry-upload {
-    min-height: 132px;
+    min-height: 96px;
     gap: var(--space-1);
     padding: var(--space-3);
 }
 
 .drama-entry-home:not(.is-source-page) .drama-entry-paste textarea {
-    min-height: 132px;
+    min-height: 96px;
 }
 
 .drama-entry-home:not(.is-source-page) .drama-entry-format-help {
@@ -438,8 +449,7 @@
 }
 
 .drama-library .drama-root:has(.drama-entry-home.is-source-page) > :not(.studio-band),
-.drama-library .studio-band:has(.drama-entry-home.is-source-page) > .app-page-header,
-.drama-library .studio-band:has(.drama-entry-home.is-source-page) > .collection-toolbar {
+.drama-library .studio-band:has(.drama-entry-home.is-source-page) > .drama-library-heading {
     display: none;
 }
 
@@ -564,7 +574,7 @@
 
 @media (max-width: 900px) {
     .drama-entry-home {
-        padding: 24px 12px 20px;
+        padding: var(--space-2) var(--space-3) var(--space-3);
     }
 
     .drama-entry-import-layout,
@@ -584,7 +594,7 @@
 @media (max-width: 640px) {
     .drama-entry-home,
     .drama-entry-home.is-source-page {
-        padding: 20px 0;
+        padding: var(--space-3) 0;
     }
 
     .drama-entry-types,
@@ -597,14 +607,6 @@
         min-height: 64px;
         justify-content: center;
         padding: var(--space-3);
-    }
-
-    .drama-entry-type-icon {
-        position: absolute;
-        right: 16px;
-        bottom: 12px;
-        width: 40px;
-        height: 40px;
     }
 
     .drama-entry-source-heading {

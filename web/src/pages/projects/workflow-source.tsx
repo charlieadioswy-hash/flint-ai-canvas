@@ -23,9 +23,9 @@ type CreationDraft = { mode: "selected" | "single"; revision: number; format: Dr
 type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; onStoryboardStarted?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
 const DRAMA_TYPES = [
-    { value: "comic" as const, label: "漫剧", cover: "/short-drama-styles/isekai-anime.jpg" },
-    { value: "live_action" as const, label: "真人剧", cover: "/short-drama-styles/urban-live-action.jpg" },
-    { value: "narration" as const, label: "解说漫", cover: "/short-drama-styles/wuxia-swordsman.jpg" },
+    { value: "comic" as const, label: "漫剧", cover: "/short-drama-types/comic.jpg" },
+    { value: "live_action" as const, label: "真人剧", cover: "/short-drama-types/live-action.jpg" },
+    { value: "narration" as const, label: "解说漫", cover: "/short-drama-types/narration.jpg" },
 ];
 const VIDEO_RATIOS = ["16:9", "4:3", "1:1", "9:16", "3:4"];
 

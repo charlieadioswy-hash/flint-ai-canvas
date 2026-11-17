@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState, type DragEvent } from "react";
+import { useDeferredValue, useEffect, useRef, useState, type DragEvent } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Dropdown, Input } from "antd";
 import { Clapperboard, ExternalLink, FileUp, MoreHorizontal, Search, Trash2 } from "lucide-react";
@@ -16,7 +16,10 @@ import { DramaWorkflowEntry } from "./workflow-entry";
 import { dramaProjectPath } from "./guide-state";
 import "./drama.css";
 
-const PAGE_SIZES = [24, 48, 96];
+const WORK_PAGE_SIZE = 15;
+const WORK_COLUMNS_MAX = 5;
+const WORK_CARD_MIN_WIDTH = 200;
+const WORK_CARD_GAP = 12;
 const STATUS_FILTERS: Array<{ value: DramaStatus | "all"; label: string }> = [
     { value: "all", label: "全部" },
     { value: "running", label: "制作中" },
@@ -47,13 +50,31 @@ export default function DramaListPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { message, modal } = App.useApp();
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
+    const libraryRef = useRef<HTMLDivElement>(null);
+    const [{ page, columns }, setPagination] = useState({ page: 1, columns: 2 });
+    const pageSize = WORK_PAGE_SIZE;
     const [keyword, setKeyword] = useState("");
     const [status, setStatus] = useState<DramaStatus | "all">("all");
     const [dragging, setDragging] = useState(false);
     const search = useDeferredValue(keyword.trim());
-    useEffect(() => setPage(1), [search, status, pageSize]);
+    useEffect(() => {
+        const library = libraryRef.current;
+        if (!library) return;
+        const resize = () => {
+            const width = library.getBoundingClientRect().width;
+            if (!width) return;
+            const next = Math.min(WORK_COLUMNS_MAX, Math.max(1, Math.floor((width + WORK_CARD_GAP) / (WORK_CARD_MIN_WIDTH + WORK_CARD_GAP))));
+            setPagination((current) => (current.columns === next ? current : { ...current, columns: next }));
+        };
+        resize();
+        if (typeof ResizeObserver === "undefined") {
+            window.addEventListener("resize", resize);
+            return () => window.removeEventListener("resize", resize);
+        }
+        const observer = new ResizeObserver(resize);
+        observer.observe(library);
+        return () => observer.disconnect();
+    }, []);
 
     const query = useQuery({
         queryKey: ["dramas", { page, pageSize, search, status }],
@@ -70,6 +91,11 @@ export default function DramaListPage() {
         onError: (error) => message.error(error instanceof Error ? error.message : "删除失败"),
     });
     const data = query.data;
+    useEffect(() => {
+        if (!data || query.isPlaceholderData) return;
+        const lastPage = Math.max(1, Math.ceil(data.total / pageSize));
+        if (page > lastPage) setPagination((current) => ({ ...current, page: lastPage }));
+    }, [data, query.isPlaceholderData, page, pageSize]);
     const counts = data?.statusCounts || {};
     const total = counts.all ?? 0;
     const filtered = Boolean(search || status !== "all");
@@ -104,71 +130,75 @@ export default function DramaListPage() {
         },
     };
 
-    if (query.isLoading)
-        return (
-            <WorkspacePage className="studio-collection-page">
-                <WorkspaceLoadingState label="正在读取作品" />
-            </WorkspacePage>
-        );
-    if (query.isError && !data)
-        return (
-            <WorkspacePage className="studio-collection-page">
-                <WorkspaceErrorState description="作品列表暂时无法读取。" onRetry={() => void query.refetch()} />
-            </WorkspacePage>
-        );
-
     return (
         <WorkspacePage className="studio-collection-page drama-library">
-            <div className="drama-root" {...dragProps}>
+            <div className="drama-root" ref={libraryRef} {...dragProps}>
                 <div className="studio-band">
                     <DramaWorkflowEntry />
-                    <PageHeader title="最近作品" meta={<span className="app-projects-header-meta">{total} 部</span>} />
-                    {total ? (
-                        <CollectionToolbar
-                            label="短剧浏览工具"
-                            active={filtered}
-                            onReset={() => {
-                                setKeyword("");
-                                setStatus("all");
-                            }}
-                        >
-                            <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索作品名" aria-label="搜索作品名" onChange={(event) => setKeyword(event.target.value)} />
-                            <div className="drama-library-status" role="radiogroup" aria-label="按状态筛选">
-                                {STATUS_FILTERS.map((item) => {
-                                    const count = item.value === "all" ? total : counts[item.value] || 0;
-                                    if (item.value !== "all" && !count && status !== item.value) return null;
-                                    return (
-                                        <button key={item.value} type="button" role="radio" aria-checked={status === item.value} className={`drama-library-status-item is-${item.value}`} onClick={() => setStatus(item.value)}>
-                                            {item.value !== "all" ? <span className="drama-dot" /> : null}
-                                            {item.label}
-                                            <b>{count}</b>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </CollectionToolbar>
-                    ) : null}
+                    <div className="drama-library-heading">
+                        <PageHeader title="我的作品" meta={<span className="app-projects-header-meta">{total} 部</span>} />
+                        {total ? (
+                            <CollectionToolbar
+                                label="短剧浏览工具"
+                                active={filtered}
+                                onReset={() => {
+                                    setKeyword("");
+                                    setStatus("all");
+                                    setPagination((current) => ({ ...current, page: 1 }));
+                                }}
+                            >
+                                <Input
+                                    prefix={<Search />}
+                                    value={keyword}
+                                    allowClear
+                                    placeholder="搜索作品名"
+                                    aria-label="搜索作品名"
+                                    onChange={(event) => {
+                                        setKeyword(event.target.value);
+                                        setPagination((current) => ({ ...current, page: 1 }));
+                                    }}
+                                />
+                                <div className="drama-library-status" role="radiogroup" aria-label="按状态筛选">
+                                    {STATUS_FILTERS.map((item) => {
+                                        const count = item.value === "all" ? total : counts[item.value] || 0;
+                                        if (item.value !== "all" && !count && status !== item.value) return null;
+                                        return (
+                                            <button
+                                                key={item.value}
+                                                type="button"
+                                                role="radio"
+                                                aria-checked={status === item.value}
+                                                className={`drama-library-status-item is-${item.value}`}
+                                                onClick={() => {
+                                                    setStatus(item.value);
+                                                    setPagination((current) => ({ ...current, page: 1 }));
+                                                }}
+                                            >
+                                                {item.value !== "all" ? <span className="drama-dot" /> : null}
+                                                {item.label}
+                                                <b>{count}</b>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </CollectionToolbar>
+                        ) : null}
+                    </div>
                 </div>
 
-                {total ? (
+                {query.isLoading ? (
+                    <WorkspaceLoadingState label="正在读取作品" />
+                ) : query.isError && !data ? (
+                    <WorkspaceErrorState description="作品列表暂时无法读取。" onRetry={() => void query.refetch()} />
+                ) : total ? (
                     data?.items.length ? (
                         <>
-                            <div className={`drama-library-grid ${query.isPlaceholderData ? "is-stale" : ""}`}>
+                            <div className={`drama-library-grid ${query.isPlaceholderData ? "is-stale" : ""}`} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} aria-busy={query.isFetching}>
                                 {data.items.map((item) => (
                                     <DramaCard key={item.project.id} item={item} onDelete={() => confirmDelete(item)} />
                                 ))}
                             </div>
-                            <PaginationBar
-                                current={page}
-                                pageSize={pageSize}
-                                total={data.total}
-                                itemLabel="部"
-                                pageSizeOptions={PAGE_SIZES}
-                                onChange={(next, size) => {
-                                    setPage(next);
-                                    setPageSize(size);
-                                }}
-                            />
+                            <PaginationBar current={page} pageSize={pageSize} total={data.total} itemLabel="部" pageSizeOptions={[pageSize]} alwaysShow onChange={(next) => setPagination((current) => ({ ...current, page: next }))} />
                         </>
                     ) : (
                         <WorkspaceNoResultsState
@@ -178,6 +208,7 @@ export default function DramaListPage() {
                             onClear={() => {
                                 setKeyword("");
                                 setStatus("all");
+                                setPagination((current) => ({ ...current, page: 1 }));
                             }}
                         />
                     )

@@ -2813,6 +2813,34 @@
     position: relative;
     min-height: 100%;
 }
+.drama-library-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    margin-top: var(--space-2);
+    margin-bottom: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--user-border-strong);
+}
+.drama-library .drama-library-heading .app-page-header {
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: 0;
+}
+.drama-library .drama-library-heading .collection-toolbar {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+.drama-library-heading .collection-toolbar-controls {
+    justify-content: flex-end;
+}
+.drama-library-heading .collection-toolbar-controls > .ant-input-affix-wrapper {
+    width: 200px;
+}
+.drama-library .drama-library-heading .collection-toolbar-actions:empty {
+    display: none;
+}
 .drama-library-empty {
     margin: 0;
     padding: var(--space-5);
@@ -2879,12 +2907,14 @@
 
 .drama-library-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
     gap: var(--space-3);
     transition: opacity 160ms ease-out;
 }
 .drama-library-grid.is-stale {
     opacity: 0.55;
+}
+.drama-library .app-pagination-bar {
+    margin-top: var(--space-3);
 }
 .drama-library-card {
     position: relative;
@@ -2901,10 +2931,10 @@
 }
 .drama-library-open {
     display: grid;
-    grid-template-columns: 80px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-3);
-    min-height: 88px;
+    gap: var(--space-2);
+    min-height: 80px;
     color: inherit;
     border-radius: inherit;
 }
@@ -2964,17 +2994,17 @@
     display: none;
 }
 .drama-library-glyph {
-    font-size: 32px;
+    font-size: 24px;
     font-weight: 600;
     line-height: 1;
     color: color-mix(in srgb, var(--user-ink) 14%, transparent);
 }
 .drama-library-empty-icon {
     position: absolute;
-    right: 14px;
-    bottom: 14px;
-    width: 18px;
-    height: 18px;
+    right: var(--space-2);
+    bottom: var(--space-2);
+    width: 14px;
+    height: 14px;
     color: color-mix(in srgb, var(--user-ink) 30%, transparent);
 }
 .drama-library-badge {
@@ -2989,13 +3019,15 @@
 .drama-library-body {
     display: grid;
     min-width: 0;
-    gap: var(--space-1);
+    gap: var(--space-half);
     padding: 0 var(--space-5) 0 0;
 }
 .drama-library-body h3 {
+    min-width: 0;
+    max-width: 100%;
     overflow: hidden;
     color: var(--user-ink);
-    font-size: 14px;
+    font-size: var(--fs-ui);
     font-weight: 600;
     line-height: 1.45;
     text-overflow: ellipsis;
@@ -3003,10 +3035,16 @@
 }
 .drama-library-meta {
     display: flex;
-    flex-wrap: wrap;
+    overflow: hidden;
     gap: 4px 8px;
     color: var(--user-ink-soft);
-    font-size: 12px;
+    font-size: var(--fs-label);
+    white-space: nowrap;
+}
+.drama-library-meta > * {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .drama-library-meta span + span::before {
     content: "·";
@@ -3045,8 +3083,16 @@
     font-variant-numeric: tabular-nums;
 }
 .drama-library-progress-text b {
+    min-width: 0;
+    overflow: hidden;
     color: var(--user-ink);
     font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.drama-library-progress-text > span {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 .drama-library-alert {
     overflow: hidden;
@@ -3113,9 +3159,15 @@
     font-size: 13px;
 }
 @media (max-width: 720px) {
-    .drama-library-grid {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 12px;
+    .drama-library-heading {
+        flex-wrap: wrap;
+        gap: var(--space-2);
+    }
+    .drama-library .drama-library-heading .collection-toolbar {
+        flex-basis: 100%;
+    }
+    .drama-library-heading .collection-toolbar-controls {
+        justify-content: flex-start;
     }
 }
 

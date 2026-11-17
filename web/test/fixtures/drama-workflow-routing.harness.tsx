@@ -55,6 +55,7 @@ function WorkflowMock() {
 }
 mock.module("antd", () => ({
     App: { useApp: () => ({ message: { success: noop, info: noop, error: noop, warning: noop }, modal: { confirm: noop } }) },
+    Modal: ({ open, children }: { open?: boolean; children?: ReactNode }) => (open ? <div role="dialog">{children}</div> : null),
     Button: ({ children, icon, loading: _loading, type: _type, size: _size, shape: _shape, danger: _danger, ...props }: Record<string, unknown>) => createElement("button", props, icon as ReactNode, children as ReactNode),
     Dropdown: ({ children, menu }: { children?: ReactNode; menu: { items: Array<{ key?: string; label?: ReactNode }> } }) => (
         <div>
