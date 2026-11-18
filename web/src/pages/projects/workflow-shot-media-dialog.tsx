@@ -12,6 +12,7 @@ import {
     adoptDramaShotMedia,
     executeDramaShotMedia,
     getDramaShotMedia,
+    getDramaShotVideoSummaries,
     preflightDramaShotMedia,
     quoteDramaShotMedia,
     saveDramaShotMedia,
@@ -22,6 +23,7 @@ import {
     type DramaShotMediaPreflight,
 } from "@/services/api/drama-shot-media";
 import { ApiError } from "@/services/api/request";
+import { getResourceAccess, resolveResourceAccessURL } from "@/services/api/resources";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
@@ -141,8 +143,17 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
         </nav>
     );
     const segmentShots = props.shots?.filter((shot) => shot.episodeId === props.shot.episodeId && shot.segmentIndex === props.shot.segmentIndex) || [];
-    const segmentLabel = props.segmentLabel || `第 ${props.shot.segmentIndex + 1} 段`;
-    const shotStrip =
+    const { episodeId, segmentIndex } = props.shot;
+    const segmentLabel = props.segmentLabel || `第 ${segmentIndex + 1} 段`;
+    const summaries = useQuery({
+        queryKey: ["drama-shot-media", props.userId, props.projectId, "strip", episodeId, segmentIndex],
+        queryFn: ({ signal }) => getDramaShotVideoSummaries(props.projectId, episodeId, segmentIndex, signal),
+        enabled: kind === "video" && segmentShots.length > 0 && Boolean(props.onSelectShot),
+        refetchOnWindowFocus: true,
+        refetchInterval: (query) => (query.state.data?.some((summary) => summary.pending) ? 3000 : false),
+    });
+    const summaryByShot = new Map(summaries.data?.map((summary) => [summary.shotId, summary]));
+    const renderShotStrip = (currentVideoId?: string) =>
         segmentShots.length && props.onSelectShot ? (
             <footer className="drama-shot-media-strip">
                 <strong>
@@ -153,6 +164,9 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                         <ShotStripItem
                             key={shot.id}
                             shot={shot}
+                            kind={kind}
+                            imageResourceId={summaryByShot.get(shot.id)?.imageResourceId}
+                            videoResourceId={shot.id === props.shot.id ? currentVideoId : summaryByShot.get(shot.id)?.resourceId}
                             active={shot.id === props.shot.id}
                             disabled={busy}
                             userId={props.userId}
@@ -183,13 +197,13 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                 </header>
             ) : null}
             {kind === "audio" ? (
-                <WorkflowShotAudioEditor {...props} tabs={tabs} shotStrip={shotStrip} onDirtyChange={setDirty} onBusyChange={mediaBusyChanged} />
+                <WorkflowShotAudioEditor {...props} tabs={tabs} shotStrip={renderShotStrip()} onDirtyChange={setDirty} onBusyChange={mediaBusyChanged} />
             ) : (
                 <ShotMediaEditor
                     key={kind}
                     {...props}
                     tabs={tabs}
-                    shotStrip={shotStrip}
+                    renderShotStrip={renderShotStrip}
                     kind={kind}
                     onDirtyChange={setDirty}
                     onBusyChange={mediaBusyChanged}
@@ -208,13 +222,87 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
     );
 }
 
-function ShotStripItem({ shot, active, disabled, userId, onClick }: { shot: DramaShot; active: boolean; disabled: boolean; userId: string; onClick: () => void }) {
-    const image = useQuery({ queryKey: ["drama-shot-media", userId, shot.projectId, shot.id, "image"], queryFn: ({ signal }) => getDramaShotMedia(shot.projectId, shot.id, "image", signal), staleTime: 20_000 });
+function ShotStripItem({
+    shot,
+    kind,
+    imageResourceId,
+    videoResourceId,
+    active,
+    disabled,
+    userId,
+    onClick,
+}: {
+    shot: DramaShot;
+    kind: DramaShotMediaKind;
+    imageResourceId?: string;
+    videoResourceId?: string;
+    active: boolean;
+    disabled: boolean;
+    userId: string;
+    onClick: () => void;
+}) {
+    const image = useQuery({
+        queryKey: ["drama-shot-media", userId, shot.projectId, shot.id, "image"],
+        queryFn: ({ signal }) => getDramaShotMedia(shot.projectId, shot.id, "image", signal),
+        enabled: kind !== "video",
+        staleTime: 20_000,
+    });
+    const imageId = kind === "video" ? imageResourceId : image.data?.resourceId;
+    const videoId = kind === "video" ? videoResourceId : undefined;
+    const fallback = imageId ? <MediaThumb resourceId={imageId} alt="" /> : <span>{shot.shotSize || "待生成画面"}</span>;
     return (
         <button type="button" aria-label={`切换分镜 ${shot.position + 1}`} aria-pressed={active} disabled={disabled} onClick={onClick}>
-            <span>{image.data?.resourceId ? <MediaThumb resourceId={image.data.resourceId} alt={`分镜 ${shot.position + 1}`} /> : <span>{shot.shotSize || "待生成画面"}</span>}</span>
+            <span>{videoId ? <ShotStripVideo key={videoId} resourceId={videoId} fallback={fallback} /> : fallback}</span>
             <strong>分镜 {shot.position + 1}</strong>
         </button>
+    );
+}
+
+function ShotStripVideo({ resourceId, fallback }: { resourceId: string; fallback: ReactNode }) {
+    const initialUrl = useResourceMediaUrl(resourceId, "playback");
+    const [retry, setRetry] = useState(false);
+    const [retryUrl, setRetryUrl] = useState("");
+    const [frameReady, setFrameReady] = useState(false);
+    useEffect(() => {
+        if (!retry) return;
+        let active = true;
+        void getResourceAccess(`resource:${resourceId}`, "display", "playback", "", { forceRefresh: true }).then(
+            (access) => {
+                if (active) setRetryUrl(resolveResourceAccessURL(access.url));
+            },
+            () => {},
+        );
+        return () => {
+            active = false;
+        };
+    }, [resourceId, retry]);
+    const url = retry ? retryUrl : initialUrl;
+    return (
+        <>
+            {frameReady ? null : fallback}
+            {url ? (
+                <video
+                    key={retry ? "retry" : "initial"}
+                    src={`${url}#t=0.1`}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    tabIndex={-1}
+                    aria-hidden
+                    data-ready={frameReady ? "" : undefined}
+                    onLoadedMetadata={(event) => {
+                        const video = event.currentTarget;
+                        if (video.currentTime === 0 && video.duration > 0) video.currentTime = Math.min(0.1, video.duration / 2);
+                    }}
+                    onLoadedData={() => setFrameReady(true)}
+                    onError={() => {
+                        setFrameReady(false);
+                        if (retry) setRetryUrl("");
+                        else setRetry(true);
+                    }}
+                />
+            ) : null}
+        </>
     );
 }
 
@@ -229,7 +317,7 @@ function ShotMediaEditor({
     onSyncBlockedChange,
     registerFlush,
     tabs,
-    shotStrip,
+    renderShotStrip,
 }: Props & {
     shot: DramaShot;
     userId: string;
@@ -239,7 +327,7 @@ function ShotMediaEditor({
     onSyncBlockedChange: (blocked: boolean) => void;
     registerFlush: (flush?: () => Promise<boolean>) => void;
     tabs: ReactNode;
-    shotStrip: ReactNode;
+    renderShotStrip: (currentVideoId?: string) => ReactNode;
 }) {
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
@@ -712,7 +800,7 @@ function ShotMediaEditor({
                             回到当前采用
                         </Button>
                     ) : null}
-                    {shotStrip}
+                    {renderShotStrip(kind === "video" ? current?.resourceId : undefined)}
                 </section>
                 <aside className="drama-shot-media-output" aria-label="镜头媒体结果与版本">
                     <header>

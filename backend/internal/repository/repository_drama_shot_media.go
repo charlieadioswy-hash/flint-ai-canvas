@@ -24,6 +24,30 @@ func (r *Repository) DramaEpisodeShotMedia(projectID, episodeID, kind string) ([
 	return rows, err
 }
 
+type DramaSegmentShotMediaRow struct {
+	ShotID       string
+	Kind         string
+	ResourceID   string
+	TaskStatus   model.TaskStatus
+	RepairTaskID string
+}
+
+func (r *Repository) DramaSegmentShotMediaRows(userID, projectID, episodeID string, segmentIndex int) ([]DramaSegmentShotMediaRow, error) {
+	var rows []DramaSegmentShotMediaRow
+	err := r.db.Table("drama_shots AS shot").
+		Select(`shot.id AS shot_id, COALESCE(media.kind, '') AS kind,
+			COALESCE(media.resource_id, '') AS resource_id, COALESCE(task.status, '') AS task_status,
+			CASE WHEN task.status = ? AND take.resource_id = '' THEN task.id ELSE '' END AS repair_task_id`, model.TaskStatusSucceeded).
+		Joins(`LEFT JOIN drama_shot_media AS media ON media.project_id = shot.project_id AND media.episode_id = shot.episode_id
+			AND media.shot_id = shot.id AND media.kind IN ?`, []string{"image", "video"}).
+		Joins(`LEFT JOIN tasks AS task ON task.id = media.task_id AND task.project_id = shot.project_id AND task.user_id = ?`, userID).
+		Joins(`LEFT JOIN drama_takes AS take ON take.id = media.pending_take_id AND take.task_id = task.id
+			AND take.project_id = shot.project_id AND take.owner_id = shot.id AND take.kind = ('shot_' || media.kind)`).
+		Where("shot.project_id = ? AND shot.episode_id = ? AND shot.segment_index = ?", projectID, episodeID, segmentIndex).
+		Order("shot.position, shot.id").Scan(&rows).Error
+	return rows, err
+}
+
 func (r *Repository) SaveDramaShotMediaConfig(row *model.DramaShotMedia, expected int64) error {
 	if expected == 0 {
 		return r.db.Create(row).Error

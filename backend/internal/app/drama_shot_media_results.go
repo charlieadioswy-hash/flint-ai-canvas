@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"gorm.io/gorm"
@@ -71,6 +72,71 @@ func (s *Service) DramaShotMedia(userID, projectID, shotID, kind string) (DramaS
 	}
 	if row.ScriptHash != "" && row.ScriptHash != dramaShotScriptHash(*shot) && result.ResourceID != "" {
 		result.Status = "stale"
+	}
+	return result, nil
+}
+
+type DramaShotVideoSummary struct {
+	ShotID          string `json:"shotId"`
+	ResourceID      string `json:"resourceId,omitempty"`
+	ImageResourceID string `json:"imageResourceId,omitempty"`
+	Pending         bool   `json:"pending"`
+}
+
+func (s *Service) DramaShotVideoSummaries(userID, projectID, episodeID string, segmentIndex int) ([]DramaShotVideoSummary, error) {
+	if segmentIndex < 0 {
+		return nil, BadAuthRequest("剧情段序号无效")
+	}
+	project, _, err := s.dramaForUser(userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	episode, err := s.repo.DramaEpisode(project.ID, episodeID)
+	if err != nil {
+		return nil, dramaLookupError(err)
+	}
+	rows, err := s.repo.DramaSegmentShotMediaRows(userID, project.ID, episode.ID, segmentIndex)
+	if err != nil {
+		return nil, err
+	}
+	// Repair only successful, still-bound takes whose result was not written back.
+	// Older takes remain the responsibility of the full history endpoint.
+	var repaired bool
+	for _, row := range rows {
+		if row.RepairTaskID == "" {
+			continue
+		}
+		task, err := s.repo.TaskForUser(userID, row.RepairTaskID)
+		if err != nil {
+			slog.Warn("drama shot summary task read failed", "project", project.ID, "shot", row.ShotID, "task", row.RepairTaskID, "error", err)
+			continue
+		}
+		handled, err := s.RegisterDramaShotMediaTaskOutput(*task)
+		if err != nil {
+			slog.Warn("drama shot summary output backfill failed", "project", project.ID, "shot", row.ShotID, "task", row.RepairTaskID, "error", err)
+			continue
+		}
+		repaired = repaired || handled
+	}
+	if repaired {
+		rows, err = s.repo.DramaSegmentShotMediaRows(userID, project.ID, episode.ID, segmentIndex)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result := make([]DramaShotVideoSummary, 0, len(rows))
+	for _, row := range rows {
+		if len(result) == 0 || result[len(result)-1].ShotID != row.ShotID {
+			result = append(result, DramaShotVideoSummary{ShotID: row.ShotID})
+		}
+		summary := &result[len(result)-1]
+		switch row.Kind {
+		case "video":
+			summary.ResourceID = row.ResourceID
+		case "image":
+			summary.ImageResourceID = row.ResourceID
+		}
+		summary.Pending = summary.Pending || row.TaskStatus == model.TaskStatusQueued || row.TaskStatus == model.TaskStatusRunning
 	}
 	return result, nil
 }

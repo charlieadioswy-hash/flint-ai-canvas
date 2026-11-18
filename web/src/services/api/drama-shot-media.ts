@@ -55,6 +55,13 @@ export type DramaShotMedia = {
     error?: string;
 };
 
+export type DramaShotVideoSummary = {
+    shotId: string;
+    resourceId?: string;
+    imageResourceId?: string;
+    pending: boolean;
+};
+
 export type DramaShotMediaPreflight = {
     shotId: string;
     kind: DramaShotMediaKind;
@@ -84,6 +91,14 @@ function mediaPath(projectId: string, shotId: string, kind: DramaShotMediaKind) 
 export function getDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, signal?: AbortSignal) {
     const deadline = AbortSignal.timeout(12_000);
     return http.get<DramaShotMedia>(mediaPath(projectId, shotId, kind), { signal: signal ? AbortSignal.any([signal, deadline]) : deadline });
+}
+
+export function getDramaShotVideoSummaries(projectId: string, episodeId: string, segmentIndex: number, signal?: AbortSignal) {
+    const deadline = AbortSignal.timeout(12_000);
+    return http.get<DramaShotVideoSummary[]>(`/dramas/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/shot-video-summaries`, {
+        params: { segmentIndex },
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    });
 }
 
 export function saveDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, input: { expectedRevision: number; config: DramaShotMediaConfig }) {

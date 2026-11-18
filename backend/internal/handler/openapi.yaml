@@ -4856,6 +4856,38 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/episodes/{episodeId}/shot-video-summaries:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: episodeId, required: true, schema: { type: string } }
+      - { in: query, name: segmentIndex, required: true, schema: { type: integer, minimum: 0 } }
+    get:
+      tags: [dramas]
+      summary: 读取本段分镜的当前图片、视频及任务状态
+      description: 按镜头顺序返回当前采用的媒体资源和当前绑定任务是否仍在进行，不读取版本历史或生成配置。可补写当前绑定的成功结果，不创建生成任务。
+      responses:
+        "200":
+          description: 成功信封，data 为分镜媒体摘要列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          required: [shotId, pending]
+                          properties:
+                            shotId: { type: string }
+                            resourceId: { type: string, description: 当前采用的视频资源 }
+                            imageResourceId: { type: string, description: 当前采用的图片资源 }
+                            pending: { type: boolean, description: 当前绑定的图片或视频任务正在排队或运行 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /dramas/{id}/shots/{shotId}/media/{kind}/quote:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }

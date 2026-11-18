@@ -52,6 +52,11 @@ const adoptions: { expectedRevision: number; takeId: string }[] = [];
 let confirmations: { onOk: () => void }[] = [];
 let readsFail = false;
 let nextMediaRead: Deferred<void> | undefined;
+const mediaReads: { projectId: string; shotId: string; kind: DramaShotMediaKind }[] = [];
+const videoSummaryReads: { projectId: string; episodeId: string; segmentIndex: number }[] = [];
+let videoSummaries: { shotId: string; imageResourceId?: string; resourceId?: string; pending: boolean }[] = [];
+const playbackRefreshes: string[] = [];
+let nextPlaybackRefresh: Deferred<string> | undefined;
 let closes = 0;
 let changed = 0;
 let selectedShots: Array<{ id: string; kind: DramaShotMediaKind }> = [];
@@ -151,6 +156,16 @@ mock.module("@/services/api/drama-cast-views", () => ({ listDramaCastViews: asyn
 const resourceApi = await import("@/services/api/resources");
 mock.module("@/services/api/resources", () => ({
     ...resourceApi,
+    getResourceAccess: async (storageKey: string, purpose: string, variant: string, _downloadName: string, options?: { forceRefresh?: boolean }) => {
+        const id = storageKey.replace(/^resource:/, "");
+        if (purpose === "display" && variant === "playback" && options?.forceRefresh) {
+            playbackRefreshes.push(storageKey);
+            const refresh = nextPlaybackRefresh;
+            nextPlaybackRefresh = undefined;
+            if (refresh) return { url: await refresh.promise };
+        }
+        return { url: `https://test.invalid/${id}` };
+    },
     getResource: async (id: string) => {
         const pending = nextResourceRead;
         nextResourceRead = undefined;
@@ -182,7 +197,12 @@ mock.module("@/pages/projects/drama-shared", () => ({
 }));
 mock.module("@/pages/projects/workflow-shot-audio", () => ({ WorkflowShotAudioEditor: () => <p>独立镜头音频编辑器</p> }));
 mock.module("@/services/api/drama-shot-media", () => ({
-    getDramaShotMedia: async (_projectId: string, _shotId: string, kind: DramaShotMediaKind, signal?: AbortSignal) => {
+    getDramaShotVideoSummaries: async (projectId: string, episodeId: string, segmentIndex: number) => {
+        videoSummaryReads.push({ projectId, episodeId, segmentIndex });
+        return structuredClone(videoSummaries);
+    },
+    getDramaShotMedia: async (projectId: string, shotId: string, kind: DramaShotMediaKind, signal?: AbortSignal) => {
+        mediaReads.push({ projectId, shotId, kind });
         const pending = nextMediaRead;
         nextMediaRead = undefined;
         if (pending) {
@@ -293,6 +313,9 @@ function media(kind: DramaShotMediaKind): DramaShotMedia {
 async function mount(page = false, configure?: () => void, initialKind?: DramaShotMediaKind, canOpenVideo?: (shot: DramaShot) => boolean, shotOverrides?: Partial<DramaShot>) {
     saves.length = checks.length = executions.length = adoptions.length = draftChecks.length = 0;
     uploads.length = downloads.length = blobReads.length = crops.length = deletions.length = 0;
+    mediaReads.length = videoSummaryReads.length = playbackRefreshes.length = 0;
+    videoSummaries = [];
+    nextPlaybackRefresh = undefined;
     casts = [];
     castTakes = [];
     castViews = [];
@@ -1292,6 +1315,95 @@ test("视频页检查目标镜头并在未通过时保持当前镜头", async ()
         allowed = true;
         await clickLabel(view.host, "切换分镜 3");
         expect(selectedShots).toEqual([{ id: "next-shot", kind: "video" }]);
+    } finally {
+        await view.close();
+    }
+});
+
+test("视频页底部批量读取同段缩略图，当前镜头采用版本直接使用编辑器结果", async () => {
+    const view = await mount(
+        true,
+        () => {
+            server.video = { ...server.video, resourceId: "current-video" };
+            videoSummaries = [
+                { shotId: "real-shot", imageResourceId: "current-fallback", resourceId: "older-current-video", pending: false },
+                { shotId: "next-shot", imageResourceId: "next-fallback", pending: true },
+            ];
+        },
+        "video",
+    );
+    try {
+        const currentCard = view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 2']")!;
+        const nextCard = view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 3']")!;
+        expect(mediaReads).toEqual([{ projectId: "project-a", shotId: "real-shot", kind: "video" }]);
+        expect(videoSummaryReads).toEqual([{ projectId: "project-a", episodeId: "episode", segmentIndex: 2 }]);
+        expect(currentCard.querySelector("video")?.getAttribute("src")).toStartWith("https://test.invalid/current-video");
+        expect(currentCard.querySelector("img")?.dataset.resource).toBe("current-fallback");
+        expect(nextCard.querySelector("img")?.dataset.resource).toBe("next-fallback");
+        expect(nextCard.querySelector("video")).toBeNull();
+
+        videoSummaries[1] = { ...videoSummaries[1], resourceId: "next-video", pending: false };
+        await act(async () => {
+            await view.client.refetchQueries({ queryKey: ["drama-shot-media", "user-a", "project-a", "strip", "episode", 2], exact: true });
+            await settle();
+        });
+        expect(nextCard.querySelector("video")?.getAttribute("src")).toStartWith("https://test.invalid/next-video");
+        expect(mediaReads).toHaveLength(1);
+        await clickLabel(view.host, "切换分镜 3");
+        expect(selectedShots).toEqual([{ id: "next-shot", kind: "video" }]);
+    } finally {
+        await view.close();
+    }
+});
+
+test("视频首帧就绪前保留分镜图，播放失败只刷新一次地址", async () => {
+    const view = await mount(
+        true,
+        () => {
+            videoSummaries = [{ shotId: "next-shot", imageResourceId: "fallback-image", resourceId: "next-video", pending: false }];
+        },
+        "video",
+    );
+    try {
+        const card = view.host.querySelector<HTMLButtonElement>("[aria-label='切换分镜 3']")!;
+        const thumbnail = card.querySelector("video")!;
+        expect(thumbnail.getAttribute("src")).toStartWith("https://test.invalid/next-video");
+        expect(thumbnail.controls).toBe(false);
+        expect(thumbnail.autoplay).toBe(false);
+        expect(thumbnail.hasAttribute("data-ready")).toBe(false);
+        expect(card.querySelector("img")?.dataset.resource).toBe("fallback-image");
+
+        await act(async () => {
+            Object.defineProperty(thumbnail, "readyState", { configurable: true, value: 2 });
+            thumbnail.dispatchEvent(new Event("loadeddata"));
+        });
+        expect(thumbnail.hasAttribute("data-ready")).toBe(true);
+
+        const refresh = deferred<string>();
+        nextPlaybackRefresh = refresh;
+        await act(async () => {
+            thumbnail.dispatchEvent(new Event("error"));
+            await settle();
+        });
+        expect(playbackRefreshes).toEqual(["resource:next-video"]);
+        expect(card.querySelector("video[data-ready]")).toBeNull();
+        expect(card.querySelector("img")?.dataset.resource).toBe("fallback-image");
+
+        await act(async () => {
+            refresh.resolve("https://test.invalid/next-video");
+            await settle();
+        });
+        const retried = card.querySelector("video")!;
+        expect(retried).not.toBe(thumbnail);
+        expect(retried.getAttribute("src")).toBe(thumbnail.getAttribute("src"));
+        expect(retried.hasAttribute("data-ready")).toBe(false);
+        await act(async () => {
+            retried.dispatchEvent(new Event("error"));
+            await settle();
+        });
+        expect(playbackRefreshes).toEqual(["resource:next-video"]);
+        expect(card.querySelector("video[data-ready]")).toBeNull();
+        expect(card.querySelector("img")?.dataset.resource).toBe("fallback-image");
     } finally {
         await view.close();
     }

@@ -375,15 +375,24 @@
 .drama-shot-media-strip button > span {
     display: grid;
     place-items: center;
+    position: relative;
     aspect-ratio: 16 / 9;
     background: var(--drama-sunken);
     overflow: hidden;
     border-radius: var(--radius-sm);
 }
-.drama-shot-media-strip img {
+.drama-shot-media-strip :is(img, video) {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+.drama-shot-media-strip video {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+.drama-shot-media-strip video:not([data-ready]) {
+    visibility: hidden;
 }
 
 @container drama-shot-editor (max-width: 960px) {
