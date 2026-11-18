@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, Fragment, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import type { Root } from "react-dom/client";
@@ -67,6 +67,8 @@ mock.module("@/pages/projects/workflow-shot-media-dialog", () => ({
         shot,
         shots,
         segmentLabel,
+        initialKind,
+        onKindChange,
         onClose,
         onDirtyChange,
         onSelectShot,
@@ -74,6 +76,8 @@ mock.module("@/pages/projects/workflow-shot-media-dialog", () => ({
         shot?: DramaShot;
         shots?: DramaShot[];
         segmentLabel?: string;
+        initialKind?: string;
+        onKindChange?: (kind: "audio") => void;
         onClose: () => void;
         onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
         onSelectShot?: (shot: DramaShot, kind: "video") => void;
@@ -81,7 +85,8 @@ mock.module("@/pages/projects/workflow-shot-media-dialog", () => ({
         shot
             ? createElement(
                   "section",
-                  { "data-media-shot": shot.id, "data-media-shots": shots?.map((item) => item.id).join(","), "data-segment-label": segmentLabel },
+                  { "data-media-shot": shot.id, "data-media-shots": shots?.map((item) => item.id).join(","), "data-segment-label": segmentLabel, "data-media-kind": initialKind },
+                  createElement("button", { onClick: () => onKindChange?.("audio") }, "切换到音频"),
                   createElement("button", { onClick: () => onDirtyChange?.(true, false) }, "修改镜头媒体"),
                   createElement("button", { onClick: () => onDirtyChange?.(false, true) }, "镜头媒体提交中"),
                   createElement("button", { onClick: onClose }, "媒体确认返回"),
@@ -209,13 +214,18 @@ mock.module("@/pages/projects/workflow-batch", () => ({
 mock.module("@/pages/projects/studio/queue-bar", () => ({
     QueueBar: ({ onJump }: { onJump: (job: { id: string; episodeId?: string; shotId?: string; kind: string }) => void }) =>
         createElement(
-            "button",
-            {
-                type: "button",
-                "aria-label": "定位队列任务",
-                onClick: () => onJump({ id: "job-1", episodeId: "ep-ready", shotId: "segment-2", kind: "segment_video" }),
-            },
-            "队列",
+            Fragment,
+            null,
+            createElement(
+                "button",
+                {
+                    type: "button",
+                    "aria-label": "定位队列任务",
+                    onClick: () => onJump({ id: "job-1", episodeId: "ep-ready", shotId: "segment-2", kind: "segment_video" }),
+                },
+                "队列",
+            ),
+            createElement("button", { type: "button", onClick: () => onJump({ id: "shot-media:video", episodeId: "ep-ready", shotId: "shot-segment-1", kind: "shot_video" }) }, "定位单镜视频"),
         ),
 }));
 mock.module("@/pages/projects/simple-studio-segment-editor", () => ({
@@ -992,6 +1002,26 @@ test("队列定位保留简易流程并选中对应段，不自动打开编辑�
         expect(location).toContain("mode=simple");
         expect(location).toContain("segment=1");
         expect(location).not.toContain("mode=advanced");
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("定位同一镜头切换到任务媒体，手动切换同步当前路由", async () => {
+    const path = "/projects/project/e/ep-ready?step=story&editor=media&shot=shot-segment-1&media=image";
+    const view = await renderProduction("story", summary("completed", [ready]), path);
+    try {
+        const media = () => view.host.querySelector("[data-media-shot='shot-segment-1']")?.getAttribute("data-media-kind");
+        expect(media()).toBe("image");
+        await click(view.host, "定位单镜视频");
+        await waitFor(() => media() === "video");
+        expect(view.host.querySelector("[data-location]")?.getAttribute("data-location")).toContain("media=video");
+        await click(view.host, "切换到音频");
+        expect(media()).toBe("audio");
+        const destination = view.host.querySelector("[data-location]")?.getAttribute("data-location");
+        expect(destination).toContain("media=audio");
+        expect(calls.allowedMediaNavigation).toHaveLength(1);
+        expect(`${calls.allowedMediaNavigation[0].pathname}${calls.allowedMediaNavigation[0].search}`).toBe(destination);
     } finally {
         await view.dispose();
     }

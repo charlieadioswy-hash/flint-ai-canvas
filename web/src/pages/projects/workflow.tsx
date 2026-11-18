@@ -40,6 +40,7 @@ import { QueueBar } from "./studio/queue-bar";
 import { dramaStudioPath, isAdvancedDramaStudio } from "./studio/studio-route";
 import { WorkflowAssets } from "./workflow-assets";
 import { WorkflowProduction } from "./workflow-production";
+import { useWorkflowJobNavigation, useWorkflowShotVideoGate, workflowJobShotMedia } from "./workflow-job-navigation";
 import { WorkflowConfiguration, type WorkflowConfigurationHandle } from "./workflow-configuration";
 import { WorkflowImpact } from "./workflow-impact";
 import { WorkflowSourceReview } from "./workflow-source";
@@ -51,6 +52,7 @@ import "./guide.css";
 import "./workflow.css";
 
 type SettingsDraft = { value: DramaSettings; baseline: DramaSettings; revision: number; episodeRevision?: number };
+const BIBLE_JOBS = { kinds: ["bible"] } as const;
 
 function sameSettings(left: DramaSettings, right: DramaSettings) {
     return JSON.stringify(left) === JSON.stringify(right);
@@ -76,6 +78,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const catalog = useDramaModelCatalog();
     const jobsActive = Boolean(summary && (summary.jobCounts.queued || 0) + (summary.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary?.production.revision);
+    const canOpenVideo = useWorkflowShotVideoGate(castQuery);
+    const navigateToJob = useWorkflowJobNavigation(projectId, canOpenVideo);
     const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
     const [configurationSyncError, setConfigurationSyncError] = useState("");
     const failedConfiguration = useRef("");
@@ -105,8 +109,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
 
     const stage = summary?.guide?.step || summary?.production.guideStep || "";
     const extractionJobs = useQuery({
-        queryKey: dramaKeys.jobs(projectId),
-        queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal),
+        queryKey: dramaKeys.jobList(projectId, BIBLE_JOBS),
+        queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal, BIBLE_JOBS),
         enabled: Boolean(summary && stage === "assets" && summary.production.stage === "bible"),
         refetchInterval: jobsActive ? 2_500 : false,
     });
@@ -728,7 +732,9 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     projectId={projectId}
                                     summary={summary}
                                     onJump={(job) => {
-                                        if (!episodeConfigurationBusy && job.kind === "cast_image" && job.shotId) setEditingCast(job.shotId);
+                                        if (episodeConfigurationBusy) return;
+                                        if (job.kind === "cast_image" && job.shotId) setEditingCast(job.shotId);
+                                        else if (workflowJobShotMedia(job.kind)) void navigateToJob(job);
                                     }}
                                 />
                             ) : null}

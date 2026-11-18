@@ -235,7 +235,7 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if err != nil {
 			return nil, service.BadAuthRequest("数量无效")
 		}
-		jobs, err := svc.DramaJobs(userID, c.Param("id"), limit)
+		jobs, err := svc.DramaJobsFiltered(userID, c.Param("id"), limit, c.Query("status"), c.Query("kinds"))
 		return gin.H{"jobs": jobs}, err
 	}))
 	r.POST("/dramas/:id/media/release", dramaRoute(svc, 16<<10, func(c *gin.Context, userID string) (any, error) {

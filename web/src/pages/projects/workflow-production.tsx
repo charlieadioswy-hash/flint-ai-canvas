@@ -5,22 +5,9 @@ import { Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import {
-    ensureDramaEpisodeStoryboard,
-    getDramaEpisode,
-    getDramaWorkflowReadiness,
-    renderDramaEpisode,
-    retryFailedDrama,
-    type DramaEpisodeDetail,
-    type DramaEpisodeRow,
-    type DramaJob,
-    type DramaSegment,
-    type DramaShot,
-    type DramaSummary,
-} from "@/services/api/drama";
+import { ensureDramaEpisodeStoryboard, getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
-import { parseList } from "./drama-shared";
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
 import { SimpleStudioSegmentEditor } from "./simple-studio-segment-editor";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
@@ -34,6 +21,7 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowStoryboardPage } from "./workflow-storyboard-page";
 import { WorkflowShotMediaDialog } from "./workflow-shot-media-dialog";
+import { keepWorkflowQuery, useWorkflowJobNavigation, useWorkflowShotVideoGate, workflowPath } from "./workflow-job-navigation";
 import { episodeAssetsPending, episodeCanPreview, isWorkflowStepAllowed } from "./workflow-state";
 import "./drama.css";
 import "./simple-studio.css";
@@ -51,23 +39,6 @@ export type WorkflowProductionProps = {
     onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
     onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
 };
-
-function keepWorkflowQuery(search: URLSearchParams, step: "story" | "preview") {
-    const next = new URLSearchParams(search);
-    next.set("step", step);
-    next.set("mode", "simple");
-    next.delete("view");
-    next.delete("tab");
-    next.delete("cast");
-    return next;
-}
-
-function workflowPath(projectId: string, episodeId: string | undefined, search: URLSearchParams, step: "story" | "preview") {
-    const selectedStep = search.get("step");
-    const next = keepWorkflowQuery(search, selectedStep === "preview" || selectedStep === "story" ? selectedStep : step);
-    const path = `/projects/${encodeURIComponent(projectId)}${episodeId ? `/e/${encodeURIComponent(episodeId)}` : ""}`;
-    return `${path}?${next}`;
-}
 
 function selectedEpisodeId(routeEpisodeId: string, queryEpisodeId: string | null) {
     return routeEpisodeId || queryEpisodeId || "";
@@ -128,18 +99,10 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
     const selectionRef = useRef(selected);
     selectionRef.current = selected;
     useEffect(() => setSelection({ owner: selectionOwner, ids: new Set() }), [selectionOwner]);
-    const jumpRequest = useRef(0);
-    const scope = useRef({ projectId, search: search.toString() });
-    scope.current = { projectId, search: search.toString() };
-    useEffect(
-        () => () => {
-            jumpRequest.current += 1;
-        },
-        [projectId],
-    );
-
     const jobsActive = Boolean((summary.jobCounts.queued || 0) + (summary.jobCounts.running || 0));
     const castQuery = useDramaCast(projectId, jobsActive, summary.production.revision);
+    const canOpenVideo = useWorkflowShotVideoGate(castQuery);
+    const navigateToJob = useWorkflowJobNavigation(projectId, canOpenVideo);
     const refresh = useCallback(
         (episodeId?: string) => {
             void invalidate(episodeId);
@@ -357,38 +320,6 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
             next.delete("shot");
             next.delete("media");
         });
-    const canOpenVideo = (shot: DramaShot) => {
-        const characters = parseList(shot.castIdsJson);
-        const looks = parseList(shot.lookCastIdsJson);
-        const props = parseList(shot.propIdsJson);
-        if (!characters.length && !looks.length && !props.length && !shot.sceneCastId) return true;
-        if (castQuery.isError) {
-            message.warning("暂时无法检查本镜头的资产图片，请刷新后重试。");
-            return false;
-        }
-        if (castQuery.isPending) {
-            message.info("正在读取本镜头的资产，请稍后重试。");
-            return false;
-        }
-        const lookByCharacter = new Map<string, string>();
-        for (const id of looks) {
-            const parentId = castQuery.byId.get(id)?.parentId;
-            if (parentId && !lookByCharacter.has(parentId)) lookByCharacter.set(parentId, id);
-        }
-        const ids = new Set([...characters.map((id) => lookByCharacter.get(id) ?? id), ...props, ...looks.filter((id) => !castQuery.byId.has(id)), shot.sceneCastId]);
-        const missing: string[] = [];
-        let unavailable = 0;
-        for (const id of ids) {
-            if (!id) continue;
-            const cast = castQuery.byId.get(id);
-            if (!cast) unavailable++;
-            else if (!cast.imageResourceId) missing.push(cast.lookName ? `${cast.name}（${cast.lookName}）` : cast.name);
-        }
-        if (!missing.length && !unavailable) return true;
-        const reasons = [missing.length ? `请先生成这些资产的图片：${missing.join("、")}` : "", unavailable ? `${unavailable} 项关联资产未找到，请检查本镜头的资产关联` : ""].filter(Boolean);
-        message.warning(reasons.join("；"));
-        return false;
-    };
     const mediaShot = step === "story" && search.get("editor") === "media" ? openDetail?.shots.find((shot) => shot.id === search.get("shot")) : undefined;
     const mediaSegmentShots = mediaShot ? openDetail?.shots.filter((shot) => shot.segmentIndex === mediaShot.segmentIndex) : undefined;
     const requestVideo = (episode: DramaEpisodeRow, segment: DramaSegment) => {
@@ -402,40 +333,12 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
     const requestPrompt = (episode: DramaEpisodeRow, segment: DramaSegment) => {
         media.requestAction({ action: "segment_prompt", targetId: segment.id, episodeId: episode.id, episodeNumber: episode.number, segmentTitle: segment.title, targetRevision: segment.revision });
     };
-    const jumpToJob = async (job: DramaJob) => {
+    const jumpToJob = (job: DramaJob) => {
         if (mediaEditingState.dirty || mediaEditingState.busy) {
             message.info("请先保存或放弃当前镜头修改，再定位其他任务");
             return;
         }
-        const episodeId = job.episodeId;
-        if (!episodeId) return;
-        const request = ++jumpRequest.current;
-        const started = scope.current;
-        const ticket = operation.capture();
-        const current = () => operation.isCurrent(ticket) && request === jumpRequest.current && scope.current.projectId === started.projectId && scope.current.search === started.search;
-        const next = keepWorkflowQuery(search, "story");
-        next.delete("scope");
-        next.delete("segment");
-        next.delete("shot");
-        next.delete("editor");
-        next.delete("media");
-        next.delete("status");
-        if (!routeEpisodeId) next.set("episode", episodeId);
-        else next.delete("episode");
-        if (job.shotId && (job.kind === "segment_video" || job.kind === "segment_prompt")) {
-            try {
-                const detail = await queryClient.fetchQuery({ queryKey: dramaKeys.episode(projectId, episodeId), queryFn: ({ signal }) => getDramaEpisode(projectId, episodeId, signal), staleTime: 0 });
-                if (!current()) return;
-                const segment = detail.segments.find((item) => item.id === job.shotId);
-                if (segment) next.set("segment", String(segment.index));
-                else message.info("任务对应的剧情段已变更，已打开本集分镜");
-            } catch (error) {
-                if (current()) message.error(error instanceof Error ? error.message : "读取目标分镜失败，请重试");
-                return;
-            }
-        }
-        if (!current()) return;
-        navigate(workflowPath(projectId, routeEpisodeId ? episodeId : undefined, next, "story"));
+        void navigateToJob(job);
     };
 
     return (
@@ -450,6 +353,7 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
                         shots={mediaSegmentShots}
                         segmentLabel={`第 ${mediaShot.segmentIndex + 1} 段`}
                         initialKind={search.get("media") === "video" ? "video" : search.get("media") === "audio" ? "audio" : "image"}
+                        onKindChange={(kind) => replaceQuery(mediaShot.episodeId, (next) => next.set("media", kind), true, true)}
                         canOpenVideo={canOpenVideo}
                         onSelectShot={(shot, kind) => openShot(shot.episodeId, shot.id, kind, true)}
                         onClose={() => openShot(mediaShot.episodeId, undefined, undefined, true)}

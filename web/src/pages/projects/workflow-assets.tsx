@@ -4,6 +4,7 @@ import { App, Button, Input, Select } from "antd";
 import { ArrowRight, ChevronLeft, ChevronRight, Gem, LoaderCircle, MapPinned, Plus, ScanText, UsersRound } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { createDramaCast, deleteDramaCast, extractDramaCast, getDramaCastImpact, getDramaEpisodeStyle, listDramaJobs, type DramaCast, type DramaCastKind, type DramaJob, type DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
@@ -17,10 +18,10 @@ import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowCharacterLibrary, type WorkflowCharacterLibraryControls } from "./workflow-character-library";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
-import { dramaKeys } from "./studio/use-studio";
 import "./workflow-assets.css";
 
 const KINDS = ["character", "scene", "prop"] as const satisfies readonly DramaCastKind[];
+const TEXT_JOBS = { kinds: ["bible", "plan", "script", "segment_prompt"] } as const;
 
 export type WorkflowAssetsProps = {
     variant?: "library" | "episode";
@@ -117,8 +118,8 @@ function WorkflowAssetsSession({
     const assetSummary = effectiveSettings === summary.production.settings ? summary : { ...summary, production: { ...summary.production, settings: effectiveSettings } };
     const episodeIndex = episodes.findIndex((episode) => episode.id === selectedEpisodeId);
     const extractionJobs = useQuery({
-        queryKey: dramaKeys.jobs(projectId),
-        queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal),
+        queryKey: dramaKeys.jobList(projectId, TEXT_JOBS),
+        queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal, TEXT_JOBS),
         enabled: !extractionStageBlocked || guideStep === "assets",
         refetchInterval: (query) => (query.state.status === "error" || query.state.data?.jobs.some((job) => job.status === "queued" || job.status === "running") || summary.jobCounts.queued || summary.jobCounts.running ? 2_500 : false),
     });
@@ -209,10 +210,11 @@ function WorkflowAssetsSession({
         },
         onSuccess: async (result, input) => {
             if (!operation.isCurrent(input.ticket)) return;
-            await queryClient.cancelQueries({ queryKey: dramaKeys.jobs(input.ticket.projectId), exact: true });
+            const queryKey = dramaKeys.jobList(input.ticket.projectId, TEXT_JOBS);
+            await queryClient.cancelQueries({ queryKey, exact: true });
             if (!operation.isCurrent(input.ticket)) return;
             activeExtractionIds.current.add(result.job.id);
-            queryClient.setQueryData<{ jobs: DramaJob[] }>(dramaKeys.jobs(input.ticket.projectId), (previous) => ({ jobs: [result.job, ...(previous?.jobs || []).filter((job) => job.id !== result.job.id)] }));
+            queryClient.setQueryData<{ jobs: DramaJob[] }>(queryKey, (previous) => ({ jobs: [result.job, ...(previous?.jobs || []).filter((job) => job.id !== result.job.id)] }));
             refreshProject(input.ticket);
             message.success(`已提交全部${CAST_KIND_LABEL[input.kind]}提取，请在任务队列查看进度`);
         },

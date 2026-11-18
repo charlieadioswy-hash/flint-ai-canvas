@@ -51,6 +51,7 @@ const executions: ExecuteCall[] = [];
 const adoptions: { expectedRevision: number; takeId: string }[] = [];
 let confirmations: { onOk: () => void }[] = [];
 let readsFail = false;
+let nextMediaRead: Deferred<void> | undefined;
 let closes = 0;
 let changed = 0;
 let selectedShots: Array<{ id: string; kind: DramaShotMediaKind }> = [];
@@ -181,7 +182,17 @@ mock.module("@/pages/projects/drama-shared", () => ({
 }));
 mock.module("@/pages/projects/workflow-shot-audio", () => ({ WorkflowShotAudioEditor: () => <p>独立镜头音频编辑器</p> }));
 mock.module("@/services/api/drama-shot-media", () => ({
-    getDramaShotMedia: async (_projectId: string, _shotId: string, kind: DramaShotMediaKind) => {
+    getDramaShotMedia: async (_projectId: string, _shotId: string, kind: DramaShotMediaKind, signal?: AbortSignal) => {
+        const pending = nextMediaRead;
+        nextMediaRead = undefined;
+        if (pending) {
+            await new Promise<void>((resolve, reject) => {
+                const abort = () => reject(signal?.reason);
+                if (signal?.aborted) return abort();
+                signal?.addEventListener("abort", abort, { once: true });
+                void pending.promise.then(resolve, reject).finally(() => signal?.removeEventListener("abort", abort));
+            });
+        }
         if (readsFail) throw new Error("状态读取失败");
         return structuredClone(server[kind]);
     },
@@ -296,6 +307,7 @@ async function mount(page = false, configure?: () => void, initialKind?: DramaSh
     quoteConfig = preflightConfig = undefined;
     confirmations = [];
     readsFail = false;
+    nextMediaRead = undefined;
     closes = changed = 0;
     selectedShots = [];
     editingStates = [];
@@ -441,7 +453,9 @@ async function rejectExecution(error: unknown, index = executions.length - 1) {
     });
 }
 async function resolveExecution(index = executions.length - 1) {
-    server[executions[index].kind].status = "queued";
+    const { kind, input } = executions[index];
+    if (input.expectedRevision === undefined) throw new Error("生成请求缺少媒体版本");
+    server[kind] = { ...server[kind], status: "queued", taskId: "real-task", revision: input.expectedRevision + 1 };
     await act(async () => {
         executions[index].result.resolve({ id: "real-task", status: "queued" });
         await settle();
@@ -544,12 +558,67 @@ test("已收到任务回执而刷新失败时保留入队提示，不提供重�
         await click(view.host, "生成图片 - 1积分");
         readsFail = true;
         await resolveExecution();
-        expect(view.host.textContent).toContain("已提交镜头图片，排队中");
+        expect(view.host.textContent).toContain("已提交镜头图片");
         expect(view.host.textContent).toContain("任务已提交，最新进度暂未刷新");
-        expect(view.host.querySelector<HTMLButtonElement>(".drama-shot-media-generate")!.disabled).toBe(true);
+        expect(button(view.host, "已排队").disabled).toBe(true);
         expect(view.host.textContent).not.toContain("核对提交结果");
+        expect(changed).toBe(1);
         expect(executions).toHaveLength(1);
     } finally {
+        await view.close();
+    }
+});
+
+test("单镜视频首次刷新失败后同步真实任务版本，完成后恢复生成按钮", async () => {
+    const view = await mount(true, undefined, "video");
+    try {
+        await click(view.host, "生成视频 - 1积分");
+        expect(button(view.host, "提交中…").disabled).toBe(true);
+        readsFail = true;
+        await resolveExecution();
+        expect(button(view.host, "已排队").disabled).toBe(true);
+        expect(view.host.textContent).toContain("最新进度暂未刷新");
+        readsFail = false;
+        const queryKey = ["drama-shot-media", "user-a", "project-a", "real-shot", "video"];
+        for (const status of ["running", "ready"]) {
+            await act(async () => {
+                server.video = { ...server.video, status };
+                await view.client.refetchQueries({ queryKey, exact: true });
+                await settle();
+            });
+            if (status === "running") expect(button(view.host, "生成中").disabled).toBe(true);
+        }
+        await waitPrice(view.host);
+        expect(button(view.host, "生成视频 - 1积分").disabled).toBe(false);
+        expect(view.host.textContent).not.toContain("最新进度暂未刷新");
+        expect(draftChecks.at(-1)?.expectedRevision).toBe(server.video.revision);
+        expect(executions).toHaveLength(1);
+    } finally {
+        await view.close();
+    }
+});
+
+test("已提交的视频状态读取卡住时解除编辑器提交锁，下一次读取可恢复", async () => {
+    const view = await mount(true, undefined, "video");
+    const firstRead = deferred<void>();
+    try {
+        await click(view.host, "生成视频 - 1积分");
+        nextMediaRead = firstRead;
+        await resolveExecution();
+        expect(nextMediaRead).toBeUndefined();
+        expect(button(view.host, "返回分镜").disabled).toBe(false);
+        expect(button(view.host, "已排队").disabled).toBe(true);
+        expect(view.host.textContent).not.toContain("提交中…");
+        await act(async () => {
+            server.video = { ...server.video, status: "ready" };
+            await view.client.refetchQueries({ queryKey: ["drama-shot-media", "user-a", "project-a", "real-shot", "video"], exact: true });
+            await settle();
+        });
+        await waitPrice(view.host);
+        expect(button(view.host, "生成视频 - 1积分").disabled).toBe(false);
+        expect(executions).toHaveLength(1);
+    } finally {
+        firstRead.resolve(undefined);
         await view.close();
     }
 });

@@ -82,7 +82,8 @@ function mediaPath(projectId: string, shotId: string, kind: DramaShotMediaKind) 
 }
 
 export function getDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, signal?: AbortSignal) {
-    return http.get<DramaShotMedia>(mediaPath(projectId, shotId, kind), { signal });
+    const deadline = AbortSignal.timeout(12_000);
+    return http.get<DramaShotMedia>(mediaPath(projectId, shotId, kind), { signal: signal ? AbortSignal.any([signal, deadline]) : deadline });
 }
 
 export function saveDramaShotMedia(projectId: string, shotId: string, kind: DramaShotMediaKind, input: { expectedRevision: number; config: DramaShotMediaConfig }) {

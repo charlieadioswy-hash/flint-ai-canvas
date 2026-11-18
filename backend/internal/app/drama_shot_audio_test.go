@@ -47,7 +47,7 @@ func shotAudioConfirmed(t *testing.T, s *Service, op string) DramaShotMediaActio
 	return DramaShotMediaActionRequest{ExpectedRevision: &quote.Revision, BaseRevision: &quote.BaseRevision, ConfirmationToken: quote.ConfirmationToken, ClientOperationID: op}
 }
 
-func completeShotAudio(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID string) DramaShotMediaView {
+func saveShotAudioTestResult(t *testing.T, db *gorm.DB, taskID, resourceID string) {
 	t.Helper()
 	if err := db.Create(&model.Resource{ID: resourceID, UserID: "user", Kind: "audio", Status: model.ResourceStatusReady, MimeType: "audio/mpeg", DurationMs: 2200, Size: 12}).Error; err != nil {
 		t.Fatal(err)
@@ -56,11 +56,52 @@ func completeShotAudio(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(encoded)}).Error; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func completeShotAudio(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID string) DramaShotMediaView {
+	t.Helper()
+	saveShotAudioTestResult(t, db, taskID, resourceID)
 	view, err := s.DramaShotMedia("user", "drama-project", "real-shot", "audio")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return view
+}
+
+func TestDramaQueueKeepsAudioResultAfterShotRemoved(t *testing.T) {
+	s, db, _ := shotAudioFixture(t)
+	const user, project, shot, resourceID = "user", "drama-project", "real-shot", "removed-shot-audio"
+	for _, row := range []any{
+		&model.DramaShot{ID: "remaining", ProjectID: project, EpisodeID: "episode", Position: 2, DurationMs: 5000},
+		&model.DramaSegment{ID: "segment", ProjectID: project, EpisodeID: "episode"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := s.ExecuteDramaShotMedia(user, project, shot, "audio", shotAudioConfirmed(t, s, "removed-shot-audio"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDramaShot(user, project, shot); err != nil {
+		t.Fatal(err)
+	}
+	saveShotAudioTestResult(t, db, task.ID, resourceID)
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := s.RegisterDramaShotMediaTaskOutput(*stored); err != nil || !handled {
+		t.Fatalf("expected recorded audio output for removed shot: handled=%v, err=%v", handled, err)
+	}
+	detail, err := s.DramaJobDetail(user, project, dramaShotQueueJobPrefix+task.ID)
+	if err != nil || detail.Job.Kind != "shot_audio" || detail.Job.Status != model.DramaJobSucceeded || detail.Job.EpisodeID != "" || detail.Job.ShotID != "" || len(detail.Attempts) != 1 {
+		t.Fatalf("expected retained completed audio task without a location: %+v, %v", detail, err)
+	}
+	result := detail.Attempts[0].Task
+	if result == nil || result.ResultMode != "audio" || len(result.ResourceIDs) != 1 || result.ResourceIDs[0] != resourceID {
+		t.Fatalf("expected playable resource on audio task: %+v", result)
+	}
 }
 
 func TestDramaShotAudioIsRealTTSAndRequiresExplicitAdoption(t *testing.T) {

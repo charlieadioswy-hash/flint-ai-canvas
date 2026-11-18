@@ -1,8 +1,8 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, StrictMode, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaShot } from "@/services/api/drama";
+import type { DramaJob, DramaJobDetail, DramaShot } from "@/services/api/drama";
 import type { DramaShotMedia, DramaShotMediaAction, DramaShotMediaConfig } from "@/services/api/drama-shot-media";
 
 const browser = new Window({ url: "http://localhost/projects/project-a" });
@@ -48,6 +48,7 @@ browser.HTMLMediaElement.prototype.pause = function () {
 browser.HTMLMediaElement.prototype.load = function () {};
 const Input = { TextArea: ({ onChange, ...props }: Record<string, unknown>) => createElement("textarea", { ...props, onInput: onChange }) };
 mock.module("antd", () => ({
+    App: { useApp: () => ({ message: {} }) },
     Button: ({ children, loading: _loading, type: _type, ...props }: Record<string, unknown>) => createElement("button", props, children as ReactNode),
     Input,
     Select: ({ options, onChange, ...props }: { options: { value: string; label: string }[]; onChange: (value: string) => void }) =>
@@ -58,6 +59,16 @@ mock.module("antd", () => ({
             options.map((option) => createElement("option", { key: option.value, value: option.value }, option.label)),
         ),
 }));
+mock.module("@/components/ui/product/app-modal", () => ({
+    AppModal: ({ open, children, onCancel }: { open: boolean; children: ReactNode; onCancel: () => void }) =>
+        open ? (
+            <section role="dialog">
+                <button onClick={onCancel}>关闭任务详情</button>
+                {children}
+            </section>
+        ) : null,
+}));
+mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => children }));
 mock.module("@/components/model-picker", () => ({ ModelPicker: ({ onChange }: { onChange: (model: string) => void }) => <button onClick={() => onChange("audio-system")}>选择语音模型</button> }));
 mock.module("@/lib/drama/model-choice", () => ({
     dramaChoiceToModel: (_config: unknown, _mode: string, choice: { modelKey?: string }) => choice.modelKey || "",
@@ -80,6 +91,8 @@ mock.module("@/lib/localforage-storage", () => ({
     }),
 }));
 mock.module("@/pages/projects/drama-shared", () => ({
+    formatCredits: String,
+    MediaThumb: () => null,
     useResourceMediaUrl: (id: string) => (id ? `https://test.invalid/${id}.mp3` : ""),
     downloadResource: async (id: string, name: string) => {
         downloads.push({ id, name });
@@ -110,6 +123,7 @@ mock.module("@/services/api/drama-shot-media", () => ({
     },
 }));
 const { WorkflowShotAudioEditor } = await import("@/pages/projects/workflow-shot-audio");
+const { JobDetailModal } = await import("@/pages/projects/studio/job-detail");
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 function audioMedia(value: Partial<DramaShotMedia> = {}): DramaShotMedia {
     return {
@@ -210,6 +224,60 @@ test("未配置语音模型时明确阻止生成", async () => {
     expect(button(ui.host, "预检生成音频").disabled).toBe(true);
     expect(executions).toHaveLength(0);
     await ui.close();
+});
+
+test("任务详情切换音源和关闭时停止旧播放器，StrictMode 下仍可试听", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const job = { id: "shot-media:audio", kind: "shot_audio", status: "succeeded", label: "原分镜已移除", costMicrocredits: 0, attempt: 0, createdAt: "2025-01-01T00:00:00Z", updatedAt: "2025-01-01T00:00:00Z" } satisfies DramaJob;
+    const key = ["drama", "project-a", "job", job.id];
+    const result = (id: string): DramaJobDetail => ({
+        job,
+        target: job.label,
+        attempts: [
+            {
+                taskId: "audio",
+                status: "succeeded",
+                costMicrocredits: 0,
+                at: job.createdAt,
+                task: { id: "audio", status: "succeeded", params: {}, resourceIds: [id], resultMode: "audio", createdAt: job.createdAt },
+            },
+        ],
+    });
+    const render = (open: boolean) =>
+        root.render(
+            <StrictMode>
+                <QueryClientProvider client={client}>
+                    <JobDetailModal projectId="project-a" job={open ? job : undefined} onClose={() => render(false)} onLocate={() => {}} />
+                </QueryClientProvider>
+            </StrictMode>,
+        );
+    try {
+        client.setQueryData(key, result("audio-first"));
+        await act(async () => render(true));
+        const first = host.querySelector("audio")!;
+        expect(first.getAttribute("src")).toBe("https://test.invalid/audio-first.mp3");
+        const beforeReplacement = paused;
+        await act(async () => {
+            client.setQueryData(key, result("audio-second"));
+            await settle();
+        });
+        expect(paused).toBeGreaterThan(beforeReplacement);
+        expect(first.hasAttribute("src")).toBe(false);
+        const current = host.querySelector("audio")!;
+        expect(current.getAttribute("src")).toBe("https://test.invalid/audio-second.mp3");
+        const beforeClose = paused;
+        await click(host, "关闭任务详情");
+        expect(paused).toBeGreaterThan(beforeClose);
+        expect(current.hasAttribute("src")).toBe(false);
+        expect(host.querySelector("audio")).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        client.clear();
+        host.remove();
+    }
 });
 
 test("选择真实模型和音色后先保存与报价，再确认生成音频", async () => {

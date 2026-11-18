@@ -2,11 +2,13 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaJob, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary, DramaWorkflowImpact } from "@/services/api/drama";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaJob, DramaJobFilter, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary, DramaWorkflowImpact } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
 const browser = new Window({ url: "http://localhost/projects/project-a/guide" });
+const assetJobsKey = (projectId: string) => dramaKeys.jobList(projectId, { kinds: ["bible", "plan", "script", "segment_prompt"] });
 const originals = new Map<string, PropertyDescriptor | undefined>();
 for (const [key, value] of Object.entries({
     window: browser,
@@ -252,9 +254,6 @@ mock.module("@/pages/projects/studio/cast-project-import", () => ({
         );
     },
 }));
-mock.module("@/pages/projects/studio/use-studio", () => ({
-    dramaKeys: { summary: (id: string) => ["drama", id], cast: (id: string) => ["drama", id, "cast"], chapters: (id: string) => ["drama", id, "chapters"], jobs: (id: string) => ["drama", id, "jobs"] },
-}));
 mock.module("@/pages/projects/guide-panels", () => ({
     GuideAssets: ({
         cast,
@@ -414,7 +413,9 @@ mock.module("@/services/api/drama", () => ({
                     : [{ id: "chapter-other", title: "其他项目章节", position: 1, wordCount: 8, reserved: false }],
         };
     },
-    listDramaJobs: async (projectId: string) => ({ jobs: structuredClone(projectJobs.get(projectId) || []) }),
+    listDramaJobs: async (projectId: string, _limit: number, _signal: AbortSignal, filter?: DramaJobFilter) => ({
+        jobs: structuredClone((projectJobs.get(projectId) || []).filter((job) => !filter?.kinds || filter.kinds.includes(job.kind))),
+    }),
     extractDramaCast: async (projectId: string, input: ExtractCall["input"]) => {
         extractCalls.push({ projectId, input: structuredClone(input) });
         const pending = deferred<{ job: DramaJob; revision: number }>();
@@ -2233,7 +2234,8 @@ test("三类资产可同一版本同时提取，每类防重且并发回执不�
             pendingExtractions[0].resolve({ job: jobs[0], revision: 4 });
             await settle();
         });
-        const queued = view.client.getQueryData<{ jobs: DramaJob[] }>(["drama", "project-a", "jobs"]);
+        const queryKey = assetJobsKey("project-a");
+        const queued = view.client.getQueryData<{ jobs: DramaJob[] }>(queryKey);
         expect(queued?.jobs.map((job) => job.id).sort()).toEqual(jobs.map((job) => job.id).sort());
         expect(view.changed).toEqual(["project-a", "project-a", "project-a"]);
         expect(extractCalls).toHaveLength(3);
@@ -2269,12 +2271,13 @@ test("三类资产可同一版本同时提取，每类防重且并发回执不�
         projectJobs.set("project-a", [...(projectJobs.get("project-a") || []), { ...fastJob, status: "succeeded" }]);
         const changedBeforeFast = view.changed.length;
         let completedBeforeRender = false;
+        const assetQuery = view.client.getQueryCache().find({ queryKey, exact: true });
         const unsubscribe = view.client.getQueryCache().subscribe((event) => {
-            if (event.type !== "updated" || event.query.queryKey.join(":") !== "drama:project-a:jobs" || completedBeforeRender) return;
+            if (event.type !== "updated" || event.query !== assetQuery || completedBeforeRender) return;
             const data = event.query.state.data as { jobs: DramaJob[] } | undefined;
             if (!data?.jobs.some((job) => job.id === fastJob.id && job.status === "queued")) return;
             completedBeforeRender = true;
-            view.client.setQueryData(["drama", "project-a", "jobs"], { jobs: data.jobs.map((job) => (job.id === fastJob.id ? { ...job, status: "succeeded" } : job)) });
+            view.client.setQueryData(queryKey, { jobs: data.jobs.map((job) => (job.id === fastJob.id ? { ...job, status: "succeeded" } : job)) });
         });
         try {
             await act(async () => {
@@ -2282,7 +2285,7 @@ test("三类资产可同一版本同时提取，每类防重且并发回执不�
                 await settle();
             });
             expect(completedBeforeRender).toBe(true);
-            expect(view.client.getQueryData<{ jobs: DramaJob[] }>(["drama", "project-a", "jobs"])?.jobs.find((job) => job.id === fastJob.id)?.status).toBe("succeeded");
+            expect(view.client.getQueryData<{ jobs: DramaJob[] }>(queryKey)?.jobs.find((job) => job.id === fastJob.id)?.status).toBe("succeeded");
             expect(button(view.container, "提取全部角色").disabled).toBe(false);
             expect(view.changed.length - changedBeforeFast).toBeGreaterThanOrEqual(2);
         } finally {
@@ -2334,7 +2337,8 @@ test("切换作品或账号后隔离迟到的提取成功和失败，不污染�
                     });
                 const changedBefore = view.changed.length;
                 const noticesBefore = notices.length;
-                const jobsBefore = structuredClone(view.client.getQueryData(["drama", boundary === "project" ? "project-b" : "project-a", "jobs"]));
+                const queryKey = assetJobsKey(boundary === "project" ? "project-b" : "project-a");
+                const jobsBefore = structuredClone(view.client.getQueryData(queryKey));
                 await act(async () => {
                     if (outcome === "success") pendingExtractions[0].resolve({ job: extractionJob("scene"), revision: 4 });
                     else pendingExtractions[0].reject(new ApiError("旧范围提取失败", { status: 409, reason: "conflict" }));
@@ -2342,7 +2346,7 @@ test("切换作品或账号后隔离迟到的提取成功和失败，不污染�
                 });
                 expect(view.changed.length).toBe(changedBefore);
                 expect(notices.slice(noticesBefore)).toEqual([]);
-                expect(view.client.getQueryData(["drama", boundary === "project" ? "project-b" : "project-a", "jobs"])).toEqual(jobsBefore);
+                expect(view.client.getQueryData(queryKey)).toEqual(jobsBefore);
                 expect(view.container.textContent).not.toContain("正在提取场景");
             } finally {
                 await view.dispose();

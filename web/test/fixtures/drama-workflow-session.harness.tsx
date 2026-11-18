@@ -124,7 +124,11 @@ mock.module("@/pages/projects/studio/drama-media-action-dialog", () => ({ DramaM
 mock.module("@/pages/projects/studio/use-drama-media-action", () => ({
     useDramaMediaAction: () => ({ state: { submitting: false }, requestCastImage: (cast: { id: string }, episodeId?: string) => castImageRequests.push({ castId: cast.id, episodeId }) }),
 }));
-mock.module("@/pages/projects/studio/queue-bar", () => ({ QueueBar: () => null }));
+mock.module("@/pages/projects/studio/queue-bar", () => ({
+    QueueBar: ({ onJump }: { onJump: (job: { id: string; kind: string; episodeId: string; shotId: string }) => void }) => (
+        <button onClick={() => onJump({ id: "shot-media:video", kind: "shot_video", episodeId: "episode-a", shotId: "queue-shot" })}>队列定位单镜视频</button>
+    ),
+}));
 mock.module("@/pages/projects/guide-panels", () => ({ GuideAssets: () => <div>主体资产列表</div> }));
 mock.module("@/pages/projects/workflow-assets", () => ({
     WorkflowAssets: ({
@@ -352,6 +356,7 @@ mock.module("@/pages/projects/workflow-configuration", () => ({
 }));
 mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { video: videoOptions } } }) }));
 mock.module("@/pages/projects/drama-shared", () => ({
+    parseList: (raw?: string) => JSON.parse(raw || "[]"),
     SOURCE_FORMAT_LABEL: {
         novel: { title: "小说", detail: "保留章节标题", placeholder: "小说正文", guide: [] },
         script: { title: "剧本", detail: "保留分集标题", placeholder: "剧本正文", guide: [] },
@@ -366,12 +371,11 @@ mock.module("@/pages/projects/drama-shared", () => ({
 }));
 mock.module("@/pages/projects/drama-source-file", () => ({ DRAMA_SOURCE_FILE_MAX_BYTES: 10_000_000, formatDramaSourceFileSize: () => "10MB", readDramaSourceFile: async () => "替换正文" }));
 const summaryKey = (projectId: string) => ["drama", projectId, "summary"];
+const { dramaKeys: workflowQueryKeys } = await import("@/lib/drama/drama-query-keys");
 mock.module("@/pages/projects/studio/use-studio", () => ({
     dramaKeys: {
+        ...workflowQueryKeys,
         summary: summaryKey,
-        chapters: (projectId: string) => ["drama", projectId, "chapters"],
-        episode: (projectId: string, episodeId: string) => ["drama", projectId, "episode", episodeId],
-        jobs: (projectId: string) => ["drama", projectId, "jobs"],
     },
     useDramaSummary: (projectId: string) => useQuery({ queryKey: summaryKey(projectId), queryFn: async () => summaries.get(projectId)! }),
     useDramaCast: () => ({ cast: [], isLoading: false, refetch: async () => ({ data: [] }) }),
@@ -390,7 +394,11 @@ mock.module("@/services/api/drama", () => ({
         return pending.promise;
     },
     listDramaChapters: async (projectId: string) => ({ chapters: chapterTitles.map((title, index) => ({ id: `${projectId}-chapter${index ? `-${index + 1}` : ""}`, title, wordCount: 4, position: index + 1, reserved: false })) }),
-    getDramaEpisode: async (projectId: string, episodeId: string) => ({ episode: { id: episodeId, number: 1, chapterIdsJson: JSON.stringify([`${projectId}-chapter`]) }, shots: [], segments: [] }),
+    getDramaEpisode: async (projectId: string, episodeId: string) => ({
+        episode: { id: episodeId, number: 1, chapterIdsJson: JSON.stringify([`${projectId}-chapter`]) },
+        shots: episodeId === "episode-a" ? [{ id: "queue-shot", segmentIndex: 2 }] : [],
+        segments: [],
+    }),
     getDramaChapter: async (projectId: string, chapterId: string) => {
         chapterReads++;
         return { chapter: { id: chapterId, title: "第一章", sourceText: `${projectId}正文`, position: 1, wordCount: 4 } };
@@ -1817,6 +1825,19 @@ test("进入制作后本集保存失败保留草稿并保护切步", async () =>
         await click(button(mounted.host, "继续编辑"));
         expect(mounted.host.querySelector<HTMLInputElement>('[aria-label="风格配置"]')?.value).toBe("失败后保留的本集风格");
         expect(styleSaves).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("资产管理队列能定位到单镜视频编辑页", async () => {
+    const mounted = await mount("/projects/project-a?manage=assets&mode=simple", false, "completed");
+    try {
+        await click(button(mounted.host, "队列定位单镜视频"));
+        expect(mounted.router.state.location.pathname).toBe("/projects/project-a");
+        const search = new URLSearchParams(mounted.router.state.location.search);
+        expect(search.has("manage")).toBe(false);
+        expect(Object.fromEntries(search)).toMatchObject({ step: "story", mode: "simple", episode: "episode-a", segment: "2", editor: "media", shot: "queue-shot", media: "video" });
     } finally {
         await mounted.close();
     }

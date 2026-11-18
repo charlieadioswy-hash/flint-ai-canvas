@@ -112,6 +112,30 @@ test("队列后台读取失败保留旧记录，现有自动更新可恢复", as
     expect(text()).not.toContain("暂时读取失败");
 }, 10000);
 
+test("队列按状态请求独立结果，切换筛选不会复用其他记录", async () => {
+    const job = (status: DramaJob["status"], label: string) => ({ id: status, kind: "cast_image", status, label, createdAt: "2026-11-15T00:00:00Z" }) as DramaJob;
+    const request = spyOn(api, "listDramaJobs").mockImplementation(async (_projectId, _limit, _signal, filter) => ({
+        jobs: [filter?.status === "active" ? job("running", "较早的进行中任务") : filter?.status === "failed" ? job("failed", "单独读取的失败任务") : job("succeeded", "最近完成的任务")],
+    }));
+    await render(<QueueBar projectId="project" summary={summary} onJump={() => {}} />);
+    await openQueue();
+    expect(text()).toContain("最近完成的任务");
+    const select = async (label: string) => {
+        await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent === label)?.click());
+        await flush();
+    };
+    await select("进行中");
+    expect(request.mock.calls.at(-1)?.[3]).toEqual({ status: "active" });
+    expect(text()).toContain("较早的进行中任务");
+    expect(text()).not.toContain("最近完成的任务");
+    await select("失败");
+    expect(request.mock.calls.at(-1)?.[3]).toEqual({ status: "failed" });
+    expect(text()).toContain("单独读取的失败任务");
+    expect(text()).not.toContain("较早的进行中任务");
+    await select("全部");
+    expect(text()).toContain("最近完成的任务");
+});
+
 test("版本区加载与成功空记录分别显示，外层有标题时不重复", async () => {
     let resolve!: (value: { takes: DramaTake[] }) => void;
     spyOn(api, "listDramaTakes").mockImplementation(

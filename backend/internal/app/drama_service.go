@@ -474,6 +474,13 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	if err != nil {
 		return DramaSummary{}, err
 	}
+	shotJobCounts, err := s.repo.DramaShotQueueJobCounts(project.ID, project.UserID)
+	if err != nil {
+		return DramaSummary{}, err
+	}
+	for status, count := range shotJobCounts {
+		jobCounts[dramaQueueStatus(status)] += count
+	}
 	casts, err := s.repo.DramaCasts(project.ID)
 	if err != nil {
 		return DramaSummary{}, err
@@ -662,6 +669,9 @@ func (s *Service) DramaJobDetail(userID string, projectID string, jobID string) 
 	if err != nil {
 		return DramaJobDetail{}, err
 	}
+	if strings.HasPrefix(jobID, dramaShotQueueJobPrefix) {
+		return s.dramaShotQueueJobDetail(*project, *productionRow, jobID)
+	}
 	job, err := s.repo.DramaJob(project.ID, jobID)
 	if err != nil {
 		return DramaJobDetail{}, err
@@ -781,7 +791,9 @@ func dramaJobTaskView(task *model.Task, labels map[string]string) *DramaJobTaskV
 				}
 			}
 		}
-		if len(view.ResourceIDs) == 0 {
+		if view.ResultMode == "audio" {
+			collect(result["audio"])
+		} else if len(view.ResourceIDs) == 0 {
 			collect(result["video"])
 		}
 		if view.ResultMode == "" && task.Type == model.TaskTypeTimelineRender {
@@ -795,17 +807,30 @@ func dramaJobTaskView(task *model.Task, labels map[string]string) *DramaJobTaskV
 }
 
 func (s *Service) DramaJobs(userID string, projectID string, limit int) ([]DramaJobView, error) {
+	return s.DramaJobsFiltered(userID, projectID, limit, "", "")
+}
+
+func (s *Service) DramaJobsFiltered(userID, projectID string, limit int, status, kinds string) ([]DramaJobView, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := dramaQueueFilter(status, kinds)
 	if err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 60
 	}
-	jobs, err := s.repo.RecentDramaJobs(project.ID, limit)
+	jobs, err := s.repo.RecentDramaJobsFiltered(project.ID, limit, filter)
 	if err != nil {
 		return nil, err
 	}
+	shotJobs, err := s.repo.RecentDramaShotQueueJobs(project.ID, project.UserID, limit, filter)
+	if err != nil {
+		return nil, err
+	}
+	jobs = mergeDramaQueueJobs(jobs, shotJobs, limit)
 	views := make([]DramaJobView, 0, len(jobs))
 	for _, job := range jobs {
 		views = append(views, dramaJobView(job))
@@ -815,10 +840,23 @@ func (s *Service) DramaJobs(userID string, projectID string, limit int) ([]Drama
 	}
 	waiting := make([]*DramaJobView, len(views))
 	for i := range views {
-		waiting[i] = &views[i]
+		if !strings.HasPrefix(views[i].ID, dramaShotQueueJobPrefix) {
+			waiting[i] = &views[i]
+		}
 	}
 	if err := s.fillDramaJobWaits(productionRow, waiting...); err != nil {
 		return nil, err
+	}
+	shotWaits := map[string]string{}
+	for _, row := range shotJobs {
+		if row.Status == model.DramaJobQueued {
+			shotWaits[row.TaskID] = row.TaskStage
+		}
+	}
+	for i := range views {
+		if strings.HasPrefix(views[i].ID, dramaShotQueueJobPrefix) && views[i].Status == model.DramaJobQueued {
+			views[i].Wait = shotWaits[views[i].TaskID]
+		}
 	}
 	return views, nil
 }

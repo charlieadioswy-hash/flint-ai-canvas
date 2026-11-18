@@ -635,8 +635,12 @@ func (r *Repository) LatestDramaJob(projectID string, kind string, episodeID str
 }
 
 func (r *Repository) RecentDramaJobs(projectID string, limit int) ([]model.DramaJob, error) {
+	return r.RecentDramaJobsFiltered(projectID, limit, DramaQueueFilter{})
+}
+
+func (r *Repository) RecentDramaJobsFiltered(projectID string, limit int, filter DramaQueueFilter) ([]model.DramaJob, error) {
 	var jobs []model.DramaJob
-	err := r.db.Where("project_id = ?", projectID).Order("updated_at desc").Limit(limit).Find(&jobs).Error
+	err := filter.apply(r.db.Model(&model.DramaJob{}).Where("project_id = ?", projectID), "drama_jobs", "drama_jobs.kind").Order("updated_at desc, id desc").Limit(limit).Find(&jobs).Error
 	return jobs, err
 }
 

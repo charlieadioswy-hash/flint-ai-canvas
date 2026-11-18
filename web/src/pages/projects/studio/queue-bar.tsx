@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "antd";
 import { AlertCircle, ChevronDown, ChevronRight, ChevronUp, Loader2, RotateCcw } from "lucide-react";
 
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
-import { listDramaJobs, type DramaJob, type DramaSummary } from "@/services/api/drama";
+import { listDramaJobs, type DramaJob, type DramaJobFilter, type DramaSummary } from "@/services/api/drama";
 
 import { formatCredits } from "../drama-shared";
 import { formatJobTime, JOB_KIND_LABEL, JobDetailModal, JobStatusIcon } from "./job-detail";
@@ -19,11 +19,9 @@ export function QueueBar({ projectId, summary, retrying = false, onRetry, onJump
     const failedItems = summary.inbox.filter((item) => item.kind === "segment_failed" || item.kind === "cast_failed" || item.kind === "episode_error").length;
     const failedText = summary.inbox.some((item) => item.kind === "episode_error" || (item.kind === "segment_failed" && item.media === "prompt"));
     const failedMedia = summary.inbox.some((item) => item.kind === "cast_failed" || (item.kind === "segment_failed" && item.media !== "prompt"));
-    const jobsQuery = useQuery({ queryKey: dramaKeys.jobs(projectId), queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal), enabled: open, refetchInterval: open ? 3_000 : false });
-    const jobs = useMemo(
-        () => (jobsQuery.data?.jobs || []).filter((job) => filter === "all" || (filter === "failed" ? job.status === "failed" || Boolean(job.error && job.status === "queued") : job.status === "running" || job.status === "queued")),
-        [filter, jobsQuery.data],
-    );
+    const jobsFilter: DramaJobFilter = filter === "all" ? {} : { status: filter };
+    const jobsQuery = useQuery({ queryKey: dramaKeys.jobList(projectId, jobsFilter), queryFn: ({ signal }) => listDramaJobs(projectId, 120, signal, jobsFilter), enabled: open, refetchInterval: open ? 3_000 : false });
+    const jobs = jobsQuery.data?.jobs || [];
     const budget = production.budgetMicrocredits;
     const held = production.heldMicrocredits || 0;
     // 预算进度与后端预算判断同一口径：已扣费加未结算订单的冻结额。

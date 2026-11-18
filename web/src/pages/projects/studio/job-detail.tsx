@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { App, Button } from "antd";
 import { AntTooltip as Tooltip } from "@/components/ui/base/tooltip/ant-tooltip";
@@ -15,6 +16,9 @@ export const JOB_KIND_LABEL: Record<DramaJob["kind"], string> = {
     script: "剧本与分镜",
     segment_prompt: "段视频提示词",
     segment_video: "段视频",
+    shot_image: "单镜图片",
+    shot_video: "单镜视频",
+    shot_audio: "单镜音频",
     render: "合成成片",
 };
 
@@ -222,6 +226,7 @@ function AttemptResult({ task }: { task: DramaJobTask }) {
         );
     }
     if (!ids.length) return task.mediaStage ? <p className="drama-jobd-muted">结果保存阶段：{task.mediaStage}</p> : null;
+    if (task.resultMode === "audio") return ids.map((id) => <ResultAudio key={id} id={id} />);
     return (
         <div className="drama-jobd-results">
             {ids.map((id) =>
@@ -235,6 +240,23 @@ function AttemptResult({ task }: { task: DramaJobTask }) {
             )}
         </div>
     );
+}
+
+function ResultAudio({ id }: { id: string }) {
+    const url = useResourceMediaUrl(id, "playback");
+    const audio = useRef<HTMLAudioElement>(null);
+    useEffect(() => {
+        const element = audio.current;
+        if (!element || !url) return;
+        // Keep source setup and teardown together so each setup restores playback after cleanup.
+        element.setAttribute("src", url);
+        return () => {
+            element.pause();
+            element.removeAttribute("src");
+            element.load();
+        };
+    }, [url]);
+    return url ? <audio ref={audio} className="w-full" controls preload="metadata" aria-label="试听生成音频" /> : <p role="status">正在读取音频…</p>;
 }
 
 function ResultVideo({ id }: { id: string }) {

@@ -1,4 +1,4 @@
-import type { DramaTakeKind } from "@/services/api/drama";
+import type { DramaJobFilter, DramaTakeKind } from "@/services/api/drama";
 
 /** 短剧查询键：制作台与精修画布共用，任一侧写入后失效同一份缓存。 */
 export const dramaKeys = {
@@ -9,6 +9,7 @@ export const dramaKeys = {
     cast: (projectId: string) => ["drama", projectId, "cast"] as const,
     castImpact: (projectId: string, castId: string) => ["drama", projectId, "cast-impact", castId] as const,
     jobs: (projectId: string) => ["drama", projectId, "jobs"] as const,
+    jobList: (projectId: string, filter: DramaJobFilter) => ["drama", projectId, "jobs", filter] as const,
     takes: (projectId: string, kind: DramaTakeKind, ownerId: string) => ["drama", projectId, "takes", kind, ownerId] as const,
     canvas: (projectId: string) => ["drama", projectId, "canvas"] as const,
     chapters: (projectId: string) => ["drama", projectId, "chapters"] as const,

@@ -44,6 +44,7 @@ type Props = {
     shots?: DramaShot[];
     segmentLabel?: string;
     initialKind?: DramaShotMediaKind;
+    onKindChange?: (kind: DramaShotMediaKind) => void;
     canOpenVideo?: (shot: DramaShot) => boolean;
     onSelectShot?: (shot: DramaShot, kind: DramaShotMediaKind) => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
@@ -73,7 +74,8 @@ export function WorkflowShotMediaDialog(props: Props) {
 function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
     const { modal } = App.useApp();
     const operation = useDramaOperationScope(props.projectId);
-    const [kind, setKind] = useState<DramaShotMediaKind>(props.initialKind || "image");
+    const [localKind, setLocalKind] = useState<DramaShotMediaKind>(props.initialKind || "image");
+    const kind = props.onKindChange ? props.initialKind || "image" : localKind;
     const [dirty, setDirty] = useState(false);
     const [busy, setBusy] = useState(false);
     const [automaticBusy, setAutomaticBusy] = useState(false);
@@ -128,7 +130,8 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                         if (kind === value || (value === "video" && props.canOpenVideo?.(props.shot) === false)) return;
                         leave(() => {
                             setDirty(false);
-                            setKind(value);
+                            if (props.onKindChange) props.onKindChange(value);
+                            else setLocalKind(value);
                         });
                     }}
                 >
@@ -241,13 +244,14 @@ function ShotMediaEditor({
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();
+    const [pendingReceipt, setPendingReceipt] = useState<{ taskId: string; revision: number }>();
     const queryKey = ["drama-shot-media", userId, projectId, shot.id, kind];
     const query = useQuery({
         queryKey,
         queryFn: ({ signal }) => getDramaShotMedia(projectId, shot.id, kind, signal),
         refetchOnMount: kind === "video" ? "always" : true,
         refetchOnWindowFocus: kind === "video" ? "always" : true,
-        refetchInterval: (current) => (["queued", "running"].includes(current.state.data?.status || "") ? 3000 : false),
+        refetchInterval: (current) => (pendingReceipt || ["queued", "running"].includes(current.state.data?.status || "") ? 3000 : false),
     });
     const [draft, setDraft] = useState<DramaShotMediaConfig>();
     const [baseline, setBaseline] = useState<{ config: string; revision: number }>();
@@ -274,7 +278,7 @@ function ShotMediaEditor({
     const dirty = Boolean(draft && baseline && (needsInitialSave || JSON.stringify(draft) !== baseline.config));
     const stale = Boolean(current && baseline && current.revision !== baseline.revision);
     const active = ["queued", "running"].includes(current?.status || "");
-    const configLocked = Boolean(busy || quote?.uncertain || active);
+    const configLocked = Boolean(busy || quote?.uncertain || active || pendingReceipt);
     const controlsDisabled = configLocked || referenceBusy;
     const priceKey = (config: DramaShotMediaConfig, revision: number) => JSON.stringify([config, revision, shot]);
     const draftKey = draft && baseline ? priceKey(draft, baseline.revision) : "";
@@ -301,7 +305,7 @@ function ShotMediaEditor({
     };
 
     useEffect(() => {
-        if (!draft || !baseline || needsInitialSave || stale || active || busy || saving || quote?.uncertain || (price?.key === draftKey && price.version === priceVersion)) return;
+        if (!draft || !baseline || needsInitialSave || stale || active || busy || saving || pendingReceipt || quote?.uncertain || (price?.key === draftKey && price.version === priceVersion)) return;
         let cancelled = false;
         const controller = new AbortController();
         const ticket = operation.capture();
@@ -331,7 +335,7 @@ function ShotMediaEditor({
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [draftKey, needsInitialSave, stale, active, busy, saving, quote?.uncertain, priceVersion]);
+    }, [draftKey, needsInitialSave, stale, active, busy, saving, pendingReceipt, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
         onDirtyChange(dirty);
@@ -342,6 +346,15 @@ function ShotMediaEditor({
     useEffect(() => onSyncBlockedChange(syncFailed || stale), [syncFailed, stale, onSyncBlockedChange]);
     useEffect(() => {
         if (!current) return;
+        if (pendingReceipt && !query.isError && current.revision >= pendingReceipt.revision) {
+            // Binding a task increments the revision. Only reconcile this submission; later edits still require a reload.
+            if (!dirty && !saving && current.taskId === pendingReceipt.taskId && current.revision === pendingReceipt.revision) {
+                setDraft(visibleReferenceConfig(current.config, kind));
+                setBaseline({ config: JSON.stringify(current.config), revision: current.revision });
+            }
+            setPendingReceipt(undefined);
+            return;
+        }
         // The storyboard also caches this slot. Open the video editor against a fresh response.
         if (!draft && (kind !== "video" || (!query.isFetching && !query.isError))) {
             setDraft(visibleReferenceConfig(current.config, kind));
@@ -351,7 +364,7 @@ function ShotMediaEditor({
             setDraft(current.config);
             setBaseline({ config: JSON.stringify(current.config), revision: current.revision });
         }
-    }, [current, draft, kind, query.isFetching, query.isError, dirty, stale, busy, saving, quote?.uncertain]);
+    }, [current, draft, kind, query.isFetching, query.isError, dirty, stale, busy, saving, pendingReceipt, quote?.uncertain]);
 
     const patch = (value: Partial<DramaShotMediaConfig>) => {
         if (configLocked) return;
@@ -371,6 +384,7 @@ function ShotMediaEditor({
         client.setQueryData(queryKey, value);
         setDraft(config);
         setBaseline({ config: JSON.stringify(value.config), revision: value.revision });
+        setPendingReceipt(undefined);
     };
     const run = async (name: string, action: (ticket: ReturnType<typeof operation.capture>) => Promise<void>) => {
         if (locked.current) return;
@@ -441,15 +455,15 @@ function ShotMediaEditor({
         return () => registerFlush(undefined);
     }, [registerFlush, operation.capture]);
     useEffect(() => {
-        if (!dirty || stale || active || busy || quote?.uncertain || failedDraft.current === JSON.stringify(draft)) return;
+        if (!dirty || stale || active || busy || pendingReceipt || quote?.uncertain || failedDraft.current === JSON.stringify(draft)) return;
         const timer = window.setTimeout(() => void saveLatest.current(operation.capture()).catch(() => undefined), 300);
         return () => window.clearTimeout(timer);
-    }, [draft, baseline?.revision, dirty, stale, active, busy, quote?.uncertain, operation.capture]);
+    }, [draft, baseline?.revision, dirty, stale, active, busy, pendingReceipt, quote?.uncertain, operation.capture]);
     const execute = () =>
         run("execute", async (ticket) => {
             let submission = quote?.uncertain ? quote : undefined;
             if (!submission) {
-                if (!current || !draft || !baseline || stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
+                if (!current || !draft || !baseline || stale || active || pendingReceipt || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
                 const value = await save(ticket, true);
                 if (!operation.isCurrent(ticket)) return;
                 const preview = await preflightDramaShotMedia(projectId, shot.id, kind, { expectedRevision: value.revision });
@@ -464,13 +478,10 @@ function ShotMediaEditor({
                 submission = { preview, request: { expectedRevision: preview.revision, baseRevision: preview.baseRevision, confirmationToken: preview.confirmationToken, clientOperationId: `shot-media:${crypto.randomUUID()}` } };
                 setQuote(submission);
             }
+            const submittedRevision = submission.preview.revision;
+            let task: Awaited<ReturnType<typeof executeDramaShotMedia>>;
             try {
-                const task = await executeDramaShotMedia(projectId, shot.id, kind, submission.request);
-                if (!operation.isCurrent(ticket)) return;
-                setNotice(`已提交镜头${kind === "image" ? "图片" : "视频"}，${STATE[task.status] || task.stage || "请查看任务进度"}`);
-                setQuote(undefined);
-                setPrice(undefined);
-                client.setQueryData(queryKey, { ...editor.current.current, status: task.status, taskId: task.id });
+                task = await executeDramaShotMedia(projectId, shot.id, kind, submission.request);
             } catch (reason) {
                 const rejected = reason instanceof ApiError && [reason.status, reason.code].some((value) => value !== undefined && value >= 400 && value < 500 && value !== 408);
                 if (operation.isCurrent(ticket)) {
@@ -482,14 +493,15 @@ function ShotMediaEditor({
                 }
                 throw reason;
             }
-            try {
-                const updated = await getDramaShotMedia(projectId, shot.id, kind);
-                if (!operation.isCurrent(ticket)) return;
-                accept(updated);
-                onChanged?.();
-            } catch {
-                if (operation.isCurrent(ticket)) setError("任务已提交，最新进度暂未刷新，请稍后重新读取");
-            }
+            if (!operation.isCurrent(ticket)) return;
+            setNotice(`已提交镜头${kind === "image" ? "图片" : "视频"}`);
+            setQuote(undefined);
+            setPrice(undefined);
+            setPendingReceipt({ taskId: task.id, revision: submittedRevision + 1 });
+            client.setQueryData<DramaShotMedia>(queryKey, (cached) => (cached?.revision === submittedRevision ? { ...cached, status: task.status, taskId: task.id } : cached));
+            onChanged?.();
+            // The receipt ends submission; the media query owns later reads and polling.
+            void query.refetch({ cancelRefetch: false });
         });
     const options = catalog.data?.options[kind] || [];
     const model = draft ? options.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.model)) : undefined;
@@ -499,6 +511,11 @@ function ShotMediaEditor({
     const resolution = dramaVideoResolutionValue(model, savedResolution) || savedResolution;
     const videoTiers = isVideo ? dramaVideoResolutionTiers(model ? [model] : [], savedResolution) : [];
     const previewTake = current?.takes.find((take) => take.id === previewTakeId);
+    let generateLabel = generationLabel(isVideo ? "生成视频" : "生成图片", displayedPrice, pricing === draftKey);
+    if (busy === "execute") generateLabel = quote?.uncertain ? "核对中…" : "提交中…";
+    else if (quote?.uncertain) generateLabel = "核对提交结果";
+    else if (active) generateLabel = current?.status === "queued" ? "已排队" : "生成中";
+    else if (pendingReceipt) generateLabel = "正在更新任务状态…";
 
     if (query.isError && !draft)
         return (
@@ -632,6 +649,7 @@ function ShotMediaEditor({
                     <WorkflowShotPromptEditor projectId={projectId} userId={userId} shot={shot} kind={kind} config={draft} disabled={controlsDisabled} onChange={patch} />
                     {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新读取后再操作。</p> : null}
                     {error ? <p role="alert">{error}</p> : null}
+                    {pendingReceipt && query.isError ? <p role="status">任务已提交，最新进度暂未刷新。</p> : null}
                     {notice ? <p role="status">{notice}</p> : null}
                     <div className="drama-shot-media-actions">
                         {syncFailed && !stale ? (
@@ -639,7 +657,7 @@ function ShotMediaEditor({
                                 重新同步配置
                             </Button>
                         ) : null}
-                        {stale || query.isError || error || priceError?.key === draftKey || (displayedPrice && (!displayedPrice.ready || !displayedPrice.priced)) ? (
+                        {stale || query.isError || error || pendingReceipt || priceError?.key === draftKey || (displayedPrice && (!displayedPrice.ready || !displayedPrice.priced)) ? (
                             <Button
                                 type="text"
                                 size="small"
@@ -648,8 +666,8 @@ function ShotMediaEditor({
                                     void run("reload", async (ticket) => {
                                         if (dirty && !stale) await save(ticket);
                                         if (dirty && stale) throw new Error("镜头媒体已有新版本，请关闭后放弃本地修改再重新进入");
-                                        const value = await getDramaShotMedia(projectId, shot.id, kind);
-                                        if (operation.isCurrent(ticket)) {
+                                        const { data: value } = await query.refetch({ throwOnError: true });
+                                        if (value && operation.isCurrent(ticket)) {
                                             accept(value);
                                             setQuote(undefined);
                                             setPriceVersion((version) => version + 1);
@@ -663,11 +681,11 @@ function ShotMediaEditor({
                         <Button
                             className="drama-shot-media-generate"
                             type="primary"
-                            disabled={Boolean(busy) || saving || referenceBusy || (!quote?.uncertain && (stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))}
-                            loading={busy === "execute"}
+                            disabled={Boolean(busy || pendingReceipt) || saving || referenceBusy || (!quote?.uncertain && (stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))}
+                            loading={busy === "execute" || (!quote?.uncertain && current?.status === "running")}
                             onClick={() => void execute()}
                         >
-                            {quote?.uncertain ? "核对提交结果" : generationLabel(isVideo ? "生成视频" : "生成图片", displayedPrice, !active && pricing === draftKey)}
+                            {generateLabel}
                         </Button>
                     </div>
                     {saving ? <p role="status">正在同步配置…</p> : null}

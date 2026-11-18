@@ -492,7 +492,7 @@ export type DramaEpisode = {
 
 export type DramaJob = {
     id: string;
-    kind: "bible" | "plan" | "cast_image" | "script" | "segment_prompt" | "segment_video" | "render";
+    kind: "bible" | "plan" | "cast_image" | "script" | "segment_prompt" | "segment_video" | "render" | "shot_image" | "shot_video" | "shot_audio";
     status: "queued" | "running" | "succeeded" | "failed" | "canceled";
     label: string;
     error?: string;
@@ -513,6 +513,8 @@ export type DramaJob = {
     /** 排队作业还没提交的原因（作品暂停、账号同时任务已满、本类同时生成数已满）；下一轮就会提交时为空。 */
     wait?: string;
 };
+
+export type DramaJobFilter = { status?: "active" | "failed"; kinds?: readonly DramaJob["kind"][] };
 
 export type DramaJobTask = {
     id: string;
@@ -875,8 +877,8 @@ export function retryDramaProjectText(projectId: string) {
     return http.post<{ jobs: number }>(`${base(projectId)}/retry-text`);
 }
 
-export function listDramaJobs(projectId: string, limit = 60, signal?: AbortSignal) {
-    return http.get<{ jobs: DramaJob[] }>(`${base(projectId)}/jobs`, { params: { limit }, signal });
+export function listDramaJobs(projectId: string, limit = 60, signal?: AbortSignal, filter?: DramaJobFilter) {
+    return http.get<{ jobs: DramaJob[] }>(`${base(projectId)}/jobs`, { params: { limit, status: filter?.status, kinds: filter?.kinds?.join(",") }, signal });
 }
 
 export function getDramaJob(projectId: string, jobId: string, signal?: AbortSignal) {
