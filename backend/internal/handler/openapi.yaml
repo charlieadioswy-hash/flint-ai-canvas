@@ -6062,6 +6062,7 @@ components:
         model: { $ref: "#/components/schemas/DramaDrawingModelChoice" }
         prompt: { type: string, description: "普通参考图可用 @[shot-image:资源ID] 稳定引用；提交模型前按实际附件编译为参考图N。草稿允许保留已移除图片引用，报价和生成时拒绝缺失或越界引用。" }
         promptSourceHash: { type: string, description: "单镜视频自动稿来源标记；非空时正文未改可按当前段与镜头重组，空串表示手工稿，省略表示尚未识别的旧配置。非授权凭据。" }
+        cameraIntent: { type: string, description: "仅单镜视频使用；用户显式选择的运镜，如跟镜头、拉镜头或无运镜。独立于提示词正文保存，修改后自动稿仍会更新；显式值优先于旧提示词内的运镜标记与原分镜。" }
         operation: { type: string }
         aspectRatio: { type: string }
         resolution: { type: string }

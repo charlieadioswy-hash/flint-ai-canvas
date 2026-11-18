@@ -37,6 +37,7 @@ func (s *Service) ExecuteDramaShotMedia(userID, projectID, shotID, kind string, 
 	metadata["dramaShotScriptHash"], metadata["dramaShotMediaRequestHash"] = dramaShotScriptHash(plan.shot), submission.Hash
 	if kind == "video" {
 		metadata["dramaShotPromptHash"] = dramaShotMediaDigest(stringValue(plan.request.Input["prompt"]))
+		metadata["dramaShotCameraPromptVersion"] = dramaShotCameraPromptVersion
 	}
 	prepare := &creationTaskPreparation{}
 	plan.request.creationPrepare = prepare

@@ -16,6 +16,7 @@ type ShotVideoPromptInput struct {
 	ShotIndex                       int
 	ShotNumber                      int
 	Seconds                         int
+	CameraIntent                    string
 	WrittenPrompt                   string
 	WrittenPromptUsesShotReferences bool
 	SourceReferences                []SegmentReference
@@ -28,6 +29,10 @@ func ShotVideoPrompt(in ShotVideoPromptInput) string {
 		return ""
 	}
 	shot := in.Segment.Shots[in.ShotIndex]
+	cameraIntent := NormalizeShotCameraIntent(in.CameraIntent)
+	if cameraIntent != "" {
+		shot.Camera = cameraIntent
+	}
 	seconds := in.Seconds
 	if seconds <= 0 {
 		seconds = max(1, int(math.Ceil(float64(shot.DurationMs)/1000)))
@@ -103,6 +108,9 @@ func ShotVideoPrompt(in ShotVideoPromptInput) string {
 	}
 	fmt.Fprintf(&b, "\n【00.00—%s秒｜镜头%d：%s】\n", segmentClock(int64(seconds)*1000), number, fromWritten(heading))
 	if body, ok := writtenShotBody(in, seconds); ok {
+		if cameraIntent != "" {
+			body = overrideWrittenShotFraming(body, shot.ShotSize, cameraIntent)
+		}
 		if in.WrittenPromptUsesShotReferences {
 			b.WriteString(actual(body) + "\n")
 		} else {
@@ -156,13 +164,17 @@ func writeShotContinuity(b *strings.Builder, in ShotVideoPromptInput) {
 	}
 }
 
-func writeStructuredShotBody(b *strings.Builder, segment SegmentPromptInput, shot SegmentShot, seconds int, rewrite func(string) string) {
-	framing := strings.TrimSpace(shotLens[shot.ShotSize] + shot.ShotSize)
-	move := firstNonEmpty(cameraMoveText(segment.CameraMotion, shot.Camera), shot.Camera)
+func shotFraming(shotSize, camera string, level int) string {
+	framing := strings.TrimSpace(shotLens[shotSize] + shotSize)
+	move := firstNonEmpty(cameraMoveText(level, camera), camera)
 	if move != "" {
 		framing = strings.Trim(strings.Join([]string{framing, move}, "，"), "，")
 	}
-	if framing != "" {
+	return framing
+}
+
+func writeStructuredShotBody(b *strings.Builder, segment SegmentPromptInput, shot SegmentShot, seconds int, rewrite func(string) string) {
+	if framing := shotFraming(shot.ShotSize, shot.Camera, segment.CameraMotion); framing != "" {
 		b.WriteString(rewrite(framing) + "。\n")
 	}
 	switch shot.Transition {
@@ -199,6 +211,9 @@ func writeStructuredShotBody(b *strings.Builder, segment SegmentPromptInput, sho
 }
 
 var (
+	shotVideoPromptTitle      = regexp.MustCompile(`^第[0-9]+镜头视频｜单镜生成$`)
+	shotWrittenLensPrefix     = regexp.MustCompile(`(?i)^\d+(?:\.\d+)?[\t ]*mm[\t ]*`)
+	shotWrittenMotionClause   = regexp.MustCompile(`^(?:(?:固定|稳定)(?:机位|镜头)|(?:机位|镜头)(?:固定|稳定)$|(?:镜头|摄影机|机位)?(?:先|再|始终|全程|缓慢|慢慢|平稳|轻微|轻轻|快速|匀速|逐渐|自然|横向|纵向|垂直|连续)*(?:跟随|跟拍|跟进|推入|推近|前推|拉远|后拉|拉出|摇向|横移|平移|侧移|升起|升高|抬升|俯拍|环绕|手持(?:镜头|拍摄|机位|晃动)|航拍|变焦))`)
 	shotWrittenHeading        = regexp.MustCompile(`(?m)^[\t ]*【\s*([0-9]+(?:\.[0-9]{1,2})?)\s*[—–-]\s*([0-9]+(?:\.[0-9]{1,2})?)\s*秒\s*[｜|]\s*镜头([^：:】\r\n]+)[：:]([^】\r\n]*)】[\t ]*$`)
 	shotHeadingCandidate      = regexp.MustCompile(`(?m)^[\t ]*【[^】\r\n]*镜头[^】\r\n]*】[\t ]*$`)
 	shotSectionHeading        = regexp.MustCompile(`(?m)^[\t ]*【[^】\r\n]+】`)
@@ -212,6 +227,132 @@ var (
 	shotReferenceLabelPattern = regexp.MustCompile(`^参考图[1-9][0-9]*$`)
 	shotOtherInstruction      = regexp.MustCompile(`第[0-9一二三四五六七八九十百]+段|镜头[0-9一二三四五六七八九十百]+`)
 )
+
+func NormalizeShotCameraIntent(value string) string {
+	value = strings.TrimSpace(value)
+	switch value {
+	case "固定":
+		return "无运镜"
+	case "推", "拉", "摇", "移", "跟", "环绕", "手持":
+		return value + "镜头"
+	default:
+		if CameraPresetRule(value) != "" {
+			return value
+		}
+		return ""
+	}
+}
+
+// SplitShotCameraIntent recognizes only standalone legacy marker lines.
+func SplitShotCameraIntent(prompt string) (body, intent string) {
+	const marker = "【运镜意图】"
+	lines := strings.Split(prompt, "\n")
+	retained := lines[:0]
+	for _, line := range lines {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), marker); ok {
+			if value := NormalizeShotCameraIntent(value); value != "" {
+				intent = value
+				continue
+			}
+		}
+		retained = append(retained, line)
+	}
+	if intent == "" {
+		return prompt, ""
+	}
+	return strings.Join(retained, "\n"), intent
+}
+
+// overrideWrittenShotFraming changes only the leading lens/framing line from a
+// segment draft. Timed action, dialogue, sound and mixed prose stay intact.
+func overrideWrittenShotFraming(body, shotSize, intent string) string {
+	line, rest, multiline := strings.Cut(body, "\n")
+	line = strings.TrimSpace(line)
+	framing, suffix := line, ""
+	if end := strings.IndexAny(line, "，,。；;"); end >= 0 {
+		framing, suffix = strings.TrimSpace(line[:end]), line[end:]
+	}
+	if shotSize == "" || shotWrittenLensPrefix.ReplaceAllString(framing, "") != strings.TrimSpace(shotSize) {
+		return body
+	}
+	if motion := strings.TrimLeft(suffix, "，,"); motion != suffix {
+		end := strings.IndexAny(motion, "，,。；;")
+		if end < 0 {
+			end = len(motion)
+		}
+		if shotWrittenMotionClause.MatchString(strings.TrimSpace(motion[:end])) {
+			suffix = motion[end:]
+		}
+	}
+	line = framing + "，" + CameraPresetRule(intent) + suffix
+	if suffix == "" {
+		line += "。"
+	}
+	if multiline {
+		line += "\n" + rest
+	}
+	return line
+}
+
+// ShotVideoCameraPrompt applies the editor's explicit camera intent at video submission.
+func ShotVideoCameraPrompt(prompt, shotSize, inheritedCamera, explicit string) string {
+	body, intent := SplitShotCameraIntent(prompt)
+	if value := NormalizeShotCameraIntent(explicit); value != "" {
+		intent = value
+	}
+	if intent == "" {
+		if rule := CameraPresetRule(inheritedCamera); rule != "" {
+			return prompt + "\n运镜要求：" + rule
+		}
+		return prompt
+	}
+	retained := strings.Split(body, "\n")
+
+	// Replace only the recognizable fields emitted by ShotVideoPrompt. Leave human-written
+	// descriptions alone; the explicit instruction below resolves any competing camera prose.
+	if len(retained) > 0 && shotVideoPromptTitle.MatchString(strings.TrimSpace(retained[0])) {
+		heading := firstNonEmpty(shotSize, "当前镜头")
+		oldHeading := heading
+		if camera := strings.TrimSpace(inheritedCamera); camera != "" {
+			oldHeading += "·" + camera
+		}
+		for i, line := range retained {
+			match := shotWrittenHeading.FindStringSubmatchIndex(line)
+			if len(match) == 0 {
+				continue
+			}
+			found := line[match[8]:match[9]]
+			if found == heading+"·"+intent {
+				break
+			}
+			if found != oldHeading {
+				continue
+			}
+			if intent != "无运镜" && NormalizeShotCameraIntent(inheritedCamera) == "无运镜" {
+				for j := range i {
+					if retained[j] == "本镜全程保持固定机位。" {
+						retained[j] = ""
+						break
+					}
+				}
+			}
+			retained[i] = line[:match[8]] + heading + "·" + intent + line[match[9]:]
+			if i+1 < len(retained) {
+				framing := retained[i+1]
+				retained[i+1] = overrideWrittenShotFraming(framing, shotSize, intent)
+				// Only the three camera-motion bands produce distinct structured framing lines.
+				for _, level := range []int{1, DefaultCameraLevel, 10} {
+					if framing == shotFraming(shotSize, inheritedCamera, level)+"。" {
+						retained[i+1] = shotFraming(shotSize, intent, level) + "。"
+						break
+					}
+				}
+			}
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(retained, "\n") + "\n运镜要求：" + CameraPresetRule(intent) + "。如正文中的运镜描述与本项冲突，以本项为准；人物动作、场景与对白照原文执行。")
+}
 
 // 不复用段首栏目：其中可混有首镜动作、跨镜情绪变化和依赖上一段尾帧的指令。
 func writtenShotBody(in ShotVideoPromptInput, seconds int) (string, bool) {

@@ -5,6 +5,63 @@ import (
 	"testing"
 )
 
+func TestShotVideoPromptCameraIntentKeepsProseAndReplacesStructuredFixedPosition(t *testing.T) {
+	const motion = "镜头贴着桌面缓慢向上抬，桌旁的人回过头。"
+	generated := ShotVideoPrompt(ShotVideoPromptInput{
+		Segment: SegmentPromptInput{Shots: []SegmentShot{{ShotSize: "中景", Camera: "固定", VideoPrompt: motion}}}, Seconds: 4,
+	})
+	got := ShotVideoCameraPrompt(generated+"\n【运镜意图】拉镜头", "中景", "固定", "")
+	for _, want := range []string{"中景·拉镜头】", motion, "运镜要求：镜头沿视轴平稳后拉", "以本项为准"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"中景·固定】", "机位固定", "固定机位"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("obsolete %q in %s", unwanted, got)
+		}
+	}
+	if markerOnly := ShotVideoCameraPrompt("【运镜意图】手持", "中景", "跟", ""); !strings.HasPrefix(markerOnly, "运镜要求：轻微自然手持运动") {
+		t.Fatalf("marker-only prompt = %q", markerOnly)
+	}
+	const unsupported = "【运镜意图】保留自定义文字"
+	if got := ShotVideoCameraPrompt(unsupported, "中景", "跟", ""); got != unsupported+"\n运镜要求："+CameraPresetRule("跟") {
+		t.Fatalf("unrecognized text uses inherited direction: %q", got)
+	}
+}
+
+func TestShotVideoPromptOverridesWrittenFramingWithoutLosingAction(t *testing.T) {
+	in := shotPromptFixture()
+	in.WrittenPrompt = strings.Replace(in.WrittenPrompt, "50mm近景，缓慢推近。", "50mm近景，缓慢推近，青衣人握紧钥匙。", 1)
+	in.CameraIntent = "无运镜"
+	prompt := ShotVideoCameraPrompt(ShotVideoPrompt(in), "近景", "推", in.CameraIntent)
+	timeline := shotPromptTimeline(t, prompt)
+	for _, want := range []string{
+		"【00.00—06.00秒｜镜头8：近景·无运镜】", "50mm近景，固定机位", "青衣人握紧钥匙。",
+		"00.00—03.00：青衣人（参考图2）微抬下巴", "03.00—06.00：右手握紧钥匙（参考图3）", "青衣人（压低声音）：“你终于来了。”",
+	} {
+		if !strings.Contains(timeline, want) {
+			t.Fatalf("missing %q from camera override:\n%s", want, timeline)
+		}
+	}
+	if strings.Contains(timeline, "缓慢推近") {
+		t.Fatalf("old written camera direction survived:\n%s", timeline)
+	}
+	if strings.Count(timeline, "保持镜头稳定，用人物动作推动画面") != 2 {
+		t.Fatalf("expected camera guidance once in framing and once in the final rule:\n%s", timeline)
+	}
+	legacy := ShotVideoCameraPrompt(ShotVideoPrompt(shotPromptFixture())+"\n【运镜意图】拉镜头", "近景", "推", "无运镜")
+	if strings.Contains(legacy, "缓慢推近") || strings.Contains(legacy, "镜头沿视轴平稳后拉") || !strings.Contains(legacy, "近景·无运镜】") {
+		t.Fatalf("dedicated camera intent did not take precedence over the written framing and legacy line:\n%s", legacy)
+	}
+	for _, lightingOrSound := range []string{"固定方向的光线从窗边透入", "稳定的雨声"} {
+		in.WrittenPrompt = strings.Replace(shotPromptFixture().WrittenPrompt, "缓慢推近", lightingOrSound, 1)
+		if got := ShotVideoPrompt(in); !strings.Contains(got, lightingOrSound) {
+			t.Fatalf("lost non-camera description %q:\n%s", lightingOrSound, got)
+		}
+	}
+}
+
 func shotPromptFixture() ShotVideoPromptInput {
 	return ShotVideoPromptInput{
 		ShotIndex: 1, ShotNumber: 8, Seconds: 6,

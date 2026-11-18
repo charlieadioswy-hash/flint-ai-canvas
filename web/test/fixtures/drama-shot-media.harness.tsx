@@ -1194,6 +1194,88 @@ test("已保存的空参考内容不回填，只显示并保存具体视频规�
     }
 });
 
+test("运镜独立于自动提示词保存，重开后显示选择", async () => {
+    const cameraSelector = 'select[aria-label="镜头运镜意图"]';
+    const originalPrompt = "人物走进会议室。";
+    const promptSourceHash = "auto-prompt-source";
+    const shot = { camera: "跟" };
+    const view = await mount(
+        true,
+        () => {
+            server.video.config.prompt = originalPrompt;
+            server.video.config.promptSourceHash = promptSourceHash;
+        },
+        "video",
+        undefined,
+        shot,
+    );
+    let savedConfig: DramaShotMediaConfig | undefined;
+    try {
+        const camera = view.host.querySelector<HTMLSelectElement>(cameraSelector)!;
+        expect(camera.value).toBe("跟镜头");
+        expect(saves).toHaveLength(0);
+
+        await act(async () => {
+            camera.value = "拉镜头";
+            camera.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect(camera.value).toBe("拉镜头");
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(1);
+        savedConfig = server.video.config;
+        expect(savedConfig.prompt).toBe(originalPrompt);
+        expect(savedConfig.promptSourceHash).toBe(promptSourceHash);
+        expect(savedConfig.cameraIntent).toBe("拉镜头");
+    } finally {
+        await view.close();
+    }
+
+    const reopened = await mount(
+        true,
+        () => {
+            server.video.config = savedConfig!;
+        },
+        "video",
+        undefined,
+        shot,
+    );
+    try {
+        expect(reopened.host.querySelector<HTMLSelectElement>(cameraSelector)?.value).toBe("拉镜头");
+        expect(saves).toHaveLength(0);
+    } finally {
+        await reopened.close();
+    }
+});
+
+test("旧版提示词中的运镜仍可显示，改选后只移除旧的运镜标记", async () => {
+    const originalPrompt = "人物走进会议室。\n【运镜意图】人物回头时视线转向门口。";
+    const view = await mount(
+        true,
+        () => {
+            server.video.config.prompt = `${originalPrompt}\n【运镜意图】拉镜头`;
+            server.video.config.promptSourceHash = "";
+        },
+        "video",
+        undefined,
+        { camera: "跟" },
+    );
+    try {
+        const camera = view.host.querySelector<HTMLSelectElement>('select[aria-label="镜头运镜意图"]')!;
+        expect(camera.value).toBe("拉镜头");
+        expect(saves).toHaveLength(0);
+        await act(async () => {
+            camera.value = "无运镜";
+            camera.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect(camera.value).toBe("无运镜");
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(1);
+        expect(server.video.config).toMatchObject({ prompt: originalPrompt, promptSourceHash: "", cameraIntent: "无运镜" });
+    } finally {
+        await view.close();
+    }
+});
+
 test("主体当前图与历史设定图可绑定镜头，切换不改变主体采用版本", async () => {
     const view = await mount(false, () => {
         casts = [cast()];

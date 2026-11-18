@@ -123,7 +123,7 @@ func (s *Service) enrichDramaShotVideoPrompt(repo *repository.Repository, shot m
 					break
 				}
 			}
-			config.Prompt = production.ShotVideoPrompt(production.ShotVideoPromptInput{Segment: draft.input, ShotIndex: shotIndex, ShotNumber: shot.Position + 1, Seconds: config.Seconds, WrittenPrompt: written, WrittenPromptUsesShotReferences: true, SourceReferences: sourceReferences})
+			config.Prompt = production.ShotVideoPrompt(production.ShotVideoPromptInput{Segment: draft.input, ShotIndex: shotIndex, ShotNumber: shot.Position + 1, Seconds: config.Seconds, CameraIntent: config.CameraIntent, WrittenPrompt: written, WrittenPromptUsesShotReferences: true, SourceReferences: sourceReferences})
 			if config.FirstFrameResourceID != "" {
 				config.Prompt += "\n【首帧约束】以随请求附带的本镜首帧为起幅，保持其人物、站位、场景与光线，随后只执行本镜动作。"
 			}

@@ -5,7 +5,7 @@ import { App, Button, Input, InputNumber, Select, Switch } from "antd";
 import { AntTooltip } from "@/components/ui/base/tooltip/ant-tooltip";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaChoiceKey, dramaVideoResolutionTiers, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
-import { CAMERA_PRESETS } from "@/lib/drama/director";
+import { CAMERA_PRESETS, shotVideoCameraValue, withoutLegacyShotVideoCameraIntent } from "@/lib/drama/director";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import type { DramaShot } from "@/services/api/drama";
 import {
@@ -595,6 +595,8 @@ function ShotMediaEditor({
     const model = draft ? options.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.model)) : undefined;
     const ratios = kind === "image" ? model?.imageRatios : model?.videoRatios;
     const isVideo = kind === "video";
+    const cameraValue = isVideo ? shotVideoCameraValue(draft?.prompt || "", shot.camera || "", draft?.cameraIntent) : "";
+    const cameraOptions = CAMERA_PRESETS.map((value) => ({ value, label: value }));
     const savedResolution = draft?.resolution === "auto" ? undefined : draft?.resolution || undefined;
     const resolution = dramaVideoResolutionValue(model, savedResolution) || savedResolution;
     const videoTiers = isVideo ? dramaVideoResolutionTiers(model ? [model] : [], savedResolution) : [];
@@ -710,17 +712,16 @@ function ShotMediaEditor({
                                 </label>
                                 <label>
                                     <span>运镜意图</span>
-                                    <AntTooltip title={shot.camera || undefined} trigger={["hover", "focus"]}>
+                                    <AntTooltip title={cameraValue || undefined} trigger={["hover", "focus"]}>
                                         <Select
-                                            aria-label="添加镜头运镜意图"
-                                            aria-description={shot.camera || undefined}
+                                            aria-label="镜头运镜意图"
                                             size="small"
-                                            placeholder={shot.camera || "选择运镜"}
+                                            placeholder="选择运镜"
                                             popupMatchSelectWidth={152}
-                                            value={undefined}
+                                            value={cameraValue || undefined}
                                             disabled={controlsDisabled}
-                                            options={CAMERA_PRESETS.map((value) => ({ value, label: value }))}
-                                            onChange={(value) => patch({ prompt: `${draft.prompt.replace(/\n?【运镜意图】[^\n]*/g, "").trim()}\n【运镜意图】${value}`.trim() })}
+                                            options={cameraValue && !CAMERA_PRESETS.includes(cameraValue) ? [{ value: cameraValue, label: cameraValue, disabled: true }, ...cameraOptions] : cameraOptions}
+                                            onChange={(value) => patch({ cameraIntent: value, prompt: withoutLegacyShotVideoCameraIntent(draft.prompt) })}
                                         />
                                     </AntTooltip>
                                 </label>

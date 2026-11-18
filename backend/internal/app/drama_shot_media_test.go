@@ -3,12 +3,14 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/platform"
+	"yingce/backend/internal/production"
 	"yingce/backend/internal/repository"
 )
 
@@ -61,6 +63,44 @@ func completeShotMedia(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID
 	}
 	if handled, err := s.RegisterDramaShotMediaTaskOutput(*task); !handled || err != nil {
 		t.Fatalf("completion = %v %v", handled, err)
+	}
+}
+
+func TestDramaShotMediaVideoUsesManualCameraIntentInProviderPrompt(t *testing.T) {
+	s, db, saved := shotMediaFixture(t)
+	const action = "人物跟随同事推门走出房间"
+	if err := db.Model(&model.DramaShot{}).Where("id = ?", "real-shot").Updates(map[string]any{"camera": "跟", "shot_size": "中景"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	config := saved.Config
+	config.Prompt = production.ShotVideoPrompt(production.ShotVideoPromptInput{
+		Segment:    production.SegmentPromptInput{Shots: []production.SegmentShot{{Camera: "跟", ShotSize: "中景", Action: action}}},
+		ShotNumber: 2, Seconds: 5,
+	}) + "\n【运镜意图】拉镜头\n【运镜意图】无运镜"
+	if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "camera-override"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct{ Prompt string }
+	if err := json.Unmarshal([]byte(stored.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"中景·无运镜】", "运镜要求：固定机位", action} {
+		if !strings.Contains(input.Prompt, want) {
+			t.Fatalf("missing %q in provider prompt:\n%s", want, input.Prompt)
+		}
+	}
+	for _, unwanted := range []string{"中景·跟】", "跟随主体移动", "沿视轴平稳后拉", "【运镜意图】"} {
+		if strings.Contains(input.Prompt, unwanted) {
+			t.Fatalf("obsolete %q in provider prompt:\n%s", unwanted, input.Prompt)
+		}
 	}
 }
 

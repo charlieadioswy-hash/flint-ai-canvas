@@ -5,3 +5,41 @@ export const DIRECTOR_TEMPLATES = [
 ] as const;
 
 export const CAMERA_PRESETS = ["无运镜", "推镜头", "拉镜头", "摇镜头", "移镜头", "跟镜头", "环绕镜头", "升镜头", "航拍镜头", "手持镜头", "荷兰角镜头", "希区柯克镜头", "POV镜头", "FPV镜头"];
+
+const CAMERA_ALIASES = new Map([
+    ["固定", "无运镜"],
+    ["推", "推镜头"],
+    ["拉", "拉镜头"],
+    ["摇", "摇镜头"],
+    ["移", "移镜头"],
+    ["跟", "跟镜头"],
+    ["环绕", "环绕镜头"],
+    ["手持", "手持镜头"],
+]);
+const CAMERA_INTENT = "【运镜意图】";
+
+function cameraPreset(camera: string) {
+    const value = camera.trim();
+    return CAMERA_ALIASES.get(value) ?? CAMERA_PRESETS.find((preset) => preset === value);
+}
+
+function cameraIntentLine(line: string) {
+    const text = line.trimStart();
+    return text.startsWith(CAMERA_INTENT) ? cameraPreset(text.slice(CAMERA_INTENT.length)) : undefined;
+}
+
+export function shotVideoCameraValue(prompt: string, inherited: string, explicit?: string) {
+    const preset = cameraPreset(explicit ?? "");
+    if (preset) return preset;
+    for (const line of prompt.split(/\r?\n/).reverse()) {
+        const value = cameraIntentLine(line);
+        if (value) return value;
+    }
+    return cameraPreset(inherited) ?? inherited.trim();
+}
+
+export function withoutLegacyShotVideoCameraIntent(prompt: string) {
+    const lines = prompt.split(/\r?\n/);
+    const body = lines.filter((line) => !cameraIntentLine(line));
+    return body.length === lines.length ? prompt : body.join("\n").trimEnd();
+}

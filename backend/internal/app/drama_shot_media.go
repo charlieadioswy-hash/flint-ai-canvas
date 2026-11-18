@@ -23,6 +23,7 @@ type DramaShotMediaConfig struct {
 	Model                DramaModelChoice  `json:"model"`
 	Prompt               string            `json:"prompt"`
 	PromptSourceHash     *string           `json:"promptSourceHash,omitempty"`
+	CameraIntent         string            `json:"cameraIntent,omitempty"`
 	Operation            string            `json:"operation"`
 	AspectRatio          string            `json:"aspectRatio"`
 	Resolution           string            `json:"resolution"`
@@ -443,6 +444,15 @@ func dramaShotMediaReferenceIDs(config DramaShotMediaConfig) []string {
 }
 
 func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, userID, projectID, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+	if config.CameraIntent = strings.TrimSpace(config.CameraIntent); config.CameraIntent != "" {
+		if kind != "video" {
+			return config, BadAuthRequest("运镜意图只用于镜头视频")
+		}
+		config.CameraIntent = production.NormalizeShotCameraIntent(config.CameraIntent)
+		if config.CameraIntent == "" {
+			return config, BadAuthRequest("镜头运镜意图无效")
+		}
+	}
 	if kind == "audio" {
 		config.ReferenceNames = nil
 		config.ReferenceSubjects = nil
@@ -705,7 +715,13 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	return plan, nil
 }
 
+const dramaShotCameraPromptVersion = 1
+
 func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string, shot model.DramaShot, kind string, config DramaShotMediaConfig) (map[string]any, error) {
+	return s.dramaShotMediaInputForCameraVersion(repo, userID, shot, kind, config, dramaShotCameraPromptVersion)
+}
+
+func (s *Service) dramaShotMediaInputForCameraVersion(repo *repository.Repository, userID string, shot model.DramaShot, kind string, config DramaShotMediaConfig, cameraVersion int) (map[string]any, error) {
 	if kind == "audio" {
 		return dramaShotAudioInput(shot, config), nil
 	}
@@ -770,6 +786,9 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 	}
 	var audios []any
 	if kind == "video" {
+		if cameraVersion == dramaShotCameraPromptVersion {
+			prompt = production.ShotVideoCameraPrompt(prompt, shot.ShotSize, shot.Camera, config.CameraIntent)
+		}
 		instructions, references, err := s.dramaShotVideoAssetInstructions(repo, userID, shot, config)
 		if err != nil {
 			return nil, err
@@ -778,8 +797,11 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 			prompt = instructions + "\n\n" + prompt
 		}
 		audios = references
-		if rule := production.CameraPresetRule(shot.Camera); rule != "" {
-			prompt += "\n运镜要求：" + rule
+		// Tasks already in flight were fingerprinted before camera intent compilation.
+		if cameraVersion == 0 {
+			if rule := production.CameraPresetRule(shot.Camera); rule != "" {
+				prompt += "\n运镜要求：" + rule
+			}
 		}
 	}
 	input := map[string]any{"mode": kind, "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}

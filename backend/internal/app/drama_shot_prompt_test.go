@@ -185,6 +185,37 @@ func TestDramaShotPromptRefreshesAutomaticDraftAndKeepsQuoteSaveScopeStable(t *t
 	}
 }
 
+func TestDramaShotPromptCameraIntentKeepsAutomaticRefresh(t *testing.T) {
+	s, db, _ := shotPromptFixture(t)
+	const user, project, shot = "user", "drama-project", "real-shot"
+	if err := db.Model(&model.DramaShot{}).Where("id = ?", shot).Update("camera", "推").Error; err != nil {
+		t.Fatal(err)
+	}
+	written := strings.Replace(shotPromptWritten, "35mm中景，窗侧冷光", "35mm中景，缓慢推近，窗侧冷光", 1)
+	if err := db.Model(&model.DramaSegment{}).Where("id = ?", "prompt-segment").Update("video_prompt", written).Error; err != nil {
+		t.Fatal(err)
+	}
+	current := mustShotMedia(t, s)
+	draft := current.Config
+	if draft.PromptSourceHash == nil || *draft.PromptSourceHash == "" || !strings.Contains(draft.Prompt, "缓慢推近") {
+		t.Fatalf("expected automatic prompt with the original movement: %+v", draft)
+	}
+	draft.CameraIntent = "无运镜"
+	updated, err := s.SaveDramaShotMedia(user, project, shot, "video", DramaShotMediaSaveRequest{ExpectedRevision: &current.Revision, Config: draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Config.PromptSourceHash == nil || *updated.Config.PromptSourceHash == "" || updated.Config.CameraIntent != "无运镜" || !strings.Contains(updated.Config.Prompt, "中景·无运镜】") || strings.Contains(updated.Config.Prompt, "缓慢推近") || !strings.Contains(updated.Config.Prompt, "衣袖随动作轻摆") {
+		t.Fatalf("override did not refresh the automatic prompt and preserve the written action: %+v", updated.Config)
+	}
+	draft = updated.Config
+	draft.Seconds = 6
+	rebuilt, err := s.SaveDramaShotMedia(user, project, shot, "video", DramaShotMediaSaveRequest{ExpectedRevision: &updated.Revision, Config: draft})
+	if err != nil || rebuilt.Config.CameraIntent != "无运镜" || !strings.Contains(rebuilt.Config.Prompt, "00.00—06.00秒") {
+		t.Fatalf("duration change did not rebuild the prompt with the saved camera: %+v, %v", rebuilt.Config, err)
+	}
+}
+
 func TestDramaShotPromptSegmentRevisionInvalidatesExecutionWithoutCharge(t *testing.T) {
 	s, db, saved := shotPromptFixture(t)
 	before, err := s.PreflightDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaActionRequest{ExpectedRevision: &saved.Revision})

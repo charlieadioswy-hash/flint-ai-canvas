@@ -8,6 +8,7 @@ export type DramaShotMediaConfig = {
     model: DramaModelChoice;
     prompt: string;
     promptSourceHash?: string;
+    cameraIntent?: string;
     operation: "text_to_image" | "image_to_image" | "text_to_video" | "image_to_video" | "reference_to_video" | "audio";
     aspectRatio: string;
     resolution: string;
