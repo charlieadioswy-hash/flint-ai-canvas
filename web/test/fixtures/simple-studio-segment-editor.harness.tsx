@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
 import type { DramaEpisodeDetail, DramaSegment, DramaShot, DramaSummary } from "@/services/api/drama";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { useSegmentPromptDraft } from "@/pages/projects/studio/use-segment-prompt-draft";
 
 const browser = new Window({ url: "http://localhost/projects/project" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -237,10 +238,61 @@ test("详情与当前真实集不匹配时不展示旧段，也不允许旧回�
         await view.render({ episodeId: "episode-b" });
         expect(dialog.detail).toBeUndefined();
         const before = patchPrompt.mock.calls.length;
-        await act(() => dialog.onSavePrompt(detail().segments[0], "不能写到另一集"));
+        await expect(dialog.onSavePrompt(detail().segments[0], "不能写到另一集")).rejects.toThrow("本段内容已变化");
         expect(patchPrompt.mock.calls.length).toBe(before);
         await expect(dialog.onSaveReferences(detail().segments[0], {})).rejects.toThrow("本段内容已变化");
     } finally {
         await view.close();
+    }
+});
+
+test("段稿保存回执采用规范化正文，失败和保存期间的新输入仍保留", async () => {
+    const root = createRoot(document.createElement("div"));
+    let saved = "原来的提示词";
+    let finishSave!: (value: boolean) => void;
+    const send = mock(async (_text: string) => {
+        if (!(await new Promise<boolean>((resolve) => (finishSave = resolve)))) throw new Error("保存失败");
+    });
+    let editor!: ReturnType<typeof useSegmentPromptDraft>;
+    function Editor() {
+        editor = useSegmentPromptDraft(saved, "模型撰写的版本", send);
+        return null;
+    }
+    try {
+        await act(() => root.render(<Editor />));
+        await act(() => editor.setEdited("秦子武（参考图 01）进门"));
+        await act(() => {
+            editor.commit();
+            editor.commit();
+        });
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(editor.saving).toBe(true);
+        await act(async () => {
+            saved = "秦子武（@[segment-cast:hero]）进门";
+            root.render(<Editor />);
+            finishSave(true);
+        });
+        expect(editor.draft).toBe(saved);
+        expect(editor.dirty).toBe(false);
+        await act(() => editor.commit());
+        expect(send).toHaveBeenCalledTimes(1);
+
+        await act(() => editor.setEdited("进门后转身"));
+        await act(() => editor.commit());
+        await act(() => finishSave(false));
+        expect(editor.draft).toBe("进门后转身");
+        expect(editor.dirty).toBe(true);
+
+        await act(() => editor.commit());
+        await act(() => editor.setEdited("进门后转身并关门"));
+        await act(async () => {
+            saved = "进门后转身";
+            root.render(<Editor />);
+            finishSave(true);
+        });
+        expect(editor.draft).toBe("进门后转身并关门");
+        expect(editor.dirty).toBe(true);
+    } finally {
+        await act(() => root.unmount());
     }
 });

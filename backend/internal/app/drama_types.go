@@ -653,9 +653,10 @@ type DramaSegmentView struct {
 	ShotIDs    []string `json:"shotIds"`
 	DurationMs int64    `json:"durationMs"`
 	// VideoPrompt 为生效内容：手动改写优先，其次是模型撰写的 Generated。
-	VideoPrompt string `json:"videoPrompt"`
-	Generated   string `json:"generated"`
-	Custom      bool   `json:"custom"`
+	VideoPrompt    string                  `json:"videoPrompt"`
+	Generated      string                  `json:"generated"`
+	Custom         bool                    `json:"custom"`
+	PromptSubjects []DramaSegmentReference `json:"promptSubjects,omitempty"`
 	// PromptStatus：none 无记录、queued 待撰写、running 撰写中、ready 完成、stale 镜头已改动、failed 失败。
 	PromptStatus string `json:"promptStatus"`
 	PromptError  string `json:"promptError,omitempty"`
@@ -710,6 +711,7 @@ type DramaSegmentRequest struct {
 	Warning string `json:"warning,omitempty"`
 	// UnknownReferences 是提示词正文里不属于本段的“参考图N”（编号超出本段参考图数量），存在时不能提交视频。
 	UnknownReferences []string `json:"unknownReferences,omitempty"`
+	ResolvedPrompt    *string  `json:"resolvedPrompt,omitempty"`
 	// AudioReferences 为按对白自动选择或用户手动指定的角色；Sent 的作为“参考音频N”随请求发送。
 	// ModelMaxAudios 是视频模型声明的参考音频上限，0 表示不支持参考音频。
 	AudioReferences []DramaSegmentAudioReference `json:"audioReferences"`
@@ -748,9 +750,10 @@ type UpdateDramaSegmentRequest struct {
 	AutoAudioReferences bool                         `json:"autoAudioReferences"`
 }
 
-// UpdateDramaShotRequest 修改镜头的剧本内容；镜头只是撰写视频提示词的素材，修改后本段提示词标记过期。
+// UpdateDramaShotRequest 修改镜头的名称或剧本内容；仅内容修改使本段提示词过期。
 type UpdateDramaShotRequest struct {
 	ExpectedRevision *int64  `json:"expectedRevision,omitempty"`
+	Name             *string `json:"name,omitempty"`
 	Speaker          *string `json:"speaker"`
 	Dialogue         *string `json:"dialogue"`
 	Action           *string `json:"action"`
@@ -807,6 +810,7 @@ type CreateDramaCastRequest struct {
 
 type DeleteDramaCastRequest struct {
 	ExpectedRevision *int64 `json:"expectedRevision,omitempty"`
+	DeleteScopeToken string `json:"deleteScopeToken"`
 }
 
 type UpdateDramaCastRequest struct {

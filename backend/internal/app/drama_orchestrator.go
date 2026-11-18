@@ -1784,7 +1784,18 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 		}
 		// 文本模型数字数常常超出要求，写作目标比硬上限再留一成；硬上限在结果回写时校验。
 		draft.input.MaxChars = maxChars * 9 / 10
-		payload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, Seconds: seconds, MaxChars: maxChars})
+		// A custom attachment selection does not remove the actual cast
+		// from the writer's source. These additional labels are authorship only.
+		writerRefs := dramaSegmentAuthoringReferences(settings, meta, draft, castByID)
+		for _, ref := range writerRefs[len(draft.view.Request.References):] {
+			subject := dramaShotSubjectReference(castByID[ref.CastID], castByID)
+			subject.Label = ref.Label
+			draft.input.References = append(draft.input.References, subject)
+		}
+		payload, _ := json.Marshal(dramaRevisionPayload{
+			Revision: segment.Revision, Seconds: seconds, MaxChars: maxChars,
+			PromptReferences: dramaSegmentPromptLabels(writerRefs),
+		})
 		job.PayloadJSON = string(payload)
 		skill, err := r.s.dramaWritingSkill(r.project.UserID, settings.PromptSkill, "视频提示词")
 		if err != nil {
@@ -1838,27 +1849,48 @@ func (r *dramaRun) applySegmentPrompt(job *model.DramaJob, task *model.Task) err
 	if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
 		return err
 	}
-	if chars := utf8.RuneCountInString(prompt); payload.MaxChars > 0 && chars > payload.MaxChars {
-		if payload.Condensed < dramaPromptCondenseAttempts {
-			return r.condenseSegmentPrompt(job, payload, prompt, chars)
+	chars := utf8.RuneCountInString(prompt)
+	tooLong := payload.MaxChars > 0 && chars > payload.MaxChars
+	if tooLong && payload.Condensed < dramaPromptCondenseAttempts {
+		return r.condenseSegmentPrompt(job, payload, prompt, chars)
+	}
+	stored := dramaSegmentEditorPrompt(truncateRunes(prompt, 12000), payload.PromptReferences)
+	fields := map[string]any{"video_prompt": stored, "prompt_seconds": payload.Seconds}
+	if !tooLong {
+		fields["prompt_status"], fields["prompt_error"] = model.DramaMediaReady, ""
+	}
+	if payload.PromptReferences != nil {
+		segment, err := r.s.repo.DramaSegment(r.project.ID, job.ShotID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
 		}
-		// 自动精简后仍超长：保存这一版供手动精简，本段标记失败；不截断，也不提交注定被拒的视频。
-		applied, err := r.s.repo.UpdateDramaSegmentRevision(job.ShotID, payload.Revision, map[string]any{"video_prompt": truncateRunes(prompt, 12000), "prompt_seconds": payload.Seconds})
 		if err != nil {
 			return err
 		}
-		if applied {
-			if err := r.s.repo.AdvanceDramaGuideRevision(r.project.ID); err != nil {
-				return err
-			}
+		segment.VideoPrompt = ""
+		snapshot := dramaSegmentStoredLabels(*segment, payload.PromptReferences)
+		if dramaSegmentPromptHasReferences(stored) {
+			snapshot[dramaShotMediaDigest(stored)] = payload.PromptReferences
 		}
-		return &dramaResultIssue{message: fmt.Sprintf("视频提示词 %d 个字符，自动精简 %d 次后仍超过本段上限 %d 个字符（视频模型上限减去开头的参考图说明）；请手动精简后保存，或重新撰写", chars, payload.Condensed, payload.MaxChars)}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			return err
+		}
+		fields["reference_labels_json"] = string(encoded)
 	}
-	applied, err := r.s.repo.UpdateDramaSegmentRevision(job.ShotID, payload.Revision, map[string]any{"video_prompt": truncateRunes(prompt, 12000), "prompt_status": model.DramaMediaReady, "prompt_error": "", "prompt_seconds": payload.Seconds})
-	if err != nil || !applied {
+	applied, err := r.s.repo.UpdateDramaSegmentRevision(job.ShotID, payload.Revision, fields)
+	if err != nil {
 		return err
 	}
-	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
+	if applied {
+		if err := r.s.repo.AdvanceDramaGuideRevision(r.project.ID); err != nil {
+			return err
+		}
+	}
+	if tooLong {
+		return &dramaResultIssue{message: fmt.Sprintf("视频提示词 %d 个字符，自动精简 %d 次后仍超过本段上限 %d 个字符（视频模型上限减去开头的参考图说明）；请手动精简后保存，或重新撰写", chars, payload.Condensed, payload.MaxChars)}
+	}
+	return nil
 }
 
 // condenseSegmentPrompt 让文本模型把超长的段提示词精简到上限内。同一作业换成精简任务继续运行，

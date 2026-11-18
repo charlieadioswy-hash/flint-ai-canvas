@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Select, Switch } from "antd";
 
+import { AntTooltip } from "@/components/ui/base/tooltip/ant-tooltip";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { dramaChoiceKey } from "@/lib/drama/model-choice";
+import { dramaChoiceKey, dramaVideoResolutionTiers, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
 import { CAMERA_PRESETS } from "@/lib/drama/director";
+import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import type { DramaShot } from "@/services/api/drama";
 import {
     adoptDramaShotMedia,
@@ -42,8 +44,8 @@ type Props = {
     shots?: DramaShot[];
     segmentLabel?: string;
     initialKind?: DramaShotMediaKind;
+    canOpenVideo?: (shot: DramaShot) => boolean;
     onSelectShot?: (shot: DramaShot, kind: DramaShotMediaKind) => void;
-    onEditText?: () => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
 };
 type Quote = { preview: DramaShotMediaPreflight; request: DramaShotMediaAction; uncertain?: boolean };
@@ -122,13 +124,13 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                     key={value}
                     aria-pressed={kind === value}
                     disabled={busy}
-                    onClick={() =>
-                        kind !== value &&
+                    onClick={() => {
+                        if (kind === value || (value === "video" && props.canOpenVideo?.(props.shot) === false)) return;
                         leave(() => {
                             setDirty(false);
                             setKind(value);
-                        })
-                    }
+                        });
+                    }}
                 >
                     {value === "image" ? "图片" : value === "video" ? "视频" : "音频"}
                 </button>
@@ -152,7 +154,8 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                             disabled={busy}
                             userId={props.userId}
                             onClick={() => {
-                                if (shot.id !== props.shot.id) leave(() => props.onSelectShot?.(shot, kind));
+                                if (shot.id === props.shot.id || (kind === "video" && props.canOpenVideo?.(shot) === false)) return;
+                                leave(() => props.onSelectShot?.(shot, kind));
                             }}
                         />
                     ))}
@@ -174,11 +177,6 @@ function ShotMediaSession(props: Props & { shot: DramaShot; userId: string }) {
                             {props.shot.scene || "未命名场景"} · {(props.shot.durationMs / 1000).toFixed(1)} 秒
                         </p>
                     </div>
-                    {props.onEditText ? (
-                        <Button disabled={busy} onClick={() => leave(props.onEditText!)}>
-                            编辑分镜文字
-                        </Button>
-                    ) : null}
                 </header>
             ) : null}
             {kind === "audio" ? (
@@ -244,7 +242,13 @@ function ShotMediaEditor({
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();
     const queryKey = ["drama-shot-media", userId, projectId, shot.id, kind];
-    const query = useQuery({ queryKey, queryFn: ({ signal }) => getDramaShotMedia(projectId, shot.id, kind, signal), refetchInterval: (current) => (["queued", "running"].includes(current.state.data?.status || "") ? 3000 : false) });
+    const query = useQuery({
+        queryKey,
+        queryFn: ({ signal }) => getDramaShotMedia(projectId, shot.id, kind, signal),
+        refetchOnMount: kind === "video" ? "always" : true,
+        refetchOnWindowFocus: kind === "video" ? "always" : true,
+        refetchInterval: (current) => (["queued", "running"].includes(current.state.data?.status || "") ? 3000 : false),
+    });
     const [draft, setDraft] = useState<DramaShotMediaConfig>();
     const [baseline, setBaseline] = useState<{ config: string; revision: number }>();
     const [busy, setBusy] = useState("");
@@ -258,6 +262,7 @@ function ShotMediaEditor({
     const [pricing, setPricing] = useState("");
     const [priceVersion, setPriceVersion] = useState(0);
     const [referenceBusy, setReferenceBusy] = useState(false);
+    const refreshReferences = useCallback(() => void query.refetch(), [query.refetch]);
     const [previewTakeId, setPreviewTakeId] = useState("");
     const locked = useRef(false);
     const current = query.data;
@@ -265,7 +270,8 @@ function ShotMediaEditor({
     editor.current = { draft, baseline, current };
     const savingRequest = useRef<Promise<DramaShotMedia> | undefined>(undefined);
     const failedDraft = useRef("");
-    const dirty = Boolean(draft && baseline && JSON.stringify(draft) !== baseline.config);
+    const needsInitialSave = kind === "video" && Boolean(current && !current.id);
+    const dirty = Boolean(draft && baseline && (needsInitialSave || JSON.stringify(draft) !== baseline.config));
     const stale = Boolean(current && baseline && current.revision !== baseline.revision);
     const active = ["queued", "running"].includes(current?.status || "");
     const configLocked = Boolean(busy || quote?.uncertain || active);
@@ -295,7 +301,7 @@ function ShotMediaEditor({
     };
 
     useEffect(() => {
-        if (!draft || !baseline || stale || active || busy || saving || quote?.uncertain || (price?.key === draftKey && price.version === priceVersion)) return;
+        if (!draft || !baseline || needsInitialSave || stale || active || busy || saving || quote?.uncertain || (price?.key === draftKey && price.version === priceVersion)) return;
         let cancelled = false;
         const controller = new AbortController();
         const ticket = operation.capture();
@@ -325,7 +331,7 @@ function ShotMediaEditor({
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [draftKey, stale, active, busy, saving, quote?.uncertain, priceVersion]);
+    }, [draftKey, needsInitialSave, stale, active, busy, saving, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
         onDirtyChange(dirty);
@@ -335,11 +341,17 @@ function ShotMediaEditor({
     }, [busy, saving, quote?.uncertain, referenceBusy, onBusyChange]);
     useEffect(() => onSyncBlockedChange(syncFailed || stale), [syncFailed, stale, onSyncBlockedChange]);
     useEffect(() => {
-        if (current && !draft) {
+        if (!current) return;
+        // The storyboard also caches this slot. Open the video editor against a fresh response.
+        if (!draft && (kind !== "video" || (!query.isFetching && !query.isError))) {
             setDraft(visibleReferenceConfig(current.config, kind));
             setBaseline({ config: JSON.stringify(current.config), revision: current.revision });
+        } else if (draft?.operation === "reference_to_video" && !dirty && !stale && !busy && !saving && !quote?.uncertain && current.config.referenceResourceIds.join("\n") !== draft.referenceResourceIds.join("\n")) {
+            // An asset adoption can change the effective images without changing this shot's saved revision.
+            setDraft(current.config);
+            setBaseline({ config: JSON.stringify(current.config), revision: current.revision });
         }
-    }, [current, draft, kind]);
+    }, [current, draft, kind, query.isFetching, query.isError, dirty, stale, busy, saving, quote?.uncertain]);
 
     const patch = (value: Partial<DramaShotMediaConfig>) => {
         if (configLocked) return;
@@ -382,7 +394,7 @@ function ShotMediaEditor({
                 const snapshot = editor.current;
                 if (!snapshot.draft || !snapshot.baseline || !snapshot.current || snapshot.current.revision !== snapshot.baseline.revision) throw new Error("镜头媒体配置已有更新，请先重新读取");
                 const key = JSON.stringify(snapshot.draft);
-                if (key === snapshot.baseline.config && (snapshot.current.id || !create)) return snapshot.current;
+                if (key === snapshot.baseline.config && (snapshot.current.id || (kind !== "video" && !create))) return snapshot.current;
                 const saved = await saveDramaShotMedia(projectId, shot.id, kind, { expectedRevision: snapshot.baseline.revision, config: snapshot.draft });
                 if (!operation.isCurrent(ticket)) return saved;
                 const latest = editor.current.draft;
@@ -482,11 +494,13 @@ function ShotMediaEditor({
     const options = catalog.data?.options[kind] || [];
     const model = draft ? options.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.model)) : undefined;
     const ratios = kind === "image" ? model?.imageRatios : model?.videoRatios;
-    const resolutions = kind === "image" ? model?.imageResolutions : model?.videoResolutions;
     const isVideo = kind === "video";
+    const savedResolution = draft?.resolution === "auto" ? undefined : draft?.resolution || undefined;
+    const resolution = dramaVideoResolutionValue(model, savedResolution) || savedResolution;
+    const videoTiers = isVideo ? dramaVideoResolutionTiers(model ? [model] : [], savedResolution) : [];
     const previewTake = current?.takes.find((take) => take.id === previewTakeId);
 
-    if (query.isError && !current)
+    if (query.isError && !draft)
         return (
             <div className="drama-shot-media-loading" role="alert">
                 {tabs}
@@ -542,53 +556,79 @@ function ShotMediaEditor({
                             <DramaModelPicker capability={kind} showPrice={false} value={draft.model} aspectRatio={draft.aspectRatio} onChange={(value) => patch({ model: value })} />
                         </fieldset>
                     </label>
-                    <div className="drama-shot-media-parameters">
+                    <div className={`drama-shot-media-parameters${isVideo ? " is-video" : ""}`}>
                         <label>
                             <span>画幅</span>
                             <Select
                                 aria-label="镜头画幅"
+                                size={isVideo ? "small" : undefined}
+                                popupMatchSelectWidth={isVideo ? 112 : undefined}
                                 disabled={controlsDisabled}
-                                value={draft.aspectRatio}
+                                value={draft.aspectRatio || undefined}
+                                placeholder={isVideo ? "选择" : "选择画幅"}
                                 options={[...new Set([draft.aspectRatio, ...(ratios || ["16:9", "9:16", "1:1"])])].filter(Boolean).map((value) => ({ value, label: value }))}
                                 onChange={(value) => patch({ aspectRatio: value })}
                             />
                         </label>
                         <label>
                             <span>分辨率</span>
-                            <Input aria-label="镜头分辨率" disabled={controlsDisabled} value={draft.resolution} list={`shot-resolutions-${kind}`} onChange={(event) => patch({ resolution: event.target.value })} />
-                            <datalist id={`shot-resolutions-${kind}`}>
-                                {resolutions?.map((value) => (
-                                    <option key={value} value={value} />
-                                ))}
-                            </datalist>
+                            {isVideo ? (
+                                <Select
+                                    aria-label="镜头分辨率"
+                                    size="small"
+                                    popupMatchSelectWidth={128}
+                                    disabled={controlsDisabled}
+                                    value={resolution}
+                                    placeholder="选择"
+                                    options={videoTiers.map((tier) => {
+                                        const supported = dramaVideoResolutionValue(model, tier);
+                                        return { value: supported || tier, label: formatVideoResolutionLabel(tier), disabled: Boolean(model && !supported) };
+                                    })}
+                                    onChange={(value) => patch({ resolution: value })}
+                                />
+                            ) : (
+                                <>
+                                    <Input aria-label="镜头分辨率" disabled={controlsDisabled} value={draft.resolution} list="shot-resolutions-image" onChange={(event) => patch({ resolution: event.target.value })} />
+                                    <datalist id="shot-resolutions-image">
+                                        {model?.imageResolutions?.map((value) => (
+                                            <option key={value} value={value} />
+                                        ))}
+                                    </datalist>
+                                </>
+                            )}
                         </label>
                         {isVideo ? (
-                            <label>
-                                <span>秒数</span>
-                                <InputNumber aria-label="镜头视频秒数" disabled={controlsDisabled} min={1} max={model?.maxVideoSeconds || 60} value={draft.seconds} onChange={(value) => patch({ seconds: value || 1 })} />
-                            </label>
+                            <>
+                                <label>
+                                    <span>秒数</span>
+                                    <InputNumber aria-label="镜头视频秒数" size="small" disabled={controlsDisabled} min={1} max={model?.maxVideoSeconds || 60} value={draft.seconds} onChange={(value) => patch({ seconds: value || 1 })} />
+                                </label>
+                                <label>
+                                    <span>运镜意图</span>
+                                    <AntTooltip title={shot.camera || undefined} trigger={["hover", "focus"]}>
+                                        <Select
+                                            aria-label="添加镜头运镜意图"
+                                            aria-description={shot.camera || undefined}
+                                            size="small"
+                                            placeholder={shot.camera || "选择运镜"}
+                                            popupMatchSelectWidth={152}
+                                            value={undefined}
+                                            disabled={controlsDisabled}
+                                            options={CAMERA_PRESETS.map((value) => ({ value, label: value }))}
+                                            onChange={(value) => patch({ prompt: `${draft.prompt.replace(/\n?【运镜意图】[^\n]*/g, "").trim()}\n【运镜意图】${value}`.trim() })}
+                                        />
+                                    </AntTooltip>
+                                </label>
+                            </>
                         ) : null}
                     </div>
-                    {isVideo ? (
-                        <label>
-                            <span>运镜意图</span>
-                            <Select
-                                aria-label="添加镜头运镜意图"
-                                placeholder={shot.camera || "选择运镜，写入本次提示词"}
-                                value={undefined}
-                                disabled={controlsDisabled}
-                                options={CAMERA_PRESETS.map((value) => ({ value, label: value }))}
-                                onChange={(value) => patch({ prompt: `${draft.prompt.replace(/\n?【运镜意图】[^\n]*/g, "").trim()}\n【运镜意图】${value}`.trim() })}
-                            />
-                        </label>
-                    ) : null}
                     {isVideo ? (
                         <label className="drama-shot-media-audio">
                             <span>同步生成声音</span>
                             <Switch disabled={controlsDisabled} checked={draft.generateAudio} onChange={(value) => patch({ generateAudio: value })} />
                         </label>
                     ) : null}
-                    <WorkflowShotReferences projectId={projectId} userId={userId} kind={kind} config={draft} disabled={configLocked} onChange={patch} onBusyChange={setReferenceBusy} />
+                    <WorkflowShotReferences projectId={projectId} userId={userId} kind={kind} config={draft} disabled={configLocked} onChange={patch} onBusyChange={setReferenceBusy} onRefreshReferences={refreshReferences} />
                     <WorkflowShotPromptEditor projectId={projectId} userId={userId} shot={shot} kind={kind} config={draft} disabled={controlsDisabled} onChange={patch} />
                     {stale ? <p role="status">镜头媒体有新版本，未保存的配置已保留。重新读取后再操作。</p> : null}
                     {error ? <p role="alert">{error}</p> : null}

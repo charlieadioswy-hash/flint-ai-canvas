@@ -76,8 +76,8 @@ paths:
       - { in: path, name: castId, required: true, schema: { type: string } }
     delete:
       tags: [dramas]
-      summary: 在短剧引导中删除未使用的资产
-      description: 仅当前用户的 assets/story 引导项目可用，按制作版本原子校验。仍被分镜、剧情段、造型或画布引用，或有进行中任务时拒绝。保留已生成的媒体资源及任务历史，不自动重做下游内容。
+      summary: 删除短剧主体资产及其造型
+      description: 从资产影响接口读取版本和 deleteScopeToken。事务内重新核对关联范围，变化时返回 409。删除解除镜头及剧情段关联；独立视图、画布引用和进行中的任务仍受保护。保留提示词、已生成媒体及任务历史。
       parameters:
         - {in: path, name: id, required: true, schema: {type: string}}
         - {in: path, name: castId, required: true, schema: {type: string}}
@@ -88,9 +88,10 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [expectedRevision]
+              required: [expectedRevision, deleteScopeToken]
               properties:
                 expectedRevision: {type: integer, minimum: 1}
+                deleteScopeToken: {type: string, minLength: 1}
       responses:
         "200": {description: 成功信封，data 为 deleted:true 与 castId}
         "400": {$ref: "#/components/responses/Error"}

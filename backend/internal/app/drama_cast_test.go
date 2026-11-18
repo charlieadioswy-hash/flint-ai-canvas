@@ -138,7 +138,7 @@ func TestDramaCastDeleteRetainsGeneratedMediaAndHistory(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
+				if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, reviewedDramaCastDeletion(t, svc, projectID, cast.ID)); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := svc.repo.DramaCast(projectID, cast.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -173,7 +173,7 @@ func TestDramaCastDeleteRetainsGeneratedMediaAndHistory(t *testing.T) {
 
 func TestDramaCastDeleteRejectsLiveReferencesAndInflightTasks(t *testing.T) {
 	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideCompleted, ""} {
-		for _, reference := range []string{"independent-view", "look", "shot-scene", "shot-character", "shot-prop", "shot-look", "segment", "segment-audio", "canvas", "running-job", "bound-queued-job", "historical-active-task", "running-image", "queued-text", "running-text"} {
+		for _, reference := range []string{"independent-view", "canvas", "running-job", "bound-queued-job", "historical-active-task", "running-image", "queued-text", "running-text"} {
 			t.Run(step+"/"+reference, func(t *testing.T) {
 				svc, fake, projectID, revision := newDramaCastGuide(t)
 				if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", step).Error; err != nil {
@@ -190,20 +190,6 @@ func TestDramaCastDeleteRejectsLiveReferencesAndInflightTasks(t *testing.T) {
 				switch reference {
 				case "independent-view":
 					record = &model.DramaCastView{ID: "independent-view", ProjectID: projectID, CastID: cast.ID, ConfigJSON: `{}`, Status: model.DramaMediaDraft}
-				case "look":
-					record = &model.DramaCast{ID: "look", ProjectID: projectID, Kind: "character", ParentID: cast.ID}
-				case "shot-scene":
-					record = &model.DramaShot{ID: "shot", ProjectID: projectID, SceneCastID: cast.ID}
-				case "shot-character":
-					record = &model.DramaShot{ID: "shot", ProjectID: projectID, CastIDsJSON: `["protected-cast"]`}
-				case "shot-prop":
-					record = &model.DramaShot{ID: "shot", ProjectID: projectID, PropIDsJSON: `["protected-cast"]`}
-				case "shot-look":
-					record = &model.DramaShot{ID: "shot", ProjectID: projectID, LookCastIDsJSON: `["protected-cast"]`}
-				case "segment":
-					record = &model.DramaSegment{ID: "segment", ProjectID: projectID, ReferenceCastIDsJSON: `["protected-cast"]`}
-				case "segment-audio":
-					record = &model.DramaSegment{ID: "segment", ProjectID: projectID, AudioCastIDsJSON: `["protected-cast"]`}
 				case "canvas":
 					payload, _ := json.Marshal(map[string]any{"nodes": []any{map[string]any{"metadata": map[string]any{"dramaRef": map[string]any{"projectId": projectID, "kind": "cast", "id": cast.ID}}}}})
 					record = &model.CanvasProject{ID: "canvas", UserID: "usr-drama", PayloadJSON: string(payload)}
@@ -226,7 +212,7 @@ func TestDramaCastDeleteRejectsLiveReferencesAndInflightTasks(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision})
+				err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, reviewedDramaCastDeletion(t, svc, projectID, cast.ID))
 				requireGuideConflict(t, err)
 				if _, err := svc.repo.DramaCast(projectID, cast.ID); err != nil {
 					t.Fatalf("rejected deletion must preserve asset: %v", err)
@@ -258,7 +244,7 @@ func TestDramaCastDeleteProductionRequiresCurrentRevision(t *testing.T) {
 			if err := svc.DeleteDramaCast("other-user", projectID, "first", DeleteDramaCastRequest{ExpectedRevision: &revision}); err == nil {
 				t.Fatal("another account must not delete production assets")
 			}
-			if err := svc.DeleteDramaCast("usr-drama", projectID, "first", DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
+			if err := svc.DeleteDramaCast("usr-drama", projectID, "first", reviewedDramaCastDeletion(t, svc, projectID, "first")); err != nil {
 				t.Fatal(err)
 			}
 			requireGuideConflict(t, svc.DeleteDramaCast("usr-drama", projectID, "second", DeleteDramaCastRequest{ExpectedRevision: &revision}))
@@ -269,7 +255,7 @@ func TestDramaCastDeleteProductionRequiresCurrentRevision(t *testing.T) {
 			if err != nil || current.Revision != revision+1 || current.GuideStep != step {
 				t.Fatalf("rejected or stale requests changed workflow state: %+v %v", current, err)
 			}
-			if err := svc.DeleteDramaCast("usr-drama", projectID, "second", DeleteDramaCastRequest{ExpectedRevision: &current.Revision}); err != nil {
+			if err := svc.DeleteDramaCast("usr-drama", projectID, "second", reviewedDramaCastDeletion(t, svc, projectID, "second")); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -304,7 +290,7 @@ func TestDramaCastDeleteRequiresCurrentRevisionAndExactReferences(t *testing.T) 
 	if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).Update("guide_step", model.DramaGuideStory).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
+	if err := svc.DeleteDramaCast("usr-drama", projectID, cast.ID, reviewedDramaCastDeletion(t, svc, projectID, cast.ID)); err != nil {
 		t.Fatalf("unrelated text and other-project references must not block deletion: %v", err)
 	}
 	p, _ := svc.repo.DramaProduction(projectID)

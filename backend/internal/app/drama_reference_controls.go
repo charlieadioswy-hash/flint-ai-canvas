@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 外部参考只接受当前用户已经入库的图片，不能直接把浏览器 URL 带入生成任务。
@@ -35,13 +36,13 @@ func (s *Service) dramaReferenceImages(userID string, images []model.DramaRefere
 	return result, nil
 }
 
-func (s *Service) dramaSegmentAudioIDs(projectID, episodeID string, index int, ids []string) ([]string, error) {
-	ids, err := s.dramaSegmentReferenceIDs(projectID, ids)
+func (s *Service) dramaSegmentAudioIDs(repo *repository.Repository, projectID, episodeID string, index int, ids []string) ([]string, error) {
+	ids, err := dramaSegmentReferenceIDs(repo, projectID, ids)
 	if err != nil {
 		return nil, err
 	}
 	for _, id := range ids {
-		cast, err := s.repo.DramaCast(projectID, id)
+		cast, err := repo.DramaCast(projectID, id)
 		if err != nil {
 			return nil, err
 		}
@@ -52,15 +53,15 @@ func (s *Service) dramaSegmentAudioIDs(projectID, episodeID string, index int, i
 	if len(ids) == 0 {
 		return ids, nil
 	}
-	productionRow, err := s.repo.DramaProduction(projectID)
+	productionRow, err := repo.DramaProduction(projectID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.DramaSegments(episodeID)
+	rows, err := repo.DramaSegments(episodeID)
 	if err != nil {
 		return nil, err
 	}
-	episode, err := s.repo.DramaEpisode(projectID, episodeID)
+	episode, err := repo.DramaEpisode(projectID, episodeID)
 	if err != nil {
 		return nil, err
 	}

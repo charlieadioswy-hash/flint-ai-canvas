@@ -4,7 +4,8 @@ import { App, Button, Input, Select } from "antd";
 import { ArrowRight, ChevronLeft, ChevronRight, Gem, LoaderCircle, MapPinned, Plus, ScanText, UsersRound } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { createDramaCast, deleteDramaCast, extractDramaCast, getDramaEpisodeStyle, listDramaJobs, type DramaCast, type DramaCastKind, type DramaJob, type DramaSummary } from "@/services/api/drama";
+import { createDramaCast, deleteDramaCast, extractDramaCast, getDramaCastImpact, getDramaEpisodeStyle, listDramaJobs, type DramaCast, type DramaCastKind, type DramaJob, type DramaSummary } from "@/services/api/drama";
+import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { CAST_KIND_LABEL } from "./drama-shared";
@@ -77,6 +78,13 @@ function WorkflowAssetsSession({
     const extractionStageBlocked = summary.production.stage === "bible" || Boolean(guideStep && !["assets", "story", "completed"].includes(guideStep));
     const operation = useDramaOperationScope(projectId);
     const [deleteDraft, setDeleteDraft] = useState<{ cast: DramaCast; revision: number; ticket: ReturnType<typeof operation.capture> }>();
+    const deleteImpact = useQuery({
+        queryKey: ["drama", projectId, "cast-impact", deleteDraft?.cast.id, "delete", userId, deleteDraft?.revision],
+        queryFn: ({ signal }) => getDramaCastImpact(projectId, deleteDraft!.cast.id, signal),
+        enabled: Boolean(deleteDraft),
+        retry: false,
+        refetchOnWindowFocus: false,
+    });
     const [kind, setKind] = useState<DramaCastKind>("character");
     const [localEpisodeId, setLocalEpisodeId] = useState(() => summary.episodes.toSorted((left, right) => left.number - right.number)[0]?.id || "");
     const [addOpen, setAddOpen] = useState(false);
@@ -168,18 +176,25 @@ function WorkflowAssetsSession({
     });
 
     const remove = useMutation({
-        mutationFn: async (input: NonNullable<typeof deleteDraft>) => {
+        mutationFn: async (input: NonNullable<typeof deleteDraft> & { deleteScopeToken: string }) => {
             if (!operation.isCurrent(input.ticket)) throw new Error("作品或登录状态已变化，请重新操作");
-            return deleteDramaCast(input.ticket.projectId, input.cast.id, input.revision);
+            return deleteDramaCast(input.ticket.projectId, input.cast.id, input.revision, input.deleteScopeToken);
         },
         onSuccess: (_, input) => {
             if (!operation.isCurrent(input.ticket)) return;
             setDeleteDraft(undefined);
+            void queryClient.invalidateQueries({ queryKey: ["drama-shot-reference-cast", userId, input.ticket.projectId] });
+            void queryClient.invalidateQueries({ queryKey: ["drama-shot-media", userId, input.ticket.projectId] });
             refreshProject(input.ticket);
             message.success(`已删除${CAST_KIND_LABEL[input.cast.kind]}「${input.cast.name}」`);
         },
         onError: (error, input) => {
-            if (operation.isCurrent(input.ticket)) message.error(error instanceof Error ? error.message : "删除失败");
+            if (!operation.isCurrent(input.ticket)) return;
+            if (error instanceof ApiError && error.reason === "drama_cast_delete_scope_changed") {
+                void deleteImpact.refetch();
+                return;
+            }
+            message.error(error instanceof Error ? error.message : "删除失败");
         },
         onSettled: () => {
             mutationLock.current = false;
@@ -258,11 +273,21 @@ function WorkflowAssetsSession({
         remove.reset();
         setDeleteDraft({ cast: item, revision, ticket: operation.capture() });
     };
-    const deleteStale = Boolean(deleteDraft && (deleteDraft.revision !== revision || !projectCast.some((item) => item.id === deleteDraft.cast.id) || !operation.isCurrent(deleteDraft.ticket)));
+    const deleteStale = Boolean(
+        deleteDraft &&
+        (deleteDraft.revision !== revision ||
+            !projectCast.some((item) => item.id === deleteDraft.cast.id) ||
+            !operation.isCurrent(deleteDraft.ticket) ||
+            (deleteImpact.isSuccess && (deleteImpact.data.castId !== deleteDraft.cast.id || deleteImpact.data.revision !== deleteDraft.revision))),
+    );
+    const deleteScopeToken = deleteImpact.data?.deleteScopeToken;
+    const deleteImpactReady = deleteImpact.isSuccess && !deleteImpact.isFetching && !deleteStale && Boolean(deleteScopeToken);
+    const deleteUsage = [deleteImpact.data?.segments ? `${deleteImpact.data.segments} 个剧情段` : "", deleteImpact.data?.shots ? `${deleteImpact.data.shots} 个镜头` : ""].filter(Boolean).join("、");
+    const deleteLooks = deleteImpactReady ? deleteImpact.data.assetIds.filter((id) => id !== deleteDraft?.cast.id).length : 0;
     const submitDelete = () => {
-        if (!deleteDraft || deleteStale || mutationLock.current || locked || pending || assetEditBlocked || libraryState.busy || editorState.busy || batchBusy) return;
+        if (!deleteDraft || !deleteScopeToken || !deleteImpactReady || mutationLock.current || locked || pending || assetEditBlocked || libraryState.busy || editorState.busy || batchBusy) return;
         mutationLock.current = true;
-        remove.mutate(deleteDraft);
+        remove.mutate({ ...deleteDraft, deleteScopeToken });
     };
     const extractionBlocked =
         busy ||
@@ -507,7 +532,7 @@ function WorkflowAssetsSession({
                 okText="确认删除"
                 cancelText="取消"
                 confirmLoading={remove.isPending}
-                okButtonProps={{ danger: true, disabled: deleteStale || locked || assetEditBlocked || create.isPending || libraryState.busy || editorState.busy || batchBusy }}
+                okButtonProps={{ danger: true, disabled: !deleteImpactReady || locked || assetEditBlocked || create.isPending || libraryState.busy || editorState.busy || batchBusy }}
                 cancelButtonProps={{ disabled: remove.isPending }}
                 maskClosable={!remove.isPending}
                 keyboard={!remove.isPending}
@@ -517,8 +542,22 @@ function WorkflowAssetsSession({
                 }}
                 onOk={submitDelete}
             >
-                <p>将从整个作品中移除此资产。已被镜头等内容使用的资产无法删除。</p>
-                {deleteStale ? <p role="alert">作品内容已更新，请关闭后重新选择要删除的资产。</p> : remove.isError ? <p role="alert">{remove.error instanceof Error ? remove.error.message : "删除失败，请重试"}</p> : null}
+                <p>{deleteLooks ? `将从整个作品中移除此角色及其 ${deleteLooks} 个造型。` : "将从整个作品中移除此资产。"}</p>
+                {deleteStale ? (
+                    <p role="alert">作品内容已更新，请关闭后重新选择要删除的资产。</p>
+                ) : deleteImpact.isError || (deleteImpact.isSuccess && !deleteImpact.isFetching && !deleteScopeToken) ? (
+                    <p role="alert">
+                        无法检查资产引用。
+                        <Button type="link" size="small" onClick={() => void deleteImpact.refetch()}>
+                            重试
+                        </Button>
+                    </p>
+                ) : !deleteImpactReady ? (
+                    <p role="status">正在检查资产引用…</p>
+                ) : deleteUsage ? (
+                    <p>已关联 {deleteUsage}。删除后解除关联，提示词和已生成的媒体保留。</p>
+                ) : null}
+                {remove.isError && !deleteStale ? <p role="alert">{remove.error instanceof Error ? remove.error.message : "删除失败，请重试"}</p> : null}
             </AppModal>
             <CastEditorDialog
                 summary={assetSummary}

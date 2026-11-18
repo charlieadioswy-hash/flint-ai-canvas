@@ -179,18 +179,21 @@ mock.module("@/pages/projects/workflow-production", () => ({
         onDirtyChange,
         onAllowMediaNavigation,
         headerActions,
+        onConfirmPreview,
     }: {
         summary: DramaSummary;
         busy?: boolean;
         onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
         onAllowMediaNavigation?: (next: { pathname: string; search: string }) => void;
         headerActions?: ReactNode;
+        onConfirmPreview?: (episodeId: string) => void;
     }) => {
         const [dirty, setDirty] = useState(false);
         const [automatic, setAutomatic] = useState(false);
         const [automaticBusy, setAutomaticBusy] = useState(false);
         const location = useLocation();
         const navigate = useNavigate();
+        const previewEpisodeId = new URLSearchParams(location.search).get("episode") || summary.episodes[0]?.id;
         useEffect(() => setDirty(false), [location.pathname, location.search]);
         useEffect(() => {
             onDirtyChange?.(dirty, automaticBusy, automatic);
@@ -200,9 +203,14 @@ mock.module("@/pages/projects/workflow-production", () => ({
             <div>
                 <header className="drama-workflow-production-toolbar">
                     <h2>分镜管理</h2>
-                    {headerActions ? (
+                    {headerActions || (onConfirmPreview && previewEpisodeId) ? (
                         <div className="drama-workflow-production-guidance" aria-label="制作流程引导">
                             {headerActions}
+                            {onConfirmPreview && previewEpisodeId ? (
+                                <button disabled={busy} onClick={() => onConfirmPreview(previewEpisodeId)}>
+                                    视频预览
+                                </button>
+                            ) : null}
                         </div>
                     ) : null}
                 </header>
@@ -1186,7 +1194,7 @@ test("完整目录中的待制作集直接进入主流程，不要求选章或�
         expect(mounted.host.querySelector('[aria-label="分镜页分集目录"]')?.textContent?.split(",")).toHaveLength(9);
         expect(mounted.host.textContent).not.toContain("继续选章");
         expect(mounted.host.querySelector('[role="dialog"]')).toBeNull();
-        expect(button(mounted.host, "完成分镜编排").disabled).toBe(false);
+        expect(button(mounted.host.querySelector<HTMLElement>(".drama-workflow-production-toolbar")!, "视频预览").disabled).toBe(false);
         await mounted.go("/projects/project-a");
         expect(mounted.host.querySelector('[aria-label="管理页分集目录"]')?.textContent?.split(",")).toHaveLength(9);
         expect(mounted.host.textContent).not.toContain("继续选章");
@@ -1196,6 +1204,40 @@ test("完整目录中的待制作集直接进入主流程，不要求选章或�
         expect(sourceSaves).toHaveLength(0);
         expect(projectTextRetries).toHaveLength(0);
         expect(scopedRetries).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("引导可完成时，分镜工具栏的预览先确认再打开当前集", async () => {
+    const mounted = await mount("/projects/project-a/guide?step=story&episode=episode-2&scope=all", false, "story");
+    try {
+        const current = makeSummary("project-a", "story", 2);
+        current.episodes = [
+            { id: "episode-1", number: 1, title: "第 1 集", stage: "prompts" },
+            { id: "episode-2", number: 2, title: "第 2 集", stage: "prompts" },
+        ] as DramaSummary["episodes"];
+        summaries.set("project-a", current);
+        await act(async () => {
+            mounted.query.setQueryData(summaryKey("project-a"), current);
+            await settle();
+        });
+        await act(settle);
+        const toolbar = mounted.host.querySelector<HTMLElement>(".drama-workflow-production-toolbar")!;
+        await click(button(toolbar, "视频预览"));
+        expect(confirms).toHaveLength(1);
+        expect(confirms[0].input).toEqual({ expectedStep: "story", expectedRevision: 2 });
+        expect(new URLSearchParams(mounted.router.state.location.search).get("step")).toBe("story");
+        const completed = { ...makeSummary("project-a", "completed", 3), episodes: current.episodes };
+        summaries.set("project-a", completed);
+        await act(async () => {
+            confirms[0].pending.resolve(completed);
+            await settle();
+        });
+        const preview = new URLSearchParams(mounted.router.state.location.search);
+        expect(preview.get("step")).toBe("preview");
+        expect(preview.get("episode")).toBe("episode-2");
+        expect(preview.has("scope")).toBe(false);
     } finally {
         await mounted.close();
     }
@@ -2227,8 +2269,7 @@ test("本集预览风格与剧本页不显示其他集的全剧阻断，阶段�
                 expect(guidance).toHaveLength(1);
                 expect(guidance[0].closest(".drama-workflow-production-toolbar")).not.toBeNull();
                 expect(guidance[0].textContent).toContain("第 7 集剧本与分镜尚未就绪");
-                expect(button(guidance[0] as HTMLElement, "完成分镜编排").disabled).toBe(true);
-                expect([...mounted.host.querySelectorAll("button")].filter((item) => item.textContent === "完成分镜编排")).toHaveLength(1);
+                expect(guidance[0].querySelector("button")).toBeNull();
             }
             expect(confirms).toHaveLength(0);
         } finally {

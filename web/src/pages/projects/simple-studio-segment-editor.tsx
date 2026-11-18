@@ -151,7 +151,14 @@ function SegmentEditorSession({ summary, detail, episodeId, segmentIndex, shotId
             onPatchShot={(shot, patch) => withShot(shot, (target) => patchShot.mutate({ ...target, patch, revision: expectedRevision }))}
             onInsertShot={(shot, position) => withShot(shot, (target) => insertShot.mutate({ ...target, position }))}
             onDeleteShot={(shot) => withShot(shot, (target) => removeShot.mutate(target))}
-            onSavePrompt={(segment, override) => withSegment(segment, (target) => savePrompt.mutate({ ...target, override, revision: expectedRevision }))}
+            onSavePrompt={async (segment, override) => {
+                const target = segmentTarget(segment);
+                if (!target) {
+                    message.error("本段内容已变化，请重新打开分镜");
+                    throw new Error("本段内容已变化，请重新打开分镜");
+                }
+                return savePrompt.mutateAsync({ ...target, override, revision: expectedRevision });
+            }}
             onSaveReferences={async (segment, patch) => {
                 const target = segmentTarget(segment);
                 if (!target) throw new Error("本段内容已变化，请重新打开分镜");

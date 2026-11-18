@@ -139,6 +139,13 @@ func NormalizeReferenceTokens(text string) string {
 	return referenceTokenPattern.ReplaceAllString(text, "参考图$1")
 }
 
+// ReplaceReferenceTokens resolves each numbered reference once using its canonical label.
+func ReplaceReferenceTokens(text string, replacement func(label string) string) string {
+	return referenceTokenPattern.ReplaceAllStringFunc(text, func(token string) string {
+		return replacement(NormalizeReferenceTokens(token))
+	})
+}
+
 // UnknownReferenceTokens 返回编号超出本段参考图数量（1..count）的引用，按出现顺序去重。
 func UnknownReferenceTokens(text string, count int) []string {
 	unknown := []string{}

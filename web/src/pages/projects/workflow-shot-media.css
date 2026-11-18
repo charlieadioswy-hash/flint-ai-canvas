@@ -45,9 +45,6 @@
     font-size: var(--fs-tiny);
     color: var(--drama-muted);
 }
-.drama-shot-media-header > button:last-child {
-    margin-left: auto;
-}
 .drama-shot-media-tabs {
     gap: var(--space-4);
     flex-wrap: nowrap;
@@ -88,10 +85,14 @@
 }
 
 .drama-shot-media-columns:has(.drama-shot-media-stage) {
-    grid-template-columns: minmax(250px, var(--shot-config-width)) minmax(0, 1fr) minmax(220px, var(--shot-versions-width));
+    grid-template-columns: minmax(var(--shot-config-min-width, 250px), var(--shot-config-width)) minmax(0, 1fr) minmax(220px, var(--shot-versions-width));
 }
-.drama-shot-media.is-page .drama-shot-media-columns {
-    height: calc(100dvh - 230px);
+.drama-shot-media-columns:has(.drama-shot-media-parameters.is-video) {
+    --shot-config-min-width: 304px;
+}
+.drama-shot-media.is-page > .drama-shot-media-columns {
+    flex: 1;
+    height: auto;
     min-height: 480px;
 }
 
@@ -149,6 +150,17 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
+}
+.drama-shot-media-parameters.is-video {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.7fr) minmax(0, 1.2fr);
+    gap: var(--space-2);
+}
+.drama-shot-media-parameters.is-video label {
+    gap: var(--space-1);
+}
+.drama-shot-media-parameters.is-video :is(.ant-select, .ant-input-number) {
+    width: 100%;
+    min-width: 0;
 }
 .drama-shot-media-operation {
     display: flex;
@@ -375,12 +387,12 @@
 }
 
 @container drama-shot-editor (max-width: 960px) {
-    .drama-shot-media.is-page .drama-shot-media-columns {
-        height: auto;
+    .drama-shot-media.is-page > .drama-shot-media-columns {
+        flex: none;
         min-height: 0;
     }
     .drama-shot-media-columns:has(.drama-shot-media-stage) {
-        grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1fr);
+        grid-template-columns: minmax(var(--shot-config-min-width, 240px), 0.8fr) minmax(0, 1fr);
         height: auto;
         overflow: visible;
     }
@@ -415,8 +427,5 @@
     }
     .drama-shot-media-canvas {
         min-height: 200px;
-    }
-    .drama-shot-media-header > button:last-child {
-        margin-left: 0;
     }
 }

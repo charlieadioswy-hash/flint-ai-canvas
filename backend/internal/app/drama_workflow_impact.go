@@ -23,7 +23,9 @@ type DramaWorkflowImpact struct {
 	Kind               string                         `json:"kind"`
 	Revision           int64                          `json:"revision"`
 	CastID             string                         `json:"castId,omitempty"`
+	DeleteScopeToken   string                         `json:"deleteScopeToken,omitempty"`
 	Segments           int                            `json:"segments"`
+	Shots              int                            `json:"shots,omitempty"`
 	Episodes           int                            `json:"episodes"`
 	AffectedSegments   int                            `json:"affectedSegments"`
 	AssetIDs           []string                       `json:"assetIds"`
@@ -59,19 +61,7 @@ func (s *Service) dramaWorkflowImpact(userID, projectID, castID string) (DramaWo
 			}
 			view.Kind, view.CastID = "cast", castID
 			view.Message = "保存设定不会自动重新生成；重新采用或生成参考图并明确更新引用视频时，下列直接引用段及尾帧续接后续段需要审阅，旧媒体保留"
-			references[castID] = true
-			// 本体变更也会影响引用其造型的段；递归有界，避免异常父关系产生无限循环。
-			for pass := 0; pass < len(casts); pass++ {
-				changed := false
-				for _, cast := range casts {
-					if references[cast.ParentID] && !references[cast.ID] {
-						references[cast.ID], changed = true, true
-					}
-				}
-				if !changed {
-					break
-				}
-			}
+			references = dramaCastAndLooks(casts, castID)
 			for id := range references {
 				view.AssetIDs = append(view.AssetIDs, id)
 			}
@@ -83,6 +73,15 @@ func (s *Service) dramaWorkflowImpact(userID, projectID, castID string) (DramaWo
 			}
 		}
 		sort.Strings(view.AssetIDs)
+		var mediaSubjects map[string]bool
+		if castID != "" {
+			mediaRefs, err := tx.DramaCastMediaReferences(projectID, references)
+			if err != nil {
+				return err
+			}
+			mediaSubjects = mediaRefs.Shots
+			view.DeleteScopeToken = dramaCastDeleteScopeToken(projectID, castID, p.Revision, mediaRefs.Bindings)
+		}
 		episodes, err := tx.DramaEpisodes(projectID)
 		if err != nil {
 			return err
@@ -104,10 +103,16 @@ func (s *Service) dramaWorkflowImpact(userID, projectID, castID string) (DramaWo
 					return err
 				}
 				for _, shot := range shots {
+					affected := mediaSubjects[shot.ID]
 					for _, id := range append(dramaShotCastIDs(shot), decodeStringList(shot.LookCastIDsJSON)...) {
 						if references[id] {
-							direct[shot.SegmentIndex] = true
+							affected = true
+							break
 						}
+					}
+					if affected {
+						direct[shot.SegmentIndex] = true
+						view.Shots++
 					}
 				}
 				for _, segment := range segments {

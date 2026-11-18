@@ -1,0 +1,59 @@
+.workflow-shot-image-preview-title {
+    overflow: hidden;
+    padding-inline-end: var(--space-7);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workflow-shot-image-preview-stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    block-size: min(58dvh, 640px);
+    overflow: hidden;
+    border-radius: var(--r-md);
+    background: var(--surface-hover);
+    container-type: size;
+}
+
+.workflow-shot-image-preview-stage[data-draggable="true"] {
+    cursor: grab;
+    touch-action: none;
+}
+
+.workflow-shot-image-preview-stage[data-dragging="true"] {
+    cursor: grabbing;
+}
+
+.workflow-shot-image-preview-image {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    inline-size: auto;
+    block-size: auto;
+    max-inline-size: 100cqw;
+    max-block-size: 100cqh;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+}
+
+.workflow-shot-image-preview-image[data-rotated="true"] {
+    max-inline-size: 100cqh;
+    max-block-size: 100cqw;
+}
+
+.workflow-shot-image-preview-state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--muted-foreground);
+    font-size: var(--fs-ui);
+}
+
+.workflow-shot-image-preview-tools {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-block-start: var(--space-3);
+}

@@ -1127,17 +1127,22 @@ func buildDramaSegmentViews(settings DramaSettings, meta dramaBibleMeta, shots [
 				view.AudioReferenceMode = "custom"
 			}
 			view.ID, view.Revision, view.UpdatedAt = row.ID, row.Revision, row.UpdatedAt.Format(time.RFC3339)
-			view.Generated, view.PromptError = strings.TrimSpace(row.VideoPrompt), row.PromptError
+			authored := func(raw string, override bool) string {
+				prompt := dramaSegmentEditorViewPrompt(row, strings.TrimSpace(raw), draft.view.Request.References, override)
+				return removeDeletedDramaSegmentCastTokens(prompt, castByID)
+			}
+			view.Generated, view.PromptError = authored(row.VideoPrompt, false), row.PromptError
 			view.VideoStatus, view.VideoResourceID, view.TailFrameResourceID, view.VideoError = row.VideoStatus, row.VideoResourceID, row.TailFrameResourceID, row.VideoError
 			view.VideoSeconds = row.VideoSeconds
 			view.VideoModel = segmentVideoChoice(row, settings.Models.Video)
 			view.PromptStatus = firstNonEmpty(row.PromptStatus, "queued")
 			if override := strings.TrimSpace(row.VideoPromptOverride); override != "" {
-				view.VideoPrompt, view.Custom = override, true
+				view.VideoPrompt, view.Custom = authored(override, true), true
 			} else {
 				view.VideoPrompt = view.Generated
 			}
 		}
+		view.PromptSubjects = dramaSegmentEditorSubjects(castByID, dramaSegmentAuthoringReferences(settings, meta, draft, castByID), view.VideoPrompt, view.Generated)
 		views = append(views, view)
 	}
 	return views
@@ -1241,18 +1246,6 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 		return BadAuthRequest("剧情段不存在")
 	}
 	fields := map[string]any{}
-	if req.AutoReferences || req.ReferenceCastIDs != nil {
-		// 参考图编号写在提示词里，换参考图后模型撰写的提示词标记过期；手写的提示词保留，由用户自行核对编号。
-		encoded := ""
-		if !req.AutoReferences {
-			ids, err := s.dramaSegmentReferenceIDs(project.ID, *req.ReferenceCastIDs)
-			if err != nil {
-				return err
-			}
-			encoded = encodeStringList(ids)
-		}
-		fields["reference_cast_ids_json"] = encoded
-	}
 	if req.ReferenceImages != nil {
 		images, err := s.dramaReferenceImages(userID, *req.ReferenceImages)
 		if err != nil {
@@ -1264,15 +1257,6 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 		}
 		fields["reference_images_json"] = string(encoded)
 	}
-	if req.AutoAudioReferences {
-		fields["audio_cast_ids_json"] = ""
-	} else if req.AudioCastIDs != nil {
-		ids, err := s.dramaSegmentAudioIDs(project.ID, episode.ID, index, *req.AudioCastIDs)
-		if err != nil {
-			return err
-		}
-		fields["audio_cast_ids_json"] = encodeStringList(ids)
-	}
 	prompt := ""
 	if req.VideoPromptOverride != nil {
 		prompt = production.NormalizeReferenceTokens(strings.TrimSpace(*req.VideoPromptOverride))
@@ -1281,13 +1265,40 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 		}
 	}
 	if err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+		// Resolve cast IDs under the same production lock as deletion.
+		if req.AutoReferences {
+			fields["reference_cast_ids_json"] = ""
+		} else if req.ReferenceCastIDs != nil {
+			ids, err := dramaSegmentReferenceIDs(tx, project.ID, *req.ReferenceCastIDs)
+			if err != nil {
+				return err
+			}
+			fields["reference_cast_ids_json"] = encodeStringList(ids)
+		}
+		if req.AutoAudioReferences {
+			fields["audio_cast_ids_json"] = ""
+		} else if req.AudioCastIDs != nil {
+			ids, err := s.dramaSegmentAudioIDs(tx, project.ID, episode.ID, index, *req.AudioCastIDs)
+			if err != nil {
+				return err
+			}
+			fields["audio_cast_ids_json"] = encodeStringList(ids)
+		}
 		if len(fields) > 0 {
-			if err := tx.SaveDramaSegmentReferenceFields(episode.ID, index, fields); err != nil {
+			keepPrompt, err := captureDramaSegmentReferenceEdit(tx, projectID, episode.ID, index, fields)
+			if err != nil {
+				return err
+			}
+			if err := tx.SaveDramaSegmentReferenceFields(episode.ID, index, fields, keepPrompt); err != nil {
 				return err
 			}
 		}
 		if req.VideoPromptOverride != nil {
-			return tx.SaveDramaSegmentOverride(model.DramaSegment{ProjectID: project.ID, EpisodeID: episode.ID, SegmentIndex: index, VideoPromptOverride: prompt})
+			labels, err := dramaSegmentOverrideLabels(tx, projectID, episode.ID, index, prompt)
+			if err != nil {
+				return err
+			}
+			return tx.SaveDramaSegmentOverride(model.DramaSegment{ProjectID: project.ID, EpisodeID: episode.ID, SegmentIndex: index, VideoPromptOverride: prompt, ReferenceLabelsJSON: labels})
 		}
 		return nil
 	}); err != nil {
@@ -1298,11 +1309,11 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 }
 
 // dramaSegmentReferenceIDs 校验用户指定的参考图：必须是本作品的设定，去重并保持顺序。
-func (s *Service) dramaSegmentReferenceIDs(projectID string, ids []string) ([]string, error) {
+func dramaSegmentReferenceIDs(repo *repository.Repository, projectID string, ids []string) ([]string, error) {
 	if len(ids) > dramaMaxReferenceLimit {
 		return nil, BadAuthRequest(fmt.Sprintf("每段最多指定 %d 个参考设定", dramaMaxReferenceLimit))
 	}
-	casts, err := s.repo.DramaCasts(projectID)
+	casts, err := repo.DramaCasts(projectID)
 	if err != nil {
 		return nil, err
 	}

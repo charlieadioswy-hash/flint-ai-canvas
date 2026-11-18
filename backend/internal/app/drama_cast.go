@@ -3,10 +3,12 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -117,6 +119,10 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 	return *created, nil
 }
 
+func dramaCastDeleteScopeToken(projectID, castID string, revision int64, bindings map[string]map[string]string) string {
+	return dramaCastViewDigest([]any{projectID, castID, revision, bindings})
+}
+
 func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDramaCastRequest) error {
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
@@ -155,26 +161,44 @@ func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDr
 		if cast.ParentID != "" {
 			return BadAuthRequest("请通过角色造型入口调整造型")
 		}
-		if err := tx.RequireNoDramaCastViews(project.ID, castID); err != nil {
-			if errors.Is(err, repository.ErrDramaCastViewChanged) {
-				return dramaGuideConflict("该资产仍有独立视图，请先删除视图后再删除资产")
-			}
+		casts, err := tx.DramaCasts(project.ID)
+		if err != nil {
 			return err
 		}
-		refs, err := tx.DramaCastDeleteReferences(userID, project.ID, castID)
+		removed := dramaCastAndLooks(casts, castID)
+		mediaRefs, err := tx.DramaCastMediaReferences(project.ID, removed)
+		if err != nil {
+			return err
+		}
+		if req.DeleteScopeToken != dramaCastDeleteScopeToken(project.ID, castID, current.Revision, mediaRefs.Bindings) {
+			conflict := NewAppError(http.StatusConflict, "资产的关联范围已更新，请重新核对后确认删除")
+			conflict.Reason = kernel.ReasonDramaCastDeleteScopeChanged
+			return conflict
+		}
+		ids := make([]string, 0, len(removed))
+		for _, item := range casts {
+			if !removed[item.ID] {
+				continue
+			}
+			ids = append(ids, item.ID)
+			if err := tx.RequireNoDramaCastViews(project.ID, item.ID); err != nil {
+				if errors.Is(err, repository.ErrDramaCastViewChanged) {
+					return dramaGuideConflict("该资产或其造型仍有独立视图，请先删除对应视图")
+				}
+				return err
+			}
+			if item.ImageStatus == model.DramaMediaRunning {
+				return dramaGuideConflict("该资产的生成任务尚未结束，请完成后再删除")
+			}
+		}
+		refs, err := tx.DramaCastDeleteReferences(userID, project.ID, ids)
 		if err != nil {
 			return err
 		}
 		switch {
-		case refs.Looks > 0:
-			return dramaGuideConflict("该角色仍有造型，暂时无法删除")
-		case refs.Shots > 0:
-			return dramaGuideConflict("该资产仍被分镜引用，请先调整分镜")
-		case refs.Segments > 0:
-			return dramaGuideConflict("该资产仍被剧情段引用，请先调整剧情段参考资产")
 		case len(refs.CanvasIDs) > 0:
 			return dramaGuideConflict("该资产仍被画布引用，请先移除画布中的关联节点")
-		case refs.ActiveTasks > 0 || cast.ImageStatus == model.DramaMediaRunning:
+		case refs.ActiveTasks > 0:
 			return dramaGuideConflict("该资产的生成任务尚未结束，请完成后再删除")
 		}
 		for _, job := range refs.Jobs {
@@ -183,9 +207,36 @@ func (s *Service) DeleteDramaCast(userID, projectID, castID string, req DeleteDr
 			}
 		}
 		// Keep a legacy current image in the take ledger so resource cleanup retains it.
-		if err := tx.PreserveDramaCastImage(*cast); err != nil {
+		for _, item := range casts {
+			if removed[item.ID] {
+				if err := tx.PreserveDramaCastImage(item); err != nil {
+					return err
+				}
+			}
+		}
+		labels, err := captureDramaCastDeletionLabels(tx, project.ID, casts, removed)
+		if err != nil {
 			return err
 		}
-		return tx.DeleteDramaCastCatalog(project.ID, castID)
+		if err := tx.DetachDramaCastReferences(project.ID, removed, labels); err != nil {
+			return err
+		}
+		return tx.DeleteDramaCastCatalog(project.ID, ids)
 	})
+}
+
+func dramaCastAndLooks(casts []model.DramaCast, castID string) map[string]bool {
+	ids := map[string]bool{castID: true}
+	for pass := 0; pass < len(casts); pass++ {
+		changed := false
+		for _, cast := range casts {
+			if ids[cast.ParentID] && !ids[cast.ID] {
+				ids[cast.ID], changed = true, true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return ids
 }

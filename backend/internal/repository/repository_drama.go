@@ -1144,25 +1144,28 @@ func (r *Repository) DramaSegments(episodeID string) ([]model.DramaSegment, erro
 	return segments, err
 }
 
-// SaveDramaSegmentOverride 写入或清除段级提示词改写；行不存在时创建（旧剧本没有段记录）。
+// SaveDramaSegmentOverride 一次保存改写及其参考图编号。
 func (r *Repository) SaveDramaSegmentOverride(segment model.DramaSegment) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var current model.DramaSegment
 		if err := tx.Where("episode_id = ? AND segment_index = ?", segment.EpisodeID, segment.SegmentIndex).First(&current).Error; err != nil {
 			return err
 		}
-		return invalidateDramaSegment(tx, current, map[string]any{"video_prompt_override": segment.VideoPromptOverride}, true)
+		if current.VideoPromptOverride == segment.VideoPromptOverride && current.ReferenceLabelsJSON == segment.ReferenceLabelsJSON {
+			return nil
+		}
+		return invalidateDramaSegment(tx, current, map[string]any{"video_prompt_override": segment.VideoPromptOverride, "reference_labels_json": segment.ReferenceLabelsJSON}, true)
 	})
 }
 
 // SaveDramaSegmentReferenceFields 一次保存图片与音色选择，并使在途作业按修订号失效。
-func (r *Repository) SaveDramaSegmentReferenceFields(episodeID string, index int, fields map[string]any) error {
+func (r *Repository) SaveDramaSegmentReferenceFields(episodeID string, index int, fields map[string]any, keepReadyPrompt bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var current model.DramaSegment
 		if err := tx.Where("episode_id = ? AND segment_index = ?", episodeID, index).First(&current).Error; err != nil {
 			return err
 		}
-		values := map[string]string{"reference_cast_ids_json": current.ReferenceCastIDsJSON, "reference_images_json": current.ReferenceImagesJSON, "audio_cast_ids_json": current.AudioCastIDsJSON}
+		values := map[string]string{"reference_cast_ids_json": current.ReferenceCastIDsJSON, "reference_images_json": current.ReferenceImagesJSON, "audio_cast_ids_json": current.AudioCastIDsJSON, "reference_labels_json": current.ReferenceLabelsJSON}
 		changed := false
 		for key, value := range fields {
 			if values[key] != value {
@@ -1172,8 +1175,11 @@ func (r *Repository) SaveDramaSegmentReferenceFields(episodeID string, index int
 		if !changed {
 			return nil
 		}
-		fields["prompt_status"] = promptStatusAfterInputChange(current.PromptStatus)
-		return invalidateDramaSegment(tx, current, fields, true)
+		keepReadyPrompt = keepReadyPrompt && current.PromptStatus == model.DramaMediaReady
+		if !keepReadyPrompt {
+			fields["prompt_status"] = promptStatusAfterInputChange(current.PromptStatus)
+		}
+		return invalidateDramaSegment(tx, current, fields, !keepReadyPrompt)
 	})
 }
 
@@ -1509,6 +1515,17 @@ func invalidateDramaSegment(tx *gorm.DB, segment model.DramaSegment, fields map[
 		jobs = jobs.Where("shot_id = ? OR kind = ?", segment.ID, model.DramaJobRender)
 	}
 	return jobs.Updates(map[string]any{"status": "canceled", "updated_at": time.Now()}).Error
+}
+
+func (r *Repository) RenameDramaShot(projectID, shotID, name string) error {
+	result := r.db.Model(&model.DramaShot{}).Where("id = ? AND project_id = ?", shotID, projectID).Update("name", name)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *Repository) UpdateDramaShotScript(shot model.DramaShot, fields map[string]any) error {

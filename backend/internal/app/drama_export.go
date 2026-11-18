@@ -173,11 +173,17 @@ func dramaSegmentTitle(shots []model.DramaShot, index int) string {
 	return fmt.Sprintf("第%d段", index+1)
 }
 
-func dramaEffectiveSegmentPrompt(segment model.DramaSegment) (string, bool) {
-	if override := strings.TrimSpace(segment.VideoPromptOverride); override != "" {
-		return override, true
+func dramaExportSegmentPrompt(segment model.DramaSegment, references []DramaSegmentReference, casts map[string]model.DramaCast) (string, bool) {
+	raw := firstNonEmpty(segment.VideoPromptOverride, segment.VideoPrompt)
+	// Imports only copy the prompt text. The source project's IDs and image
+	// order have no meaning in the destination project.
+	portable := make([]DramaSegmentReference, 0, len(references))
+	for _, reference := range references {
+		reference.Label = ""
+		portable = append(portable, reference)
 	}
-	return strings.TrimSpace(segment.VideoPrompt), false
+	portable = append(portable, dramaSegmentPromptSubjects(casts, raw)...)
+	return resolveDramaSegmentPromptForReferences(segment, references, portable), strings.TrimSpace(segment.VideoPromptOverride) != ""
 }
 
 // ===== 剪映草稿 =====
@@ -437,6 +443,10 @@ func (s *Service) PrepareDramaAssetPackage(userID, projectID string, req DramaAs
 	if err := s.packDramaCasts(userID, project.ID, root, casts, req, archive, &manifest); err != nil {
 		return nil, err
 	}
+	castByID := make(map[string]model.DramaCast, len(casts))
+	for _, cast := range casts {
+		castByID[cast.ID] = cast
+	}
 	seen := map[string]bool{}
 	var episodes []model.DramaEpisode
 	for _, rawID := range req.EpisodeIDs {
@@ -456,7 +466,7 @@ func (s *Service) PrepareDramaAssetPackage(userID, projectID string, req DramaAs
 	}
 	sort.Slice(episodes, func(i, j int) bool { return episodes[i].Number < episodes[j].Number })
 	for _, episode := range episodes {
-		if err := s.packDramaEpisode(userID, root, episode, dramaEpisodeSettings(settings, episode), req, archive, &manifest); err != nil {
+		if err := s.packDramaEpisode(userID, root, episode, dramaEpisodeSettings(settings, episode), castByID, req, archive, &manifest); err != nil {
 			return nil, err
 		}
 	}
@@ -547,7 +557,7 @@ func (s *Service) dramaCastImagePrompt(projectID string, cast model.DramaCast) s
 	return ""
 }
 
-func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpisode, settings DramaSettings, req DramaAssetPackageRequest, archive *DramaArchive, manifest *dramaAssetManifest) error {
+func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpisode, settings DramaSettings, casts map[string]model.DramaCast, req DramaAssetPackageRequest, archive *DramaArchive, manifest *dramaAssetManifest) error {
 	shots, err := s.repo.DramaShots(episode.ID)
 	if err != nil {
 		return err
@@ -565,6 +575,12 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 	segmentByIndex := make(map[int]model.DramaSegment, len(segments))
 	for _, segment := range segments {
 		segmentByIndex[segment.SegmentIndex] = segment
+	}
+	referencesByIndex := map[int][]DramaSegmentReference{}
+	if req.Prompts {
+		for _, draft := range buildDramaSegmentDrafts(settings, dramaBibleMeta{}, shots, casts, segments) {
+			referencesByIndex[draft.view.Index] = draft.view.Request.References
+		}
 	}
 	indexes := make([]int, 0, len(shotsBySegment))
 	for _, shot := range shots {
@@ -593,7 +609,7 @@ func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpiso
 			}
 		}
 		if req.Prompts {
-			entry.VideoPrompt, entry.CustomPrompt = dramaEffectiveSegmentPrompt(segment)
+			entry.VideoPrompt, entry.CustomPrompt = dramaExportSegmentPrompt(segment, referencesByIndex[index], casts)
 			fmt.Fprintf(&prompts, "\n## 第 %d 段 · %s\n\n", index+1, title)
 			if entry.VideoPrompt != "" {
 				prompts.WriteString(entry.VideoPrompt + "\n")

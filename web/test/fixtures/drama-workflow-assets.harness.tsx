@@ -2,7 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, useState, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaJob, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary } from "@/services/api/drama";
+import type { DramaAssetSettings, DramaCast, DramaCastKind, DramaEpisodeDetail, DramaJob, DramaSettings, DramaSourceFormat, DramaStudioBatchRequest, DramaStudioBatchView, DramaSummary, DramaWorkflowImpact } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
 
@@ -39,7 +39,7 @@ environmentManager.setIsServer(() => false);
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void };
 type UserState = { user: LocalUser | null; setUser: (user: LocalUser | null) => void };
 type CreateCall = { projectId: string; input: { kind: DramaCastKind; name: string; appearance?: string; description?: string; expectedRevision?: number; episodeId?: string } };
-type DeleteCall = { projectId: string; castId: string; expectedRevision: number };
+type DeleteCall = { projectId: string; castId: string; expectedRevision: number; deleteScopeToken: string };
 type BatchCall = { projectId: string; input: DramaStudioBatchRequest };
 type ExtractCall = { projectId: string; input: { expectedRevision: number; kind: DramaCastKind; allChapters?: boolean; episodeIds?: string[] } };
 
@@ -53,6 +53,8 @@ let deferEpisodeReads = false;
 const pendingEpisodeReads: Deferred<DramaEpisodeDetail>[] = [];
 const createCalls: CreateCall[] = [];
 const deleteCalls: DeleteCall[] = [];
+let deleteImpactOverride: Partial<DramaWorkflowImpact> = {};
+let deleteImpactError = false;
 const savedToLibrary: DramaCast[] = [];
 const pendingDeletes: Deferred<{ deleted: boolean; castId: string }>[] = [];
 const configurationReads: string[] = [];
@@ -115,6 +117,12 @@ mock.module("antd", () => ({
         htmlType = "button",
         ...props
     }: { children?: ReactNode; icon?: ReactNode; loading?: boolean; size?: string; type?: string; danger?: boolean; htmlType?: string } & Record<string, unknown>) => createElement("button", { ...props, type: htmlType }, icon, children),
+    Popover: ({ children, content, open }: { children: ReactNode; content?: ReactNode; open?: boolean }) => (
+        <>
+            {children}
+            {open ? content : null}
+        </>
+    ),
     Input: Object.assign(({ autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("input", props), {
         TextArea: ({ autoSize: _autoSize, showCount: _showCount, status: _status, ...props }: Record<string, unknown>) => createElement("textarea", props),
     }),
@@ -425,8 +433,25 @@ mock.module("@/services/api/drama", () => ({
         }
         return result;
     },
-    deleteDramaCast: async (projectId: string, castId: string, expectedRevision: number) => {
-        deleteCalls.push({ projectId, castId, expectedRevision });
+    getDramaCastImpact: async (projectId: string, castId: string): Promise<DramaWorkflowImpact> => {
+        if (deleteImpactError) throw new Error("读取暂时失败");
+        return {
+            kind: "cast",
+            revision: configurationSummaries.get(projectId)!.production.revision,
+            castId,
+            deleteScopeToken: "reviewed-token",
+            segments: 0,
+            episodes: 0,
+            affectedSegments: 0,
+            assetIds: [castId],
+            directSegments: [],
+            continuitySegments: [],
+            message: "",
+            ...deleteImpactOverride,
+        };
+    },
+    deleteDramaCast: async (projectId: string, castId: string, expectedRevision: number, deleteScopeToken: string) => {
+        deleteCalls.push({ projectId, castId, expectedRevision, deleteScopeToken });
         const pending = deferred<{ deleted: boolean; castId: string }>();
         pendingDeletes.push(pending);
         return pending.promise;
@@ -637,6 +662,8 @@ function resetFixture() {
     projectJobs.clear();
     createCalls.length = 0;
     deleteCalls.length = 0;
+    deleteImpactOverride = {};
+    deleteImpactError = false;
     pendingDeletes.length = 0;
     savedToLibrary.length = 0;
     configurationReads.length = 0;
@@ -1712,14 +1739,17 @@ test("单集与资产库的角色快捷存库共用唯一控制器并传递真�
     }
 });
 
-test("删除先确认且可取消，确认只提交目标ID与当前作品版本，在途冻结并防止重复提交", async () => {
+test("删除显示关联范围且可取消，确认提交目标和核对过的范围，在途冻结并防止重复提交", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 7));
+    deleteImpactOverride = { revision: 7, castId: "room", segments: 2, shots: 3 };
     try {
         await click(button(view.container, "删除旧宅"));
         let dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
         expect(dialog).not.toBeNull();
         expect(dialog.textContent).toContain("从整个作品中移除此资产");
+        expect(dialog.textContent).toContain("已关联 2 个剧情段、3 个镜头");
+        expect(dialog.textContent).toContain("提示词和已生成的媒体保留");
         expect(deleteCalls).toHaveLength(0);
         expect(view.dirtyStates.at(-1)).toEqual([false, true]);
         expect(view.container.querySelector<HTMLSelectElement>('[aria-label="主体管理剧集"]')?.disabled).toBe(true);
@@ -1730,7 +1760,7 @@ test("删除先确认且可取消，确认只提交目标ID与当前作品版本
         await click(button(view.container, "删除旧宅"));
         dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
         await click(button(dialog, "确认删除"));
-        expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 7 }]);
+        expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 7, deleteScopeToken: "reviewed-token" }]);
         expect(button(dialog, "确认删除").disabled).toBe(true);
         expect(button(dialog, "取消").disabled).toBe(true);
         await click(button(dialog, "确认删除"));
@@ -1752,10 +1782,67 @@ test("删除先确认且可取消，确认只提交目标ID与当前作品版本
     }
 });
 
-test("删除引用冲突保留真实后端信息和原卡片，不误报成功或将业务冲突改写成版本提示", async () => {
+test("删除前读取版本失败可以重试，并且不能通过过期的引用结果继续", async () => {
+    resetFixture();
+    deleteImpactError = true;
+    const view = await mount(summaryOf("project-a", 4));
+    try {
+        await click(button(view.container, "删除旧宅"));
+        let dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("无法检查资产引用");
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toEqual([]);
+
+        deleteImpactError = false;
+        deleteImpactOverride = { revision: 5, segments: 2, shots: 3 };
+        await click(button(dialog, "重试"));
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("作品内容已更新");
+        expect(button(dialog, "确认删除").disabled).toBe(true);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls).toEqual([]);
+
+        await click(button(dialog, "取消"));
+        await view.update({ summary: summaryOf("project-a", 5) });
+        await click(button(view.container, "删除旧宅"));
+        dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        expect(dialog.textContent).toContain("已关联 2 个剧情段、3 个镜头");
+        expect(button(dialog, "确认删除").disabled).toBe(false);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("确认后镜头关联变化时更新影响范围，重新确认才提交新的范围", async () => {
     resetFixture();
     const view = await mount(summaryOf("project-a", 4));
-    const conflict = "该资产仍被分镜引用，请先调整分镜";
+    try {
+        await click(button(view.container, "删除旧宅"));
+        const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
+        await click(button(dialog, "确认删除"));
+        deleteImpactOverride = { shots: 1, deleteScopeToken: "fresh-token" };
+        await act(async () => {
+            pendingDeletes[0].reject(new ApiError("资产的关联范围已更新，请重新核对后确认删除", { status: 409, reason: "drama_cast_delete_scope_changed" }));
+            await settle();
+        });
+        expect(dialog.textContent).toContain("已关联 1 个镜头");
+        expect(deleteCalls.map((call) => call.deleteScopeToken)).toEqual(["reviewed-token"]);
+        await click(button(dialog, "确认删除"));
+        expect(deleteCalls.map((call) => call.deleteScopeToken)).toEqual(["reviewed-token", "fresh-token"]);
+        await act(async () => {
+            pendingDeletes[1].resolve({ deleted: true, castId: "room" });
+            await settle();
+        });
+        expect(view.container.querySelector('[role="dialog"][aria-label="删除「旧宅」？"]')).toBeNull();
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("生成任务在途的删除冲突保留真实后端信息和原卡片，不误报成功或改写为版本提示", async () => {
+    resetFixture();
+    const view = await mount(summaryOf("project-a", 4));
+    const conflict = "该资产的生成任务尚未结束，请完成后再删除";
     try {
         await click(button(view.container, "删除旧宅"));
         const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
@@ -1852,7 +1939,7 @@ test("跨作品、账号、集或卸载后隔离迟到的删除成功及失败�
                 await click(button(view.container, "删除旧宅"));
                 const dialog = view.container.querySelector<HTMLElement>('[role="dialog"][aria-label="删除「旧宅」？"]')!;
                 await click(button(dialog, "确认删除"));
-                expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 4 }]);
+                expect(deleteCalls).toEqual([{ projectId: "project-a", castId: "room", expectedRevision: 4, deleteScopeToken: "reviewed-token" }]);
                 if (boundary === "project") await view.update({ summary: summaryOf("project-b", 1), cast: [castOf("project-b", "other-room", "scene", "其他作品场景")] });
                 if (boundary === "account")
                     await act(async () => {

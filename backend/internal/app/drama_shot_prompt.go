@@ -119,11 +119,11 @@ func (s *Service) enrichDramaShotVideoPrompt(repo *repository.Repository, shot m
 			written := ""
 			for _, row := range rows {
 				if row.SegmentIndex == shot.SegmentIndex && dramaPromptReady(row) {
-					written = firstNonEmpty(row.VideoPromptOverride, row.VideoPrompt)
+					written = resolveDramaSegmentPromptForReferences(row, draft.view.Request.References, dramaShotWrittenPromptReferences(row, actual, castByID))
 					break
 				}
 			}
-			config.Prompt = production.ShotVideoPrompt(production.ShotVideoPromptInput{Segment: draft.input, ShotIndex: shotIndex, ShotNumber: shot.Position + 1, Seconds: config.Seconds, WrittenPrompt: written, SourceReferences: sourceReferences})
+			config.Prompt = production.ShotVideoPrompt(production.ShotVideoPromptInput{Segment: draft.input, ShotIndex: shotIndex, ShotNumber: shot.Position + 1, Seconds: config.Seconds, WrittenPrompt: written, WrittenPromptUsesShotReferences: true, SourceReferences: sourceReferences})
 			if config.FirstFrameResourceID != "" {
 				config.Prompt += "\n【首帧约束】以随请求附带的本镜首帧为起幅，保持其人物、站位、场景与光线，随后只执行本镜动作。"
 			}
@@ -136,6 +136,36 @@ func (s *Service) enrichDramaShotVideoPrompt(repo *repository.Repository, shot m
 		}
 	}
 	return config, BadAuthRequest("镜头已不在本集分镜中，请重新载入")
+}
+
+func dramaShotWrittenPromptReferences(row model.DramaSegment, attached []production.SegmentReference, casts map[string]model.DramaCast) []DramaSegmentReference {
+	refs := make([]DramaSegmentReference, 0, len(attached))
+	labels := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, ref := range attached {
+		if label := labels[ref.Identity]; label != "" && ref.Label != "" && ref.Label != label {
+			ambiguous[ref.Identity] = true
+		}
+		if ref.Label != "" {
+			labels[ref.Identity] = ref.Label
+		}
+	}
+	for _, ref := range attached {
+		entry := DramaSegmentReference{Label: labels[ref.Identity], Name: ref.Name}
+		if ambiguous[ref.Identity] {
+			entry.Label = ""
+		}
+		if id, ok := strings.CutPrefix(ref.Identity, "cast:"); ok {
+			entry.CastID = id
+		} else if id, ok := strings.CutPrefix(ref.Identity, "resource:"); ok {
+			entry.ResourceID = id
+		} else {
+			continue
+		}
+		refs = append(refs, entry)
+	}
+	// A manual mention need not be in the segment's selected attachments.
+	return append(refs, dramaSegmentPromptSubjects(casts, firstNonEmpty(row.VideoPromptOverride, row.VideoPrompt))...)
 }
 
 func dramaShotSubjectReference(cast model.DramaCast, casts map[string]model.DramaCast) production.SegmentReference {

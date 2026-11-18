@@ -61,6 +61,9 @@ func (s *Service) ExecuteDramaShotMedia(userID, projectID, shotID, kind string, 
 		if _, err := repo.DramaProductionForUpdate(projectID); err != nil {
 			return err
 		}
+		if err := lockDramaShotReferenceSubjects(repo, projectID, kind, plan.view.Config); err != nil {
+			return err
+		}
 		if err := repo.LockDramaCastImageReferences(userID, dramaShotMediaReferenceIDs(plan.view.Config)); err != nil {
 			return BadAuthRequest("参考图或首尾帧已变化，请重新预检")
 		}

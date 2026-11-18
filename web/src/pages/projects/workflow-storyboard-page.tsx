@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { App, Button } from "antd";
-import { Clapperboard, Image, Pencil, Play, Plus, RefreshCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { App, Button, Input } from "antd";
+import { Clapperboard, Pencil, Play, Plus, RefreshCw } from "lucide-react";
 
-import { insertDramaShot, type DramaCast, type DramaEpisodeDetail, type DramaSegment, type DramaShot, type DramaSummary } from "@/services/api/drama";
+import { AppModal } from "@/components/ui/product/app-modal";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { insertDramaShot, updateDramaShot, type DramaCast, type DramaEpisodeDetail, type DramaSegment, type DramaShot, type DramaSummary } from "@/services/api/drama";
 import { getDramaShotMedia, type DramaShotMedia } from "@/services/api/drama-shot-media";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -57,6 +59,7 @@ export function WorkflowStoryboardPage({
 }: Props) {
     const { message } = App.useApp();
     const operation = useDramaOperationScope(summary.project.id);
+    const queryClient = useQueryClient();
     const segments = detail.segments.toSorted((left, right) => left.index - right.index);
     const phase = videoAllowed ? "video" : "prompt";
     const visibleSegments = segments.filter((item) => status === "all" || segmentState(item, phase).tone === status);
@@ -65,6 +68,7 @@ export function WorkflowStoryboardPage({
     const [board, setBoard] = useState<{ projectId: string; episodeId: string; shots: DramaShot[]; title: string }>();
     const boardOpen = Boolean(board && board.projectId === summary.project.id && board.episodeId === detail.episode.id);
     const [previewSegmentId, setPreviewSegmentId] = useState<string>();
+    const [nameEdit, setNameEdit] = useState<{ shot: DramaShot; draft: string; revision: number; ticket: ReturnType<typeof operation.capture> }>();
     const mode = summary.production.settings.storyboard.generationMode || "reference_video";
     const boardLabel = mode === "grid_image" ? "生成宫格图" : "生成故事板";
     const defaultKind = mode === "grid_image" || mode === "storyboard" ? "image" : "video";
@@ -91,6 +95,30 @@ export function WorkflowStoryboardPage({
             insertLock.current = false;
         },
     });
+    const rename = useMutation({
+        mutationFn: ({ shot, name, revision, ticket }: { shot: DramaShot; name: string; revision: number; ticket: ReturnType<typeof operation.capture> }) => {
+            if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
+            return updateDramaShot(shot.projectId, shot.id, { name, expectedRevision: revision });
+        },
+        onSuccess: ({ shot }, { ticket }) => {
+            if (!operation.isCurrent(ticket)) return;
+            queryClient.setQueryData<DramaEpisodeDetail>(dramaKeys.episode(shot.projectId, shot.episodeId), (current) =>
+                current ? { ...current, shots: current.shots.map((item) => (item.id === shot.id ? { ...item, name: shot.name } : item)) } : current,
+            );
+            setNameEdit(undefined);
+            onChanged();
+        },
+        onError: (error, { ticket }) => {
+            if (operation.isCurrent(ticket)) message.error(error instanceof Error ? error.message : "分镜名称保存失败");
+        },
+    });
+    const editedName = nameEdit?.draft.trim() || "";
+    const nameTooLong = Array.from(editedName).length > 120;
+    const renameStale = Boolean(nameEdit && (nameEdit.revision !== summary.production.revision || !operation.isCurrent(nameEdit.ticket) || !detail.shots.some((shot) => shot.id === nameEdit.shot.id && (shot.name || "") === (nameEdit.shot.name || ""))));
+    const saveName = () => {
+        if (!nameEdit || rename.isPending || renameStale || nameTooLong || editedName === (nameEdit.shot.name || "")) return;
+        rename.mutate({ shot: nameEdit.shot, name: editedName, revision: nameEdit.revision, ticket: nameEdit.ticket });
+    };
 
     if (!segments.length) return <p role="status">本集暂无剧情段，请先完成剧本与分镜。</p>;
     const generating = Boolean(segment && mediaBusy(segment.videoStatus));
@@ -237,13 +265,51 @@ export function WorkflowStoryboardPage({
                 {segment && !collapsed ? (
                     <div className="drama-storyboard-shots-grid">
                         {shots.map((shot) => (
-                            <StoryboardShotCard key={shot.id} shot={shot} castById={castById} videoAllowed={videoAllowed} defaultKind={defaultKind} onOpen={(kind) => onOpenShot(shot, kind)} onEdit={() => onEditShot(shot)} onOpenCast={onOpenCast} />
+                            <StoryboardShotCard
+                                key={shot.id}
+                                shot={shot}
+                                castById={castById}
+                                videoAllowed={videoAllowed}
+                                defaultKind={defaultKind}
+                                onOpen={(kind) => onOpenShot(shot, kind)}
+                                onRename={() => setNameEdit({ shot, draft: shot.name || "", revision: summary.production.revision, ticket: operation.capture() })}
+                                onOpenCast={onOpenCast}
+                            />
                         ))}
                     </div>
                 ) : null}
                 {segment && !collapsed && !shots.length ? <p role="status">本段暂无镜头，请编辑本段或重新拆分。</p> : null}
                 {!segment ? <p role="status">切换“全部状态”查看本集剧情段。</p> : null}
             </section>
+            {nameEdit ? (
+                <AppModal
+                    open
+                    title="编辑分镜名称"
+                    width={420}
+                    okText="保存"
+                    cancelText="取消"
+                    confirmLoading={rename.isPending}
+                    okButtonProps={{ disabled: renameStale || nameTooLong || editedName === (nameEdit.shot.name || "") }}
+                    cancelButtonProps={{ disabled: rename.isPending }}
+                    closable={!rename.isPending}
+                    keyboard={!rename.isPending}
+                    mask={{ closable: !rename.isPending }}
+                    onOk={saveName}
+                    onCancel={() => !rename.isPending && setNameEdit(undefined)}
+                >
+                    <Input
+                        autoFocus
+                        aria-label="分镜名称"
+                        placeholder={`分镜 ${nameEdit.shot.position + 1}`}
+                        value={nameEdit.draft}
+                        disabled={rename.isPending}
+                        status={nameTooLong ? "error" : undefined}
+                        onChange={(event) => setNameEdit({ ...nameEdit, draft: event.target.value })}
+                        onPressEnter={(event) => !event.nativeEvent.isComposing && saveName()}
+                    />
+                    {renameStale ? <p role="alert">分镜已更新，请关闭后重新编辑。当前输入仍保留。</p> : nameTooLong ? <p role="alert">分镜名称不能超过 120 个字符</p> : null}
+                </AppModal>
+            ) : null}
             <WorkflowStoryboardDialog
                 open={boardOpen}
                 projectId={summary.project.id}
@@ -286,7 +352,7 @@ function StoryboardShotCard({
     videoAllowed,
     defaultKind,
     onOpen,
-    onEdit,
+    onRename,
     onOpenCast,
 }: {
     shot: DramaShot;
@@ -294,10 +360,11 @@ function StoryboardShotCard({
     videoAllowed: boolean;
     defaultKind: "image" | "video";
     onOpen: (kind?: "image" | "video" | "audio") => void;
-    onEdit: () => void;
+    onRename: () => void;
     onOpenCast: (id: string) => void;
 }) {
     const userId = useUserStore((state) => state.user?.id || "");
+    const [previewOpen, setPreviewOpen] = useState(false);
     const image = useQuery({
         queryKey: ["drama-shot-media", userId, shot.projectId, shot.id, "image"],
         queryFn: ({ signal }) => getDramaShotMedia(shot.projectId, shot.id, "image", signal),
@@ -312,6 +379,7 @@ function StoryboardShotCard({
     });
     const videoUrl = useResourceMediaUrl(video.data?.resourceId, "playback");
     const tone = shotTone(video.data, videoAllowed);
+    const name = shot.name || `分镜 ${shot.position + 1}`;
     const subjects = castIds(shot).flatMap((id) => {
         const cast = castById.get(id);
         return cast ? [cast] : [];
@@ -333,21 +401,17 @@ function StoryboardShotCard({
                     </span>
                 )}
                 <span className="drama-storyboard-shot-time">{(shot.durationMs / 1000).toFixed(1)}s</span>
-                <span className="drama-storyboard-shot-open">
-                    <Pencil className="size-3" />
-                    编辑媒体
-                </span>
             </button>
             <div className="drama-storyboard-shot-content">
                 <header>
-                    <h5>分镜 {shot.position + 1}</h5>
+                    <h5 title={name}>{name}</h5>
                     <span className="drama-storyboard-shot-state">{MEDIA_STATE[video.data?.status || "idle"] || video.data?.status}</span>
                 </header>
                 <p className="drama-storyboard-shot-description">
                     <span>【镜头语言】</span>
                     {[shot.shotSize, shot.camera].filter(Boolean).join("。")}。<span>【场景与氛围】</span>
                     {shot.scene || "待补充"}。<span>【主体与画面】</span>
-                    {shot.action || shot.imagePrompt || "点击铅笔补充画面描述"}
+                    {shot.action || shot.imagePrompt || "暂无画面描述"}
                     {shot.dialogue ? (
                         <>
                             {" "}
@@ -382,12 +446,16 @@ function StoryboardShotCard({
                 ) : null}
             </div>
             <footer>
-                <Button type="text" size="small" aria-label={`分镜 ${shot.position + 1} 图片 · ${MEDIA_STATE[image.data?.status || "idle"] || image.data?.status}`} title="编辑图片" icon={<Image className="size-3.5" />} onClick={() => onOpen("image")} />
-                <Button type="text" size="small" aria-label={`分镜 ${shot.position + 1} 视频 · ${MEDIA_STATE[video.data?.status || "idle"] || video.data?.status}`} title="编辑视频" icon={<Play className="size-3.5" />} onClick={() => onOpen("video")} />
-                <Button className="drama-storyboard-shot-edit" type="text" size="small" aria-label={`编辑分镜 ${shot.position + 1} 文字`} icon={<Pencil className="size-3.5" />} onClick={onEdit}>
-                    编辑分镜
+                {video.data?.resourceId ? <Button type="text" size="small" aria-label={`预览分镜视频：${name}`} title="预览视频" icon={<Play className="size-3.5" />} onClick={() => setPreviewOpen(true)} /> : null}
+                <Button className="drama-storyboard-shot-edit" type="text" size="small" aria-label={`编辑分镜名称：${name}`} icon={<Pencil className="size-3.5" />} onClick={onRename}>
+                    编辑分镜名称
                 </Button>
             </footer>
+            {previewOpen ? (
+                <AppModal open centered title={`预览分镜视频：${name}`} width={760} footer={null} onCancel={() => setPreviewOpen(false)}>
+                    {videoUrl ? <video className="drama-storyboard-shot-video-preview" controls src={videoUrl} preload="metadata" playsInline /> : <p role="status">正在读取视频…</p>}
+                </AppModal>
+            ) : null}
         </article>
     );
 }

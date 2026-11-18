@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Button, Input, InputNumber, Popover, Select } from "antd";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { AntTooltip as Tooltip } from "@/components/ui/base/tooltip/ant-tooltip";
@@ -10,19 +10,21 @@ import { CAMERA_PRESETS } from "@/lib/drama/director";
 import type { DramaCast, DramaEpisodeDetail, DramaModelChoice, DramaSegment, DramaSegmentReferencePatch, DramaShot, DramaShotPatch, DramaTransition } from "@/services/api/drama";
 import { ReferenceBoard } from "./segment-references";
 import { dramaChoiceKey, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
+import { segmentSendPromptBody } from "@/lib/drama/segment-prompt";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
 import { dramaSegmentVideoRequirements, dramaVideoOptionFor } from "./segment-quote";
 
-import { CAST_KIND_LABEL, formatCredits, mediaBusy, MediaThumb } from "../drama-shared";
+import { formatCredits, mediaBusy, MediaThumb } from "../drama-shared";
 import { promptReady, secondsLabel, SegmentStatus, SegmentVideo, videoWaitLabel } from "./segment-parts";
 import { DramaTakeList } from "./take-list";
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
-import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { WorkflowShotMediaDialog } from "../workflow-shot-media-dialog";
 import { QuotedMediaButton } from "./drama-media-action-context";
 import { WorkflowStoryboardDialog } from "../workflow-storyboard-dialog";
+import { segmentPromptEditorReferences, segmentPromptMention } from "./segment-prompt-references";
+import { useSegmentPromptDraft } from "./use-segment-prompt-draft";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
 const CAMERAS = [...CAMERA_PRESETS, "固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
@@ -58,7 +60,7 @@ type Props = {
     onInsertShot?: (shot: DramaShot, position: "before" | "after") => void;
     /** 删除镜头；剧情段唯一的镜头不能删。 */
     onDeleteShot?: (shot: DramaShot) => void;
-    onSavePrompt: (segment: DramaSegment, override: string) => void;
+    onSavePrompt: (segment: DramaSegment, override: string) => Promise<unknown>;
     /** 指定本段参考图；null 恢复按镜头自动取。 */
     onSaveReferences: (segment: DramaSegment, patch: DramaSegmentReferencePatch) => Promise<unknown>;
     onWritePrompt: (segment: DramaSegment) => void;
@@ -167,7 +169,7 @@ export function SegmentDialog({
                                 onWritePrompt={() => onWritePrompt(segment)}
                             />
                             <ReferenceBoard key={segment.id} segment={segment} shots={shots} castById={castById} busy={busy} onSave={(patch) => onSaveReferences(segment, patch)} onOpenCast={onOpenCast} />
-                            <SegmentPrompt segment={segment} castById={castById} writing={writing} onSave={(override) => onSavePrompt(segment, override)} onWrite={() => onWritePrompt(segment)} />
+                            <SegmentPrompt key={segment.id} segment={segment} castById={castById} writing={writing} onSave={(override) => onSavePrompt(segment, override)} onWrite={() => onWritePrompt(segment)} />
                             <SegmentReceipt segment={segment} />
                             <section className="drama-sdx-section" aria-label="本段镜头">
                                 <div className="drama-sdx-section-head">
@@ -284,7 +286,7 @@ function SegmentToolbar({
     const requirements = dramaSegmentVideoRequirements(segment.request, chosenOption, changed, videoResolution);
     const running = mediaBusy(segment.videoStatus);
     const writingNow = segment.promptStatus === "queued" || segment.promptStatus === "running";
-    const sent = [segment.request.header, segment.videoPrompt.trim()].filter(Boolean).join("\n\n");
+    const sent = [segment.request.header, segmentSendPromptBody(segment)].filter(Boolean).join("\n\n");
     const generateLabel = running
         ? segment.videoStatus === "queued" && segment.videoWait
             ? videoWaitLabel(segment.videoWait)
@@ -531,76 +533,29 @@ function ShotCard({
     );
 }
 
-// 与服务端 production.referenceTokenPattern 一致：“@参考图1”“参考图 1”保存时都会归一成“参考图1”。
-const REFERENCE_TOKEN = /@?参考图\s*(\d+)/g;
-
-/** 正文里引用到的参考图编号，以及不属于本段的编号（超出参考图数量）。 */
-function referenceUsage(text: string, count: number) {
-    const used = new Set<number>();
-    const unknown: string[] = [];
-    for (const match of text.matchAll(REFERENCE_TOKEN)) {
-        const number = Number(match[1]);
-        if (number >= 1 && number <= count) used.add(number);
-        else if (!unknown.includes(`参考图${match[1]}`)) unknown.push(`参考图${match[1]}`);
-    }
-    return { used, unknown };
-}
-
 const PROMPT_EDITOR_MIN = 260;
 const PROMPT_EDITOR_MAX = 560;
 
-/**
- * 完整视频提示词：与画布视频节点的提示词面板一致，正文里的“参考图N”显示为带缩略图的引用，输入 @ 可插入本段参考图。
- * 提交时系统在正文前追加参考图对应说明（上方列出），视频模型靠同一个“参考图N”把名称与图片对上。
- */
-function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segment: DramaSegment; castById: Map<string, DramaCast>; writing: boolean; onSave: (override: string) => void; onWrite: () => void }) {
-    const [draft, setDraft] = useState(segment.videoPrompt);
+function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segment: DramaSegment; castById: Map<string, DramaCast>; writing: boolean; onSave: (override: string) => Promise<unknown>; onWrite: () => void }) {
+    const { draft, dirty, saving, setEdited, commit, restore } = useSegmentPromptDraft(segment.videoPrompt, segment.generated, onSave);
     const [editorHeight, setEditorHeight] = useState(PROMPT_EDITOR_MIN);
     const [showHeader, setShowHeader] = useState(false);
-    useEffect(() => setDraft(segment.videoPrompt), [segment.videoPrompt]);
+    const { request } = segment;
     const busy = segment.promptStatus === "queued" || segment.promptStatus === "running";
     const notice = segment.custom && segment.promptStatus === "stale" ? "" : PROMPT_NOTICE[segment.promptStatus];
-    const dirty = draft.trim() !== segment.videoPrompt.trim();
-    const { request } = segment;
-    const references = useMemo<CanvasResourceReference[]>(
-        () =>
-            request.references.map((ref) => {
-                const resourceId = ref.resourceId || castById.get(ref.castId)?.imageResourceId;
-                return {
-                    id: `drama-ref:${ref.castId || ref.resourceId}`,
-                    nodeId: "",
-                    kind: "image",
-                    label: ref.label,
-                    title: `${ref.name} · ${CAST_KIND_LABEL[ref.kind]}${ref.sent ? "" : "（未附图）"}`,
-                    storageKey: resourceId ? `resource:${resourceId}` : undefined,
-                    mentionToken: ref.label,
-                    active: true,
-                };
-            }),
-        [castById, request.references],
-    );
-    const usage = useMemo(() => referenceUsage(draft, request.references.length), [draft, request.references.length]);
-    // 与服务端一致按字符（码点）计：参考图说明 + 空行 + 正文。
-    const sentChars = Array.from([request.header, draft.trim()].filter(Boolean).join("\n\n")).length;
-    const overLimit = Boolean(request.promptMaxChars && sentChars > request.promptMaxChars);
-    const unmentioned = request.references.filter((_, index) => !usage.used.has(index + 1));
-    const commit = () => {
-        const next = draft.trim();
-        if (!dirty) return;
-        if (!next) {
-            setDraft(segment.videoPrompt);
-            return;
-        }
-        onSave(next === segment.generated.trim() ? "" : next);
-    };
+    const references = useMemo(() => segmentPromptEditorReferences(segment, castById), [castById, segment]);
+    const used = new Set(Array.from(draft.matchAll(/@\[segment-cast:[^\]\s]+\]|参考图[0-9]+/g), (match) => match[0]));
+    const unknown = dirty ? [] : (request.unknownReferences ?? []);
+    const sentChars = Array.from([request.header, segmentSendPromptBody(segment)].filter(Boolean).join("\n\n")).length;
+    const overLimit = Boolean(!dirty && request.promptMaxChars && sentChars > request.promptMaxChars);
+    const unmentioned = request.references.filter((ref) => ref.sent && !used.has(segmentPromptMention(ref)));
     return (
         <section className="drama-sdx-section drama-sdx-prompt" aria-label="完整视频提示词">
             <div className="drama-sdx-section-head">
                 <strong>完整视频提示词</strong>
                 {segment.custom ? <span className="drama-sdx-chip is-accent">已手动改写</span> : null}
-                <small>正文里的“参考图N”对应本段参考图；输入 @ 插入参考图，双击引用放大查看</small>
                 {segment.custom ? (
-                    <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} onClick={() => onSave("")}>
+                    <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} disabled={saving} onMouseDown={(event) => event.preventDefault()} onClick={restore}>
                         恢复模型版本
                     </Button>
                 ) : null}
@@ -616,20 +571,20 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                     </div>
                     <div className="drama-sdx-prefix-refs">
                         {segment.index > 0 ? <span className="drama-sdx-prefix-ref is-frame">首帧 · 上一段最后一帧（不占编号）</span> : null}
-                        {request.references.map((ref, index) => {
+                        {request.references.map((ref) => {
                             const resourceId = ref.resourceId || castById.get(ref.castId)?.imageResourceId;
-                            const caption = ref.sent ? `${ref.label}：${ref.name}` : `${ref.label}（${ref.name}）未附图，按文字设定生成`;
+                            const label = ref.castId ? ref.name : `${ref.label}：${ref.name}`;
+                            const caption = ref.sent ? label : `${label}（未附图）`;
                             const chip = (
                                 <span
                                     key={ref.castId || ref.resourceId}
-                                    className={`drama-sdx-prefix-ref ${ref.sent ? "" : "is-missing"} ${usage.used.has(index + 1) ? "" : "is-unused"}`}
+                                    className={`drama-sdx-prefix-ref ${ref.sent ? "" : "is-missing"} ${used.has(segmentPromptMention(ref)) ? "" : "is-unused"}`}
                                     title={resourceId ? undefined : caption}
                                     tabIndex={resourceId ? 0 : undefined}
                                     aria-label={caption}
                                 >
                                     <span className="drama-sdx-prefix-thumb">{resourceId ? <MediaThumb resourceId={resourceId} alt="" /> : null}</span>
-                                    <b>{ref.label}</b>
-                                    {ref.name}
+                                    <b>{label}</b>
                                 </span>
                             );
                             if (!resourceId) return chip;
@@ -670,22 +625,20 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                     <CanvasResourceMentionTextarea
                         value={draft}
                         references={references}
-                        onChange={(next) => {
-                            setDraft(next);
-                        }}
+                        onChange={setEdited}
                         onSubmit={commit}
                         sendOnEnter={false}
                         onContentSizeChange={setEditorHeight}
-                        mentionMenuLabels={{ connected: "本段参考图" }}
+                        mentionMenuLabels={{ connected: "本段资产与附件" }}
                         className="drama-sdx-editor-input thin-scrollbar"
                         style={{ color: "var(--foreground)" }}
                         aria-label="完整视频提示词"
-                        placeholder="也可以直接在这里手写本段完整视频提示词；输入 @ 引用参考图，失焦保存。开头的参考图说明由系统自动追加。"
+                        placeholder="本段视频提示词"
                         onBlur={commit}
                         onKeyDown={(event) => {
                             if (event.key === "Escape" && dirty) {
                                 event.stopPropagation();
-                                setDraft(segment.videoPrompt);
+                                setEdited(null);
                             }
                         }}
                     />
@@ -697,12 +650,12 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                     <small>写好后自动显示</small>
                 </div>
             )}
-            {usage.unknown.length ? (
+            {unknown.length ? (
                 <p className="drama-sg-note is-error" role="alert">
-                    正文里的 {usage.unknown.join("、")} 不是本段的参考图（本段共 {request.references.length} 张），生成视频前请改成正确的编号或用 @ 重新插入。
+                    正文里的 {unknown.join("、")} 未关联本段资产或附件。
                 </p>
             ) : draft && unmentioned.length ? (
-                <p className="drama-sg-note">正文还没有引用 {unmentioned.map((ref) => `${ref.label}（${ref.name}）`).join("、")}；参考图仍会随请求发送，在正文里写明谁是谁，视频模型才不会认错。</p>
+                <p className="drama-sg-note">正文未引用：{unmentioned.map((ref) => (ref.castId ? ref.name : `${ref.label}：${ref.name}`)).join("、")}</p>
             ) : null}
             {overLimit ? (
                 <p className="drama-sg-note is-error" role="alert">
@@ -711,11 +664,16 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                 </p>
             ) : null}
             <div className="drama-sd-pane-foot">
-                {dirty ? <span className="is-dirty">未保存 · 失焦或 ⌘↵ 保存，Esc 放弃</span> : <span>直接修改正文，失焦自动保存</span>}
-                <span className={overLimit ? "is-over" : undefined} title="与视频模型校验口径一致：开头的参考图说明 + 正文">
-                    发送全文 {sentChars}
-                    {request.promptMaxChars ? ` / ${request.promptMaxChars}` : ""} 字
-                </span>
+                {saving ? (
+                    <span role="status">正在保存…</span>
+                ) : dirty ? (
+                    <span className="is-dirty">未保存</span>
+                ) : (
+                    <span className={overLimit ? "is-over" : undefined} title="包含开头的附件说明与正文">
+                        发送全文 {sentChars}
+                        {request.promptMaxChars ? ` / ${request.promptMaxChars}` : ""} 字
+                    </span>
+                )}
             </div>
         </section>
     );

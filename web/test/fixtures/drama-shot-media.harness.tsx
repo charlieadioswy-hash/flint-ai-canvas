@@ -163,7 +163,10 @@ mock.module("@/services/api/resources", () => ({
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 const userScope = await import("@/lib/user-scope");
 mock.module("@/lib/user-scope", () => ({ ...userScope, getActiveUserScope: () => userStore.getState().user.id }));
-mock.module("@/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: { options: { image: [], video: [] } } }), DramaModelPicker: () => <button>模型选择器</button> }));
+mock.module("@/pages/projects/drama-model-picker", () => ({
+    useDramaModelCatalog: () => ({ data: { options: { image: [], video: [{ choice: { channelId: "channel", modelKey: "model" }, videoResolutions: ["720p", "1080p"], defaultVideoResolution: "720p" }] } } }),
+    DramaModelPicker: () => <button>模型选择器</button>,
+}));
 mock.module("@/pages/projects/drama-shared", () => ({
     parseList: (value?: string) => {
         try {
@@ -276,7 +279,7 @@ function media(kind: DramaShotMediaKind): DramaShotMedia {
         },
     };
 }
-async function mount(page = false, configure?: () => void, initialKind?: DramaShotMediaKind) {
+async function mount(page = false, configure?: () => void, initialKind?: DramaShotMediaKind, canOpenVideo?: (shot: DramaShot) => boolean, shotOverrides?: Partial<DramaShot>) {
     saves.length = checks.length = executions.length = adoptions.length = draftChecks.length = 0;
     uploads.length = downloads.length = blobReads.length = crops.length = deletions.length = 0;
     casts = [];
@@ -310,8 +313,9 @@ async function mount(page = false, configure?: () => void, initialKind?: DramaSh
                 <WorkflowShotMediaDialog
                     open
                     initialKind={initialKind}
+                    canOpenVideo={canOpenVideo}
                     projectId={projectId}
-                    shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1, segmentIndex: 2, scene: "同一房间", durationMs: 5000 } as DramaShot}
+                    shot={{ id: "real-shot", projectId, episodeId: "episode", position: 1, segmentIndex: 2, scene: "同一房间", durationMs: 5000, ...shotOverrides } as DramaShot}
                     presentation={page ? "page" : "dialog"}
                     segmentLabel="第 3 段"
                     shots={
@@ -561,6 +565,25 @@ test("修改后切换类型先同步配置，不确认放弃也不触发生成",
         expect(executions).toHaveLength(0);
         await act(settle);
         expect(view.host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("video 原始提示词");
+    } finally {
+        await view.close();
+    }
+});
+
+test("本镜视频入口未通过时保留图片标签，通过后可切换视频", async () => {
+    let allowed = false;
+    const canOpenVideo = mock((_shot: DramaShot) => allowed);
+    const view = await mount(true, undefined, "image", canOpenVideo);
+    try {
+        await click(view.host, "视频");
+        expect(canOpenVideo).toHaveBeenCalledWith(expect.objectContaining({ id: "real-shot" }));
+        expect(button(view.host, "图片").getAttribute("aria-pressed")).toBe("true");
+        expect(button(view.host, "视频").getAttribute("aria-pressed")).toBe("false");
+
+        allowed = true;
+        await click(view.host, "视频");
+        await waitPrice(view.host);
+        expect(button(view.host, "视频").getAttribute("aria-pressed")).toBe("true");
     } finally {
         await view.close();
     }
@@ -976,6 +999,109 @@ test("裁剪上传新图片只替换当前帧，确认前保留原图并锁住�
     }
 });
 
+test("单镜视频在资产换图后刷新参考图和报价，保留引用顺序与分辨率", async () => {
+    const view = await mount(
+        true,
+        () => {
+            casts = [
+                cast(),
+                cast({ id: "night-look", parentId: "cast-one", lookName: "夜行衣", imageResourceId: "cast-night" }),
+                cast({ id: "living-room", kind: "scene", name: "客厅", imageResourceId: "room-current" }),
+                cast({ id: "key", kind: "prop", name: "钥匙", imageResourceId: "key-current" }),
+                cast({ id: "other-prop", kind: "prop", name: "无关道具", imageResourceId: "other-current" }),
+            ];
+            server.video = {
+                ...server.video,
+                id: "",
+                revision: 0,
+                config: {
+                    ...server.video.config,
+                    operation: "reference_to_video",
+                    resolution: "1080p",
+                    referenceResourceIds: ["cast-night", "key-current", "room-current"],
+                    referenceSubjects: { "cast-night": "night-look", "key-current": "key", "room-current": "living-room" },
+                },
+            };
+        },
+        "video",
+        undefined,
+        { castIdsJson: '["cast-one"]', lookCastIdsJson: '["night-look"]', sceneCastId: "living-room", propIdsJson: '["key"]' },
+    );
+    try {
+        const referencePanel = view.host.querySelector('[aria-label="参考内容"]');
+        expect(referencePanel?.textContent).not.toContain("本镜头资产");
+        expect(referencePanel?.querySelector('img[data-resource="cast-night"]')).toBeTruthy();
+        expect(referencePanel?.querySelector('img[data-resource="key-current"]')).toBeTruthy();
+        expect(referencePanel?.querySelector('img[data-resource="room-current"]')).toBeTruthy();
+        expect(referencePanel?.querySelector('img[data-resource="cast-current"]')).toBeNull();
+        expect(referencePanel?.querySelector('img[data-resource="other-current"]')).toBeNull();
+        expect(view.host.querySelector<HTMLSelectElement>('[aria-label="镜头分辨率"]')?.value).toBe("1080p");
+        expect(saves).toHaveLength(1);
+        expect(saves[0]).toMatchObject({
+            shotId: "real-shot",
+            kind: "video",
+            input: { expectedRevision: 0, config: { resolution: "1080p", referenceResourceIds: ["cast-night", "key-current", "room-current"] } },
+        });
+        expect(executions).toHaveLength(0);
+
+        casts = casts.map((item) => (item.id === "night-look" ? { ...item, imageResourceId: "cast-newest" } : item));
+        server.video.config = {
+            ...server.video.config,
+            referenceResourceIds: ["cast-newest", "key-current", "room-current"],
+            referenceSubjects: { "cast-newest": "night-look", "key-current": "key", "room-current": "living-room" },
+            prompt: "@[shot-image:cast-newest] 开门",
+        };
+        await act(async () => {
+            await view.client.invalidateQueries({ queryKey: ["drama-shot-reference-cast"] });
+            await settle();
+        });
+        for (let i = 0; i < 50 && !view.host.querySelector('[aria-label="参考内容"] img[data-resource="cast-newest"]'); i++) await act(settle);
+        await waitPrice(view.host);
+        expect(view.host.querySelector('[aria-label="参考内容"] img[data-resource="cast-night"]')).toBeNull();
+        expect(view.host.querySelector('[aria-label="参考内容"] img[data-resource="cast-newest"]')).toBeTruthy();
+        expect(view.host.querySelector<HTMLTextAreaElement>('[aria-label="镜头媒体提示词"]')?.value).toBe("@[shot-image:cast-newest] 开门");
+        expect(draftChecks.at(-1)?.config.referenceResourceIds).toEqual(["cast-newest", "key-current", "room-current"]);
+        expect(saves).toHaveLength(1);
+        await click(view.host, "主体");
+        expect(view.host.querySelector('[aria-label="选择主体图片"]')?.textContent).not.toContain("查看其他设定图");
+    } finally {
+        await view.close();
+    }
+});
+
+test("已保存的空参考内容不回填，只显示并保存具体视频规格", async () => {
+    const view = await mount(
+        true,
+        () => {
+            casts = [cast()];
+            server.video.config.operation = "reference_to_video";
+            server.video.config.resolution = "1080p";
+        },
+        "video",
+        undefined,
+        { castIdsJson: '["cast-one"]' },
+    );
+    try {
+        const panel = view.host.querySelector('[aria-label="参考内容"]');
+        expect(panel?.textContent).toContain("添加参考内容");
+        expect(panel?.querySelector('img[data-resource="cast-current"]')).toBeNull();
+        const ratios = view.host.querySelector<HTMLSelectElement>('[aria-label="镜头画幅"]')!;
+        const resolutions = view.host.querySelector<HTMLSelectElement>('[aria-label="镜头分辨率"]')!;
+        expect(ratios.value).toBe("9:16");
+        expect(resolutions.value).toBe("1080p");
+        expect(Array.from(resolutions.options, (option) => option.value)).toEqual(["720p", "1080p"]);
+        expect(saves).toHaveLength(0);
+        await act(async () => {
+            resolutions.value = "720p";
+            resolutions.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await waitPrice(view.host);
+        expect(saves[0]?.input.config.resolution).toBe("720p");
+    } finally {
+        await view.close();
+    }
+});
+
 test("主体当前图与历史设定图可绑定镜头，切换不改变主体采用版本", async () => {
     const view = await mount(false, () => {
         casts = [cast()];
@@ -1079,6 +1205,24 @@ test("镜头页面只展示当前真实段镜头，切镜头先同步配置且�
         expect(saves[0].input.config.prompt).toBe("尚未保存");
         expect(closes).toBe(1);
         expect(selectedShots).toEqual([{ id: "next-shot", kind: "image" }]);
+    } finally {
+        await view.close();
+    }
+});
+
+test("视频页检查目标镜头并在未通过时保持当前镜头", async () => {
+    let allowed = false;
+    const canOpenVideo = mock((_shot: DramaShot) => allowed);
+    const view = await mount(true, undefined, "video", canOpenVideo);
+    try {
+        await clickLabel(view.host, "切换分镜 3");
+        expect(canOpenVideo).toHaveBeenCalledWith(expect.objectContaining({ id: "next-shot" }));
+        expect(selectedShots).toHaveLength(0);
+        expect(button(view.host, "视频").getAttribute("aria-pressed")).toBe("true");
+
+        allowed = true;
+        await clickLabel(view.host, "切换分镜 3");
+        expect(selectedShots).toEqual([{ id: "next-shot", kind: "video" }]);
     } finally {
         await view.close();
     }

@@ -402,7 +402,7 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 					if request.FirstFramePending && plan.pendingVideoID == "" {
 						blocked("等待上一段尾帧就绪")
 					}
-					if max := request.PromptMaxChars; max > 0 && utf8.RuneCountInString(strings.TrimSpace(request.Header+"\n\n"+firstNonEmpty(segment.VideoPromptOverride, segment.VideoPrompt))) > max {
+					if max := request.PromptMaxChars; max > 0 && utf8.RuneCountInString(strings.TrimSpace(request.Header+"\n\n"+dramaSegmentRequestPrompt(*segment, request))) > max {
 						blocked("段提示词与最新资产说明超过所选模型上限，请精简资产描述或提示词，或换用上限更大的模型；原段稿已保留")
 					}
 					for _, ref := range append(refs, audios...) {

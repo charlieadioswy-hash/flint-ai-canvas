@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Button } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Button, Popover } from "antd";
+import { ChevronDown } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { formatDramaCredits } from "@/lib/drama/drama-format";
@@ -32,6 +34,8 @@ export type WorkflowBatchProps = {
     triggerLabel?: string;
     scopeDescription?: string;
     compact?: boolean;
+    popover?: boolean;
+    noticeMount?: HTMLElement | null;
     onBusyChange?: (busy: boolean) => void;
     regenerate?: boolean;
     restyleSegments?: boolean;
@@ -73,6 +77,8 @@ function WorkflowBatchSession({
     triggerLabel,
     scopeDescription,
     compact,
+    popover,
+    noticeMount,
     onBusyChange,
     regenerate,
     restyleSegments,
@@ -88,6 +94,9 @@ function WorkflowBatchSession({
     const [state, setState] = useState<BatchState>(INITIAL);
     const [buttonQuotes, setButtonQuotes] = useState<Partial<Record<DramaStudioBatchAction, ButtonQuote>>>({});
     const [quoteEpoch, setQuoteEpoch] = useState(0);
+    const [actionsOpen, setActionsOpen] = useState(false);
+    const triggerHost = useRef<HTMLSpanElement>(null);
+    const focusAction = useCallback((node: HTMLDivElement | null) => node?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(), []);
     const quoteSignature = JSON.stringify([signature, revision, quoteEpoch]);
     const stateRef = useRef(state);
     stateRef.current = state;
@@ -264,9 +273,14 @@ function WorkflowBatchSession({
         locked.current = false;
         setState((current) => (current.phase === "uncertain" ? { ...current, open: false } : INITIAL));
     };
-    return (
-        <div className={`drama-workflow-batch ${compact ? "is-compact" : ""}`}>
-            {!compact ? <span>已选 {ids.length} 项</span> : null}
+    const canOpenActions = ids.length > 0 || state.phase === "uncertain";
+    const closeActions = () => {
+        if (!popover) return;
+        setActionsOpen(false);
+        triggerHost.current?.querySelector("button")?.focus();
+    };
+    const actionButtons = (
+        <>
             {actions.map((action) => {
                 const quoted = buttonQuotes[action]?.signature === quoteSignature ? buttonQuotes[action] : undefined;
                 const media = action !== "segment_prompt";
@@ -282,19 +296,37 @@ function WorkflowBatchSession({
                         disabled={disabled || !validScope || busy || state.phase === "uncertain" || (media && !canGenerate)}
                         title={reason}
                         loading={busy && state.action === action}
-                        onClick={() => (media ? void confirm({ open: false, action, phase: "ready", preview: quoted?.preview, signature }) : void check(action))}
+                        onClick={() => {
+                            closeActions();
+                            if (media) void confirm({ open: false, action, phase: "ready", preview: quoted?.preview, signature });
+                            else void check(action);
+                        }}
                     >
                         {media ? generationLabel(scopedLabel, quoted?.preview, Boolean(validScope && !disabled && (!quoted || quoted.loading))) : label}
                     </Button>
                 );
             })}
             {onClearSelection ? (
-                <Button size="small" type="text" disabled={!ids.length || busy} onClick={onClearSelection}>
+                <Button
+                    size="small"
+                    type="text"
+                    disabled={!ids.length || busy}
+                    onClick={() => {
+                        closeActions();
+                        onClearSelection();
+                    }}
+                >
                     清空选择
                 </Button>
             ) : null}
             {state.phase === "uncertain" && !state.open ? (
-                <Button size="small" onClick={() => setState((current) => ({ ...current, open: true }))}>
+                <Button
+                    size="small"
+                    onClick={() => {
+                        closeActions();
+                        setState((current) => ({ ...current, open: true }));
+                    }}
+                >
                     查看待核对批次
                 </Button>
             ) : null}
@@ -303,20 +335,79 @@ function WorkflowBatchSession({
                     重新计价
                 </Button>
             ) : null}
-            {ids.length > 200 ? <span role="alert">每批最多选择 200 项</span> : null}
-            {actions
-                .filter((action) => action !== "segment_prompt")
-                .map((action) => {
-                    const quoted = buttonQuotes[action]?.signature === quoteSignature ? buttonQuotes[action] : undefined;
-                    const reason = quoted?.error || quoted?.preview?.reason || quoted?.preview?.items.find((item) => item.status === "blocked" || item.status === "failed" || item.status === "conflict")?.reason;
-                    return reason ? (
-                        <span key={action} role="status">
-                            {reason}
-                        </span>
-                    ) : null;
-                })}
-            {!state.open && state.phase === "submitted" ? <span role="status">已加入队列 {queued} 项</span> : null}
-            {!state.open && state.notice ? <span role="status">{state.notice}</span> : null}
+        </>
+    );
+    const notices = [
+        ids.length > 200 ? (
+            <span key="scope" role="alert">
+                每批最多选择 200 项
+            </span>
+        ) : null,
+        ...actions
+            .filter((action) => action !== "segment_prompt")
+            .map((action) => {
+                const quoted = buttonQuotes[action]?.signature === quoteSignature ? buttonQuotes[action] : undefined;
+                const reason = quoted?.error || quoted?.preview?.reason || quoted?.preview?.items.find((item) => item.status === "blocked" || item.status === "failed" || item.status === "conflict")?.reason;
+                return reason ? (
+                    <span key={action} role="status">
+                        {reason}
+                    </span>
+                ) : null;
+            }),
+        !state.open && state.phase === "submitted" ? (
+            <span key="queued" role="status">
+                已加入队列 {queued} 项
+            </span>
+        ) : null,
+        !state.open && state.notice ? (
+            <span key="refresh" role="status">
+                {state.notice}
+            </span>
+        ) : null,
+    ].filter(Boolean);
+    return (
+        <div className={`drama-workflow-batch ${compact ? "is-compact" : ""}`}>
+            {!compact ? <span>已选 {ids.length} 项</span> : null}
+            {popover ? (
+                <span
+                    ref={triggerHost}
+                    onKeyDown={(event) => {
+                        if (event.key !== "Escape" || !actionsOpen) return;
+                        event.stopPropagation();
+                        closeActions();
+                    }}
+                >
+                    <Popover
+                        trigger="click"
+                        placement="bottomRight"
+                        open={actionsOpen && canOpenActions}
+                        onOpenChange={(open) => setActionsOpen(open && canOpenActions && !busy)}
+                        destroyOnHidden
+                        content={
+                            <div ref={focusAction} className="drama-workflow-batch-popover" role="dialog" aria-label="批量操作">
+                                <p className="drama-workflow-batch-scope">{scopeDescription || `已选 ${ids.length} 段`}</p>
+                                {actionButtons}
+                            </div>
+                        }
+                    >
+                        <Button
+                            size="small"
+                            icon={<ChevronDown className="size-3.5" />}
+                            iconPlacement="end"
+                            aria-label={`批量操作，已选 ${ids.length} 段`}
+                            aria-haspopup="dialog"
+                            aria-expanded={actionsOpen && canOpenActions}
+                            aria-disabled={!canOpenActions || busy}
+                            loading={busy}
+                        >
+                            批量操作{ids.length ? ` · ${ids.length} 段` : ""}
+                        </Button>
+                    </Popover>
+                </span>
+            ) : (
+                actionButtons
+            )}
+            {noticeMount === undefined ? notices : noticeMount && notices.length ? createPortal(<div className="drama-workflow-batch-notices">{notices}</div>, noticeMount) : null}
             <AppModal
                 open={state.open}
                 title={state.action ? ACTION_LABEL[state.action] : "批量制作"}

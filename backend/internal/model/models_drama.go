@@ -190,6 +190,7 @@ type DramaShot struct {
 	ProjectID string `json:"projectId" gorm:"index;size:36"`
 	EpisodeID string `json:"episodeId" gorm:"size:36;index:idx_drama_shots_episode_position,priority:1"`
 	Position  int    `json:"position" gorm:"index:idx_drama_shots_episode_position,priority:2"`
+	Name      string `json:"name,omitempty" gorm:"size:120;not null;default:''"`
 	// SegmentIndex/SegmentTitle 把一集切成剧情段；一段总时长不超过视频模型单次上限，一段生成一个视频。
 	SegmentIndex int    `json:"segmentIndex"`
 	SegmentTitle string `json:"segmentTitle" gorm:"size:240"`
@@ -238,6 +239,7 @@ type DramaSegment struct {
 	VideoModelJSON string `json:"videoModelJson" gorm:"type:text"`
 	// ReferenceCastIDsJSON 为空表示按镜头自动取参考图；非空是用户为本段指定的设定 ID 列表（顺序即参考图编号，可为 []）。
 	ReferenceCastIDsJSON string `json:"referenceCastIdsJson" gorm:"type:text"`
+	ReferenceLabelsJSON  string `json:"-" gorm:"type:text;not null;default:''"`
 	// ReferenceImagesJSON 保存用户上传或从素材库选择的附加参考图，排在设定图之后。
 	ReferenceImagesJSON string `json:"referenceImagesJson" gorm:"type:text"`
 	// AudioCastIDsJSON 为空时按对白自动选择；[] 表示手动关闭全部角色音色。

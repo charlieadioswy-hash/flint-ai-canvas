@@ -128,6 +128,38 @@ func TestDramaShotPromptReferenceNumbersFollowActualAttachments(t *testing.T) {
 	}
 }
 
+func TestDramaShotPromptResolvesManualSubjectAgainstShotAttachments(t *testing.T) {
+	s, db, saved := shotPromptFixture(t)
+	manual := strings.Replace(shotPromptWritten, "秦子武（参考图2）缓缓侧身", "@[segment-cast:prompt-hero]缓缓侧身", 1)
+	if err := db.Model(&model.DramaSegment{}).Where("id = ?", "prompt-segment").Updates(map[string]any{
+		"video_prompt_override": manual, "reference_cast_ids_json": `["prompt-brother"]`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, operation, firstFrame, expected string
+		images                                []string
+	}{
+		{name: "numbered reference", operation: "reference_to_video", images: []string{"ref-two", "ref-one"}, expected: "参考图2缓缓侧身"},
+		{name: "pinned first frame", operation: "image_to_video", firstFrame: "ref-one", expected: "秦子武缓缓侧身"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			draft := saved.Config
+			draft.Operation, draft.FirstFrameResourceID, draft.LastFrameResourceID = tt.operation, tt.firstFrame, ""
+			draft.ReferenceResourceIDs = tt.images
+			draft.ReferenceSubjects = map[string]string{"ref-one": "prompt-hero"}
+			got, err := s.QuoteDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, body, found := strings.Cut(got.Config.Prompt, "【00.00—05.00秒")
+			if !found || !strings.Contains(body, tt.expected) || !strings.Contains(body, "衣袖随动作轻摆") || strings.Contains(body, "segment-cast:") {
+				t.Fatalf("written shot body did not keep its subject binding:\n%s", got.Config.Prompt)
+			}
+		})
+	}
+}
+
 func TestDramaShotPromptRefreshesAutomaticDraftAndKeepsQuoteSaveScopeStable(t *testing.T) {
 	s, db, saved := shotPromptFixture(t)
 	draft := saved.Config

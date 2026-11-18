@@ -254,7 +254,11 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                 for (const key of ["scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
                 if (!routeEpisodeId && confirmedEpisodeId) params.set("episode", confirmedEpisodeId);
             }
-            params.set("step", resolveWorkflowStep(next));
+            if (expectedStep === "story") {
+                for (const key of ["scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
+                if (!routeEpisodeId && confirmedEpisodeId) params.set("episode", confirmedEpisodeId);
+            }
+            params.set("step", expectedStep === "story" ? "preview" : resolveWorkflowStep(next));
             // 只放行服务端确认成功后的这一次内部推进，编辑/确认期间的离开保护继续生效。
             if (routeEpisodeId && confirmedEpisodeId && routeEpisodeId !== confirmedEpisodeId) {
                 const pathname = `/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(confirmedEpisodeId)}`;
@@ -476,16 +480,10 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     ) : null;
     const hasFooterAction = active === "style" || active === "source" || (active === "review" && (managing || Boolean(routeEpisodeId) || stage !== "configuring"));
     const storyHeaderActions =
-        active === "story" && (footerStatus || stage === "story") ? (
+        active === "story" && footerStatus ? (
             <>
                 {footerStatus}
-                {settingsStale ? (
-                    <Button onClick={() => setSettingsDraft(null)}>重新载入配置</Button>
-                ) : stage === "story" ? (
-                    <Button type="primary" disabled={!canConfirm} loading={confirm.isPending} onClick={() => confirm.mutate({ expectedStep: "story", ticket: operation.capture() })}>
-                        完成分镜编排
-                    </Button>
-                ) : null}
+                {settingsStale ? <Button onClick={() => setSettingsDraft(null)}>重新载入配置</Button> : null}
             </>
         ) : undefined;
 
@@ -693,6 +691,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     summary={episodeSummary!}
                                     step={active}
                                     headerActions={storyHeaderActions}
+                                    onConfirmPreview={stage === "story" && canConfirm ? (episodeId) => confirm.mutate({ expectedStep: "story", episodeId, ticket: operation.capture() }) : undefined}
+                                    previewPending={confirm.isPending}
                                     onChanged={refresh}
                                     busy={confirm.isPending || saveStyle.isPending || episodeConfigurationBusy}
                                     onDirtyChange={sourceChanged}

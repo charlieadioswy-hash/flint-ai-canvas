@@ -36,6 +36,10 @@
     padding-block: var(--space-2);
 }
 
+.app-user-workspace .app-workspace-stage:has(.drama-workflow-page .drama-shot-media.is-page) > .app-workspace-topbar {
+    display: none;
+}
+
 .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension:has(.drama-project-topbar),
 .app-user-workspace .app-workspace-shell.is-project-workspace .app-workspace-topbar-extension > .drama-project-topbar {
     display: contents;

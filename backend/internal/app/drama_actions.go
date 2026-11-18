@@ -413,7 +413,7 @@ func (s *Service) RescriptDramaEpisode(userID string, projectID string, episodeI
 	return s.DramaEpisodeDetail(userID, projectID, episodeID)
 }
 
-// UpdateDramaShot 修改镜头内容，并只把受影响的下游槽位标为过期。
+// UpdateDramaShot 修改镜头名称或内容，并只把受内容影响的下游槽位标为过期。
 func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDramaShotRequest) (model.DramaShot, error) {
 	project, p, err := s.dramaForUser(userID, projectID)
 	if err != nil {
@@ -465,6 +465,26 @@ func (s *Service) UpdateDramaShot(userID, projectID, shotID string, req UpdateDr
 			}
 			shot.DurationMs = duration
 			fields["duration_ms"] = duration
+		}
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if utf8.RuneCountInString(name) > 120 {
+			return model.DramaShot{}, BadAuthRequest("镜头名称不能超过 120 个字符")
+		}
+		if name != shot.Name {
+			if len(fields) == 0 {
+				err := s.withDramaTextEdit(projectID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
+					return tx.RenameDramaShot(project.ID, shot.ID, name)
+				})
+				if err != nil {
+					return model.DramaShot{}, err
+				}
+				shot.Name = name
+				return *shot, nil
+			}
+			shot.Name = name
+			fields["name"] = name
 		}
 	}
 	if len(fields) == 0 {

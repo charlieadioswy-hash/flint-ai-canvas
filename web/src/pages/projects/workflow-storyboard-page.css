@@ -238,25 +238,17 @@
     inset: 0;
 }
 
-.drama-storyboard-shot-time,
-.drama-storyboard-shot-open {
+.drama-storyboard-shot-time {
     position: absolute;
     bottom: var(--space-2);
+    left: var(--space-2);
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
     color: var(--foreground);
     background: var(--surface);
     font-size: var(--fs-micro);
-}
-
-.drama-storyboard-shot-time {
-    left: var(--space-2);
-}
-.drama-storyboard-shot-open {
-    right: var(--space-2);
 }
 
 .drama-storyboard-shot-content {
@@ -273,8 +265,12 @@
 }
 
 .drama-storyboard-shot-content h5 {
+    min-width: 0;
+    overflow: hidden;
     font-size: var(--fs-label);
     font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .drama-storyboard-shot-description {
@@ -294,6 +290,7 @@
     color: var(--foreground);
 }
 .drama-storyboard-shot-state {
+    flex-shrink: 0;
     color: var(--drama-muted);
     font-size: var(--fs-micro);
 }
@@ -386,6 +383,12 @@
 .drama-storyboard-shot-edit {
     margin-left: auto;
     color: var(--drama-muted);
+}
+.drama-storyboard-shot-video-preview {
+    display: block;
+    width: 100%;
+    max-height: 70dvh;
+    object-fit: contain;
 }
 .drama-storyboard-page :is(button, a):focus-visible {
     outline: 2px solid var(--control-focus-ring);

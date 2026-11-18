@@ -45,7 +45,8 @@ const (
 	// 短剧作品预算已用完（含关联画布上的精修花费）：画布生成任务也被拒绝，提高预算后可继续。
 	ReasonDramaBudgetExhausted ErrorReason = "drama_budget_exhausted"
 	// 采用到剧情段时段版本已变（调度或其他页面刚改过），客户端需刷新后重新确认。
-	ReasonDramaSegmentChanged ErrorReason = "drama_segment_changed"
+	ReasonDramaSegmentChanged         ErrorReason = "drama_segment_changed"
+	ReasonDramaCastDeleteScopeChanged ErrorReason = "drama_cast_delete_scope_changed"
 	// 删除的集生成过视频：客户端需让用户输入“第 N 集”，带 confirm 重新提交。
 	ReasonDramaEpisodeConfirmRequired ErrorReason = "drama_episode_confirm_required"
 	// 插话时本轮已经结束：客户端把这条留在本机队列，作为下一轮发送。

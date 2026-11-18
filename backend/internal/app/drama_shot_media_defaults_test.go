@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -42,7 +44,7 @@ func TestDramaShotMediaDefaultsUseSelectedLookAndOwnedReadyReferences(t *testing
 				&model.DramaCast{ID: "pending", ProjectID: "drama-project", Kind: "character", ImageStatus: model.DramaMediaReady, ImageResourceID: "unready"},
 				&model.DramaCast{ID: "deleted", ProjectID: "drama-project", Kind: "character", ImageStatus: model.DramaMediaReady, ImageResourceID: "missing"},
 				&model.DramaCast{ID: "duplicate-prop", ProjectID: "drama-project", Kind: "prop", ImageStatus: model.DramaMediaReady, ImageResourceID: "ref-two"},
-				&model.DramaCast{ID: "prop", ProjectID: "drama-project", Kind: "prop", ImageStatus: model.DramaMediaReady, ImageResourceID: "prop-image"},
+				&model.DramaCast{ID: "prop", ProjectID: "drama-project", Kind: "prop", ImageStatus: model.DramaMediaRunning, ImageResourceID: "prop-image"},
 				&model.DramaCast{ID: "scene", ProjectID: "drama-project", Kind: "scene", ImageStatus: model.DramaMediaReady, ImageResourceID: "scene-image"},
 			} {
 				if err := db.Create(row).Error; err != nil {
@@ -79,6 +81,162 @@ func TestDramaShotMediaDefaultsUseSelectedLookAndOwnedReadyReferences(t *testing
 				t.Fatalf("model limit = %+v, %v", view.Config, err)
 			}
 		})
+	}
+}
+
+func TestDramaShotMediaDefaultsUseEpisodeVideoResolution(t *testing.T) {
+	for _, tc := range []struct{ name, configured, want string }{
+		{"supported alias", "1080P", "1080p"},
+		{"unsupported", "768p", "768p"},
+		{"model default", "", "720p"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, db := newShotMediaDefaultsFixture(t, "reference_video")
+			p, err := s.repo.DramaProduction("drama-project")
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := parseDramaSettings(p.SettingsJSON)
+			settings.VideoResolution = "480p"
+			if err := db.Model(p).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+				t.Fatal(err)
+			}
+			settings.VideoResolution = tc.configured
+			if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "episode").Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+				t.Fatal(err)
+			}
+			view, err := s.DramaShotMedia("user", "drama-project", "real-shot", "video")
+			if err != nil || view.ID != "" || view.Config.Resolution != tc.want {
+				t.Fatalf("first view resolution = %q, want %q: %+v, %v", view.Config.Resolution, tc.want, view, err)
+			}
+		})
+	}
+}
+
+func TestDramaShotMediaDefaultsRecoverLegacyScreenSettings(t *testing.T) {
+	s, db, saved := shotMediaFixture(t)
+	p, err := s.repo.DramaProduction(saved.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := parseDramaSettings(p.SettingsJSON)
+	settings.AspectRatio = "16:9"
+	settings.VideoResolution = "1080p"
+	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", saved.EpisodeID).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ ratio, resolution, wantRatio, wantResolution string }{
+		{"", "", "16:9", "1080p"},
+		{"auto", "auto", "16:9", "1080p"},
+		{"9:16", "auto", "9:16", "1080p"},
+		{"auto", "720p", "16:9", "720p"},
+		{"9:16", "720p", "9:16", "720p"},
+	} {
+		config := saved.Config
+		config.AspectRatio, config.Resolution = tc.ratio, tc.resolution
+		legacy, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&model.DramaShotMedia{}).Where("id = ?", saved.ID).UpdateColumn("config_json", string(legacy)).Error; err != nil {
+			t.Fatal(err)
+		}
+		view, err := s.DramaShotMedia("user", saved.ProjectID, saved.ShotID, "video")
+		if err != nil || view.Revision != saved.Revision || view.Config.AspectRatio != tc.wantRatio || view.Config.Resolution != tc.wantResolution || view.Config.FirstFrameResourceID != "ref-one" || view.Config.LastFrameResourceID != "ref-two" {
+			t.Fatalf("wrong legacy settings for %+v, frames should stay intact: %+v, %v", tc, view.Config, err)
+		}
+	}
+}
+
+func TestDramaShotVideoRejectsMissingOrIncompatibleScreenSettings(t *testing.T) {
+	s, _, saved := shotMediaFixture(t)
+	for _, tc := range []struct{ ratio, resolution, reason string }{
+		{"9:16", "", "请选择镜头视频分辨率"},
+		{"9:16", "auto", "请选择镜头视频分辨率"},
+		{"auto", "720p", "请选择镜头视频画幅"},
+		{"9:16", "768p", "请选择可用分辨率"},
+		{"2:1", "720p", "请选择可用画幅"},
+	} {
+		draft := saved.Config
+		draft.AspectRatio, draft.Resolution = tc.ratio, tc.resolution
+		request := DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft}
+		if _, err := s.SaveDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", request); !isAppErrorStatus(err, 400) || !strings.Contains(err.Error(), tc.reason) {
+			t.Fatalf("invalid settings were saved or reported incorrectly for %+v: %v", tc, err)
+		}
+		quote, err := s.QuoteDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", request)
+		if err != nil || quote.Ready || quote.Priced || !strings.Contains(quote.Reason, tc.reason) {
+			t.Fatalf("invalid settings were admitted or reported incorrectly for %+v: %+v, %v", tc, quote, err)
+		}
+	}
+}
+
+func TestDramaShotMediaDefaultsTranslateFixedScreenResolutionAtSubmission(t *testing.T) {
+	s, db := newShotMediaDefaultsFixture(t, "reference_video")
+	capability := autoDLProfile(t, false)
+	capability.Video.DefaultResolution = "768p横"
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "video-cm").Updates(map[string]any{
+		"protocol": "autodl-comfyui", "provider_model_key": "minimax_h3_zm_u24", "capability_config_json": mustEncodeModelCapabilityConfig(t, capability),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.repo.DramaProduction("drama-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shot, err := s.repo.DramaShot("drama-project", "real-shot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := parseDramaSettings(p.SettingsJSON)
+	settings.AspectRatio = "9:16"
+	for _, tc := range []struct{ configured, option, protocol string }{{"480p", "480p", "480p竖"}, {"", "768p", "768p竖"}, {"1080p", "1080p", ""}} {
+		settings.VideoResolution = tc.configured
+		if err := db.Model(&model.DramaEpisode{}).Where("id = ?", "episode").Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+			t.Fatal(err)
+		}
+		view, err := s.DramaShotMedia("user", shot.ProjectID, shot.ID, "video")
+		if err != nil || view.Config.Resolution != tc.option {
+			t.Fatalf("editor resolution = %q, want %q: %v", view.Config.Resolution, tc.option, err)
+		}
+		if tc.protocol == "" {
+			if _, err := s.SaveDramaShotMedia("user", shot.ProjectID, shot.ID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &view.Revision, Config: view.Config}); !isAppErrorStatus(err, 400) || !strings.Contains(err.Error(), "1080p") {
+				t.Fatalf("unsupported fixed-screen tier should require an explicit correction: %v", err)
+			}
+			continue
+		}
+		input, err := s.dramaShotMediaInput(s.repo, "user", *shot, "video", view.Config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := input["config"].(map[string]any)
+		if config["size"] != "" || config["vquality"] != tc.protocol {
+			t.Fatalf("protocol config = %+v, want %s and no independent aspect ratio", config, tc.protocol)
+		}
+	}
+}
+
+func TestDramaShotMediaDefaultsKeepSavedEmptyReferenceSelection(t *testing.T) {
+	s, db := newShotMediaDefaultsFixture(t, "reference_video")
+	if err := db.Create(&model.DramaCast{ID: "hero", ProjectID: "drama-project", Kind: "character", ImageStatus: model.DramaMediaReady, ImageResourceID: "ref-one"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.DramaShot{}).Where("id = ?", "real-shot").Update("cast_ids_json", `["hero"]`).Error; err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.DramaShotMedia("user", "drama-project", "real-shot", "video")
+	if err != nil || !slices.Equal(view.Config.ReferenceResourceIDs, []string{"ref-one"}) {
+		t.Fatalf("unexpected initial references: %+v, %v", view.Config, err)
+	}
+	view.Config.ReferenceResourceIDs = []string{}
+	if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &view.Revision, Config: view.Config}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.DramaCast{}).Where("id = ?", "hero").Update("image_resource_id", "ref-two").Error; err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.DramaShotMedia("user", "drama-project", "real-shot", "video")
+	if err != nil || stored.ID == "" || len(stored.Config.ReferenceResourceIDs) != 0 || len(stored.Config.ReferenceSubjects) != 0 {
+		t.Fatalf("saved empty references were refilled: %+v, %v", stored.Config, err)
 	}
 }
 

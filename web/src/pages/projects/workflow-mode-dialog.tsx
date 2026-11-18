@@ -5,8 +5,9 @@ import { Button, InputNumber, Select } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
-import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
+import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionTiers, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
 import { shotTarget } from "@/lib/drama/storyboard";
+import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import { updateDramaEpisodeStyle, updateDramaSettings, type DramaEpisodeStyle, type DramaSettings, type DramaSummary } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -78,6 +79,8 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
     const sample = DRAMA_STYLES.find((item) => item.name === draft.styleName && item.prompt === draft.stylePrompt)?.cover || "/short-drama-styles/chinese-2d.jpg";
     const videoOptions = catalog.data?.options.video || [];
     const videoModel = videoOptions.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.models.video));
+    const videoResolution = dramaVideoResolutionValue(videoModel, draft.videoResolution);
+    const resolutionOptions = dramaVideoResolutionTiers(videoModel ? [videoModel] : []).map((value) => ({ value, label: formatVideoResolutionLabel(value) }));
     const stale = revision < summary.production.revision || Boolean(episodeStyle && episodeRevision !== undefined && episodeRevision < episodeStyle.episodeRevision);
     const generationKey = JSON.stringify(generationConfiguration(draft));
     const generationDirty = generationKey !== JSON.stringify(generationConfiguration(baseline.current));
@@ -85,7 +88,7 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
     const hasImage = mode === "storyboard";
     const continuity = draft.videoContinuity || "tail_frame";
     const ratioIssue = hasVideo ? dramaVideoRatioIssue(videoModel, draft.aspectRatio) : "";
-    const resolutionIssue = hasVideo ? dramaVideoResolutionIssue(videoModel, draft.videoResolution) : "";
+    const resolutionIssue = !hasVideo || videoResolution ? "" : !videoModel ? "请选择可用的视频模型" : resolutionOptions.length ? "请选择当前视频模型支持的分辨率" : "当前视频模型没有可选分辨率，请更换模型";
     const continuityIssue = hasVideo && videoModel && continuity === "tail_frame" && !videoModel.tailFrameChain ? "不支持尾帧续接，请改为各段独立生成或更换模型" : "";
     const configIssue = ratioIssue || resolutionIssue || continuityIssue;
     const disabled = busy || mediaSaving || stale;
@@ -131,6 +134,7 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
     };
     const persistGeneration = () => {
         if (write.current) return write.current;
+        if (configIssue) return Promise.resolve(false);
         if (JSON.stringify(generationConfiguration(latestDraft.current)) === JSON.stringify(generationConfiguration(baseline.current))) return Promise.resolve(true);
         const ticket = operation.capture();
         const target = latestDraft.current;
@@ -329,12 +333,11 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
                                             <span>视频分辨率</span>
                                             <Select
                                                 aria-label="分镜视频分辨率"
-                                                disabled={disabled}
-                                                value={draft.videoResolution || ""}
-                                                options={[
-                                                    { value: "", label: "模型默认" },
-                                                    ...[...new Set([draft.videoResolution, ...(videoModel?.videoResolutions || [])])].filter((value): value is string => Boolean(value)).map((value) => ({ value, label: value })),
-                                                ]}
+                                                aria-required={hasVideo}
+                                                disabled={disabled || !resolutionOptions.length}
+                                                value={videoResolution || undefined}
+                                                placeholder="选择分辨率"
+                                                options={resolutionOptions}
                                                 onChange={(videoResolution) => update({ videoResolution })}
                                             />
                                         </label>
@@ -353,7 +356,7 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
                                         />
                                     </label>
                                     {ratioIssue ? <p role="alert">当前视频模型{ratioIssue}</p> : null}
-                                    {resolutionIssue ? <p role="alert">当前视频模型{resolutionIssue}</p> : null}
+                                    {resolutionIssue ? <p role="alert">{resolutionIssue}</p> : null}
                                     {continuityIssue ? <p role="alert">当前视频模型{continuityIssue}</p> : null}
                                     {mode === "smart_director" || mode === "storyboard" ? <p className="drama-workflow-mode-template">分镜风格：{mode === "smart_director" ? "智能导演 · 剧集版" : "手绘故事板 · 详细分镜版"}</p> : null}
                                 </>

@@ -292,7 +292,6 @@ export function ReferenceBoard({
                                     <div className="drama-sdx-frame-note">
                                         <span>{first ? "开场段：无首帧，按提示词与参考图生成" : request.firstFrameResourceId ? `首帧：第 ${segment.index} 段尾帧` : `首帧：等待第 ${segment.index} 段视频生成`}</span>
                                     </div>
-                                    <small className="drama-sdx-hint">调整卡片顺序会更新参考图编号。模型撰写的提示词需重新撰写；手写提示词请核对编号。移除只取消本段引用。</small>
                                 </>
                             }
                             voiceActions={

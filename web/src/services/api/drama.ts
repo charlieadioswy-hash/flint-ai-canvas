@@ -127,7 +127,9 @@ export type DramaWorkflowImpact = {
     kind: "style" | "cast";
     revision: number;
     castId?: string;
+    deleteScopeToken?: string;
     segments: number;
+    shots?: number;
     episodes: number;
     affectedSegments: number;
     assetIds: string[];
@@ -438,6 +440,7 @@ export type DramaSummary = {
 
 export type DramaShot = {
     id: string;
+    name?: string;
     projectId: string;
     episodeId: string;
     position: number;
@@ -580,6 +583,8 @@ export type DramaSegment = {
     /** auto 按本段镜头自动取参考图；custom 为手动指定（顺序即参考图编号）。 */
     referenceMode: "auto" | "custom";
     audioReferenceMode: "auto" | "custom";
+    /** 段提示词可引用的资产，包括未选为附件的主体。 */
+    promptSubjects?: DramaSegmentReference[];
     request: DramaSegmentRequest;
     promptJob?: DramaJob;
     videoJob?: DramaJob;
@@ -587,7 +592,7 @@ export type DramaSegment = {
     videoWait?: string;
 };
 
-/** 参考图编号与提交顺序一致；sent=false 表示未就绪或超过模型上限，不随请求发送。 */
+/** label 是编辑顺位；提交时仅给 sent 的图片连续编号。 */
 export type DramaSegmentReference = { castId: string; label: string; kind: DramaCastKind | "image"; name: string; resourceId?: string; sent: boolean };
 
 export type DramaReferenceImage = { resourceId: string; name: string };
@@ -599,6 +604,8 @@ export type DramaSegmentReferencePatch = { referenceCastIds?: string[]; autoRefe
  * firstFramePending：上一段视频还没生成，本段要等它完成后才能提交。
  */
 export type DramaSegmentRequest = {
+    /** 发送给视频模型的正文，和界面使用的资产引用分开。 */
+    resolvedPrompt?: string;
     operation: "image_to_video" | "reference_to_video" | "text_to_video" | "";
     seconds: number;
     maxVideoSeconds: number;
@@ -950,7 +957,7 @@ export function ensureDramaEpisodeStoryboard(projectId: string, episodeId: strin
     return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboard/ensure`);
 }
 
-export type DramaShotPatch = Partial<Pick<DramaShot, "speaker" | "dialogue" | "action" | "shotSize" | "camera" | "imagePrompt" | "videoPrompt">> & { transition?: DramaTransition; durationSeconds?: number; expectedRevision?: number };
+export type DramaShotPatch = Partial<Pick<DramaShot, "name" | "speaker" | "dialogue" | "action" | "shotSize" | "camera" | "imagePrompt" | "videoPrompt">> & { transition?: DramaTransition; durationSeconds?: number; expectedRevision?: number };
 
 /** 让文本模型（重新）撰写指定剧情段的完整视频提示词。 */
 export function writeDramaSegmentPrompts(projectId: string, episodeId: string, segments: number[]) {
@@ -989,9 +996,9 @@ export function createDramaCast(projectId: string, input: DramaCastCreateInput) 
     return http.post<{ cast: DramaCast }>(`${base(projectId)}/cast`, input);
 }
 
-/** 删除未被使用且无在途任务的资产条目，保留已有资源和生成历史。 */
-export function deleteDramaCast(projectId: string, castId: string, expectedRevision: number) {
-    return http.deleteWithBody<{ deleted: boolean; castId: string }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}`, { expectedRevision });
+/** 按已确认的关联范围删除资产，保留已有资源和生成历史。 */
+export function deleteDramaCast(projectId: string, castId: string, expectedRevision: number, deleteScopeToken: string) {
+    return http.deleteWithBody<{ deleted: boolean; castId: string }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}`, { expectedRevision, deleteScopeToken });
 }
 export function importDramaCast(projectId: string, input: { sourceProjectId: string; castIds: string[]; matchByName: boolean; replaceExisting: boolean; episodeId?: string }) {
     return http.post<{ imported: number; skipped: number; cast: DramaCast[] }>(`${base(projectId)}/cast/import`, input);

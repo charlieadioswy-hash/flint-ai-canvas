@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Input, Tooltip } from "antd";
-import { ArrowLeft, ArrowLeftRight, Crop, Download, ImagePlus, LoaderCircle, Plus, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Crop, Download, ImagePlus, LoaderCircle, Plus, Replace, X } from "lucide-react";
 
 import { AssetLibraryPickerModal } from "@/components/assets/asset-library-picker-modal";
 import { ImageCropDialog, type ImageCropRect } from "@/components/image-crop-dialog";
@@ -17,6 +17,7 @@ import { getCachedResourceBlob } from "@/services/resource-blob-cache";
 
 import { MediaThumb } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
+import { WorkflowShotImagePreview } from "./workflow-shot-image-preview";
 import "./workflow-shot-references.css";
 
 type Target = { role: "reference" | "first" | "last"; replaceId?: string };
@@ -29,10 +30,12 @@ type Props = {
     disabled: boolean;
     onChange: (patch: Partial<DramaShotMediaConfig>) => void;
     onBusyChange: (busy: boolean) => void;
+    onRefreshReferences: () => void;
 };
 const KINDS = { character: "角色", scene: "场景", prop: "道具" };
 
-const imageName = (cast: DramaCast) => `${cast.name}${cast.lookName ? ` · ${cast.lookName}` : ""} · ${cast.imageVersion > 1 ? `版本 ${cast.imageVersion}` : "初始版"}`;
+const assetName = (cast: DramaCast) => `${cast.name}${cast.lookName ? ` · ${cast.lookName}` : ""}`;
+const imageName = (cast: DramaCast) => `${assetName(cast)} · ${cast.imageVersion > 1 ? `版本 ${cast.imageVersion}` : "初始版"}`;
 
 function withReferenceSubjects(current: DramaShotMediaConfig, patch: Partial<DramaShotMediaConfig>, image?: PickedImage): Partial<DramaShotMediaConfig> {
     const next = { ...current, ...patch };
@@ -46,12 +49,13 @@ function withReferenceSubjects(current: DramaShotMediaConfig, patch: Partial<Dra
 }
 
 /** 当前镜头的图片绑定；裁剪、换图均不修改项目主体的原图或采用版本。 */
-export function WorkflowShotReferences({ projectId, userId, kind, config, disabled, onChange, onBusyChange }: Props) {
+export function WorkflowShotReferences({ projectId, userId, kind, config, disabled, onChange, onBusyChange, onRefreshReferences }: Props) {
     const scope = useDramaOperationScope(projectId);
     const latest = useRef({ config, onChange });
     latest.current = { config, onChange };
     const casts = useQuery({ queryKey: ["drama-shot-reference-cast", userId, projectId], queryFn: ({ signal }) => listDramaCast(projectId, signal), staleTime: 20_000 });
     const [picker, setPicker] = useState<{ target: Target; cast?: DramaCast }>();
+    const [preview, setPreview] = useState<{ id: string; name: string }>();
     const [library, setLibrary] = useState<Target>();
     const [crop, setCrop] = useState<{ target: Target; image: PickedImage; url: string }>();
     const [working, setWorking] = useState("");
@@ -62,6 +66,20 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
     const locked = useRef(false);
     const frameMode = kind === "video" && config.operation === "image_to_video";
     const disabledActions = disabled || Boolean(working);
+    const castRows = casts.data?.cast || [];
+    const changedReferences =
+        kind === "video" && config.operation === "reference_to_video"
+            ? config.referenceResourceIds
+                  .flatMap((id) => {
+                      const castId = config.referenceSubjects?.[id];
+                      const adopted = castId && castRows.find((cast) => cast.id === castId)?.imageResourceId;
+                      return adopted && adopted !== id ? [id, adopted] : [];
+                  })
+                  .join("\n")
+            : "";
+    useEffect(() => {
+        if (changedReferences) onRefreshReferences();
+    }, [changedReferences, onRefreshReferences]);
     useEffect(() => onBusyChange(Boolean(working || crop)), [working, crop, onBusyChange]);
     useEffect(() => () => onBusyChange(false), [onBusyChange]);
     useEffect(() => {
@@ -76,7 +94,10 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
         [crop],
     );
 
-    const nameOf = (id: string, index = 0) => config.referenceNames?.[id] || ((casts.data?.cast || []).find((cast) => cast.imageResourceId === id) ? imageName(casts.data!.cast.find((cast) => cast.imageResourceId === id)!) : `参考图片 ${index + 1}`);
+    const nameOf = (id: string, index = 0) => {
+        const subject = castRows.find((cast) => cast.id === config.referenceSubjects?.[id]) || castRows.find((cast) => cast.imageResourceId === id);
+        return config.referenceNames?.[id] || (subject ? (subject.imageResourceId === id ? imageName(subject) : assetName(subject)) : `参考图片 ${index + 1}`);
+    };
     const apply = (target: Target, image: PickedImage) => {
         const current = latest.current.config;
         const referenceNames = {
@@ -152,7 +173,8 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
             const resource = await uploadResourceFile(file, "image", { fileName: file.name });
             if (!scope.isCurrent(ticket)) return;
             if (resource.status !== "ready" || !resource.mimeType.startsWith("image/")) throw new Error("裁剪图片尚未保存，请重试");
-            apply(current.target, { id: resource.id, name, castId: current.image.castId });
+            const castId = kind === "video" && current.target.role === "reference" ? undefined : current.image.castId;
+            apply(current.target, { id: resource.id, name, castId });
             setCrop(undefined);
         });
     };
@@ -166,15 +188,16 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
         const cast = casts.data?.cast.find((item) => item.id === config.referenceSubjects?.[id]) || casts.data?.cast.find((item) => item.imageResourceId === id);
         return (
             <div className={`shot-reference-card ${target.role !== "reference" ? "is-frame" : ""}`} key={target.role === "reference" ? id : target.role}>
-                <Tooltip title={id ? "点击切换设定图" : `添加${label}`} placement="top">
+                <Tooltip title={id ? "预览图片" : `添加${label}`} placement="top">
                     <button
                         type="button"
                         className="shot-reference-image"
-                        aria-label={id ? `切换${target.role === "reference" ? name : label}` : `选择${label.replace("图", "")}`}
-                        disabled={disabledActions}
+                        aria-label={id ? `预览${target.role === "reference" ? name : label}` : `选择${label.replace("图", "")}`}
+                        disabled={!id && disabledActions}
                         onClick={() => {
                             setError("");
-                            setPicker({ target, cast });
+                            if (id) setPreview({ id, name });
+                            else setPicker({ target, cast });
                         }}
                     >
                         {id ? <MediaThumb resourceId={id} alt={name} /> : <Plus aria-hidden />}
@@ -182,6 +205,19 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
                 </Tooltip>
                 {id ? (
                     <div className="shot-reference-tools">
+                        <Tooltip title="换图" placement="top">
+                            <button
+                                type="button"
+                                aria-label={`切换${target.role === "reference" ? name : label}`}
+                                disabled={disabledActions}
+                                onClick={() => {
+                                    setError("");
+                                    setPicker({ target, cast });
+                                }}
+                            >
+                                <Replace aria-hidden />
+                            </button>
+                        </Tooltip>
                         <Tooltip title="裁剪图片" placement="top">
                             <button type="button" aria-label={`裁剪${label}`} disabled={disabledActions} onClick={() => void beginCrop(target, { id, name, castId: cast?.id })}>
                                 <Crop aria-hidden />
@@ -296,6 +332,7 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
                     }}
                 />
             </section>
+            {preview ? <WorkflowShotImagePreview key={preview.id} resourceId={preview.id} name={preview.name} onClose={() => setPreview(undefined)} /> : null}
             {picker ? (
                 <SubjectPicker
                     projectId={projectId}
@@ -304,6 +341,7 @@ export function WorkflowShotReferences({ projectId, userId, kind, config, disabl
                     loading={casts.isPending}
                     failed={casts.isError}
                     initialCast={picker.cast}
+                    latestOnly={kind === "video" && picker.target.role === "reference"}
                     disabled={Boolean(working)}
                     onRetry={() => void casts.refetch()}
                     onClose={() => setPicker(undefined)}
@@ -354,6 +392,7 @@ function SubjectPicker({
     loading,
     failed,
     initialCast,
+    latestOnly,
     disabled,
     error,
     onRetry,
@@ -368,6 +407,7 @@ function SubjectPicker({
     loading: boolean;
     failed: boolean;
     initialCast?: DramaCast;
+    latestOnly: boolean;
     disabled: boolean;
     error: string;
     onRetry: () => void;
@@ -378,7 +418,7 @@ function SubjectPicker({
 }) {
     const [kind, setKind] = useState<keyof typeof KINDS>(initialCast?.kind || "character");
     const [search, setSearch] = useState("");
-    const [selected, setSelected] = useState(initialCast);
+    const [selected, setSelected] = useState(latestOnly ? undefined : initialCast);
     const visible = casts.filter((cast) => cast.kind === kind && `${cast.name} ${cast.lookName || ""}`.includes(search.trim()));
     return (
         <AppModal open title={selected ? `切换「${selected.name}」的设定图` : "选择主体图片"} width={760} footer={null} onCancel={onClose} closable={!disabled} mask={{ closable: !disabled }} keyboard={!disabled}>
@@ -432,9 +472,11 @@ function SubjectPicker({
                                             </strong>
                                             <small>{cast.imageResourceId ? "当前设定图" : "尚未生成图片"}</small>
                                         </button>
-                                        <button type="button" disabled={disabled} onClick={() => setSelected(cast)}>
-                                            查看其他设定图
-                                        </button>
+                                        {!latestOnly ? (
+                                            <button type="button" disabled={disabled} onClick={() => setSelected(cast)}>
+                                                查看其他设定图
+                                            </button>
+                                        ) : null}
                                     </div>
                                 ))}
                                 {!visible.length ? (

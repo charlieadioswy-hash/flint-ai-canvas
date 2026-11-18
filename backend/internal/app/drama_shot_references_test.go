@@ -88,56 +88,73 @@ func TestDramaShotStableImageTokenDraftSaveAndAdmission(t *testing.T) {
 	assertShotReferencesNoTasksOrCharge(t, db)
 }
 
-func TestDramaShotReferenceSubjectsPreserveAlternateImages(t *testing.T) {
-	for _, source := range []string{"history", "view", "crop", "new subject", "two views"} {
-		t.Run(source, func(t *testing.T) {
-			s, db, saved := shotPromptFixture(t)
-			resourceID := "alternate-subject-image"
-			if err := db.Create(&model.Resource{ID: resourceID, UserID: "user", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png"}).Error; err != nil {
-				t.Fatal(err)
-			}
-			castID, name := "prompt-hero", "秦子武"
-			switch source {
-			case "history":
-				if err := db.Create(&model.DramaTake{ID: "hero-history", ProjectID: "drama-project", OwnerID: castID, Kind: "cast", Version: 2, ResourceID: resourceID}).Error; err != nil {
-					t.Fatal(err)
-				}
-			case "view", "two views":
-				if err := db.Create(&model.DramaCastView{ID: "hero-view", ProjectID: "drama-project", CastID: castID, ResourceID: resourceID, Status: model.DramaMediaReady}).Error; err != nil {
-					t.Fatal(err)
-				}
-			case "new subject":
-				castID, name = "extra-subject", "门口路人"
-				if err := db.Create(&model.DramaCast{ID: castID, ProjectID: "drama-project", Name: name, Kind: "character", Appearance: "蓝色长衣"}).Error; err != nil {
-					t.Fatal(err)
-				}
-			}
-			draft := saved.Config
-			draft.Operation, draft.FirstFrameResourceID, draft.LastFrameResourceID = "reference_to_video", "", ""
-			draft.ReferenceResourceIDs = []string{resourceID}
-			draft.ReferenceSubjects = map[string]string{resourceID: castID}
-			if source == "two views" {
-				draft.ReferenceResourceIDs = append(draft.ReferenceResourceIDs, "ref-one")
-				draft.ReferenceSubjects["ref-one"] = castID
-			}
-			quote, err := s.QuoteDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
-			if err != nil || !quote.Ready || !strings.Contains(quote.Config.Prompt, name+"（参考图1）") || strings.Contains(quote.Config.Prompt, "补充图片（参考图1）") || strings.Contains(quote.Config.Prompt, name+"：浅色衬衣") {
-				t.Fatalf("alternate image lost subject association:\n%s\n%v", quote.Config.Prompt, err)
-			}
-			if source == "two views" && !strings.Contains(quote.Config.Prompt, name+"（参考图2）") {
-				t.Fatalf("second view lost its attachment number:\n%s", quote.Config.Prompt)
-			}
-			updated, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
-			if err != nil || !reflect.DeepEqual(updated.Config.ReferenceSubjects, draft.ReferenceSubjects) {
-				t.Fatalf("subject mapping not persisted: %+v %v", updated.Config.ReferenceSubjects, err)
-			}
-			preflight, err := s.PreflightDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaActionRequest{ExpectedRevision: &updated.Revision})
-			if err != nil || !preflight.Ready || preflight.ScopeHash != quote.ScopeHash {
-				t.Fatalf("subject mapping quote/save/preflight differs: %+v %v", preflight, err)
-			}
-			assertShotReferencesNoTasksOrCharge(t, db)
-		})
+func TestDramaShotReferenceSubjectsFollowAdoptedImageThroughExecution(t *testing.T) {
+	s, db, saved := shotPromptFixture(t)
+	for _, id := range []string{"adopted-image", "uploaded-image"} {
+		if err := db.Create(&model.Resource{ID: id, UserID: "user", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png"}).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
+	draft := saved.Config
+	draft.Operation, draft.FirstFrameResourceID, draft.LastFrameResourceID = "reference_to_video", "", ""
+	draft.ReferenceResourceIDs = []string{"uploaded-image", "ref-one"}
+	draft.ReferenceSubjects = map[string]string{"ref-one": "prompt-hero"}
+	draft.ReferenceNames = map[string]string{"ref-one": "秦子武 · 初始版", "uploaded-image": "窗边.png"}
+	draft.Prompt = "@[shot-image:ref-one]看向@[shot-image:uploaded-image]，以参考图2为准。"
+	saved, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := shotMediaConfirmed(t, s, "before-adoption")
+	if err := db.Model(&model.DramaCast{}).Where("id = ?", "prompt-hero").Update("image_resource_id", "adopted-image").Error; err != nil {
+		t.Fatal(err)
+	}
+	current := mustShotMedia(t, s)
+	if current.Revision != saved.Revision || !reflect.DeepEqual(current.Config.ReferenceResourceIDs, []string{"uploaded-image", "adopted-image"}) ||
+		!reflect.DeepEqual(current.Config.ReferenceSubjects, map[string]string{"adopted-image": "prompt-hero"}) ||
+		!reflect.DeepEqual(current.Config.ReferenceNames, map[string]string{"uploaded-image": "窗边.png"}) ||
+		current.Config.Prompt != "@[shot-image:adopted-image]看向@[shot-image:uploaded-image]，以参考图2为准。" {
+		t.Fatalf("reading after adoption affected the wrong binding: %+v", current.Config)
+	}
+	quote, err := s.QuoteDramaShotMedia("user", "drama-project", "real-shot", "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: saved.Config})
+	if err != nil || !quote.Ready || !reflect.DeepEqual(quote.Config, current.Config) {
+		t.Fatalf("quoting a draft still holding old binding returned a different config: %+v, %v", quote, err)
+	}
+	if _, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", before); !isAppErrorStatus(err, 409) {
+		t.Fatalf("quote for outdated adopted image was accepted: %v", err)
+	}
+	assertShotReferencesNoTasksOrCharge(t, db)
+	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "video", shotMediaConfirmed(t, s, "after-adoption"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.repo.Task(task.ID)
+	if err != nil || !strings.Contains(stored.InputJSON, "resource:adopted-image") || !strings.Contains(stored.InputJSON, "resource:uploaded-image") ||
+		strings.Contains(stored.InputJSON, "resource:ref-one") || !strings.Contains(stored.Prompt, "参考图2看向参考图1，以参考图2为准。") {
+		t.Fatalf("task used wrong reference images or numbering: %+v %v", stored, err)
+	}
+}
+
+func TestDramaShotReferenceSubjectsRequireCurrentDistinctImages(t *testing.T) {
+	s, db, saved := shotPromptFixture(t)
+	draft := saved.Config
+	draft.Operation, draft.FirstFrameResourceID, draft.LastFrameResourceID = "reference_to_video", "", ""
+	draft.ReferenceResourceIDs = []string{"ref-one", "ref-two"}
+	draft.ReferenceSubjects = map[string]string{"ref-one": "prompt-hero"}
+	for imageID, want := range map[string]string{"": "当前没有可用的采用图", "ref-two": "同一张主体图片"} {
+		if err := db.Model(&model.DramaCast{}).Where("id = ?", "prompt-hero").Update("image_resource_id", imageID).Error; err != nil {
+			t.Fatal(err)
+		}
+		request := DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft}
+		quote, err := s.QuoteDramaShotMedia("user", "drama-project", "real-shot", "video", request)
+		if err != nil || quote.Ready || !strings.Contains(quote.Reason, want) || !reflect.DeepEqual(quote.Config.ReferenceResourceIDs, draft.ReferenceResourceIDs) {
+			t.Fatalf("unresolvable binding shifted slot numbering or was accepted: %+v %v", quote, err)
+		}
+		if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "video", request); !isAppErrorStatus(err, 400) {
+			t.Fatalf("unresolvable binding was saved: %v", err)
+		}
+	}
+	assertShotReferencesNoTasksOrCharge(t, db)
 }
 
 func TestDramaShotReferenceSubjectsValidateOwnershipAndPruneBindings(t *testing.T) {
@@ -198,7 +215,11 @@ func TestDramaShotManualPromptsKeepExplicitSubjectImageBindings(t *testing.T) {
 			draft.ReferenceSubjects = map[string]string{"alternate-hero": "prompt-hero", "alternate-brother": "prompt-brother"}
 			draft.Prompt = "秦子武看向秦子文。@[shot-image:alternate-hero]在左，@[shot-image:alternate-brother]在右。"
 			updated, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", kind, DramaShotMediaSaveRequest{ExpectedRevision: &revision, Config: draft})
-			if err != nil || updated.Config.Prompt != draft.Prompt {
+			wantPrompt := draft.Prompt
+			if kind == "video" {
+				wantPrompt = "秦子武看向秦子文。@[shot-image:ref-one]在左，@[shot-image:ref-two]在右。"
+			}
+			if err != nil || updated.Config.Prompt != wantPrompt {
 				t.Fatalf("manual prompt changed on save: %+v %v", updated.Config, err)
 			}
 			shot, err := s.repo.DramaShot("drama-project", "real-shot")

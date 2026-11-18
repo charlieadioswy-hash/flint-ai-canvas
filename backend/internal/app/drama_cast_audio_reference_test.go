@@ -1,13 +1,12 @@
 package app
 
 import (
-	"strings"
 	"testing"
 
 	"yingce/backend/internal/model"
 )
 
-func TestDramaCastDeleteProtectsOffscreenAudioReferences(t *testing.T) {
+func TestDramaCastDeleteDetachesOffscreenAudioReferences(t *testing.T) {
 	fixture := newDramaGuideRevisionFixture(t, model.DramaGuideStory)
 	svc, fake := fixture.svc, fixture.fake
 	projectID := fixture.summary.Project.ID
@@ -25,29 +24,18 @@ func TestDramaCastDeleteProtectsOffscreenAudioReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision++
-	err := svc.DeleteDramaCast("usr-drama", projectID, fixture.cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision})
-	requireGuideConflict(t, err)
-	if !strings.Contains(err.Error(), "剧情段") {
-		t.Fatalf("audio-only reference should block deletion as a segment reference: %v", err)
+	if err := svc.DeleteDramaCast("usr-drama", projectID, fixture.cast.ID, reviewedDramaCastDeletion(t, svc, projectID, fixture.cast.ID)); err != nil {
+		t.Fatalf("audio-only reference must be detached: %v", err)
 	}
-	if _, err := svc.repo.DramaCast(projectID, fixture.cast.ID); err != nil {
-		t.Fatalf("rejected deletion must preserve the voice character: %v", err)
+	if _, err := svc.repo.DramaCast(projectID, fixture.cast.ID); err == nil {
+		t.Fatal("voice character still exists")
 	}
 	production, err := svc.repo.DramaProduction(projectID)
-	if err != nil || production.Revision != revision || production.GuideStep != model.DramaGuideStory {
-		t.Fatalf("rejected deletion changed guide state: %+v %v", production, err)
+	if err != nil || production.Revision != revision+1 {
+		t.Fatalf("deletion did not advance guide revision: %+v %v", production, err)
 	}
 	segments, err := svc.repo.DramaSegments(fixture.shot.EpisodeID)
-	if err != nil || len(segments) != 1 || segments[0].AudioCastIDsJSON != encodeStringList(selected) {
-		t.Fatalf("rejected deletion must preserve the audio reference: %+v %v", segments, err)
-	}
-	// Removing the audio reference releases the deletion protection.
-	empty := []string{}
-	if err := svc.UpdateDramaSegment("usr-drama", projectID, fixture.shot.EpisodeID, 0, UpdateDramaSegmentRequest{ExpectedRevision: &revision, AudioCastIDs: &empty}); err != nil {
-		t.Fatal(err)
-	}
-	revision++
-	if err := svc.DeleteDramaCast("usr-drama", projectID, fixture.cast.ID, DeleteDramaCastRequest{ExpectedRevision: &revision}); err != nil {
-		t.Fatalf("character without live references should be deletable: %v", err)
+	if err != nil || len(segments) != 1 || segments[0].AudioCastIDsJSON != "[]" {
+		t.Fatalf("explicit audio reference was not cleared: %+v %v", segments, err)
 	}
 }

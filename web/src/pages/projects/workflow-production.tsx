@@ -5,9 +5,22 @@ import { Clapperboard, Film, Package, RefreshCw } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { ensureDramaEpisodeStoryboard, getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, retryFailedDrama, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaJob, type DramaSegment, type DramaSummary } from "@/services/api/drama";
+import {
+    ensureDramaEpisodeStoryboard,
+    getDramaEpisode,
+    getDramaWorkflowReadiness,
+    renderDramaEpisode,
+    retryFailedDrama,
+    type DramaEpisodeDetail,
+    type DramaEpisodeRow,
+    type DramaJob,
+    type DramaSegment,
+    type DramaShot,
+    type DramaSummary,
+} from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 
+import { parseList } from "./drama-shared";
 import { SimpleEpisodeFinalCard } from "./simple-studio-final-card";
 import { SimpleStudioSegmentEditor } from "./simple-studio-segment-editor";
 import { CastEditorDialog } from "./studio/cast-editor-dialog";
@@ -21,6 +34,7 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowStoryboardPage } from "./workflow-storyboard-page";
 import { WorkflowShotMediaDialog } from "./workflow-shot-media-dialog";
+import { isWorkflowStepAllowed } from "./workflow-state";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
@@ -30,6 +44,8 @@ export type WorkflowProductionProps = {
     step: "story" | "preview";
     onChanged: () => void | Promise<unknown>;
     headerActions?: ReactNode;
+    onConfirmPreview?: (episodeId: string) => void;
+    previewPending?: boolean;
     embedded?: boolean;
     busy?: boolean;
     onDirtyChange?: (dirty: boolean, busy?: boolean, automatic?: boolean) => void;
@@ -85,7 +101,7 @@ function needsStoryboard(detail: DramaEpisodeDetail) {
     );
 }
 
-export function WorkflowProduction({ summary, step, onChanged, headerActions, embedded = false, busy = false, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
+export function WorkflowProduction({ summary, step, onChanged, headerActions, onConfirmPreview, previewPending = false, embedded = false, busy = false, onDirtyChange, onAllowMediaNavigation }: WorkflowProductionProps) {
     const projectId = summary.project.id;
     const userId = useUserStore((state) => state.user?.id || "");
     const selectionOwner = `${userId}:${projectId}`;
@@ -98,6 +114,7 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
     const invalidate = useDramaInvalidate(projectId);
     const [castSelection, setCastSelection] = useState<{ owner: string; episodeId: string; id: string }>();
     const [exportProjectId, setExportProjectId] = useState<string>();
+    const [batchNoticeMount, setBatchNoticeMount] = useState<HTMLDivElement | null>(null);
     const [mediaEditingState, setMediaEditingState] = useState({ dirty: false, busy: false });
     const mediaEditingChanged = useCallback(
         (dirty: boolean, busy = false, automatic = false) => {
@@ -250,29 +267,10 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
         if (readiness.isError) return "本集制作状态读取失败，请刷新后再生成";
         return episodeReadiness(episodeId)?.blockingReason || (videoAllowed(episodeId) ? "" : "正在核对本集文字与提示词，请稍后或刷新");
     };
-    const textProgress = visibleEpisodes.reduce(
-        (result, episode) => {
-            const query = queries[episodes.findIndex((item) => item.id === episode.id)];
-            const detail = query?.data;
-            const current = detail?.episode || episode;
-            if (query?.isError) result.unavailable += 1;
-            else if (textFailure(episode, detail)) result.failedEpisodes.push(episode.number);
-            else if (!detail || current.stage === "queued" || current.stage === "script" || !detail.segments.length) result.pendingEpisodes += 1;
-            else result.readyEpisodes += 1;
-            result.total += detail?.segments.length ?? episode.stats.segments;
-            if (detail) {
-                for (const segment of detail.segments) {
-                    if (segment.promptStatus === "failed") result.failed += 1;
-                    else if (segment.custom || segment.promptStatus === "ready") result.completed += 1;
-                }
-            } else result.completed += episode.stats.promptSucceeded;
-            return result;
-        },
-        { total: 0, completed: 0, failed: 0, readyEpisodes: 0, pendingEpisodes: 0, unavailable: 0, failedEpisodes: [] as number[] },
-    );
-    const textProcessed = textProgress.total ? Math.min(100, Math.round(((textProgress.completed + textProgress.failed) / textProgress.total) * 100)) : 0;
     const openDetail = queries.find((query) => query.data?.episode.id === activeEpisodeId)?.data;
     const currentEpisode = episodes.find((episode) => episode.id === activeEpisodeId);
+    const storyboardNotice = step === "story" && currentEpisode ? mediaBlocker(currentEpisode.id) || (guideStep === "story" ? "本集文字已就绪，可独立生成视频；其他集可继续处理。" : "") : "";
+    const canPreview = step === "story" && currentEpisode && isWorkflowStepAllowed(summary, "preview", { manualPreview: true, episodeId: currentEpisode.id });
     const selectedLabels = Object.fromEntries(
         queries.flatMap((query) => {
             const detail = query.data;
@@ -305,7 +303,7 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
             navigate(destination, { replace });
         } else setSearch(next, { replace });
     };
-    const openSegment = (episodeId: string, index: number | null, shotId?: string, authorizedMediaNavigation = false) => {
+    const openSegment = (episodeId: string, index: number | null, shotId?: string) => {
         replaceQuery(
             episodeId,
             (next) => {
@@ -326,7 +324,6 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                 }
             },
             index === null,
-            authorizedMediaNavigation,
         );
     };
     const openShot = (episodeId: string, shotId?: string, kind?: "image" | "video" | "audio", authorizedMediaNavigation = false) => {
@@ -358,6 +355,38 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
             next.delete("shot");
             next.delete("media");
         });
+    const canOpenVideo = (shot: DramaShot) => {
+        const characters = parseList(shot.castIdsJson);
+        const looks = parseList(shot.lookCastIdsJson);
+        const props = parseList(shot.propIdsJson);
+        if (!characters.length && !looks.length && !props.length && !shot.sceneCastId) return true;
+        if (castQuery.isError) {
+            message.warning("暂时无法检查本镜头的资产图片，请刷新后重试。");
+            return false;
+        }
+        if (castQuery.isPending) {
+            message.info("正在读取本镜头的资产，请稍后重试。");
+            return false;
+        }
+        const lookByCharacter = new Map<string, string>();
+        for (const id of looks) {
+            const parentId = castQuery.byId.get(id)?.parentId;
+            if (parentId && !lookByCharacter.has(parentId)) lookByCharacter.set(parentId, id);
+        }
+        const ids = new Set([...characters.map((id) => lookByCharacter.get(id) ?? id), ...props, ...looks.filter((id) => !castQuery.byId.has(id)), shot.sceneCastId]);
+        const missing: string[] = [];
+        let unavailable = 0;
+        for (const id of ids) {
+            if (!id) continue;
+            const cast = castQuery.byId.get(id);
+            if (!cast) unavailable++;
+            else if (!cast.imageResourceId) missing.push(cast.lookName ? `${cast.name}（${cast.lookName}）` : cast.name);
+        }
+        if (!missing.length && !unavailable) return true;
+        const reasons = [missing.length ? `请先生成这些资产的图片：${missing.join("、")}` : "", unavailable ? `${unavailable} 项关联资产未找到，请检查本镜头的资产关联` : ""].filter(Boolean);
+        message.warning(reasons.join("；"));
+        return false;
+    };
     const mediaShot = step === "story" && search.get("editor") === "media" ? openDetail?.shots.find((shot) => shot.id === search.get("shot")) : undefined;
     const mediaSegmentShots = mediaShot ? openDetail?.shots.filter((shot) => shot.segmentIndex === mediaShot.segmentIndex) : undefined;
     const requestVideo = (episode: DramaEpisodeRow, segment: DramaSegment) => {
@@ -419,8 +448,8 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                         shots={mediaSegmentShots}
                         segmentLabel={`第 ${mediaShot.segmentIndex + 1} 段`}
                         initialKind={search.get("media") === "video" ? "video" : search.get("media") === "audio" ? "audio" : "image"}
+                        canOpenVideo={canOpenVideo}
                         onSelectShot={(shot, kind) => openShot(shot.episodeId, shot.id, kind, true)}
-                        onEditText={() => openSegment(mediaShot.episodeId, mediaShot.segmentIndex, mediaShot.id, true)}
                         onClose={() => openShot(mediaShot.episodeId, undefined, undefined, true)}
                         onChanged={() => void refresh(mediaShot.episodeId)}
                         onDirtyChange={mediaEditingChanged}
@@ -483,34 +512,60 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                         void refresh();
                                     }}
                                 />
-                                {step === "preview" || step === "story" ? (
-                                    <Button icon={<Package className="size-4" />} onClick={() => setExportProjectId(projectId)}>
-                                        下载全部素材
-                                    </Button>
+                                <Button icon={<Package className="size-4" />} onClick={() => setExportProjectId(projectId)}>
+                                    下载全部素材
+                                </Button>
+                                {step === "story" ? (
+                                    <div className="drama-workflow-production-episode-notices">
+                                        {storyboardNotice ? (
+                                            <span className="drama-workflow-production-episode-notice" role="status">
+                                                {storyboardNotice}
+                                            </span>
+                                        ) : null}
+                                        <div ref={setBatchNoticeMount} className="drama-workflow-production-batch-notices" />
+                                    </div>
                                 ) : null}
                             </div>
-                            {headerActions ? (
+                            {headerActions || step === "story" ? (
                                 <div className="drama-workflow-production-guidance" aria-label="制作流程引导">
                                     {headerActions}
+                                    {step === "story" ? (
+                                        <div role="group" aria-label="已选剧情段批量操作">
+                                            <WorkflowBatch
+                                                projectId={projectId}
+                                                revision={summary.production.revision}
+                                                targetIds={[...selected]}
+                                                targetLabels={selectedLabels}
+                                                actions={textConfirmed || readinessCurrent ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
+                                                compact
+                                                popover
+                                                noticeMount={batchNoticeMount}
+                                                scopeDescription={`范围：实际已选 ${selected.size} 个剧情段，包含跨筛选与切集保留的选择。`}
+                                                onChanged={() => refresh()}
+                                                onClearSelection={() => selectSegments([...selected], false)}
+                                            />
+                                        </div>
+                                    ) : null}
+                                    {canPreview ? (
+                                        <Button
+                                            type="primary"
+                                            disabled={busy || mediaEditingState.dirty || mediaEditingState.busy}
+                                            loading={previewPending}
+                                            onClick={() => {
+                                                if (onConfirmPreview) onConfirmPreview(currentEpisode.id);
+                                                else
+                                                    replaceQuery(currentEpisode.id, (next) => {
+                                                        for (const key of ["scope", "segment", "shot", "editor", "media", "status"]) next.delete(key);
+                                                        next.set("step", "preview");
+                                                    });
+                                            }}
+                                        >
+                                            视频预览
+                                        </Button>
+                                    ) : null}
                                 </div>
                             ) : null}
                         </div>
-                        {step === "story" ? (
-                            <section className="drama-workflow-production-batch" aria-label="已选剧情段批量操作">
-                                <strong>已选 {selected.size} 段</strong>
-                                <WorkflowBatch
-                                    projectId={projectId}
-                                    revision={summary.production.revision}
-                                    targetIds={[...selected]}
-                                    targetLabels={selectedLabels}
-                                    actions={textConfirmed || readinessCurrent ? ["segment_prompt", "segment_assets", "segment_video"] : ["segment_prompt"]}
-                                    compact
-                                    scopeDescription={`范围：实际已选 ${selected.size} 个剧情段，包含跨筛选与切集保留的选择。`}
-                                    onChanged={() => refresh()}
-                                    onClearSelection={() => selectSegments([...selected], false)}
-                                />
-                            </section>
-                        ) : null}
                         {!episodes.length ? (
                             <div className="drama-workflow-production-empty">
                                 <Clapperboard className="size-7" />
@@ -523,27 +578,11 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                   const query = queries[episodes.findIndex((item) => item.id === episode.id)];
                                   const detail = query?.data;
                                   const episodeCanGenerate = videoAllowed(episode.id);
-                                  const blocker = mediaBlocker(episode.id);
                                   const scriptError = textFailure(episode, detail);
                                   const current = detail?.episode || episode;
                                   const failedWithoutSegments = Boolean(current.error) && current.stage !== "render" && (detail ? !detail.segments.length : episode.stats.segments === 0);
                                   return (
                                       <section key={episode.id} className="drama-workflow-production-episode" aria-label={`第 ${episode.number} 集`}>
-                                          <header>
-                                              <span className="drama-workflow-production-number">{String(episode.number).padStart(2, "0")}</span>
-                                              <div>
-                                                  <h3>{episode.title || `第 ${episode.number} 集`}</h3>
-                                                  <p>
-                                                      {detail?.segments.length ?? episode.stats.segments} 段 · {detail?.shots.length ?? episode.shotCount} 镜
-                                                  </p>
-                                                  {blocker ? <p role="status">{blocker}</p> : guideStep === "story" ? <p role="status">本集文字已就绪，可独立生成视频；其他集可继续处理。</p> : null}
-                                              </div>
-                                              <div className="drama-workflow-production-actions">
-                                                  <Button size="small" onClick={() => replaceQuery(episode.id, (next) => next.set("step", "preview"))}>
-                                                      视频预览
-                                                  </Button>
-                                              </div>
-                                          </header>
                                           {query?.isError ? <WorkspaceErrorState description="本集内容读取失败" onRetry={() => void query.refetch()} /> : null}
                                           {query?.isLoading ? <WorkspaceLoadingState label="正在读取本集分镜" /> : null}
                                           {scriptError || failedWithoutSegments ? (
@@ -594,7 +633,9 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                                   status={status}
                                                   videoAllowed={episodeCanGenerate}
                                                   onChanged={() => void refresh(episode.id)}
-                                                  onOpenShot={(shot, kind) => openShot(episode.id, shot.id, kind)}
+                                                  onOpenShot={(shot, kind) => {
+                                                      if (kind !== "video" || canOpenVideo(shot)) openShot(episode.id, shot.id, kind);
+                                                  }}
                                                   onEditShot={(shot) => openSegment(episode.id, shot.segmentIndex, shot.id)}
                                                   onOpenCast={(id) => setCastSelection({ owner: castSelectionOwner, episodeId: episode.id, id })}
                                                   segmentIndex={episode.id === activeEpisodeId ? segmentIndex : undefined}
@@ -695,41 +736,6 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, em
                                   );
                               })
                             : null}
-                        {step === "story" ? (
-                            <details className="drama-workflow-production-advanced">
-                                <summary>文字制作进度</summary>
-                                <p className="drama-workflow-production-note">按连续剧情范围生成的视频与逐镜媒体分别保留。此处可继续管理已有视频和批次。</p>
-                                {visibleEpisodes.length ? (
-                                    <section className="drama-workflow-production-progress" aria-label="文字制作进度">
-                                        <div className="drama-workflow-production-progress-meta">
-                                            <strong>段提示词进度</strong>
-                                            <span>
-                                                {textProgress.completed + textProgress.failed}/{textProgress.total} 段已处理
-                                            </span>
-                                            <span className="is-success">{textProgress.completed} 段已完成</span>
-                                            <span className="is-failed">{textProgress.failed} 段失败</span>
-                                            <span>{Math.max(0, textProgress.total - textProgress.completed - textProgress.failed)} 段待处理</span>
-                                        </div>
-                                        <div className="drama-workflow-production-progress-track" role="progressbar" aria-label="段提示词进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={textProcessed}>
-                                            <span className="is-success" style={{ width: `${textProgress.total ? (textProgress.completed / textProgress.total) * 100 : 0}%` }} />
-                                            <span className="is-failed" style={{ width: `${textProgress.total ? (textProgress.failed / textProgress.total) * 100 : 0}%` }} />
-                                        </div>
-                                        <div className="drama-workflow-production-progress-meta" role="status">
-                                            <span>
-                                                剧本与分镜：{textProgress.readyEpisodes}/{visibleEpisodes.length} 集就绪
-                                            </span>
-                                            {textProgress.failedEpisodes.length ? (
-                                                <span className="is-failed">
-                                                    {textProgress.failedEpisodes.length} 集剧本失败（第 {textProgress.failedEpisodes.join("、")} 集）
-                                                </span>
-                                            ) : null}
-                                            {textProgress.pendingEpisodes ? <span>{textProgress.pendingEpisodes} 集尚未就绪</span> : null}
-                                            {textProgress.unavailable ? <span className="is-failed">{textProgress.unavailable} 集读取失败</span> : null}
-                                        </div>
-                                    </section>
-                                ) : null}
-                            </details>
-                        ) : null}
                         {episodes.length && !all && !currentEpisode ? (
                             <WorkspaceErrorState title="所选集不存在" description="该集可能已被删除，请选择其他集。" onRetry={() => replaceQuery(undefined, (next) => next.set("scope", "all"))} actionLabel="查看全部集" />
                         ) : null}

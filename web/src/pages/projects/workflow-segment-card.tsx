@@ -5,6 +5,7 @@ import type { DramaSegment, DramaShot } from "@/services/api/drama";
 
 import { MediaThumb, mediaBusy, useResourceMediaUrl } from "./drama-shared";
 import { SegmentStatus, secondsLabel } from "./studio/segment-parts";
+import { displaySegmentPrompt } from "@/lib/drama/segment-prompt";
 import { QuotedMediaButton } from "./studio/drama-media-action-context";
 
 function VideoCover({ resourceId }: { resourceId: string }) {
@@ -17,11 +18,11 @@ export function segmentCopy(segment: DramaSegment, shots: DramaShot[]) {
         .map((shot) => (shot.dialogue ? `${shot.speaker || "旁白"}：${shot.dialogue}` : shot.action || shot.imagePrompt))
         .filter(Boolean)
         .join(" ");
-    return spoken || segment.videoPrompt.trim() || "打开分镜，补充画面与台词";
+    return spoken || displaySegmentPrompt(segment, segment.videoPrompt).trim() || "打开分镜，补充画面与台词";
 }
 
 export function segmentPromptText(segment: DramaSegment) {
-    return segment.videoPrompt.trim() || segment.generated.trim();
+    return displaySegmentPrompt(segment, segment.videoPrompt.trim() || segment.generated.trim());
 }
 
 /** 分镜卡片只展示服务端已有的段、镜头和视频，不生成演示画面。 */

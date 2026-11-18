@@ -17,7 +17,7 @@ description: 信封、错误码与 OpenAPI
 
 ### 段提示词与资产设定分离
 
-段提示词保存剧情、台词、动作、站位、运镜、时间码和当前情绪／说话方式，资产以名称与参考图编号关联。角色长期外观、固定服装、固定声线、场景陈设及道具材质不再复制进新撰写的段稿；剧情所需的换装、受伤、持物或破损等临时状态仍保留。
+段提示词保存剧情、台词、动作、站位、运镜、时间码和当前情绪／说话方式，资产按唯一 ID 关联、按名称显示。角色长期外观、固定服装、固定声线、场景陈设及道具材质不再复制进新撰写的段稿；剧情所需的换装、受伤、持物或破损等临时状态仍保留。
 
 修改同一资产的设定、参考图或角色声音后，不将原本就绪的段提示词标为过期，不清空人工改写，也不自动调用文字模型。预检和实际视频提交均读取当前资产，追加最新外观、声线描述及可发送的图片／声音样本；造型沿用角色本体的当前声音。声音样本仍受视频模型能力、生成方式、参考数量和时长限制，不能发送时明确说明，并使用当前声线文字，不承诺所有模型都能接收音频样本。
 
@@ -40,7 +40,7 @@ description: 信封、错误码与 OpenAPI
 | `PATCH /api/dramas/:id/settings`      | 保存制作设置或预算；提交 `settings` 与 `expectedRevision` 时在事务内校验当前制作版本，适用于首次配置、已完成引导及普通制作，成功递增版本。活动引导的非配置阶段仍拒绝全量设置更新；纯预算更新保持原合同。提交已停用的 `guideConversationId` 写入返回 `400 / drama_agent_retired`，整次请求不写入                                                                                                                                                                                                    |
 | `POST /api/dramas/:id/cast`           | `{expectedRevision?,kind,name,aliases?,appearance?,description?,voiceInstructions?,imagePrompt?,imageStyleId?,imageStyleName?,imageStylePrompt?}`；引导项目仅 assets/story 阶段可新增且必须提供当前版本，普通制作台可省略版本；`kind` 为 `character/scene/prop`，返回 `{cast}`。允许仅名称草稿，不自动生图；未填写描述或图片提示词时，单图生成、段补图及旧重生入口均拒绝生成。assets/story 阶段可显式预检并生成单资产图片，不推进文字阶段                                                          |
 | `POST /api/dramas/:id/cast/extract`   | `{expectedRevision,kind,allChapters?,episodeIds?,chapterIds?}`；`kind` 严格为 `character/scene/prop`。`allChapters=true` 锁定作品全部原文章节（含预留章节），与 `episodeIds/chapterIds` 互斥，不将预留章节加入制作、不创建分集；省略或 false 时保持制作范围规则：两个显式范围互斥且空数组拒绝，均省略则锁定已加入制作的全部章节，跨项目或预留章节拒绝。首次资产建档后，可在 assets/story 或制作台按类提取。返回 `{job,revision}`，任务含 `assetKind/sourceChapterIds/sourceEpisodeIds`；只新增缺失同类资产，保留已有人工设定、图片与历史，不自动生图，不推进全局引导或覆盖作品圣经。复用原 Bible 模型、技能、计费、并发与失败结果恢复，重试保留来源范围 |
-| `DELETE /api/dramas/:id/cast/:castId` | JSON `{expectedRevision}`；assets/story、已完成引导及普通制作均可删除未使用的主体资产，必须携带当前 `production.revision`，成功递增一次；story 删除后返回 assets，已完成引导及普通制作保持原步骤。独立视图、造型、分镜、段图片/音频参考、画布引用、在途图片任务与文字任务受保护，冲突返回 409。只删除资产条目，已有图片保留为历史版本，不删除媒体文件或已提交任务历史；未提交的排队生图作业取消。返回 `{deleted:true,castId}`                                                                      |
+| `DELETE /api/dramas/:id/cast/:castId` | JSON `{expectedRevision,deleteScopeToken}`，取自资产影响接口的 `revision` 和 `deleteScopeToken`。服务端删除前重新核对镜头媒体的主体关联，范围改变时返回 `409 / drama_cast_delete_scope_changed`。删除主体及其造型并解除镜头和剧情段关联，提示词、已生成媒体及任务历史保留；独立视图、画布引用和进行中的任务仍受保护。story 删除后返回 assets，已完成引导及普通制作保持步骤；成功递增作品版本，返回 `{deleted:true,castId}`。 |
 
 进行中的引导项目保存正文、设置、资产文字、镜头及剧情段提示词时，统一携带当前 `production.revision` 作为 `expectedRevision`；这些文字变更与异步文字结果落库递增该版本。版本变化返回冲突，刷新后重新审阅。相关文字任务仍在运行时拒绝覆盖其输入；实体 revision 继续保护异步结果，不另要求前端提交实体版本。图片状态变化不使文字版本变化。传统项目及引导完成后的制作台保持既有编辑合同。阶段确认不放行视频、成片或批量图片；单张参考图继续使用原设定重生接口，零图片可以完成引导。两个引导接口拒绝传统项目，不能隐式开启引导。
 
@@ -102,7 +102,7 @@ description: 信封、错误码与 OpenAPI
 
 成片来源规则：本集没有采用逐镜视频时按原连续剧情段合成；任一镜头存在采用指针后，整集按当前镜头顺序读取全部逐镜视频。每镜必须当前采用与 Take 一致、脚本来源未过期、状态就绪、本人视频资源可用且时长有效。缺镜时返回具体镜号，不混入旧段视频。视频片段自身的音轨沿用，独立镜头音频不自动混入；剪映导出仍按剧情段视频。
 
-`GET /api/dramas/:id/settings/impact` 预览全剧风格的后续生成范围；`GET /api/dramas/:id/cast/:castId/impact` 返回真实资产影响。统一返回 `{kind,revision,castId?,segments,episodes,affectedSegments,assetIds,directSegments,continuitySegments,message}`，保留旧的直接引用 `segments/episodes` 计数。每个段含 `id/episodeId/episodeNumber/episodeTitle/segmentIndex/revision/videoStatus/hasVideo`；资产范围包含手动图片、声音引用与本体所关联的造型。尾帧续接只列会因已有或生成中的直接引用视频更新而受影响的后续段，独立出片无此范围。全剧风格的资产范围排除已指定独立风格或完整图片提示词的资产。章节影响继续使用 `GET /api/dramas/:id/chapters/:chapterId/impact`；所有影响接口只读，不自动标记过期或重新生成。
+`GET /api/dramas/:id/settings/impact` 预览全剧风格的后续生成范围；`GET /api/dramas/:id/cast/:castId/impact` 返回真实资产影响。统一返回 `{kind,revision,castId?,segments,episodes,affectedSegments,assetIds,directSegments,continuitySegments,message}`，保留旧的直接引用 `segments/episodes` 计数。资产影响还返回 `shots` 和 `deleteScopeToken`，用于核对删除范围。每个段含 `id/episodeId/episodeNumber/episodeTitle/segmentIndex/revision/videoStatus/hasVideo`；资产范围包含手动图片、声音引用与本体所关联的造型。尾帧续接只列会因已有或生成中的直接引用视频更新而受影响的后续段，独立出片无此范围。全剧风格的资产范围排除已指定独立风格或完整图片提示词的资产。章节影响继续使用 `GET /api/dramas/:id/chapters/:chapterId/impact`；所有影响接口只读，不自动标记过期或重新生成。
 
 `PATCH /api/dramas/:id/workflow/style` 接收 `{expectedRevision,styleName,stylePrompt,drawing?}`，风格名称为 1–60 字，说明为 1–10000 字，返回更新后的短剧概览。配置、资产、分镜及制作阶段均可保存风格；在作品锁内检查 CAS 和相关活跃文字作业，原子更新默认风格与可选的共享绘图配置并递增制作版本，保留画幅、拆集、阶段及已有媒体。风格保存不重写旧分镜、不自动生图或生成视频，也不产生生成费用。
 
@@ -1311,7 +1311,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 | `POST /dramas/:id/episodes/:episodeId/storyboard/ensure` | 无请求体，返回 `DramaEpisodeDetail`。仅缺失结果的 `draft` 或空 `done` 集进入 `script`；已有镜头、剧情段、活跃剧本作业或 `queued/script` 阶段直接返回，不删除结果、不重复提交、不改变暂停状态。失败集返回 409，需用户显式重试。本次新启动沿用模型/预算校验恢复调度；恢复校验失败返回 400，集阶段与制作状态保持原值，修正后可再次确保生成。作品行锁与集版本 CAS 防止重复开工 |
 | `POST /dramas/:id/episodes/:episodeId/render` | `{ expectedRevision }` 必填本集当前版本，合成完整已采用段或逐镜视频，来源规则见“简易流程逐集推进与影响提示”。缺段/缺镜、脚本过期、未就绪、采用记录不一致、资源或时长无效、配置/资产阶段或本集有相关文字/段视频任务时拒绝；版本变化返回 409。不生成图片或视频，不恢复暂停作品，不要求模型配置、生成积分或剩余生成预算，仍受任务数与存储配额限制；活动引导保持精确媒体限制。返回 `{ jobs }`，新合成/失败重试/重新合成为 1，同版本已有受理合成为 0；旧成片在替代版本完成前保留。仅使用本地 FFmpeg，沿用成片版本回写和任务进度。与调度共用作品租约，等待超过 10 秒返回 409 |
 | `POST /dramas/:id/episodes/:episodeId/segments/prompts` | `{ segments: number[] }` 让文本模型（重新）撰写这些剧情段的完整视频提示词，正在撰写的段跳过；返回 `{ queued }` |
-| `PATCH /dramas/:id/episodes/:episodeId/segments/:index` | 保存剧情段视频提示词改写 `{ videoPromptOverride }`，最多 12000 字，空串恢复为模型撰写的版本；正文里的参考图引用统一写作“参考图N”（“@参考图N”“参考图 N”保存时归一，模型撰写的提示词同样归一）。段视图 `request.unknownReferences` 列出正文里编号超出本段参考图数量的引用，此时 `request.warning` 说明原因，生成本段视频被拒绝；本段与后续已生成的段视频标记过期。也可以 `{ referenceCastIds: string[] }` 手动指定本段参考图（本作品的设定 ID，最多 20 个，顺序即“参考图N”编号，空数组表示不发参考图），或 `{ autoReferences: true }` 恢复按镜头自动取；参考图变化时模型撰写的提示词标记过期、视频过期。段视图的 `referenceMode` 为 auto/custom，`request` 附 `referenceCapacity`（本段最多发送张数，已扣除首帧并受每段上限约束）、`modelMaxImages` 与 `referenceLimited` |
+| `PATCH /dramas/:id/episodes/:episodeId/segments/:index` | 保存剧情段视频提示词改写 `{ videoPromptOverride }`，最多 12000 字，空串恢复为模型撰写的版本。本段与后续已生成的段视频标记过期。`{ referenceCastIds: string[] }` 手动指定本段附图（本作品的资产 ID，最多 20 个，空数组表示不附主体图），`{ autoReferences: true }` 恢复按镜头自动选择。段视图的 `referenceMode` 为 auto/custom，`request` 附 `referenceCapacity`、`modelMaxImages`、`referenceLimited` 与 `unknownReferences`。未匹配的图片编号阻止生成，原因见 `request.warning`。 |
 | `POST /dramas/:id/episodes/:episodeId/segments/generate` | `{ segments, videoModel? }` 按剧情段生成视频，可同时换视频模型（只接受目录中的模型）。提示词缺失或过期、视频正在生成时返回 400；样片模式下第 1 集样片确认前，其他集返回 400。段按顺序提交，第 2 段起等上一段最后一帧 |
 | `POST /dramas/:id/episodes/:episodeId/segments/:index/reprocess` | 重新处理已生成、但结果回写（如抽尾帧）失败的段视频：只重放最近一次已成功的生成任务结果，不重新调用模型、不重复扣费，返回 `{ reprocessing: true }`。段视频不是 failed、没有已入库视频或最近一次作业不可重放时返回 400。段视图的 `videoReprocessable` 为 true 时可调用 |
 | `POST /dramas/:id/shots/:shotId/insert` · `DELETE /dramas/:id/shots/:shotId` | `{ position: "before" \| "after" }` 在镜头前后插入空镜头（沿用场景与出场角色、归入同一剧情段，本段合计不能超过视频模型单次上限）/ 删除镜头（剧情段唯一的镜头不能删）；本段提示词与视频标记过期 |
@@ -1342,7 +1342,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 | `PATCH /dramas/:id/cast/:castId/definition` | `{ expectedRevision, expectedCastRevision, fields }`，仅更新明确给出的结构化文字字段，返回 `{cast}`。支持角色定位、年龄、性别、性格、背景、体型、服装、随身物品、一致性/多视图说明、声音语言/年龄/音色；未知原有键及 `sourceDefinition` 全文保留，原文不可由此接口改写。默认参考图和后续剧本文字上下文使用明确字段，完整自定义图片提示词仍优先；不自动重写分镜或生成媒体 |
 | `GET /dramas/:id/cast/:castId/usage` | 只读 `{hasStory,appearances,audioReferences,imageReferences}`，支持本作品基础角色、场景与道具，造型从所属角色进入。角色出镜按分镜 `castIdsJson/lookCastIdsJson`（含实际造型）、场景按 `sceneCastId`、道具按 `propIdsJson` 每镜去重统计；每项包含 `episodeId/episodeNumber/episodeTitle/shotId/position/segmentIndex`，镜头位置与段索引从 0 起。段的显式参考图/音频 ID 引用独立列出 `episodeId/episodeNumber/segmentId/segmentIndex`，不计入出镜，不根据资产名称、对白或正文提及猜测。尚无分镜时 `hasStory=false`；已有分镜但此资产未出镜时为 true 与空出镜数组。按用户与作品校验归属，不修改资产或启动任务 |
 | `PUT /dramas/:id/cast/:castId/image` | `{ resourceId, restyleSegments, source?, taskId? }` 用当前用户已就绪的图片资源替换参考图并锁定：取消排队中的生图，写入版本记录；锁定的参考图生成剧情段视频时随请求发送，并在参考图说明里标明形象以图片为准。`source` 为 `upload`（默认）或 `canvas`（从精修画布采用），`taskId` 是产出这张图的画布任务，校验属于当前用户且结果包含该资源，否则忽略。同一资源已是当前且已锁定时不重复写版本，返回 `unchanged: true`。返回 `{ cast, affectedSegments, unchanged? }` |
-| `GET /dramas/:id/cast/:castId/impact` · `POST …/regenerate` | 预览引用该设定的集数与剧情段数 `{ episodes, segments }`；重新生成参考图，`restyleSegments=true` 时引用它、且已生成或生成中的剧情段视频标记过期（段提示词只引用参考图编号，保持不变），返回实际受影响的 `{ affectedSegments }` |
+| `GET /dramas/:id/cast/:castId/impact` · `POST …/regenerate` | 预览引用该设定的集数与剧情段数 `{ episodes, segments }`；重新生成参考图，`restyleSegments=true` 时引用它、且已生成或生成中的剧情段视频标记过期，段提示词的资产绑定保持不变，返回实际受影响的 `{ affectedSegments }` |
 | `PUT /dramas/:id/cast/:castId/voice` · `DELETE …` | 为角色指定声音：`{ voiceProfileId }` 从声音库选一条带样本音频的声音，或 `{ sampleResourceId, voiceName? }` 用刚上传 / 录制的样本（按 `voiceName` 登记到声音库，同一样本复用一条）；`restyleSegments` 让引用该角色的剧情段视频过期。支持参考音频的视频模型在该角色开口、且本段按参考图生视频时带上样本（上游要求参考音频与参考图同时提供，尾帧续接段不混用）。没有样本音频的内置声音返回 400。DELETE 清除，只按声线描述生成。造型沿用所属角色的声音 |
 | `POST /dramas/:id/cast/:castId/looks` | 为角色新增造型（妆造）`{ lookName, appearance, imagePrompt?, imageStyleId?, imageStyleName?, imageStylePrompt?, fromChapter?, toChapter?, episodeId? }`：造型是角色子行（kind=character、`parentId` 指向角色），承载外观与默认适用章节，每角色最多 6 套。传入 `episodeId` 时同事务保存本集资产关联，省略则仅新增共享造型。确认只保存为 `imageStatus=draft`，不创建生成任务；用户单独调用 `POST …/cast/:lookId/regenerate` 后，以角色本体图为底图生成。`imagePrompt` 最多 12000 字，留空按外观描述生成 |
 | `PATCH /dramas/:id/looks/:lookId` · `DELETE …` | 修改造型 `{ lookName?, appearance?, imagePrompt?, imageStyleId?, imageStyleName?, imageStylePrompt?, fromChapter?, toChapter?, restyleSegments? }`，只保存设定并保留现有图片，不自动生成；生成中拒绝修改。删除造型后，引用它的镜头回退到角色本体。自定义造型图复用 `PUT …/cast/:lookId/image`，可上传或从素材库选图，采用后锁定 |
@@ -1365,13 +1365,17 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 
 ### 剧情段参考与音色选择
 
+段提示词界面按资产名称展示引用，例如 `秦子武（@ 秦子武）`。正文中的 `@[segment-cast:ID]` 绑定角色、造型、场景或道具的唯一 ID；同一资产换图或调整附件顺序时不改变绑定。资产尚未生成图片时仍可引用。读旧稿时按原有附件顺序识别数字引用；删除资产时保留叙事文字，移除关联，不因已解绑的资产阻止生成。
+
+`request.resolvedPrompt` 用于发送预览：只对实际随请求发送的图片从 1 连续编号，首帧单独传递。编辑器使用 `videoPrompt`，不把已转换的发送编号存回草稿。无资产身份的附加图片在界面保留“参考图N”。
+
 `PATCH /dramas/:id/episodes/:episodeId/segments/:index` 还接受以下字段，省略表示保留该项：
 
 - `referenceImages: [{ resourceId, name }]`：替换本段附加参考图，最多 20 张，`[]` 清空。资源必须属于当前用户、已经入库且为就绪图片；不接受远程 URL。图片排在设定参考之后，统一编号为“参考图N”，受模型和作品的参考图数量限制。预演中这类条目 `kind=image`、`castId` 为空、`resourceId` 为实际资源。界面支持素材库与本地上传，上传单张不超过 20 MB；删除只移除本段引用，原素材保留。引用仍存在时，素材删除及孤儿清理保留该资源。
 - `audioCastIds: string[]`：手动选择角色音色，顺序即优先发送顺序，`[]` 关闭全部。只接受当前作品已绑定声音样本的角色本体；手动保存数量不得超过当前视频模型的 `request.modelMaxAudios`，超限返回 400。
 - `autoAudioReferences: true`：恢复按本段对白自动选择说话角色（支持别名，造型沿用角色本体声音）。段视图的 `audioReferenceMode` 为 `auto/custom`；自动模式超限时按开口顺序发送，剩余音色在 `request.audioReferences[].note` 说明原因。模型不支持、尾帧续接、缺少参考图、样本超时或失效同样显示实际未发送原因。
 
-图片与音色选择写入后使本段提示词和视频过期；手写提示词保留，需核对参考编号。音色开关在点击“保存音色选择”后生效。`GET /dramas/models` 的视频模型附 `maxAudios`，用于换模型时即时提示新上限；参考面板按已保存的模型展示实际发送状态。角色卡显示有无音频并提供授权样本试听；预览不调用生成模型。造型的“确认保存”与“生成造型图”是独立操作，只有后者会创建计费生成任务。
+图片选择变更后，已生成视频会标记过期；可解析引用的已完成段稿保留。音色选择继续沿用原有更新规则，开关在点击“保存音色选择”后生效。`GET /dramas/models` 的视频模型附 `maxAudios`，用于换模型时即时提示新上限；参考面板按已保存的模型展示实际发送状态。角色卡显示有无音频并提供授权样本试听；预览不调用生成模型。造型的“确认保存”与“生成造型图”是独立操作，只有后者会创建计费生成任务。
 
 ### 参考图画幅与分辨率
 

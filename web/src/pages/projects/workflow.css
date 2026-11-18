@@ -166,28 +166,6 @@
     font-size: var(--fs-tiny);
 }
 
-.drama-workflow-production-batch {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-    padding: var(--space-3) 0;
-}
-
-.drama-workflow-production-batch {
-    border-block: 1px solid var(--drama-line);
-    margin-bottom: var(--space-4);
-}
-
-.drama-workflow-production-batch > strong {
-    font-size: var(--fs-ui);
-}
-
-.drama-workflow-production-batch .ant-btn {
-    min-height: 32px;
-}
-
 .drama-workflow-steps {
     display: flex;
     justify-content: safe center;

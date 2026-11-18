@@ -188,10 +188,8 @@ function AdvancedDramaStudioPage() {
     });
     const saveSegment = useMutation({
         mutationFn: ({ segment, override }: { segment: DramaSegment; override: string }) => updateDramaSegment(projectId, episodeId, segment.index, override),
-        onSuccess: (_, { override }) => {
-            invalidate(episodeId);
-            message.success(override ? "已保存完整视频提示词" : "已恢复模型撰写的版本");
-        },
+        onSuccess: (_, { override }) => message.success(override ? "已保存完整视频提示词" : "已恢复模型撰写的版本"),
+        onSettled: () => invalidate(episodeId),
         onError: (error) => errorMessage(error, "保存失败"),
     });
     const saveReferences = useMutation({
@@ -276,7 +274,7 @@ function AdvancedDramaStudioPage() {
         },
         onError: (error) => errorMessage(error, "重命名失败"),
     });
-    const busy = approve.isPending || rescript.isPending || media.state.submitting || insertShot.isPending || removeShot.isPending || saveReferences.isPending;
+    const busy = approve.isPending || rescript.isPending || media.state.submitting || insertShot.isPending || removeShot.isPending || saveSegment.isPending || saveReferences.isPending;
 
     const openInbox = (item: DramaInboxItem) => {
         if (item.castId) {
@@ -710,7 +708,7 @@ function AdvancedDramaStudioPage() {
                                 onPatchShot={(shot, patch) => patchShot.mutate({ shot, patch })}
                                 onInsertShot={(shot, position) => insertShot.mutate({ shot, position })}
                                 onDeleteShot={(shot) => removeShot.mutate(shot)}
-                                onSavePrompt={(segment, override) => saveSegment.mutate({ segment, override })}
+                                onSavePrompt={(segment, override) => saveSegment.mutateAsync({ segment, override })}
                                 onSaveReferences={(segment, patch) => saveReferences.mutateAsync({ segment, patch })}
                                 onWritePrompt={(segment) => writeSegment.mutate([segment.index])}
                                 onGenerate={(segment, videoModel) => {

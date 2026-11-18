@@ -96,10 +96,10 @@ func validDramaShotMediaKind(kind string) bool {
 }
 
 func dramaShotScriptHash(shot model.DramaShot) string {
-	// Ordering and timestamps are persistence metadata. Reindexing an unrelated
-	// scene must not invalidate saved media; script and dependency fields remain.
+	// Display name, order and timestamps aren't generation inputs.
 	shot.CreatedAt, shot.UpdatedAt = time.Time{}, time.Time{}
 	shot.Position = 0
+	shot.Name = ""
 	return dramaShotMediaDigest(shot)
 }
 
@@ -128,7 +128,6 @@ func defaultDramaShotMediaConfig(shot model.DramaShot, settings DramaSettings, k
 	config := DramaShotMediaConfig{Model: settings.Models.Image, Prompt: shot.ImagePrompt, Operation: "text_to_image", AspectRatio: settings.AspectRatio, Resolution: "1K", ReferenceResourceIDs: []string{}}
 	if kind == "video" {
 		config.Model, config.Prompt, config.Operation = settings.Models.Video, shot.VideoPrompt, "text_to_video"
-		config.Resolution = settings.VideoResolution
 		config.Seconds = max(1, int((shot.DurationMs+999)/1000))
 	}
 	return config
@@ -145,10 +144,12 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 		config := defaultDramaShotMediaConfig(shot, settings, kind)
 		var configErr error
 		if kind == "video" {
-			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, settings, config)
+			profile, _ := s.dramaVideoProfile(config.Model)
+			config.Resolution = dramaShotEpisodeResolution(settings, profile.video)
+			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, settings, profile.video, config)
 		}
 		if configErr == nil {
-			config, configErr = s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+			config, configErr = s.readDramaShotMediaConfig(repo, shot, p, kind, config)
 		}
 		return model.DramaShotMedia{ProjectID: shot.ProjectID, EpisodeID: shot.EpisodeID, ShotID: shot.ID, Kind: kind, Status: "idle"}, config, configErr
 	}
@@ -159,11 +160,110 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 	if err := json.Unmarshal([]byte(row.ConfigJSON), &config); err != nil {
 		return *row, config, errors.New("镜头媒体配置损坏，请重新保存")
 	}
-	config, err = s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+	// Recover legacy slots that stored a model default instead of a concrete
+	// screen setting without refreshing any of their media.
+	if kind == "video" && (missingDramaShotAspectRatio(config.AspectRatio) || isAutomaticVideoResolution(config.Resolution)) {
+		episode, err := repo.DramaEpisode(shot.ProjectID, shot.EpisodeID)
+		if err != nil {
+			return *row, config, err
+		}
+		settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
+		if missingDramaShotAspectRatio(config.AspectRatio) {
+			config.AspectRatio = settings.AspectRatio
+		}
+		if isAutomaticVideoResolution(config.Resolution) {
+			profile, _ := s.dramaVideoProfile(settings.Models.Video)
+			config.Resolution = dramaShotEpisodeResolution(settings, profile.video)
+		}
+	}
+	config, err = s.readDramaShotMediaConfig(repo, shot, p, kind, config)
 	return *row, config, err
 }
 
-func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, settings DramaSettings, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+func (s *Service) readDramaShotMediaConfig(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+	config, _, err := resolveDramaShotReferenceImages(repo, p.UserID, shot.ProjectID, kind, config)
+	if err != nil {
+		return config, err
+	}
+	return s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+}
+
+func missingDramaShotAspectRatio(ratio string) bool {
+	ratio = strings.TrimSpace(ratio)
+	return ratio == "" || strings.EqualFold(ratio, "auto") || strings.EqualFold(ratio, "default")
+}
+
+func dramaShotEpisodeResolution(settings DramaSettings, video *VideoCapabilityConfig) string {
+	if !isAutomaticVideoResolution(settings.VideoResolution) {
+		// Keep an explicit episode choice visible even after a model change;
+		// the shot editor requires a compatible selection before saving.
+		return firstNonEmpty(dramaShotVideoResolutionOption(video, settings.AspectRatio, settings.VideoResolution), settings.VideoResolution)
+	}
+	if video == nil {
+		return ""
+	}
+	if video.FixedScreenSpec != nil {
+		screen := dramaVideoScreenFor(video, settings.AspectRatio, "")
+		return dramaShotVideoResolutionOption(video, settings.AspectRatio, screen.Resolution)
+	}
+	return dramaShotVideoResolutionOption(video, settings.AspectRatio, video.DefaultResolution)
+}
+
+// The shot editor uses the same resolution options as episode settings. Fixed
+// screen models need the orientation-specific label only at the task boundary.
+func dramaShotVideoResolutionOption(video *VideoCapabilityConfig, ratio, resolution string) string {
+	if video == nil || isAutomaticVideoResolution(resolution) {
+		return ""
+	}
+	if video.FixedScreenSpec != nil {
+		screen := dramaVideoScreenFor(video, ratio, resolution)
+		if screen.Issue != "" {
+			return ""
+		}
+		if tier := dramaResolutionTier(screen.Resolution); tier != "" {
+			return tier + "p"
+		}
+		return screen.Resolution
+	}
+	if len(video.Ratios) > 0 && !videoRatioAllowed(video.Ratios, ratio) {
+		return ""
+	}
+	key := dramaVideoResolutionKey(resolution)
+	for _, option := range video.Resolutions {
+		if dramaVideoResolutionKey(option) == key {
+			return option
+		}
+	}
+	return ""
+}
+
+func (s *Service) validateDramaShotVideoScreen(config DramaShotMediaConfig) error {
+	if missingDramaShotAspectRatio(config.AspectRatio) {
+		return BadAuthRequest("请选择镜头视频画幅")
+	}
+	if isAutomaticVideoResolution(config.Resolution) {
+		return BadAuthRequest("请选择镜头视频分辨率")
+	}
+	profile, err := s.dramaVideoProfile(config.Model)
+	if profile.video == nil {
+		return BadAuthRequest(fmt.Sprintf("请选择可用的镜头视频模型：%v", err))
+	}
+	if profile.video.FixedScreenSpec != nil {
+		if screen := profile.screen(config.AspectRatio, config.Resolution); screen.Issue != "" {
+			return BadAuthRequest(screen.Issue)
+		}
+		return nil
+	}
+	if len(profile.video.Ratios) > 0 && !videoRatioAllowed(profile.video.Ratios, config.AspectRatio) {
+		return BadAuthRequest(fmt.Sprintf("当前视频模型不支持 %s 画幅，请选择可用画幅", config.AspectRatio))
+	}
+	if dramaShotVideoResolutionOption(profile.video, config.AspectRatio, config.Resolution) == "" {
+		return BadAuthRequest(fmt.Sprintf("当前视频模型不支持 %s 分辨率，请选择可用分辨率", config.Resolution))
+	}
+	return nil
+}
+
+func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, settings DramaSettings, video *VideoCapabilityConfig, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
 	validImage := func(id string) (bool, error) {
 		resource, err := repo.ResourceForUser(p.UserID, id)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -192,8 +292,8 @@ func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, s
 		if settings.ReferenceLimit > 0 {
 			limit = min(limit, settings.ReferenceLimit)
 		}
-		if profile, err := s.dramaVideoProfile(config.Model); err == nil {
-			limit = min(limit, max(profile.MaxImages, 0))
+		if video != nil {
+			limit = min(limit, max(video.References.MaxImages, 0))
 		}
 		seen := map[string]bool{}
 		for _, reference := range drafts[0].view.Request.References {
@@ -202,7 +302,9 @@ func (s *Service) defaultDramaShotVideoReferences(repo *repository.Repository, s
 			}
 			cast := castByID[reference.CastID]
 			id := cast.ImageResourceID
-			if cast.ImageStatus != model.DramaMediaReady || id == "" || seen[id] {
+			// Image status also tracks regeneration; the adopted resource stays
+			// usable while a replacement is queued, running or has failed.
+			if id == "" || seen[id] {
 				continue
 			}
 			valid, err := validImage(id)
@@ -251,9 +353,21 @@ func (s *Service) SaveDramaShotMedia(userID, projectID, shotID, kind string, req
 	if req.ExpectedRevision == nil || *req.ExpectedRevision < 0 {
 		return DramaShotMediaView{}, BadAuthRequest("请提供镜头媒体版本")
 	}
-	config, err := s.normalizeDramaShotMediaConfig(s.repo, userID, projectID, kind, req.Config)
+	config, issue, err := resolveDramaShotReferenceImages(s.repo, userID, projectID, kind, req.Config)
 	if err != nil {
 		return DramaShotMediaView{}, err
+	}
+	if issue != "" {
+		return DramaShotMediaView{}, BadAuthRequest(issue)
+	}
+	config, err = s.normalizeDramaShotMediaConfig(s.repo, userID, projectID, kind, config)
+	if err != nil {
+		return DramaShotMediaView{}, err
+	}
+	if kind == "video" {
+		if err := s.validateDramaShotVideoScreen(config); err != nil {
+			return DramaShotMediaView{}, err
+		}
 	}
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
 		p, err := repo.DramaProductionForUpdate(projectID)
@@ -264,12 +378,22 @@ func (s *Service) SaveDramaShotMedia(userID, projectID, shotID, kind string, req
 		if err != nil {
 			return err
 		}
-		if err := repo.LockDramaCastImageReferences(userID, dramaShotMediaReferenceIDs(config)); err != nil {
-			return BadAuthRequest("参考图或首尾帧已变化，请重新选择")
+		if err := lockDramaShotReferenceSubjects(repo, projectID, kind, req.Config); err != nil {
+			return err
+		}
+		config, issue, err = resolveDramaShotReferenceImages(repo, userID, projectID, kind, req.Config)
+		if err != nil {
+			return err
+		}
+		if issue != "" {
+			return BadAuthRequest(issue)
 		}
 		config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, kind, config)
 		if err != nil {
 			return err
+		}
+		if err := repo.LockDramaCastImageReferences(userID, dramaShotMediaReferenceIDs(config)); err != nil {
+			return BadAuthRequest("参考图或首尾帧已变化，请重新选择")
 		}
 		config, err = s.enrichDramaShotVideoPrompt(repo, *shot, *p, kind, config)
 		if err != nil {
@@ -493,6 +617,14 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 			return blocked("本镜头媒体正在排队或生成")
 		}
 	}
+	config, issue, err := resolveDramaShotReferenceImages(repo, userID, projectID, kind, config)
+	plan.view.Config = config
+	if err != nil {
+		return plan, err
+	}
+	if issue != "" {
+		return blocked(issue)
+	}
 	config, err = s.normalizeDramaShotMediaConfig(repo, userID, projectID, kind, config)
 	plan.view.Config = config
 	if err != nil {
@@ -512,6 +644,11 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	}
 	if config.Model.Empty() || config.Prompt == "" {
 		return blocked("请填写镜头提示词并选择模型")
+	}
+	if kind == "video" {
+		if err := s.validateDramaShotVideoScreen(config); err != nil {
+			return blocked(err.Error())
+		}
 	}
 	input, err := s.dramaShotMediaInput(repo, userID, *shot, kind, config)
 	if err != nil {
@@ -580,7 +717,17 @@ func (s *Service) dramaShotMediaInput(repo *repository.Repository, userID string
 	if kind == "image" {
 		providerConfig["imageResolution"] = config.Resolution
 	} else {
-		providerConfig["vquality"], providerConfig["videoSeconds"], providerConfig["videoGenerateAudio"] = config.Resolution, strconv.Itoa(config.Seconds), strconv.FormatBool(config.GenerateAudio)
+		resolution := config.Resolution
+		if profile, _ := s.dramaVideoProfile(config.Model); profile.video != nil {
+			if profile.video.FixedScreenSpec != nil {
+				if screen := profile.screen(config.AspectRatio, resolution); screen.Issue == "" {
+					providerConfig["size"], resolution = screen.Size, screen.Resolution
+				}
+			} else if option := dramaShotVideoResolutionOption(profile.video, config.AspectRatio, resolution); option != "" {
+				resolution = option
+			}
+		}
+		providerConfig["vquality"], providerConfig["videoSeconds"], providerConfig["videoGenerateAudio"] = resolution, strconv.Itoa(config.Seconds), strconv.FormatBool(config.GenerateAudio)
 		metadata["videoEditOperation"] = config.Operation
 	}
 	refs := []any{}

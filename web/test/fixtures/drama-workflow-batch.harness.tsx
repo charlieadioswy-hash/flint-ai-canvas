@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { cloneElement, createElement, type ReactElement, type ReactNode } from "react";
 import { create } from "zustand";
 import type { DramaStudioBatchRequest, DramaStudioBatchStatus, DramaStudioBatchView } from "@/services/api/drama";
 import type { WorkflowBatchProps } from "@/pages/projects/workflow-batch";
@@ -36,7 +36,15 @@ const checks: Call[] = [];
 const executions: Call[] = [];
 let refreshes = 0;
 let refreshFailure = false;
-mock.module("antd", () => ({ Button: ({ children, loading: _loading, type: _type, size: _size, ...props }: Record<string, unknown>) => createElement("button", props, children as ReactNode) }));
+mock.module("antd", () => ({
+    Button: ({ children, loading: _loading, type: _type, size: _size, icon: _icon, iconPlacement: _iconPlacement, ...props }: Record<string, unknown>) => createElement("button", props, children as ReactNode),
+    Popover: ({ open, onOpenChange, content, children }: { open: boolean; onOpenChange: (value: boolean) => void; content: ReactNode; children: ReactElement<{ onClick?: () => void }> }) => (
+        <>
+            {cloneElement(children, { onClick: () => onOpenChange(!open) })}
+            {open ? content : null}
+        </>
+    ),
+}));
 mock.module("@/components/ui/product/app-modal", () => ({
     AppModal: ({ open, title, children, footer }: { open: boolean; title: string; children?: ReactNode; footer?: ReactNode }) =>
         open ? (
@@ -170,6 +178,33 @@ test("自动报价只读，展示积分后一次点击提交真实范围，无�
         expect(refreshes).toBe(1);
     } finally {
         await v.close();
+    }
+});
+test("批量操作收起时仍报价，菜单提交后的回执出现在独立提示区", async () => {
+    const noticeMount = document.createElement("div");
+    document.body.append(noticeMount);
+    const v = await mount({ compact: true, popover: true, noticeMount, scopeDescription: "已选 2 段，含其他集保留的选择" });
+    try {
+        const call = await quote(v);
+        expect(v.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(button(v.host, "批量操作 · 2 段").getAttribute("aria-label")).toBe("批量操作，已选 2 段");
+        expect(checks).toHaveLength(1);
+        await click(button(v.host, "批量操作 · 2 段"));
+        expect(v.host.querySelector('[role="dialog"]')?.textContent).toContain("含其他集保留的选择");
+        expect(button(v.host, "批量生成视频 - 2积分").disabled).toBe(false);
+        await click(button(v.host, "批量生成视频 - 2积分"));
+        expect(v.host.querySelector('[role="dialog"]')).toBeNull();
+        expect(executions).toHaveLength(1);
+        expect(executions[0].input).toEqual({ ...call.input, confirmationToken: "confirmed-token" });
+        await act(async () => {
+            executions[0].pending.resolve(response(executions[0], ["queued", "queued"]));
+            await settle();
+        });
+        expect(v.host.textContent).not.toContain("已加入队列");
+        expect(noticeMount.querySelector('[role="status"]')?.textContent).toBe("已加入队列 2 项");
+    } finally {
+        await v.close();
+        noticeMount.remove();
     }
 });
 test("同帧重复点击只提交一个批次", async () => {

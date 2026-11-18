@@ -4,6 +4,7 @@ import { createCanvasNode, createStoryboardRow } from "@/lib/canvas/canvas-proje
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING } from "@/lib/canvas/canvas-frame";
 import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { DRAMA_CAST_KIND_LABEL, dramaCastDisplayName } from "@/lib/drama/drama-format";
+import { segmentSendPromptBody } from "@/lib/drama/segment-prompt";
 import type { DramaCast, DramaCastKind, DramaEpisode, DramaSegment, DramaShot, DramaTake } from "@/services/api/drama";
 import { CanvasNodeType, type CanvasConnection, type CanvasDramaRef, type CanvasMediaVersion, type CanvasNodeData, type CanvasVideoEditOperation, type Position, type StoryboardColumn, type StoryboardRow } from "@/types/canvas";
 
@@ -227,7 +228,7 @@ const SEGMENT_OPERATION: Record<string, CanvasVideoEditOperation> = { image_to_v
 
 /** 剧情段的完整发送提示词：系统追加的参考图说明在前，正文在后。 */
 export function dramaSegmentPrompt(segment: DramaSegment) {
-    return [segment.request.header, segment.videoPrompt]
+    return [segment.request.header, segmentSendPromptBody(segment)]
         .map((part) => part?.trim())
         .filter(Boolean)
         .join("\n\n");
@@ -264,7 +265,7 @@ export function buildDramaSegmentGroup(input: {
     const columns = references.length > 1 ? 2 : 1;
     const referenceNodes = references.map((reference, index) => {
         const cast = input.castById.get(reference.castId);
-        const node = mediaNode(CanvasNodeType.Image, `${reference.label} · ${reference.name}`, reference.resourceId, media, {
+        const node = mediaNode(CanvasNodeType.Image, `参考图${index + 1} · ${reference.name}`, reference.resourceId, media, {
             assetCategory: reference.kind === "image" ? "material" : DRAMA_CAST_ASSET_CATEGORY[reference.kind],
             ...(reference.castId ? { dramaRef: { projectId: input.projectId, kind: "cast" as const, id: reference.castId, baseResourceId: cast?.imageResourceId || reference.resourceId } } : {}),
         });

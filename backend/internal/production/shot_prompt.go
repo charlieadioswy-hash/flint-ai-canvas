@@ -12,12 +12,13 @@ import (
 // ShotVideoPromptInput 将段内的一个镜头渲染为独立生成请求。
 // Segment.References 的非空 Label 对应本次实际附件，空 Label 只提供文字设定。
 type ShotVideoPromptInput struct {
-	Segment          SegmentPromptInput
-	ShotIndex        int
-	ShotNumber       int
-	Seconds          int
-	WrittenPrompt    string
-	SourceReferences []SegmentReference
+	Segment                         SegmentPromptInput
+	ShotIndex                       int
+	ShotNumber                      int
+	Seconds                         int
+	WrittenPrompt                   string
+	WrittenPromptUsesShotReferences bool
+	SourceReferences                []SegmentReference
 }
 
 // ShotVideoPrompt 保留可靠的单镜写稿，并用结构化数据补齐场景、起幅、参考图和声音约束。
@@ -102,7 +103,11 @@ func ShotVideoPrompt(in ShotVideoPromptInput) string {
 	}
 	fmt.Fprintf(&b, "\n【00.00—%s秒｜镜头%d：%s】\n", segmentClock(int64(seconds)*1000), number, fromWritten(heading))
 	if body, ok := writtenShotBody(in, seconds); ok {
-		b.WriteString(fromWritten(body) + "\n")
+		if in.WrittenPromptUsesShotReferences {
+			b.WriteString(actual(body) + "\n")
+		} else {
+			b.WriteString(fromWritten(body) + "\n")
+		}
 	} else {
 		writeStructuredShotBody(&b, in.Segment, shot, seconds, fromWritten)
 	}

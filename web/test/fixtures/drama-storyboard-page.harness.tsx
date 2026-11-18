@@ -9,7 +9,7 @@ for (const [key, value] of Object.entries({ window: browser, document: browser.d
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+const { QueryClient, QueryClientProvider, useQuery } = await import("@tanstack/react-query");
 const userStore = create(() => ({ user: { id: "user" } }));
 mock.module("@/pages/projects/studio/drama-media-action-context", () => ({
     DramaMediaActionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -32,13 +32,45 @@ mock.module("antd", () => ({
             options.map((option) => createElement("option", { key: option.value, value: option.value }, option.label)),
         ),
     InputNumber: ({ onChange, ...props }: { onChange: (value: number) => void }) => createElement("input", { ...props, type: "number", onInput: (event: { target: { value: string } }) => onChange(Number(event.target.value)) }),
+    Input: ({ onChange, autoFocus: _autoFocus, ...props }: { onChange: (event: { target: { value: string } }) => void; autoFocus?: boolean }) => createElement("input", { ...props, onInput: onChange }),
 }));
 mock.module("@/components/ui/product/app-modal", () => ({
-    AppModal: ({ title, children }: { title: string; children: ReactNode }) => (
-        <section role="dialog" aria-label={title}>
-            {children}
-        </section>
-    ),
+    AppModal: ({
+        open,
+        title,
+        children,
+        okText,
+        onOk,
+        onCancel,
+        okButtonProps,
+        footer,
+    }: {
+        open: boolean;
+        title: string;
+        children: ReactNode;
+        okText?: string;
+        onOk?: () => void;
+        onCancel?: () => void;
+        okButtonProps?: { disabled?: boolean };
+        footer?: ReactNode;
+    }) =>
+        open ? (
+            <section role="dialog" aria-label={title}>
+                {children}
+                {footer !== undefined ? (
+                    footer
+                ) : (
+                    <>
+                        {onCancel ? <button onClick={onCancel}>取消</button> : null}
+                        {onOk ? (
+                            <button onClick={onOk} disabled={okButtonProps?.disabled}>
+                                {okText || "确定"}
+                            </button>
+                        ) : null}
+                    </>
+                )}
+            </section>
+        ) : null,
 }));
 mock.module("@/pages/projects/workflow-scene-splits", () => ({
     WorkflowSceneSplits: ({ initialSegmentIndex, buttonLabel }: { initialSegmentIndex: number; buttonLabel: string }) => <button data-split-segment={initialSegmentIndex}>{buttonLabel}</button>,
@@ -61,9 +93,19 @@ mock.module("@/pages/projects/drama-shared", () => ({
     useResourceMediaUrl: (resourceId?: string) => (resourceId ? `/resources/${resourceId}` : ""),
 }));
 mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => children }));
+const videoChoice = (modelKey: string): DramaModelChoice => ({ channelId: "channel", modelKey });
+const defaultVideoOptions: DramaModelOption[] = ["video", "video-new", "episode-video"].map((modelKey) => ({
+    choice: videoChoice(modelKey),
+    capability: "video",
+    label: modelKey,
+    priceLabel: "",
+    tailFrameChain: true,
+    videoRatios: ["16:9", "9:16", "1:1"],
+    videoResolutions: ["720p", "1080p"],
+}));
 let catalogVideoOptions: DramaModelOption[] = [];
 mock.module("@/pages/projects/drama-model-picker", () => ({
-    useDramaModelCatalog: () => ({ data: { options: { image: [], video: catalogVideoOptions } } }),
+    useDramaModelCatalog: () => ({ data: { options: { image: [], video: catalogVideoOptions.length ? catalogVideoOptions : defaultVideoOptions } } }),
     DramaModelPicker: ({ capability, value, onChange }: { capability: string; value: DramaModelChoice; onChange: (value: DramaModelChoice) => void }) =>
         capability === "video" && catalogVideoOptions.length ? (
             <select
@@ -81,12 +123,13 @@ mock.module("@/pages/projects/drama-model-picker", () => ({
                 ))}
             </select>
         ) : (
-            <button aria-label={`选择分镜${capability === "image" ? "图片" : "视频"}模型`} onClick={() => onChange({ modelKey: `${capability}-new` })}>
+            <button aria-label={`选择分镜${capability === "image" ? "图片" : "视频"}模型`} onClick={() => onChange(capability === "video" ? videoChoice("video-new") : { modelKey: "image-new" })}>
                 模型选择
             </button>
         ),
 }));
 const inserted: string[] = [];
+const shotWrites: Array<{ projectId: string; shotId: string; patch: { name?: string; expectedRevision?: number } }> = [];
 const generationWrites: Array<{ expectedRevision?: number; generation?: DramaGenerationConfigurationPatch }> = [];
 const episodeWrites: Array<{ projectId: string; episodeId: string; input: UpdateDramaEpisodeStyleRequest }> = [];
 let episodeWriteFailure = false;
@@ -97,6 +140,10 @@ mock.module("@/services/api/drama", () => ({
     insertDramaShot: async (_projectId: string, shotId: string) => {
         inserted.push(shotId);
         return { shot: { ...shots[0], id: "inserted", position: 3 } };
+    },
+    updateDramaShot: async (projectId: string, shotId: string, patch: { name?: string; expectedRevision?: number }) => {
+        shotWrites.push({ projectId, shotId, patch: structuredClone(patch) });
+        return { shot: { ...shots.find((shot) => shot.id === shotId), name: patch.name } };
     },
     updateDramaEpisodeStyle: async (projectId: string, episodeId: string, input: UpdateDramaEpisodeStyleRequest): Promise<DramaEpisodeStyle> => {
         episodeWrites.push({ projectId, episodeId, input: structuredClone(input) });
@@ -125,13 +172,14 @@ const mediaStates = new Map<string, { status: string; resourceId?: string }>();
 mock.module("@/services/api/drama-shot-media", () => ({ getDramaShotMedia: async (_projectId: string, shotId: string, kind: string) => ({ id: "", status: "idle", shotId, kind, takes: [], ...mediaStates.get(`${shotId}:${kind}`) }) }));
 const { WorkflowStoryboardPage } = await import("@/pages/projects/workflow-storyboard-page");
 const { WorkflowModeDialog } = await import("@/pages/projects/workflow-mode-dialog");
+const { dramaKeys } = await import("@/lib/drama/drama-query-keys");
 afterAll(() => browser.happyDOM.abort());
 
 const settings = {
     episodeSeconds: 60,
     aspectRatio: "16:9",
     videoResolution: "720p",
-    models: { text: {}, image: { modelKey: "image" }, video: { modelKey: "video" } },
+    models: { text: {}, image: { modelKey: "image" }, video: videoChoice("video") },
     storyboard: { generationMode: "reference_video", directorTemplate: "", targetShotCount: 0, segmentMode: "auto", segmentSeconds: 8 },
     assets: {},
 } as DramaSettings;
@@ -224,11 +272,9 @@ test("按真实段导航，段内跨场景仍显示完整镜头，新增定位�
         expect(view.host.textContent).not.toContain("主角打开灯");
         await click(view.host, "编辑分镜 1 的媒体");
         expect(opened).toEqual([["s1", "video"]]);
-        await click(view.host, "编辑分镜 1 文字");
-        expect(edited).toEqual(["s1"]);
         await click(view.host, "新增镜头");
         expect(inserted).toEqual(["s2"]);
-        expect(edited).toEqual(["s1", "inserted"]);
+        expect(edited).toEqual(["inserted"]);
         await act(async () => {
             view.host.querySelectorAll<HTMLButtonElement>("nav[aria-label*='段列表'] .drama-storyboard-segment-row > button")[1].click();
             await settle();
@@ -239,6 +285,125 @@ test("按真实段导航，段内跨场景仍显示完整镜头，新增定位�
         expect(view.host.querySelectorAll(".drama-storyboard-shot")).toHaveLength(1);
     } finally {
         await view.close();
+    }
+});
+
+test("卡片改名只保存目标分镜名称，取消时不修改分镜", async () => {
+    const edited: string[] = [];
+    let changed = 0;
+    const namedDetail = { ...detail, shots: shots.map((shot) => (shot.id === "s2" ? { ...shot, name: "人物回头" } : shot)) };
+    function StoryboardFromEpisodeCache() {
+        const { data } = useQuery({ queryKey: dramaKeys.episode("p", "e"), initialData: namedDetail, enabled: false });
+        return (
+            <WorkflowStoryboardPage
+                {...segmentActions}
+                summary={summary}
+                detail={data}
+                castById={new Map()}
+                status="all"
+                videoAllowed
+                onChanged={() => {
+                    changed += 1;
+                }}
+                onOpenShot={() => undefined}
+                onEditShot={(shot) => edited.push(shot.id)}
+                onOpenCast={() => undefined}
+            />
+        );
+    }
+    const view = await mount(<StoryboardFromEpisodeCache />);
+    try {
+        const secondCard = view.host.querySelectorAll<HTMLElement>(".drama-storyboard-shot")[1];
+        const getDialog = () => view.host.querySelector<HTMLElement>('[role="dialog"][aria-label="编辑分镜名称"]');
+        const fillName = async (dialog: HTMLElement, value: string) => {
+            await act(async () => {
+                const field = dialog.querySelector<HTMLInputElement>('input[aria-label="分镜名称"]')!;
+                field.value = value;
+                field.dispatchEvent(new Event("input", { bubbles: true }));
+                await settle();
+            });
+        };
+        await click(secondCard, "编辑分镜名称");
+        const firstDialog = getDialog()!;
+        expect(firstDialog.querySelector<HTMLInputElement>('input[aria-label="分镜名称"]')?.value).toBe("人物回头");
+        expect(firstDialog.querySelectorAll("input, textarea")).toHaveLength(1);
+        await fillName(firstDialog, "取消的名称");
+        await click(firstDialog, "取消");
+        expect(getDialog()).toBeNull();
+        expect(shotWrites).toEqual([]);
+
+        await click(secondCard, "编辑分镜名称");
+        const saveDialog = getDialog()!;
+        expect(saveDialog.querySelector<HTMLInputElement>('input[aria-label="分镜名称"]')?.value).toBe("人物回头");
+        await fillName(saveDialog, "门边回望");
+        await click(saveDialog, "保存");
+        await act(settle);
+        expect(shotWrites).toEqual([{ projectId: "p", shotId: "s2", patch: { name: "门边回望", expectedRevision: 2 } }]);
+        expect(secondCard.querySelector("h5")?.textContent).toBe("门边回望");
+        expect(secondCard.querySelector(".drama-storyboard-shot-description")?.textContent).toContain("人物回头");
+        expect(changed).toBe(1);
+        expect(edited).toEqual([]);
+        expect(getDialog()).toBeNull();
+    } finally {
+        await view.close();
+    }
+});
+
+test("改名期间收到新版本时保留草稿，并阻止覆盖新名称", async () => {
+    const page = (value: DramaSummary, episode: DramaEpisodeDetail) => (
+        <WorkflowStoryboardPage {...segmentActions} summary={value} detail={episode} castById={new Map()} status="all" videoAllowed onChanged={() => undefined} onOpenShot={() => undefined} onEditShot={() => undefined} onOpenCast={() => undefined} />
+    );
+    const view = await mount(page(summary, detail));
+    const writeCount = shotWrites.length;
+    try {
+        await click(view.host, "编辑分镜名称：分镜 1");
+        const dialog = view.host.querySelector<HTMLElement>('[role="dialog"][aria-label="编辑分镜名称"]')!;
+        const input = dialog.querySelector<HTMLInputElement>('input[aria-label="分镜名称"]')!;
+        await act(async () => {
+            input.value = "本地草稿";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+        });
+        expect([...dialog.querySelectorAll("button")].find((button) => button.textContent === "保存")?.disabled).toBe(false);
+        await view.render(page({ ...summary, production: { ...summary.production, revision: 3 } }, { ...detail, shots: shots.map((shot) => (shot.id === "s1" ? { ...shot, name: "另一个标签页的名称" } : shot)) }));
+        expect(dialog.querySelector('[role="alert"]')?.textContent).toContain("分镜已更新");
+        expect(input.value).toBe("本地草稿");
+        expect([...dialog.querySelectorAll("button")].find((button) => button.textContent === "保存")?.disabled).toBe(true);
+        await click(dialog, "保存");
+        expect(shotWrites).toHaveLength(writeCount);
+        expect(view.host.querySelector(".drama-storyboard-shot h5")?.textContent).toBe("另一个标签页的名称");
+    } finally {
+        await view.close();
+    }
+});
+
+test("已有单镜视频可直接预览，缺图时无需打开视频生成编辑器", async () => {
+    const opened: string[] = [];
+    mediaStates.set("s1:video", { status: "stale", resourceId: "existing-shot-video" });
+    const view = await mount(
+        <WorkflowStoryboardPage
+            {...segmentActions}
+            summary={summary}
+            detail={detail}
+            castById={new Map()}
+            status="all"
+            videoAllowed={false}
+            onChanged={() => undefined}
+            onOpenShot={(shot) => opened.push(shot.id)}
+            onEditShot={() => undefined}
+            onOpenCast={() => undefined}
+        />,
+    );
+    try {
+        await click(view.host, "预览分镜视频：分镜 1");
+        const video = view.host.querySelector<HTMLVideoElement>('[role="dialog"][aria-label="预览分镜视频：分镜 1"] video');
+        expect(video?.getAttribute("src")).toBe("/resources/existing-shot-video");
+        expect(video?.controls).toBe(true);
+        expect(opened).toEqual([]);
+        expect(view.host.querySelector('[aria-label="预览分镜视频：分镜 2"]')).toBeNull();
+    } finally {
+        await view.close();
+        mediaStates.clear();
     }
 });
 
@@ -289,11 +454,7 @@ async function mountVideoFilter(status: string, videoAllowed = true, data = deta
 }
 
 test("段视频就绪筛选保留段内全部镜头，不受单镜图片或视频状态影响", async () => {
-    for (const [imageStatus, imageLabel] of [
-        ["failed", "生成失败"],
-        ["queued", "排队中"],
-        ["stale", "待更新"],
-    ]) {
+    for (const imageStatus of ["failed", "queued", "stale"]) {
         mediaStates.set("s1:image", { status: imageStatus, resourceId: "image-1" });
         mediaStates.set("s1:video", { status: "ready", resourceId: "video-1" });
         const view = await mountVideoFilter("ready", true, { ...detail, segments: [{ ...detail.segments[0], videoStatus: "ready", videoResourceId: "segment-video" }, detail.segments[1]] });
@@ -302,9 +463,8 @@ test("段视频就绪筛选保留段内全部镜头，不受单镜图片或视�
             expect(cards).toHaveLength(2);
             expect(cards[0].getAttribute("data-tone")).toBe("ready");
             expect(cards[0].textContent).toContain("分镜 1");
-            expect(cards[0].querySelector(`[aria-label='分镜 1 图片 · ${imageLabel}']`)).toBeTruthy();
             expect(cards[0].querySelector("[data-resource='image-1']")).toBeTruthy();
-            expect(cards[0].querySelector("[aria-label='分镜 1 视频 · 已就绪']")).toBeTruthy();
+            expect(cards[0].querySelector(".drama-storyboard-shot-state")?.textContent).toBe("已就绪");
         } finally {
             await view.close();
             mediaStates.clear();
@@ -559,18 +719,53 @@ test("分镜模式更换视频模型协调分辨率与衔接，保留比例并�
     try {
         await choose("选择分镜视频模型", "new");
         expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频与生图比例']")!.value).toBe("16:9");
-        expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")!.value).toBe("");
+        expect(Array.from(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")!.options, (option) => option.value)).toEqual(["720p"]);
         expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频衔接']")!.value).toBe("parallel");
         expect(view.host.textContent).toContain("不支持 16:9 画幅");
         expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!.disabled).toBe(true);
         await choose("分镜视频与生图比例", "9:16");
+        expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!.disabled).toBe(true);
+        await choose("分镜视频分辨率", "720p");
         await waitGeneration();
         await click(view.host, "确认并进入漫剧分镜");
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ aspectRatio: "9:16", videoContinuity: "parallel", models: { video: { logicalModelId: "new" } } });
-        expect(saved[0].videoResolution).toBeUndefined();
+        expect(saved[0]).toMatchObject({ aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel", models: { video: { logicalModelId: "new" } } });
     } finally {
         await view.close();
+        catalogVideoOptions = [];
+    }
+});
+
+test("编排弹窗的旧空分辨率或不支持的档位须先选择有效档位", async () => {
+    const video = { logicalModelId: "available-video" };
+    catalogVideoOptions = [{ choice: video, capability: "video", label: "视频模型", priceLabel: "", tailFrameChain: true, videoRatios: ["16:9"], videoResolutions: ["720p", "1080p"], defaultVideoResolution: "720p" }];
+    try {
+        for (const videoResolution of [undefined, "1440p"]) {
+            episodeWrites.length = 0;
+            const confirmed: DramaSettings[] = [];
+            const episodeStyle: DramaEpisodeStyle = { projectId: "p", episodeId: "e", revision: 2, episodeRevision: 8, settings: { ...settings, models: { ...settings.models, video }, videoResolution } };
+            const view = await mount(<WorkflowModeDialog open summary={summary} episodeStyle={episodeStyle} onCancel={() => undefined} onConfirm={(value) => confirmed.push(value)} />);
+            try {
+                const select = view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")!;
+                const confirm = [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!;
+                expect(Array.from(select.options, (option) => option.value)).toEqual(["720p", "1080p"]);
+                expect(confirm.disabled).toBe(true);
+                expect(episodeWrites).toHaveLength(0);
+                expect(confirmed).toHaveLength(0);
+                await choose(view.host, "分镜视频分辨率", "1080p");
+                expect(confirm.disabled).toBe(true);
+                await waitGeneration();
+                expect(episodeWrites).toHaveLength(1);
+                expect(episodeWrites[0]).toMatchObject({ episodeId: "e", input: { settings: { videoResolution: "1080p" } } });
+                expect(confirm.disabled).toBe(false);
+                await click(view.host, "确认并进入漫剧分镜");
+                expect(confirmed).toHaveLength(1);
+                expect(confirmed[0].videoResolution).toBe("1080p");
+            } finally {
+                await view.close();
+            }
+        }
+    } finally {
         catalogVideoOptions = [];
     }
 });
@@ -595,7 +790,7 @@ test("参考生视频窗口的生成配置自动生效，镜头数量仍待确�
         await choose(view.host, "分镜视频衔接", "parallel");
         await waitGeneration();
         expect(generationWrites).toHaveLength(1);
-        expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: settings.models.image, video: { modelKey: "video-new" } }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
+        expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: settings.models.image, video: videoChoice("video-new") }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
         expect(saved).toHaveLength(0);
         expect(view.host.textContent).not.toContain("作品设置已有更新");
         await click(view.host, "确认并进入漫剧分镜");
@@ -619,7 +814,7 @@ test("重编窗口带入本集参数，媒体自动保存时保留旧模式，�
             aspectRatio: "9:16",
             videoResolution: "1080p",
             videoContinuity: "parallel",
-            models: { ...settings.models, image: { modelKey: "episode-image" }, video: { modelKey: "episode-video" } },
+            models: { ...settings.models, image: { modelKey: "episode-image" }, video: videoChoice("episode-video") },
             storyboard: { ...settings.storyboard, generationMode: "storyboard", directorTemplate: "storyboard_detail", shotCountMode: "fixed", targetShotCount: 32 },
         },
     };
@@ -648,7 +843,7 @@ test("重编窗口带入本集参数，媒体自动保存时保留旧模式，�
         await choose(view.host, "分镜数量方式", "smart");
         await waitGeneration();
         expect(generationWrites).toHaveLength(0);
-        expect(episodeWrites).toEqual([{ projectId: "p", episodeId: "e", input: { expectedRevision: 2, expectedEpisodeRevision: 8, settings: { ...episodeStyle.settings, models: { ...episodeStyle.settings.models, video: { modelKey: "video-new" } } } } }]);
+        expect(episodeWrites).toEqual([{ projectId: "p", episodeId: "e", input: { expectedRevision: 2, expectedEpisodeRevision: 8, settings: { ...episodeStyle.settings, models: { ...episodeStyle.settings.models, video: videoChoice("video-new") } } } }]);
         expect(confirmed).toHaveLength(0);
         await click(view.host, "确认并进入漫剧分镜");
         expect(episodeWrites).toHaveLength(2);

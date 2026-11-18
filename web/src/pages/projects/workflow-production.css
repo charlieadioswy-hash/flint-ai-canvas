@@ -47,6 +47,22 @@
     min-width: 0;
 }
 
+.drama-workflow-production-episode-notices {
+    display: grid;
+    gap: var(--space-1);
+    max-width: 100%;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: var(--fs-tiny);
+    line-height: var(--lh-body);
+    overflow-wrap: anywhere;
+}
+
+.drama-workflow-production-episode-notices:not(:has(> :not(:empty))),
+.drama-workflow-production-batch-notices:empty {
+    display: none;
+}
+
 .drama-workflow-production-guidance {
     display: flex;
     align-items: center;
@@ -78,45 +94,6 @@
     width: 112px;
 }
 
-.drama-workflow-production-progress {
-    display: grid;
-    gap: var(--space-2);
-    margin-bottom: var(--space-4);
-    font-size: var(--fs-tiny);
-}
-
-.drama-workflow-production-progress-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-    color: var(--drama-muted);
-}
-
-.drama-workflow-production-progress-meta .is-success {
-    color: var(--drama-ok);
-}
-
-.drama-workflow-production-progress-meta .is-failed {
-    color: var(--drama-err);
-}
-
-.drama-workflow-production-progress-track {
-    display: flex;
-    height: var(--space-2);
-    overflow: hidden;
-    border-radius: var(--radius-sm);
-    background: var(--drama-sunken);
-}
-
-.drama-workflow-production-progress-track > .is-success {
-    background: var(--drama-ok);
-}
-
-.drama-workflow-production-progress-track > .is-failed {
-    background: var(--drama-err);
-}
-
 .drama-workflow-production-episode {
     margin-bottom: var(--space-7);
 }
@@ -125,8 +102,7 @@
     margin-bottom: var(--space-3);
 }
 
-.drama-workflow-production-episode header p,
-.drama-workflow-production-note {
+.drama-workflow-production-episode header p {
     margin-top: var(--space-1);
     color: var(--drama-muted);
     font-size: var(--fs-tiny);
@@ -384,31 +360,6 @@
 
 .drama-workflow-production > .drama-queue .drama-queue-list {
     min-height: 0;
-}
-
-.drama-workflow-production-advanced {
-    margin-block: var(--space-4);
-    padding-block: var(--space-3);
-    border-top: 1px solid var(--drama-line);
-}
-
-.drama-workflow-production-advanced > summary {
-    cursor: pointer;
-    color: var(--drama-muted);
-    font-size: var(--fs-tiny);
-    font-weight: 600;
-}
-
-.drama-workflow-production-advanced[open] > summary {
-    margin-bottom: var(--space-3);
-}
-.drama-workflow-production-advanced .drama-workflow-batch-episode {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-    margin-block: var(--space-3);
-    font-size: var(--fs-tiny);
-    color: var(--drama-muted);
 }
 
 @container drama-workflow-production (min-width: 1240px) {
