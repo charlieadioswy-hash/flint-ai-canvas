@@ -73,17 +73,24 @@ describe("短剧简易工作台步骤", () => {
         expect(resolveWorkflowStep(summary("assets"), "not-a-step")).toBe("assets");
     });
 
-    test("分集已有段或镜头进入分镜，尚无分镜回到分集剧本并保留阶段门禁", () => {
+    test("分集按本集主体和分镜结果决定入口", () => {
         const stats = { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 };
-        expect(episodeWorkflowEntryStep({ shotCount: 0, stats })).toBe("review");
-        for (const content of [
-            { shotCount: 0, segments: 1 },
-            { shotCount: 1, segments: 0 },
-        ]) {
-            const step = episodeWorkflowEntryStep({ shotCount: content.shotCount, stats: { ...stats, segments: content.segments } });
-            expect(step).toBe("story");
-            expect(resolveWorkflowStep(summary("configuring"), step)).toBe("review");
-            expect(resolveWorkflowStep(summary("completed"), step)).toBe("story");
-        }
+        const fresh = { id: "fresh", assetsReady: false, storyboardReady: false, shotCount: 0, stats };
+        const extracted = { ...fresh, id: "extracted", assetsReady: true };
+        const boarded = { ...extracted, id: "boarded", storyboardReady: true, shotCount: 2, stats: { ...stats, segments: 1 } };
+        expect(episodeWorkflowEntryStep(fresh)).toBe("assets");
+        expect(episodeWorkflowEntryStep(extracted)).toBe("review");
+        expect(episodeWorkflowEntryStep(boarded)).toBe("story");
+
+        const current = summary("completed");
+        current.episodes = [fresh, extracted, boarded] as DramaSummary["episodes"];
+        expect(resolveWorkflowStep(current, undefined, fresh.id)).toBe("assets");
+        expect(resolveWorkflowStep(current, "story", fresh.id)).toBe("assets");
+        expect(resolveWorkflowStep(current, "preview", fresh.id)).toBe("assets");
+        expect(resolveWorkflowStep(current, "review", fresh.id)).toBe("review");
+        expect(resolveWorkflowStep(current, "story", extracted.id)).toBe("story");
+        expect(resolveWorkflowStep(current, "preview", extracted.id)).toBe("review");
+        expect(resolveWorkflowStep(current, "preview", boarded.id)).toBe("preview");
+        expect(resolveWorkflowStep(summary("configuring"), "assets", fresh.id)).toBe("review");
     });
 });

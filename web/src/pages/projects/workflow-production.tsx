@@ -34,7 +34,7 @@ import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { WorkflowBatch } from "./workflow-batch";
 import { WorkflowStoryboardPage } from "./workflow-storyboard-page";
 import { WorkflowShotMediaDialog } from "./workflow-shot-media-dialog";
-import { isWorkflowStepAllowed } from "./workflow-state";
+import { episodeAssetsPending, episodeCanPreview, isWorkflowStepAllowed } from "./workflow-state";
 import "./drama.css";
 import "./simple-studio.css";
 import "./workflow-production.css";
@@ -154,15 +154,17 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
     const episodes = summary.episodes;
     const queryEpisodeId = search.get("episode");
     const activeEpisodeId = selectedEpisodeId(routeEpisodeId, queryEpisodeId) || (step === "story" ? episodes.toSorted((left, right) => left.number - right.number)[0]?.id || "" : "");
-    const all = step === "preview" && (search.get("scope") === "all" || !activeEpisodeId);
+    const all = step === "preview" && !activeEpisodeId;
     const castSelectionOwner = JSON.stringify([userId, projectId, activeEpisodeId, all]);
     useEffect(() => setCastSelection(undefined), [castSelectionOwner]);
-    const visibleEpisodes = all ? episodes : episodes.filter((episode) => episode.id === activeEpisodeId);
+    const selectableEpisodes = step === "preview" ? episodes.filter(episodeCanPreview) : episodes;
+    const visibleEpisodes = all ? selectableEpisodes : selectableEpisodes.filter((episode) => episode.id === activeEpisodeId);
+    const visibleEpisodeIds = new Set(visibleEpisodes.map((episode) => episode.id));
     const queries = useQueries({
         queries: episodes.map((episode) => ({
             queryKey: dramaKeys.episode(projectId, episode.id),
             queryFn: ({ signal }: { signal: AbortSignal }) => getDramaEpisode(projectId, episode.id, signal),
-            enabled: Boolean(projectId && (all || episode.id === activeEpisodeId)),
+            enabled: Boolean(projectId && visibleEpisodeIds.has(episode.id)),
             refetchInterval: jobsActive ? 2_500 : false,
         })),
     });
@@ -201,12 +203,12 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
     const status = search.get("status") || "all";
     const guideStep = summary.guide?.step || summary.production.guideStep;
     const textConfirmed = guideStep === "completed" || !guideStep;
-    const canStartStoryboard = textConfirmed || guideStep === "story";
+    const canStartStoryboard = (textConfirmed || guideStep === "story") && !episodeAssetsPending(summary, activeEpisodeId);
     const automaticallyStarted = useRef(new Set<string>());
     const storyboard = useMutation({
         mutationFn: ({ episodeId, ticket }: { episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或账号已切换，请重新操作");
-            if (!canStartStoryboard || busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy) throw new Error("请先完成当前操作再生成分镜");
+            if (!canStartStoryboard || episodeAssetsPending(summary, episodeId) || busy || media.state.submitting || mediaEditingState.dirty || mediaEditingState.busy) throw new Error("请先完成当前操作再生成分镜");
             const current = queries.find((query) => query.data?.episode.id === episodeId);
             if (!current?.data || current.isError || !needsStoryboard(current.data)) throw new Error("本集状态已更新，请刷新后再操作");
             return ensureDramaEpisodeStoryboard(ticket.projectId, episodeId);
@@ -464,7 +466,7 @@ export function WorkflowProduction({ summary, step, onChanged, headerActions, on
                                     aria-label="选择集数"
                                     disabled={busy}
                                     value={all ? "all" : activeEpisodeId}
-                                    options={[...(step === "preview" ? [{ value: "all", label: "全部集" }] : []), ...episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title || "未命名"}` }))]}
+                                    options={[...(step === "preview" ? [{ value: "all", label: "全部集" }] : []), ...selectableEpisodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title || "未命名"}` }))]}
                                     onChange={(id: string) =>
                                         replaceQuery(id === "all" ? undefined : id, (next) => {
                                             next.delete("segment");

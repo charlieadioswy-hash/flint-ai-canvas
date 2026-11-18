@@ -201,6 +201,19 @@ func TestDramaInitialAssetsLegacyPaidResultRetainsWholeSource(t *testing.T) {
 		if stored.AssetIDsJSON != "" {
 			t.Fatalf("legacy global result must not be reinterpreted as selected-episode work: %+v", stored)
 		}
+		if row := episodeCompletionRow(t, svc, projectID, episode.ID); !row.AssetsReady || row.StoryboardReady {
+			t.Fatalf("paid legacy extraction did not unlock the original episode: %+v", row)
+		}
+	}
+	current := guideSummary(t, svc, projectID)
+	newEpisode, err := svc.AddDramaEpisode("usr-drama", projectID, AddDramaEpisodeRequest{
+		ExpectedRevision: &current.Production.Revision, Text: "在旧提取完成后新增的全新章节。", CreateDraft: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row := episodeCompletionRow(t, svc, projectID, newEpisode.Episode.ID); row.AssetsReady {
+		t.Fatalf("later episode inherited unrelated legacy extraction: %+v", row)
 	}
 }
 

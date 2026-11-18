@@ -45,7 +45,7 @@ import { WorkflowImpact } from "./workflow-impact";
 import { WorkflowSourceReview } from "./workflow-source";
 import { WorkflowModeDialog } from "./workflow-mode-dialog";
 import { WorkflowEpisodes } from "./workflow-episodes";
-import { EPISODE_WORKFLOW_STEPS, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS, type WorkflowStep } from "./workflow-state";
+import { episodeAssetsPending, episodeWorkflowEntryStep, EPISODE_WORKFLOW_STEPS, isWorkflowStepAllowed, resolveWorkflowStep, WORKFLOW_STEPS, type WorkflowStep } from "./workflow-state";
 import "./drama.css";
 import "./guide.css";
 import "./workflow.css";
@@ -122,17 +122,32 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const managing = management !== null || Boolean(summary && summary.episodes.length > 0 && stage !== "configuring" && !summary.production.hasDraftForm && !routeEpisodeId && !searchParams.has("step") && !searchParams.has("episode"));
     const managementTab = ["script", "style", "assets", "episodes"].includes(management || "") ? management : "episodes";
     const episodesView = managing && managementTab === "episodes";
-    const selectedEpisodeId = routeEpisodeId || searchParams.get("episode") || summary?.episodes.toSorted((left, right) => left.number - right.number)[0]?.id;
-    const resolvedStep = summary ? resolveWorkflowStep(summary, requested, selectedEpisodeId) : "review";
+    const queryEpisodeId = searchParams.get("episode");
+    const allEpisodesPreview = requested === "preview" && !routeEpisodeId && !queryEpisodeId;
+    const selectedEpisodeId = routeEpisodeId || queryEpisodeId || summary?.episodes.toSorted((left, right) => left.number - right.number)[0]?.id;
+    const assetsPending = Boolean(summary && episodeAssetsPending(summary, selectedEpisodeId));
+    const resolvedStep = summary && allEpisodesPreview && isWorkflowStepAllowed(summary, "preview", { manualPreview: true }) ? "preview" : summary ? resolveWorkflowStep(summary, requested, selectedEpisodeId) : "review";
     const active = managing ? (managementTab === "script" ? "review" : managementTab === "style" ? "style" : managementTab === "assets" ? "assets" : "story") : routeEpisodeId && resolvedStep === "source" ? "review" : resolvedStep;
     const steps = routeEpisodeId ? EPISODE_WORKFLOW_STEPS : WORKFLOW_STEPS;
+    useEffect(() => {
+        if (!summary || managing) return;
+        const explicitEpisodeId = routeEpisodeId || queryEpisodeId;
+        const canResolveEpisode = !explicitEpisodeId || summary.episodes.some((episode) => episode.id === explicitEpisodeId);
+        const blocked = (assetsPending && active === "assets" && requested !== "assets") || (canResolveEpisode && requested === "preview" && active !== "preview");
+        if (!blocked) return;
+        // 后台就绪后仍留在当前步骤，由用户主动继续。
+        const next = new URLSearchParams(searchParams);
+        for (const key of ["scope", "segment", "shot", "editor", "media", "status", "cast"]) next.delete(key);
+        next.set("step", active);
+        setSearchParams(next, { replace: true });
+    }, [summary, managing, assetsPending, active, requested, routeEpisodeId, queryEpisodeId, searchParams, setSearchParams]);
     const modeOpen = Boolean(modeTarget && !managing && active === "assets" && modeTarget.episodeId === selectedEpisodeId && modeTarget.initial === (stage === "assets"));
     useEffect(() => {
         if (modeTarget && !modeOpen) setModeTarget(undefined);
     }, [modeTarget, modeOpen]);
 
     const revision = summary?.production.revision || 0;
-    const episodeStyleId = managing || stage === "configuring" ? undefined : routeEpisodeId || searchParams.get("episode") || (["assets", "story", "preview"].includes(active) ? selectedEpisodeId : undefined);
+    const episodeStyleId = managing || stage === "configuring" || (active === "preview" && allEpisodesPreview) ? undefined : routeEpisodeId || queryEpisodeId || (["assets", "story", "preview"].includes(active) ? selectedEpisodeId : undefined);
     const initialConfiguration = stage === "configuring" && !episodeStyleId;
     const episodeStyleKey = ["drama-episode-style", userId, projectId, episodeStyleId, revision];
     const episodeStyleQuery = useQuery({ queryKey: episodeStyleKey, queryFn: ({ signal }) => getDramaEpisodeStyle(projectId, episodeStyleId!, signal), enabled: Boolean(summary && episodeStyleId), placeholderData: keepPreviousData });
@@ -258,7 +273,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                 for (const key of ["scope", "segment", "shot", "editor", "media", "status"]) params.delete(key);
                 if (!routeEpisodeId && confirmedEpisodeId) params.set("episode", confirmedEpisodeId);
             }
-            params.set("step", expectedStep === "story" ? "preview" : resolveWorkflowStep(next));
+            params.set("step", expectedStep === "story" ? "preview" : resolveWorkflowStep(next, undefined, confirmedEpisodeId));
             // 只放行服务端确认成功后的这一次内部推进，编辑/确认期间的离开保护继续生效。
             if (routeEpisodeId && confirmedEpisodeId && routeEpisodeId !== confirmedEpisodeId) {
                 const pathname = `/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(confirmedEpisodeId)}`;
@@ -367,7 +382,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     const rescript = useMutation({
         mutationFn: ({ episodeId, ticket }: { episodeId: string; ticket: ReturnType<typeof operation.capture> }) => {
             if (!operation.isCurrent(ticket)) throw new Error("作品或登录状态已变化，请重新操作");
-            if (stage === "assets" || !summary?.episodes.some((episode) => episode.id === episodeId)) throw new Error("本集状态已更新，请刷新后再编排剧本");
+            if (stage === "assets" || !summary?.episodes.some((episode) => episode.id === episodeId && episode.assetsReady !== false)) throw new Error("本集状态已更新，请刷新后再编排剧本");
             return rescriptDramaEpisode(ticket.projectId, episodeId);
         },
         onSuccess: (detail, { episodeId, ticket }) => {
@@ -434,7 +449,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
     }, [generationKey, generationDirty, settingsDraft, settingsStale, episodeConfigurationBusy, workflowBusy, configIssue, blocker.state, otherSettingsDirty, configurationSyncError]);
     const canConfirm = Boolean(summary?.guide?.canConfirm) && !episodeConfigurationBusy && !settingsStale && !generationDirty && !workflowBusy && !sourceState.dirty && !sourceState.busy && !(settingsDirty && !initialConfiguration);
     const canArrange =
-        stage === "assets"
+        !assetsPending &&
+        (stage === "assets"
             ? canConfirm
             : Boolean(selectedEpisodeId && summary?.episodes.some((episode) => episode.id === selectedEpisodeId)) &&
               !workflowBusy &&
@@ -444,7 +460,7 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
               !sourceState.dirty &&
               !sourceState.busy &&
               !media.state.submitting &&
-              !retryText.isPending;
+              !retryText.isPending);
     const blocking = (stage === "assets" && active === "assets") || (stage === "story" && active === "story") ? summary?.guide?.blockingReason : undefined;
     const footerStatus = configurationSyncError ? (
         <span role="alert">
@@ -569,7 +585,12 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                                     busy={confirm.isPending || saveStyle.isPending}
                                     onChanged={refresh}
                                     onDirtyChange={sourceChanged}
-                                    onOpenEpisode={(episodeId, step = "review") => navigate(`/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(episodeId)}?step=${step}`)}
+                                    onOpenEpisode={(episodeId, step) => {
+                                        const episode = summary.episodes.find((item) => item.id === episodeId);
+                                        if (!episode) return;
+                                        const entry = resolveWorkflowStep(summary, step ?? episodeWorkflowEntryStep(episode), episodeId);
+                                        navigate(`/projects/${encodeURIComponent(projectId)}/e/${encodeURIComponent(episodeId)}?step=${entry}`);
+                                    }}
                                 />
                             ) : null}
                             {!episodesView && (active === "source" || active === "review") ? (
@@ -643,9 +664,9 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                             ) : null}
                             {active === "assets" ? (
                                 <div className="drama-workflow-assets">
-                                    {stage === "assets" && blocking ? (
+                                    {!managing && (blocking || assetsPending) ? (
                                         <p className="drama-workflow-notice" role="status">
-                                            {blocking}
+                                            {blocking || "本集角色、场景和道具尚未提取完毕"}
                                         </p>
                                     ) : null}
                                     {textFailed ? (

@@ -13,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { SOURCE_FORMAT_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys } from "./studio/use-studio";
 import { DRAMA_SOURCE_FILE_MAX_BYTES, formatDramaSourceFileSize, readDramaSourceFile } from "./drama-source-file";
+import { episodeAssetsPending } from "./workflow-state";
 
 import "./workflow-source.css";
 
@@ -282,7 +283,8 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
         },
     });
     const guideStep = summary.guide?.step || summary.production.guideStep;
-    const canStartStoryboard = !guideStep || guideStep === "story" || guideStep === "completed";
+    const assetsPending = episodeAssetsPending(summary, episodeId);
+    const canStartStoryboard = (!guideStep || guideStep === "story" || guideStep === "completed") && !assetsPending;
     const working = busy || reading || reloading || downloading || save.isPending || replace.isPending || saveMetadata.isPending || createEpisodes.isPending || storyboard.isPending;
     const totalChapters = chapters.data?.chapters.length || 0;
     const chapterScopeSummary = `原文共 ${totalChapters} 章 · 共 ${summary.episodes.length} 集`;
@@ -409,7 +411,13 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                 {step === "review" ? (
                     <div className="drama-source-actions">
                         {episode.data?.episode.stage === "draft" ? (
-                            <Button type="primary" loading={storyboard.isPending} disabled={working || dirty || !canStartStoryboard} title={!canStartStoryboard ? "请先完成首次配置并确认主体资产" : undefined} onClick={() => storyboard.mutate()}>
+                            <Button
+                                type="primary"
+                                loading={storyboard.isPending}
+                                disabled={working || dirty || !canStartStoryboard}
+                                title={assetsPending ? "本集主体提取尚未完成" : !canStartStoryboard ? "请先完成首次配置并确认主体资产" : undefined}
+                                onClick={() => storyboard.mutate()}
+                            >
                                 {storyboard.isPending ? "正在生成分镜…" : "生成分镜"}
                             </Button>
                         ) : null}

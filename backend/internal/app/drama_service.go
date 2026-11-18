@@ -466,6 +466,10 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	if err != nil {
 		return DramaSummary{}, err
 	}
+	completions, err := s.dramaEpisodeCompletions(project.ID, userID, episodes, outline, stats)
+	if err != nil {
+		return DramaSummary{}, err
+	}
 	jobCounts, err := s.repo.DramaJobCounts(project.ID)
 	if err != nil {
 		return DramaSummary{}, err
@@ -515,6 +519,7 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 	awaiting := 0
 	for _, episode := range episodes {
 		stat := stats[episode.ID]
+		completion := completions[episode.ID]
 		held := dramaMediaHeld(settings, productionRow, &episode)
 		if held {
 			awaiting++
@@ -522,6 +527,7 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 		summary.Episodes = append(summary.Episodes, DramaEpisodeRow{
 			ID: episode.ID, Number: episode.Number, Title: episode.Title, Synopsis: truncateRunes(episode.Synopsis, 120), Stage: episode.Stage, SourceFormat: production.NormalizeSourceFormat(episode.SourceFormat), Error: episode.Error,
 			ShotCount: episode.ShotCount, DurationMs: episode.DurationMs, Approved: episode.Approved, MediaReleased: episode.MediaReleased, AwaitingMedia: held,
+			AssetsReady: completion.assetsReady, StoryboardReady: completion.storyboardReady, VideoReady: completion.videoReady,
 			FinalResourceID: episode.FinalResourceID, FinalStale: episode.FinalStale,
 			Stats:    DramaEpisodeStats{Segments: stat.Total, PromptReady: stat.PromptReady, PromptSucceeded: stat.PromptSucceeded, VideoReady: stat.VideoReady, VideoGenerated: stat.VideoGenerated, Failed: stat.Failed},
 			Revision: episode.Revision, UpdatedAt: episode.UpdatedAt.Format(time.RFC3339),

@@ -1180,6 +1180,52 @@ test("资产方案的未保存状态接入主壳，阻止确认和离开直到�
     }
 });
 
+test("主体未就绪的单集直链停在角色场景，提取完成后才允许切到分镜", async () => {
+    const mounted = await mount("/projects/project-a/e/episode-b?step=preview&editor=media&shot=old", false, "completed");
+    try {
+        const data = makeSummary("project-a", "completed", 2);
+        data.episodes = [
+            { id: "episode-a", number: 1, assetsReady: true, storyboardReady: true, videoReady: true },
+            { id: "episode-b", number: 2, assetsReady: false, storyboardReady: false, videoReady: false },
+        ] as DramaSummary["episodes"];
+        const update = async () => {
+            summaries.set("project-a", data);
+            await act(async () => {
+                mounted.query.setQueryData(summaryKey("project-a"), structuredClone(data));
+                await settle();
+            });
+            await act(async () => void (await settle()));
+        };
+        await update();
+        expect(mounted.router.state.location.search).toBe("?step=assets");
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')?.textContent).toBe("episode-b");
+        expect(button(mounted.host, "编排剧本").disabled).toBe(true);
+        expect(button(mounted.host, "漫剧分镜").disabled).toBe(true);
+        data.episodes[1].assetsReady = true;
+        await update();
+        expect(mounted.router.state.location.search).toBe("?step=assets");
+        expect(button(mounted.host, "编排剧本").disabled).toBe(false);
+        expect(button(mounted.host, "漫剧分镜").disabled).toBe(false);
+        expect(button(mounted.host, "视频预览").disabled).toBe(true);
+        await mounted.go("/projects/project-a/e/episode-b?step=preview&segment=0");
+        expect(mounted.router.state.location.search).toBe("?step=review");
+        expect(mounted.host.querySelector(".drama-workflow-production-toolbar")).toBeNull();
+        expect(rescripts).toHaveLength(0);
+        await click(button(mounted.host, "漫剧分镜"));
+        expect(mounted.router.state.location.search).toBe("?step=story");
+        expect(mounted.host.querySelector('[aria-label="当前主体集"]')).toBeNull();
+        expect(rescripts).toHaveLength(0);
+        data.episodes[0] = { ...data.episodes[0], assetsReady: false, storyboardReady: false, videoReady: false };
+        data.episodes[1].storyboardReady = true;
+        await update();
+        await mounted.go("/projects/project-a?step=preview&scope=all");
+        expect(mounted.router.state.location.search).toBe("?step=preview&scope=all");
+        expect(mounted.host.querySelector('[aria-label="短剧制作步骤"] [aria-current="step"]')?.textContent).toBe("视频预览");
+    } finally {
+        await mounted.close();
+    }
+});
+
 test("完整目录中的待制作集直接进入主流程，不要求选章或自动启动制作", async () => {
     const mounted = await mount("/projects/project-a/guide?step=story");
     try {
@@ -2251,6 +2297,7 @@ test("本集预览风格与剧本页不显示其他集的全剧阻断，阶段�
         const mounted = await mount(`/projects/project-a/e/episode-8?step=${step}`);
         try {
             const current = makeSummary("project-a", stage, 7);
+            current.episodes = [{ id: "episode-8", number: 8, assetsReady: true, storyboardReady: true, shotCount: 1 }] as DramaSummary["episodes"];
             current.guide!.canConfirm = false;
             current.guide!.blockingReason = "第 7 集剧本与分镜尚未就绪";
             summaries.set("project-a", current);

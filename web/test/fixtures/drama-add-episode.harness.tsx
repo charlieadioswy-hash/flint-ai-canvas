@@ -165,6 +165,20 @@ test("空原文禁提交，带版本新建并防同帧双击，提交期锁定�
         await view.close();
     }
 });
+test("简易制作台只创建分集草稿，保留后续主体步骤", async () => {
+    reset();
+    const view = await mount({ createDraft: true });
+    try {
+        await input(view.host, "本集原文", "待提取主体的正文");
+        await act(async () => button(view.host, "新建分集").click());
+        expect(calls).toEqual([{ projectId: "project", input: { title: "", text: "待提取主体的正文", sourceFormat: "novel", expectedRevision: 4, createDraft: true } }]);
+        await finish();
+        expect(added).toEqual(["new-episode"]);
+    } finally {
+        await view.close();
+    }
+});
+
 test("轮询版本变化保留原文但不自动抬高提交版本，重新打开才取新版本", async () => {
     reset();
     const view = await mount();

@@ -14,8 +14,17 @@ export const WORKFLOW_STEPS: ReadonlyArray<{ key: WorkflowStep; title: string }>
 
 export const EPISODE_WORKFLOW_STEPS = WORKFLOW_STEPS.filter((step) => step.key !== "source").map((step) => (step.key === "review" ? { ...step, title: "分集剧本" } : step));
 
-export function episodeWorkflowEntryStep(episode: Pick<DramaEpisodeRow, "shotCount" | "stats">): "review" | "story" {
-    return episode.shotCount > 0 || episode.stats.segments > 0 ? "story" : "review";
+export function episodeWorkflowEntryStep(episode: Pick<DramaEpisodeRow, "assetsReady" | "storyboardReady">): "assets" | "review" | "story" {
+    if (!episode.assetsReady) return "assets";
+    return episode.storyboardReady ? "story" : "review";
+}
+
+export function episodeAssetsPending(summary: DramaSummary, episodeId?: string) {
+    return Boolean(episodeId && summary.episodes?.some((episode) => episode.id === episodeId && episode.assetsReady === false));
+}
+
+export function episodeCanPreview(episode: Pick<DramaEpisodeRow, "assetsReady" | "storyboardReady">) {
+    return episode.assetsReady !== false && episode.storyboardReady !== false;
 }
 
 const STEP_INDEX = new Map(WORKFLOW_STEPS.map((step, index) => [step.key, index]));
@@ -36,14 +45,16 @@ export function isLegacyDramaWorkflow(summary: DramaSummary) {
 
 /**
  * 当前阶段允许浏览的步骤。configuring 只到风格配置；资产阶段允许回看当前集已有的分镜。
- * completed 与传统项目可到分镜；预览不作为恢复落点，但到达分镜后可手动进入。
+ * 本集主体就绪后可编排分镜，分镜就绪后可手动进入视频预览。
  */
 export function allowedWorkflowSteps(summary: DramaSummary, options: WorkflowStepOptions = {}): WorkflowStep[] {
     const stage = guideStep(summary);
-    const preview = options.manualPreview ? (["preview"] as const) : [];
+    const episode = options.episodeId ? summary.episodes?.find((item) => item.id === options.episodeId) : summary.episodes?.toSorted((left, right) => left.number - right.number)[0];
+    const canPreview = options.episodeId ? (episode ? episodeCanPreview(episode) : false) : !summary.episodes?.length || summary.episodes.some(episodeCanPreview);
+    const preview = options.manualPreview && canPreview ? (["preview"] as const) : [];
+    if (stage !== "configuring" && episodeAssetsPending(summary, options.episodeId)) return ["source", "review", "style", "assets"];
     if (!stage || stage === "completed" || stage === "story") return ["source", "review", "style", "assets", "story", ...preview];
     if (stage === "assets") {
-        const episode = options.episodeId ? summary.episodes?.find((item) => item.id === options.episodeId) : summary.episodes?.toSorted((left, right) => left.number - right.number)[0];
         const existingStoryboard = Boolean(episode && (episode.shotCount > 0 || episode.stats?.segments > 0));
         return ["source", "review", "style", "assets", ...(existingStoryboard ? (["story"] as const) : [])];
     }
@@ -55,9 +66,9 @@ export function isWorkflowStepAllowed(summary: DramaSummary, step: WorkflowStep,
 }
 
 /** 打开项目时的默认步骤。summary 未加载时调用方不得据此重定向。 */
-export function defaultWorkflowStep(summary: DramaSummary): WorkflowStep {
+export function defaultWorkflowStep(summary: DramaSummary, episodeId?: string): WorkflowStep {
     const stage = guideStep(summary);
-    if (stage === "assets") return "assets";
+    if (stage === "assets" || (stage !== "configuring" && episodeAssetsPending(summary, episodeId))) return "assets";
     if (stage === "story" || stage === "completed" || !stage) return "story";
     return summary.production.chapterCount > 0 ? "review" : "source";
 }
@@ -66,5 +77,7 @@ export function defaultWorkflowStep(summary: DramaSummary): WorkflowStep {
 export function resolveWorkflowStep(summary: DramaSummary, requested?: string | null, episodeId?: string): WorkflowStep {
     const step = WORKFLOW_STEPS.find((item) => item.key === requested)?.key;
     if (step && isWorkflowStepAllowed(summary, step, { manualPreview: true, episodeId })) return step;
-    return defaultWorkflowStep(summary);
+    const fallback = defaultWorkflowStep(summary, episodeId);
+    // The storyboard page can start generation on entry; a preview link is not that intent.
+    return step === "preview" && fallback === "story" ? "review" : fallback;
 }

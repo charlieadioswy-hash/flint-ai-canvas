@@ -5,7 +5,7 @@ import { ArrowDownWideNarrow, Clapperboard, Download, FileArchive, Film, Image, 
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
-import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, type DramaEpisodeDetail, type DramaEpisodeRow, type DramaSummary } from "@/services/api/drama";
+import { getDramaEpisode, getDramaWorkflowReadiness, renderDramaEpisode, type DramaEpisodeRow, type DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -20,13 +20,12 @@ import "./workflow-episodes.css";
 export type WorkflowEpisodesProps = {
     summary: DramaSummary;
     onChanged: () => void | Promise<unknown>;
-    onOpenEpisode: (episodeId: string, step?: "review" | "story") => void;
+    onOpenEpisode: (episodeId: string, step?: ReturnType<typeof episodeWorkflowEntryStep>) => void;
     onDirtyChange?: (dirty: boolean, busy?: boolean) => void;
     busy?: boolean;
 };
 
 type Filter = "all" | "idle" | "active" | "failed" | "done";
-type ProgressState = Exclude<Filter, "all"> | "unknown";
 type ResultKind = "render" | "download";
 type ResultItem = {
     episodeId: string;
@@ -55,44 +54,17 @@ function matches(episode: DramaEpisodeRow, filter: Filter) {
     return true;
 }
 
-function subjectStatus(detail?: DramaEpisodeDetail) {
-    if (!detail) return "勾选后检查";
-    const references = new Map(
-        detail.segments
-            .flatMap((segment) => segment.request.references)
-            .filter((reference) => reference.castId)
-            .map((reference) => [reference.castId, reference]),
-    );
-    if (!references.size) return "无主体引用";
-    const missing = [...references.values()].filter((reference) => !reference.resourceId).length;
-    return missing ? `缺少 ${missing} 项参考图` : `已引用 ${references.size} 项`;
-}
-
-function subjectState(detail?: DramaEpisodeDetail): ProgressState {
-    if (!detail) return "unknown";
-    if (!detail.segments.length) return "idle";
-    return detail.segments.some((segment) => segment.request.references.some((reference) => reference.castId && !reference.resourceId)) ? "idle" : "done";
-}
-
-function storyboardState(episode: DramaEpisodeRow): ProgressState {
-    if (episode.stage === "script") return episode.error ? "failed" : "active";
-    if (episode.shotCount > 0) return "done";
-    return "idle";
-}
-
-function videoState(episode: DramaEpisodeRow): ProgressState {
-    if ((episode.error || episode.stats.failed > 0) && (episode.stage === "video" || episode.stage === "render")) return "failed";
-    if (!episode.finalStale && ((episode.finalResourceId && episode.stage === "done") || (episode.stats.segments > 0 && episode.stats.videoReady >= episode.stats.segments))) return "done";
-    return episode.finalStale || episode.stats.videoReady > 0 || episode.stats.videoGenerated > 0 || episode.stage === "render" ? "active" : "idle";
-}
-
 function updatedTime(episode: DramaEpisodeRow) {
     const time = Date.parse(episode.updatedAt || "");
     return Number.isFinite(time) ? time : 0;
 }
 
 const DRAMA_TYPE_LABEL = { comic: "精品漫", live_action: "真人剧", narration: "漫剧解说" };
-const PROGRESS_LABEL: Record<ProgressState, string> = { idle: "未进行", active: "进行中", failed: "失败", done: "完成", unknown: "尚未检查" };
+const EPISODE_PROGRESS = [
+    { field: "assetsReady", label: "主体" },
+    { field: "storyboardReady", label: "分镜" },
+    { field: "videoReady", label: "视频" },
+] as const;
 
 export function WorkflowEpisodes(props: WorkflowEpisodesProps) {
     const userId = useUserStore((state) => state.user?.id || "");
@@ -135,7 +107,6 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
     const scopeComplete = selected.length > 0 && !scopeLoading && !scopeFailed && currentDetails.length === selected.length;
     const segmentIds = scopeComplete ? [...new Set(currentDetails.flatMap((detail) => detail.segments.map((segment) => segment.id)))] : [];
     const targetLabels = Object.fromEntries(currentDetails.flatMap((detail) => detail.segments.map((segment) => [segment.id, `第 ${detail.episode.number} 集 · 第 ${segment.index + 1} 段`])));
-    const byId = new Map(currentDetails.map((detail) => [detail.episode.id, detail]));
     const visible = useMemo(
         () =>
             summary.episodes
@@ -473,33 +444,19 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
                             </button>
                             <footer className="drama-workflow-episode-progress">
                                 <dl>
-                                    <div data-status={subjectState(byId.get(episode.id))} title={subjectStatus(byId.get(episode.id))}>
-                                        <dt>
-                                            <span className="drama-workflow-episode-dot" aria-hidden />
-                                            主体
-                                        </dt>
-                                        <dd className="sr-only">
-                                            {PROGRESS_LABEL[subjectState(byId.get(episode.id))]} · {subjectStatus(byId.get(episode.id))}
-                                        </dd>
-                                    </div>
-                                    <div data-status={storyboardState(episode)} title={episode.shotCount ? `${episode.shotCount} 镜头` : episode.stage === "draft" ? "待制作" : "等待拆镜"}>
-                                        <dt>
-                                            <span className="drama-workflow-episode-dot" aria-hidden />
-                                            分镜
-                                        </dt>
-                                        <dd className="sr-only">
-                                            {PROGRESS_LABEL[storyboardState(episode)]} · {episode.shotCount ? `${episode.shotCount} 镜头` : episode.stage === "draft" ? "待制作" : "等待拆镜"}
-                                        </dd>
-                                    </div>
-                                    <div data-status={videoState(episode)} title={episode.stats.segments ? `${episode.stats.videoReady}/${episode.stats.segments} 段连续视频就绪` : "尚无连续视频"}>
-                                        <dt>
-                                            <span className="drama-workflow-episode-dot" aria-hidden />
-                                            视频
-                                        </dt>
-                                        <dd className="sr-only">
-                                            {PROGRESS_LABEL[videoState(episode)]} · {episode.stats.segments ? `${episode.stats.videoReady}/${episode.stats.segments} 段连续视频就绪` : "尚无连续视频"}
-                                        </dd>
-                                    </div>
+                                    {EPISODE_PROGRESS.map(({ field, label }) => {
+                                        const ready = episode[field];
+                                        const status = ready ? "已完成" : "未完成";
+                                        return (
+                                            <div key={field} data-status={ready ? "done" : "idle"} title={`${label}：${status}`}>
+                                                <dt>
+                                                    <span className="drama-workflow-episode-dot" aria-hidden />
+                                                    {label}
+                                                </dt>
+                                                <dd className="sr-only">{status}</dd>
+                                            </div>
+                                        );
+                                    })}
                                 </dl>
                                 <Dropdown
                                     trigger={["click"]}
@@ -529,6 +486,7 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
             {adding ? (
                 <AddEpisodeModal
                     open
+                    createDraft
                     projectId={projectId}
                     expectedRevision={summary.production.revision}
                     nextNumber={Math.max(0, ...summary.episodes.map((episode) => episode.number)) + 1}

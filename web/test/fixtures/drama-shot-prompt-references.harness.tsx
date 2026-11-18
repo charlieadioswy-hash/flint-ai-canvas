@@ -280,6 +280,50 @@ test("参考图编号只遵循当前附件顺序，并保留资源名称与正�
     expect(plainText(parts)).toBe(prompt);
 });
 
+test("单镜已有稿中的资产名保留原文，同一个附图在括号中只显示一次资产引用", () => {
+    const prompt = "【本镜参考图】\n林晚（参考图1）：推门。\n王府大厅 (@[shot-image:hall-view])：暖光。\n构图（参考图3）：独立上传。";
+    const config = mediaConfig({ prompt, referenceResourceIds: ["hero-image", "hall-view", "upload"], referenceSubjects: { "hall-view": "hall" } });
+    const references = buildShotPromptReferences(shot({ castIdsJson: '["hero"]', sceneCastId: "hall" }), [cast({ imageResourceId: "hero-image" }), cast({ id: "hall", kind: "scene", name: "王府大厅", imageResourceId: "hall-current" })], config, "video");
+    const editor = document.createElement("div");
+    renderEditableContent(editor, prompt, references);
+    const chips = Array.from(editor.querySelectorAll<HTMLElement>("[data-mention-reference-id]"));
+    expect(chips.map((chip) => [chip.dataset.mentionReferenceId, chip.querySelector(".canvas-resource-inline-label")?.textContent])).toEqual([
+        ["shot-ref:hero-image", "林晚"],
+        ["shot-ref:hall-view", "王府大厅"],
+        ["shot-ref:upload", "参考图3"],
+    ]);
+    expect(chips[0].previousSibling?.textContent).toEndWith("林晚（");
+    expect(chips[1].previousSibling?.textContent).toEndWith("王府大厅 (");
+    expect(serializeEditableValue(editor)).toBe(prompt);
+
+    const reordered = { ...config, prompt: "王府大厅（@[shot-image:hall-view]），林晚（参考图 3）。", referenceResourceIds: ["upload", "hall-view", "hero-image"] };
+    const reorderedReferences = buildShotPromptReferences(shot(), [cast({ imageResourceId: "hero-image" }), cast({ id: "hall", kind: "scene", name: "王府大厅" })], reordered, "video");
+    renderEditableContent(editor, reordered.prompt, reorderedReferences);
+    expect(Array.from(editor.querySelectorAll<HTMLElement>("[data-mention-reference-id]"), (chip) => chip.dataset.mentionReferenceId)).toEqual(["shot-ref:hall-view", "shot-ref:hero-image"]);
+    expect(serializeEditableValue(editor)).toBe(reordered.prompt);
+});
+
+test("同名角色或同一角色的不同附图各自保留可区分的单个引用", () => {
+    const prompt = "林晚（参考图1）望向林晚（参考图2）；林晚（@[shot-image:hero-view]）的侧脸，背景（参考图4）。";
+    const config = mediaConfig({
+        prompt,
+        referenceResourceIds: ["hero-image", "other-image", "hero-view", "background"],
+        referenceSubjects: { "hero-image": "hero", "other-image": "other", "hero-view": "hero" },
+    });
+    const references = buildShotPromptReferences(shot({ castIdsJson: '["hero","other"]' }), [cast(), cast({ id: "other" })], config, "image");
+    const editor = document.createElement("div");
+    renderEditableContent(editor, prompt, references);
+    const chips = Array.from(editor.querySelectorAll<HTMLElement>("[data-mention-reference-id]"));
+    expect(chips.map((chip) => [chip.dataset.mentionReferenceId, chip.querySelector(".canvas-resource-inline-label")?.textContent])).toEqual([
+        ["shot-ref:hero-image", "林晚 · 参考图1"],
+        ["shot-ref:other-image", "林晚 · 参考图2"],
+        ["shot-ref:hero-view", "林晚 · 参考图3"],
+        ["shot-ref:background", "参考图4"],
+    ]);
+    expect(new Set(chips.slice(0, 3).map((chip) => chip.title)).size).toBe(3);
+    expect(serializeEditableValue(editor)).toBe(prompt);
+});
+
 test("真实图片引用菜单插入稳定身份，删除前图和重新载入都不改绑", async () => {
     const currentShot = shot();
     let config = mediaConfig({ referenceResourceIds: ["background", "hero-image"], referenceNames: { background: "雨夜街道", "hero-image": "人物图片" } });

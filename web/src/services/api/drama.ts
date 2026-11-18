@@ -403,6 +403,9 @@ export type DramaEpisodeRow = {
     sourceFormat: DramaSourceFormat;
     error: string;
     shotCount: number;
+    assetsReady: boolean;
+    storyboardReady: boolean;
+    videoReady: boolean;
     durationMs: number;
     approved: boolean;
     mediaReleased: boolean;
@@ -909,7 +912,7 @@ export function renameDramaEpisode(projectId: string, episodeId: string, title: 
 }
 
 /** 新增一集：原文直接成为新的一集，单集最多 1.2 万字。不传 anchorEpisodeId 时追加到末尾，传了插到那一集之前或之后，后续集号顺延。 */
-export function addDramaEpisode(projectId: string, input: { title: string; text: string; sourceFormat: DramaSourceFormat; expectedRevision: number; anchorEpisodeId?: string; position?: "before" | "after" }) {
+export function addDramaEpisode(projectId: string, input: { title: string; text: string; sourceFormat: DramaSourceFormat; expectedRevision: number; createDraft?: boolean; anchorEpisodeId?: string; position?: "before" | "after" }) {
     return http.post<DramaEpisodeDetail>(`${base(projectId)}/episodes`, input, { timeout: 60_000 });
 }
 

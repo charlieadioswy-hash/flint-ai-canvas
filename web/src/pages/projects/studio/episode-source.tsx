@@ -180,6 +180,7 @@ type AddEpisodeProps = {
     projectId: string;
     expectedRevision: number;
     nextNumber: number;
+    createDraft?: boolean;
     /** 不传时追加到末尾。 */
     placement?: EpisodePlacement;
     defaultFormat: DramaSourceFormat;
@@ -195,7 +196,7 @@ export function AddEpisodeModal(props: AddEpisodeProps) {
     return props.open ? <AddEpisodeSession key={`${userId}:${scope}:${props.projectId}`} {...props} userId={userId} scope={scope} /> : null;
 }
 
-function AddEpisodeSession({ projectId, expectedRevision, nextNumber, placement, defaultFormat, blockedReason, onClose, onAdded, onDirtyChange, userId, scope }: AddEpisodeProps & { userId: string; scope: string }) {
+function AddEpisodeSession({ projectId, expectedRevision, nextNumber, createDraft, placement, defaultFormat, blockedReason, onClose, onAdded, onDirtyChange, userId, scope }: AddEpisodeProps & { userId: string; scope: string }) {
     const { message, modal } = App.useApp();
     const operation = useDramaOperationScope(projectId);
     const [title, setTitle] = useState("");
@@ -237,7 +238,14 @@ function AddEpisodeSession({ projectId, expectedRevision, nextNumber, placement,
         setError("");
         const ticket = operation.capture();
         try {
-            const detail = await addDramaEpisode(projectId, { title: title.trim(), text, sourceFormat: format, expectedRevision: revision, ...(placement ? { anchorEpisodeId: placement.anchorId, position: placement.position } : {}) });
+            const detail = await addDramaEpisode(projectId, {
+                title: title.trim(),
+                text,
+                sourceFormat: format,
+                expectedRevision: revision,
+                ...(createDraft ? { createDraft } : {}),
+                ...(placement ? { anchorEpisodeId: placement.anchorId, position: placement.position } : {}),
+            });
             if (!operation.isCurrent(ticket)) return;
             message.success(`已${placement ? "插入" : "新建"}第 ${detail.episode.number} 集`);
             latest.current.onDirtyChange?.(false, false);

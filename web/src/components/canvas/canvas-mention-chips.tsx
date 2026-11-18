@@ -68,6 +68,10 @@ function inlineIconSvg(Icon: React.ComponentType<{ className?: string }>): strin
     return renderToStaticMarkup(<Icon className="size-3" />);
 }
 
+function inlineMentionLabel(reference: CanvasResourceReference, token: string) {
+    return reference.inlineLabel ?? (reference.textAliases?.includes(token) ? token : reference.label);
+}
+
 export function createInlineMentionChip(reference: CanvasResourceReference, token: string) {
     const chip = document.createElement("span");
     chip.contentEditable = "false";
@@ -97,7 +101,7 @@ export function createInlineMentionChip(reference: CanvasResourceReference, toke
 
     const label = document.createElement("span");
     label.className = "canvas-resource-inline-label";
-    label.textContent = reference.textAliases?.includes(token) ? token : reference.label;
+    label.textContent = inlineMentionLabel(reference, token);
     chip.appendChild(label);
 
     return chip;
@@ -211,8 +215,8 @@ export function syncInlineMentionPreviews(editor: HTMLElement, references: Canva
             preview.replaceWith(createInlinePreview(reference));
         }
         const label = chip.querySelector(".canvas-resource-inline-label");
-        const text = reference.textAliases?.includes(chip.dataset.mentionToken || "") ? chip.dataset.mentionToken : reference.label;
-        if (label && label.textContent !== text) label.textContent = text || "";
+        const text = inlineMentionLabel(reference, chip.dataset.mentionToken || "");
+        if (label && label.textContent !== text) label.textContent = text;
     });
 }
 

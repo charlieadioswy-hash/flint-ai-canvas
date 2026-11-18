@@ -32,10 +32,14 @@ export type CanvasResourceReference = {
     assetId?: string;
     category?: AssetCategory;
     mentionToken?: string;
+    /** 正文中的显示名可以与菜单里的附件编号不同。 */
+    inlineLabel?: string;
     /** 保留失效引用的正文显示，但不再允许从菜单插入。 */
     mentionMenuHidden?: boolean;
     /** 已明确关联主体的自然文本别名；原位显示引用，不改写或补空格到正文。 */
     textAliases?: string[];
+    /** 整组匹配，但只将中间的引用渲染为胶囊。 */
+    contextualAliases?: { prefix: string; token: string; suffix: string }[];
     /** 仅 kind === "tool" 时使用，对应后端工具 ID。 */
     toolId?: number;
     /** 仅 kind === "tool" 时使用，对应工具类型（style/nine_grid/effect/motion）。 */

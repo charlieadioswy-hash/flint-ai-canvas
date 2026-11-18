@@ -358,6 +358,7 @@ type AddDramaEpisodeRequest struct {
 	Title            string `json:"title"`
 	Text             string `json:"text"`
 	SourceFormat     string `json:"sourceFormat"`
+	CreateDraft      bool   `json:"createDraft,omitempty"`
 	AnchorEpisodeID  string `json:"anchorEpisodeId"`
 	Position         string `json:"position"`
 }
@@ -516,6 +517,9 @@ type DramaEpisodeRow struct {
 	SourceFormat    string            `json:"sourceFormat"`
 	Error           string            `json:"error"`
 	ShotCount       int               `json:"shotCount"`
+	AssetsReady     bool              `json:"assetsReady"`
+	StoryboardReady bool              `json:"storyboardReady"`
+	VideoReady      bool              `json:"videoReady"`
 	DurationMs      int64             `json:"durationMs"`
 	Approved        bool              `json:"approved"`
 	MediaReleased   bool              `json:"mediaReleased"`

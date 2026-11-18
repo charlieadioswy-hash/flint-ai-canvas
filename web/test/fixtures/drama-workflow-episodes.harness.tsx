@@ -131,6 +131,9 @@ function episodeOf(id: string, number: number, patch: Partial<DramaEpisodeRow> =
         approved: true,
         mediaReleased: true,
         awaitingMedia: false,
+        assetsReady: true,
+        storyboardReady: true,
+        videoReady: true,
         finalStale: false,
         stats: { segments: 2, promptReady: 2, promptSucceeded: 2, videoReady: 2, videoGenerated: 2, failed: 0 },
         ...patch,
@@ -179,7 +182,7 @@ async function mount(initial = summaryOf()) {
     const root = createRoot(container);
     const changed: string[] = [];
     const opened: string[] = [];
-    const openedSteps: Array<{ id: string; step?: "review" | "story" }> = [];
+    const openedSteps: Array<{ id: string; step?: "assets" | "review" | "story" }> = [];
     const dirtyStates: Array<[boolean, boolean]> = [];
     let summary = initial;
     const update = async (next = summary) => {
@@ -248,7 +251,6 @@ test("选择分集才读取对应剧情段，筛选与排序不会把批次换�
         await click(view.container.querySelector<HTMLInputElement>('[aria-label="选择第 2 集"]')!);
         expect(reads).toEqual(["project-a:e2"]);
         expect(view.container.querySelector('[aria-label="真实批次范围"]')?.getAttribute("data-target-ids")).toBe("e2-segment");
-        expect(view.container.textContent).toContain("已引用 1 项");
         const sort = view.container.querySelector<HTMLSelectElement>('[aria-label="分集排序"]')!;
         await act(async () => {
             sort.value = "desc";
@@ -269,7 +271,7 @@ test("选择分集才读取对应剧情段，筛选与排序不会把批次换�
 test("分集卡展示真实类型更新时间和三项进度，没有继续选章入口", async () => {
     const data = summaryOf("project-a", [
         episodeOf("e1", 1, { updatedAt: "2026-11-13T01:00:00Z" }),
-        episodeOf("e2", 2, { updatedAt: "2026-11-15T01:00:00Z", stats: { segments: 2, promptReady: 2, promptSucceeded: 2, videoReady: 0, videoGenerated: 0, failed: 0 } }),
+        episodeOf("e2", 2, { updatedAt: "2026-11-15T01:00:00Z", assetsReady: false, storyboardReady: true, videoReady: false }),
         episodeOf("e3", 3, { updatedAt: "2026-11-14T01:00:00Z", error: "视频生成失败" }),
     ]);
     data.production.settings.dramaType = "live_action";
@@ -284,10 +286,20 @@ test("分集卡展示真实类型更新时间和三项进度，没有继续选�
         expect(view.container.querySelector(".drama-workflow-episodes-selection")?.textContent).toContain("共 3 项");
         expect(view.container.textContent).not.toContain("继续选章");
         expect(view.container.querySelectorAll(".drama-workflow-episode-card dl > div")).toHaveLength(9);
-        expect(view.container.querySelector('[data-status="unknown"]')?.textContent).toContain("勾选后检查");
-        expect(view.container.querySelector(".drama-workflow-episode-card dl > div:last-child")?.getAttribute("data-status")).toBe("idle");
+        const progress = view.container.querySelector(".drama-workflow-episode-card dl")!;
+        const statuses = [
+            ["主体", "未完成", "idle"],
+            ["分镜", "已完成", "done"],
+            ["视频", "未完成", "idle"],
+        ];
+        const readProgress = () => [...progress.children].map((item) => [item.querySelector("dt")?.textContent, item.querySelector("dd")?.textContent, item.getAttribute("data-status")]);
+        expect(readProgress()).toEqual(statuses);
+        expect(progress.querySelector('[title="主体：未完成"] .drama-workflow-episode-dot')?.getAttribute("aria-hidden")).toBe("true");
+        expect(reads).toEqual([]);
         expect(view.container.querySelector('[aria-label="第 2 集更多操作"]')).not.toBeNull();
         await click(view.container.querySelector<HTMLInputElement>('[aria-label="选择第 2 集"]')!);
+        expect(reads).toEqual(["project-a:e2"]);
+        expect(readProgress()).toEqual(statuses);
         await click(button(view.container, "批量制作提交中"));
         expect(button(view.container, "新建分集").disabled).toBe(true);
         expect(view.dirtyStates.at(-1)).toEqual([false, true]);
@@ -361,18 +373,25 @@ test("全部合成只提交就绪集的各自版本，失败逐项保留并可�
     }
 });
 
-test("分集卡和更多菜单按真实段或镜头内容进入制作，没有分镜回到分集剧本", async () => {
+test("分集卡和更多菜单按本集进度打开主体、分集剧本或分镜", async () => {
     const emptyStats = { segments: 0, promptReady: 0, promptSucceeded: 0, videoReady: 0, videoGenerated: 0, failed: 0 };
     const view = await mount(
-        summaryOf("project-a", [episodeOf("empty", 1, { shotCount: 0, stats: emptyStats }), episodeOf("segments", 2, { shotCount: 0, stats: { ...emptyStats, segments: 1 } }), episodeOf("shots", 3, { shotCount: 1, stats: emptyStats })]),
+        summaryOf("project-a", [
+            episodeOf("missing-assets", 1, { assetsReady: false, storyboardReady: false, videoReady: false, shotCount: 0, stats: emptyStats }),
+            episodeOf("empty", 2, { storyboardReady: false, videoReady: false, shotCount: 0, stats: emptyStats }),
+            episodeOf("segments", 3, { shotCount: 0, stats: { ...emptyStats, segments: 1 } }),
+            episodeOf("shots", 4, { shotCount: 1, stats: emptyStats }),
+        ]),
     );
     try {
-        for (const number of [1, 2, 3]) {
+        for (const number of [1, 2, 3, 4]) {
             const matches = [...view.container.querySelectorAll<HTMLButtonElement>("button")].filter((item) => item.getAttribute("aria-label") === `打开第 ${number} 集` || item.textContent?.trim() === `打开第 ${number} 集`);
             expect(matches).toHaveLength(2);
             for (const entry of matches) await click(entry);
         }
         expect(view.openedSteps).toEqual([
+            { id: "missing-assets", step: "assets" },
+            { id: "missing-assets", step: "assets" },
             { id: "empty", step: "review" },
             { id: "empty", step: "review" },
             { id: "segments", step: "story" },

@@ -18,7 +18,7 @@ import (
 
 // 逐集追加、插入与删除集、原文与镜头编辑、上传锁定参考图。修改只把受影响的下游标记过期，不会自动花钱重做媒体。
 
-// AddDramaEpisode 新增一集：这段原文直接成为新的一集，调度循环为它写剧本，已有各集的内容不受影响。
+// AddDramaEpisode 新增一集：这段原文直接成为新的一集。简易制作台先存草稿，从主体开始制作。
 // 不指定锚点时追加到末尾；指定时插到那一集之前或之后，后续集号顺延。
 func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeRequest) (DramaEpisodeDetail, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
@@ -60,7 +60,11 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 	now := time.Now()
 	chapter := model.ProjectUnit{ID: newID(), ProjectID: project.ID, Kind: model.ProjectUnitKindChapter, Title: title, SourceText: text, WordCount: runes, Status: model.ProjectUnitStatusReady, CreatedAt: now, UpdatedAt: now}
 	episode := newDramaChapterEpisode(project.ID, 0, chapter, production.NormalizeSourceFormat(req.SourceFormat), now)
-	episode.ScriptRequested = true
+	if req.CreateDraft {
+		episode.Stage = model.DramaEpisodeDraft
+	} else {
+		episode.ScriptRequested = true
+	}
 	err = s.withDramaTextEdit(project.ID, req.ExpectedRevision, false, func(tx *repository.Repository) error {
 		current, err := tx.DramaProduction(project.ID)
 		if err != nil {
@@ -84,7 +88,7 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 			return err
 		}
 		// 活动引导保留阶段门禁；已完成作品重新交给调度，暂停中的保持暂停。
-		if !dramaGuideActive(current) && current.Status == model.DramaStatusCompleted {
+		if !req.CreateDraft && !dramaGuideActive(current) && current.Status == model.DramaStatusCompleted {
 			return tx.UpdateDramaGuideDraftFields(project.ID, map[string]any{"status": model.DramaStatusRunning, "stage": model.DramaStageProduce})
 		}
 		return nil
@@ -101,7 +105,9 @@ func (s *Service) AddDramaEpisode(userID, projectID string, req AddDramaEpisodeR
 		}
 		return DramaEpisodeDetail{}, err
 	}
-	s.wakeDramaScheduler()
+	if !req.CreateDraft {
+		s.wakeDramaScheduler()
+	}
 	return s.DramaEpisodeDetail(userID, projectID, episode.ID)
 }
 

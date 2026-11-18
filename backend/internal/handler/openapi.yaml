@@ -5641,6 +5641,7 @@ components:
         title: { type: string, maxLength: 60, description: 留空时按最终集号取默认标题 }
         text: { type: string, minLength: 1, maxLength: 12000, description: 去除首尾空白后必须非空，不经过分集规划 }
         sourceFormat: { type: string, enum: [novel, script, storyboard] }
+        createDraft: { type: boolean, default: false, description: 为 true 时只创建待制作分集，不排队编排剧本或恢复已完成的制作 }
         anchorEpisodeId: { type: string, description: 省略或空串时末尾追加；非空时必须属于当前作品且须完成引导 }
         position: { type: string, enum: [before, after], description: anchorEpisodeId 非空时必传 }
     ProduceDramaChaptersRequest:

@@ -282,6 +282,9 @@ function episode(id: string, number: number, patch: Partial<DramaEpisodeRow> = {
         sourceFormat: "script",
         error: "",
         shotCount: 1,
+        assetsReady: true,
+        storyboardReady: true,
+        videoReady: false,
         durationMs: 5000,
         approved: false,
         mediaReleased: false,
@@ -750,15 +753,17 @@ test("自动启动失败不循环提交，可手动只重试当前集的非破�
     }
 });
 
-test("视频预览保留全部集浏览，空集载入和切集均不自动生成分镜", async () => {
+test("视频预览只列出分镜就绪的集，切换可预览集不自动生成分镜", async () => {
     const first = draftEpisode("ep-first", 4);
     const second = draftEpisode("ep-second", 5);
+    const draft = { ...draftEpisode("ep-unstarted", 6), storyboardReady: false };
     details.set(first.id, detail(first, []));
     details.set(second.id, detail(second, []));
-    const view = await renderProduction("preview", summary("preview", [first, second]));
+    const view = await renderProduction("preview", summary("preview", [first, second, draft]));
     try {
         expect(view.host.querySelector<HTMLSelectElement>('[aria-label="选择集数"]')?.value).toBe("all");
         expect(view.host.querySelector('[aria-label="选择集数"] option[value="all"]')).toBeTruthy();
+        expect(view.host.querySelector(`[aria-label="选择集数"] option[value="${draft.id}"]`)).toBeNull();
         expect(view.host.querySelectorAll("[data-final]")).toHaveLength(2);
         await select(view.host, "选择集数", second.id);
         expect(view.host.querySelectorAll("[data-final]")).toHaveLength(1);

@@ -255,7 +255,7 @@
 .drama-workflow-episode-card dl {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2);
+    gap: var(--space-1) var(--space-2);
     margin: 0;
     padding: 0;
     font-size: var(--fs-label);
@@ -291,6 +291,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
+    white-space: nowrap;
 }
 
 .drama-workflow-episode-dot {
@@ -302,21 +303,8 @@
     background: var(--text-secondary);
 }
 
-.drama-workflow-episodes [data-status="active"] .drama-workflow-episode-dot {
-    background: var(--status-loading);
-}
-
-.drama-workflow-episodes [data-status="failed"] .drama-workflow-episode-dot {
-    background: var(--status-error);
-}
-
-.drama-workflow-episodes [data-status="done"] .drama-workflow-episode-dot {
+.drama-workflow-episode-progress [data-status="done"] .drama-workflow-episode-dot {
     background: var(--status-success);
-}
-
-.drama-workflow-episodes [data-status="unknown"] .drama-workflow-episode-dot {
-    border: 1px dashed var(--text-secondary);
-    background: transparent;
 }
 
 .drama-workflow-episode-card .drama-workflow-episode-progress {

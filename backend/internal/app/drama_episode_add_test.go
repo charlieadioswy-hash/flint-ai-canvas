@@ -83,6 +83,44 @@ func TestDramaAddEpisodeDuringGuidePreservesExistingWork(t *testing.T) {
 	}
 }
 
+func TestDramaAddEpisodeDraftDoesNotArrangeOrResume(t *testing.T) {
+	for _, step := range []string{model.DramaGuideAssets, model.DramaGuideStory, model.DramaGuideCompleted} {
+		t.Run(step, func(t *testing.T) {
+			svc, fake, summary, _ := dramaEpisodeAddFixture(t, step)
+			projectID := summary.Project.ID
+			if step == model.DramaGuideCompleted {
+				if err := fake.db.Model(&model.DramaProduction{}).Where("project_id = ?", projectID).UpdateColumn("status", model.DramaStatusCompleted).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := svc.repo.DramaProduction(projectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := AddDramaEpisodeRequest{ExpectedRevision: &before.Revision, Text: "先提取这一集的角色、场景和道具。", CreateDraft: true}
+			if step == model.DramaGuideCompleted {
+				input.AnchorEpisodeID, input.Position = summary.Episodes[0].ID, "before"
+			}
+			added, err := svc.AddDramaEpisode("usr-drama", projectID, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if added.Episode.Stage != model.DramaEpisodeDraft || added.Episode.ScriptRequested || len(added.Chapters) != 1 || input.AnchorEpisodeID != "" && added.Episode.Number != 1 {
+				t.Fatalf("draft should save source without script intent: %+v", added.Episode)
+			}
+			after, err := svc.repo.DramaProduction(projectID)
+			if err != nil || after.Revision != before.Revision+1 || after.Status != before.Status || after.Stage != before.Stage {
+				t.Fatalf("draft unexpectedly restarted or changed the active production stage: %+v %v", after, err)
+			}
+			scripts := fake.byKind["script"]
+			runDramaTicks(t, svc, projectID, 5)
+			if row := episodeCompletionRow(t, svc, projectID, added.Episode.ID); row.Stage != model.DramaEpisodeDraft || row.AssetsReady || row.StoryboardReady || row.VideoReady || fake.byKind["script"] != scripts {
+				t.Fatalf("the scheduler started a new draft before its asset step: %+v", row)
+			}
+		})
+	}
+}
+
 func TestDramaAddEpisodeRejectsInvalidScopeAndStateAtomically(t *testing.T) {
 	for _, mutation := range []string{"missing_revision", "stale_revision", "foreign_owner", "configuring", "unknown_guide", "insert_during_guide", "foreign_anchor", "invalid_position", "active_queued_text", "active_running_text", "pending_plan", "empty_text", "long_text", "long_title"} {
 		t.Run(mutation, func(t *testing.T) {

@@ -24,10 +24,13 @@ export function hasMentionTokenBoundary(token: string, value: string, end: numbe
 export function splitMentionText(value: string, references: CanvasResourceReference[]): MentionTextPart[] {
     if (!value) return [];
     if (!references.length) return [{ type: "text", text: value }];
-    const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string; plainText?: boolean }>();
+    const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string; plainText?: boolean; prefix?: string; suffix?: string }>();
     references.forEach((reference) => {
         reference.textAliases?.forEach((alias) => {
             if (alias.length > 1) referenceByToken.set(alias, { reference, serializedToken: alias, plainText: true });
+        });
+        reference.contextualAliases?.forEach(({ prefix, token, suffix }) => {
+            referenceByToken.set(prefix + token + suffix, { reference, serializedToken: token, plainText: true, prefix, suffix });
         });
     });
     // 别名（@名称、@[node:ID]）先登记、规范令牌后登记：同名时别的引用不能抢走已有的规范令牌。
@@ -59,11 +62,12 @@ export function splitMentionText(value: string, references: CanvasResourceRefere
             index += 1;
             continue;
         }
-        if (index > textStart) parts.push({ type: "text", text: value.slice(textStart, index) });
         const matched = referenceByToken.get(token)!;
+        const mentionStart = index + (matched.prefix?.length ?? 0);
+        if (mentionStart > textStart) parts.push({ type: "text", text: value.slice(textStart, mentionStart) });
         parts.push({ type: "mention", token: matched.serializedToken, reference: matched.reference });
         index += token.length;
-        textStart = index;
+        textStart = index - (matched.suffix?.length ?? 0);
     }
     if (textStart < value.length) parts.push({ type: "text", text: value.slice(textStart) });
     return parts;

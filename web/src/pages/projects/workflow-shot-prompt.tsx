@@ -14,6 +14,66 @@ import { shotImageMentionIds, shotImageMentionToken } from "./workflow-shot-refe
 const KIND_LABEL = { character: "角色", scene: "场景", prop: "道具" };
 const castLabel = (cast: DramaCast) => `${cast.name}${cast.lookName ? ` · ${cast.lookName}` : ""}`;
 
+function buildShotImagePromptReferences(casts: DramaCast[], config: DramaShotMediaConfig): CanvasResourceReference[] {
+    const castsById = new Map(casts.map((cast) => [cast.id, cast]));
+    const castByImage = new Map<string, DramaCast | undefined>();
+    for (const cast of casts) {
+        const id = cast.imageResourceId;
+        if (id) castByImage.set(id, castByImage.has(id) ? undefined : cast);
+    }
+    const inlineLabelCounts = new Map<string, number>();
+    const promptImages = config.referenceResourceIds.map((id, index) => {
+        const subjectId = config.referenceSubjects?.[id];
+        const cast = subjectId ? castsById.get(subjectId) : castByImage.get(id);
+        const label = `参考图${index + 1}`;
+        const inlineLabel = cast ? castLabel(cast) : undefined;
+        const displayLabel = inlineLabel ?? label;
+        inlineLabelCounts.set(displayLabel, (inlineLabelCounts.get(displayLabel) ?? 0) + 1);
+        const aliases = new Set([label]);
+        const contextualAliases: NonNullable<CanvasResourceReference["contextualAliases"]> = [];
+        const reference: CanvasResourceReference = {
+            id: `shot-ref:${id}`,
+            nodeId: "",
+            kind: "image",
+            label,
+            title: config.referenceNames?.[id] || cast?.name || label,
+            inlineLabel,
+            storageKey: `resource:${id}`,
+            mentionToken: shotImageMentionToken(id),
+            active: true,
+        };
+        const names = cast ? [cast.name, castLabel(cast), castLabel(cast).replace(" · ", "·"), ...parseList(cast.aliasesJson)].filter(Boolean).sort((a, b) => b.length - a.length) : [];
+        return { id, names, reference, aliases, contextualAliases };
+    });
+    const byId = new Map(promptImages.map((image) => [image.id, image]));
+    for (const match of config.prompt.matchAll(/@\[shot-image:([^\]\s]+)\]|@?参考图[ \t]*(\d+)/g)) {
+        const image = match[1] ? byId.get(match[1]) : promptImages[Number(match[2]) - 1];
+        if (!image?.names.length) continue;
+        const token = match[0];
+        if (match[2]) image.aliases.add(token);
+        // Keep the name and punctuation editable. The image slot supplies the single named chip.
+        const before = config.prompt.slice(0, match.index);
+        const opener = before.match(/[ \t]*([（(])[ \t]*$/);
+        if (!opener) continue;
+        const closer = config.prompt.slice(match.index + token.length).match(/^[ \t]*([）)])/);
+        if (!closer || (opener[1] === "（" ? "）" : ")") !== closer[1]) continue;
+        const text = before.slice(0, -opener[0].length);
+        const name = image.names.find((candidate) => text.endsWith(candidate));
+        if (name) image.contextualAliases.push({ prefix: name + opener[0], token, suffix: closer[0] });
+    }
+    return promptImages.map(({ reference, aliases, contextualAliases }) => {
+        const { inlineLabel, label, title } = reference;
+        const ambiguous = inlineLabel !== undefined && (inlineLabelCounts.get(inlineLabel) ?? 0) > 1;
+        return {
+            ...reference,
+            inlineLabel: ambiguous ? `${inlineLabel} · ${label}` : inlineLabel,
+            title: ambiguous ? `${title}（${label}）` : title,
+            textAliases: [...aliases],
+            contextualAliases,
+        };
+    });
+}
+
 /** 资产身份来自镜头关联；图片编号仅来自本次实际绑定，不为缺图资产分配图片编号。 */
 export function buildShotPromptReferences(shot: DramaShot, casts: DramaCast[], config: DramaShotMediaConfig, kind: "image" | "video"): CanvasResourceReference[] {
     const frameMode = kind === "video" && config.operation === "image_to_video";
@@ -77,17 +137,7 @@ export function buildShotPromptReferences(shot: DramaShot, casts: DramaCast[], c
                   mentionToken: frame.label,
                   active: true,
               }))
-        : config.referenceResourceIds.map((id, index) => ({
-              id: `shot-ref:${id}`,
-              nodeId: "",
-              kind: "image",
-              label: `参考图${index + 1}`,
-              title: config.referenceNames?.[id] || casts.find((cast) => cast.id === config.referenceSubjects?.[id] || cast.imageResourceId === id)?.name || `参考图${index + 1}`,
-              storageKey: `resource:${id}`,
-              mentionToken: shotImageMentionToken(id),
-              textAliases: [`参考图${index + 1}`],
-              active: true,
-          }));
+        : buildShotImagePromptReferences(casts, config);
     const missingImages: CanvasResourceReference[] = shotImageMentionIds(config.prompt)
         .filter((id) => frameMode || !config.referenceResourceIds.includes(id))
         .map((id) => ({
