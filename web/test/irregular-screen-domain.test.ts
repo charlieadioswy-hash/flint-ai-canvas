@@ -4,7 +4,7 @@ import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node
 import { resolveCanvasControlNetInputs } from "../src/lib/canvas/controlnet";
 import { switchControlNetPreprocessor } from "../src/lib/canvas/controlnet-options";
 import { readNodeGenerationSpec } from "../src/lib/canvas/generation-contract";
-import { buildIrregularScreenTemplate, irregularScreenGenerationMode, irregularScreenOutputSizeError, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
+import { buildIrregularScreenTemplate, irregularScreenGenerationMode, isIrregularScreenScene, resolveIrregularScreenOutputSize, type IrregularScreenTemplateInput } from "../src/lib/canvas/irregular-screen-domain";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -20,13 +20,6 @@ function input(): IrregularScreenTemplateInput {
         maskMode: "color",
     };
 }
-
-test("screen readiness rejects stale or manually stretched sizes while allowing pixel rounding", () => {
-    expect(irregularScreenOutputSizeError({ width: 400, height: 900 }, "1024x1024")).toContain("相同比例");
-    expect(irregularScreenOutputSizeError({ width: 1600, height: 900 }, "1024x1024")).toContain("相同比例");
-    expect(irregularScreenOutputSizeError({ width: 3803, height: 2139 }, "1824x1024")).toBe("");
-    expect(irregularScreenOutputSizeError({ width: 1024, height: 1024 }, "")).toContain("相同比例");
-});
 
 describe("irregular screen canvas template", () => {
     test("ControlNet Inpaint binds its own region without enabling local repaint", () => {
@@ -139,35 +132,38 @@ describe("irregular screen canvas template", () => {
         expect(second.generationNodeId).toBe(first.generationNodeId);
     });
 
-    test("does not accept mismatched source coordinates or stretched output", () => {
+    test("allows a different output ratio while requiring valid dimensions and aligned inputs", () => {
+        const template = buildIrregularScreenTemplate({ ...input(), size: "720x1280" });
+        const generator = template.nodes.find((node) => node.id === template.generationNodeId)!;
+        const spec = readNodeGenerationSpec(generator)!;
+        expect(spec.options.size).toBe("720x1280");
+        expect(spec.options.outputMask?.resizeMode).toBe("stretch");
+        expect(generator.width / generator.height).toBeCloseTo(9 / 16);
         expect(() => buildIrregularScreenTemplate({ ...input(), outputMask: { storageKey: "resource:mask", width: 800, height: 450 } })).toThrow("相同");
-        expect(() => buildIrregularScreenTemplate({ ...input(), size: "1024x1024" })).toThrow("比例");
+        expect(() => buildIrregularScreenTemplate({ ...input(), size: "0x1024" })).toThrow("输出尺寸");
         expect(() => buildIrregularScreenTemplate({ ...input(), controlParameters: { ...input().controlParameters, resizeMode: "crop" } })).toThrow("坐标");
     });
 
     test("prefers near-identical aspect ratio presets even when custom dimensions are allowed", () => {
         const profile = defaultImageCapabilityConfig("liblib-image");
         profile.size = { ...profile.size, values: ["768x1024", "1024x576"], default: "768x1024" };
-        const selected = resolveIrregularScreenOutputSize({ width: 3803, height: 2139 }, profile);
-        expect(selected.size).toBe("1024x576");
-        expect(selected.scaled).toBe(true);
-        expect(selected.aspectRatioAdjusted).toBe(true);
-        expect(profile.size.allowCustom).toBe(true);
+        expect(resolveIrregularScreenOutputSize({ width: 3803, height: 2139 }, profile)).toBe("1024x576");
     });
 
     test("chooses the configured default generation scale instead of the upload resolution", () => {
         const profile = defaultImageCapabilityConfig("liblib-image");
         profile.size = { ...profile.size, values: ["3840x2160", "1024x576", "2048x1152"], default: "1024x576" };
-        expect(resolveIrregularScreenOutputSize({ width: 3840, height: 2160 }, profile)).toEqual({ width: 1024, height: 576, size: "1024x576", scaled: true, aspectRatioAdjusted: false });
+        expect(resolveIrregularScreenOutputSize({ width: 3840, height: 2160 }, profile)).toBe("1024x576");
         profile.size.default = "2048x1152";
-        expect(resolveIrregularScreenOutputSize({ width: 3840, height: 2160 }, profile).size).toBe("2048x1152");
+        expect(resolveIrregularScreenOutputSize({ width: 3840, height: 2160 }, profile)).toBe("2048x1152");
     });
 
-    test("falls back to custom source dimensions only without a matching preset", () => {
+    test("falls back to the configured output size when the model has no preset matching the mask ratio", () => {
         const profile = defaultImageCapabilityConfig("liblib-image");
-        expect(resolveIrregularScreenOutputSize({ width: 1258, height: 710 }, profile)).toEqual({ width: 1258, height: 710, size: "1258x710", scaled: false, aspectRatioAdjusted: false });
-        profile.size = { ...profile.size, allowCustom: false, values: ["1024x1024", "1024x576"] };
-        expect(() => resolveIrregularScreenOutputSize({ width: 400, height: 900 }, profile)).toThrow("同等比例".replace("同等", "同"));
+        profile.size = { ...profile.size, allowCustom: false, values: ["1024x1024", "1280x720"], default: "1280x720" };
+        expect(resolveIrregularScreenOutputSize({ width: 720, height: 1280 }, profile)).toBe("1280x720");
+        profile.size.default = "auto";
+        expect(resolveIrregularScreenOutputSize({ width: 720, height: 1280 }, profile)).toBe("1024x1024");
     });
 
     test("rejects corrupt scene identities", () => {

@@ -145,15 +145,15 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
     });
 
     describe("real generation preparation", () => {
-        test("submits text-to-image Inpaint defaults with an independent ControlNet mask", async () => {
+        test("submits square output with a wide ControlNet Inpaint mask", async () => {
             const controls = config.channels[0].modelCosts![0].capabilityConfig!.image!.controlNet!;
             controls.preprocessors = ["canny", "inpaint_global_harmonious", "inpaint_only", "inpaint_only+lama"];
             controls.models = ["b6806516962f4e1599a93ac4483c3d23", "a311363995dd4f2fa42ee3fc9582d920"];
             const settings = model.screenDefaultSettings(config, config.model, "text2img");
             const template = domain.buildIrregularScreenTemplate({
                 generationMode: "text2img",
-                controlImage: { storageKey: "resource:control", width: 1024, height: 1024 },
-                outputMask: { storageKey: "resource:mask", width: 1024, height: 1024 },
+                controlImage: { storageKey: "resource:control", width: 1280, height: 720 },
+                outputMask: { storageKey: "resource:mask", width: 1280, height: 720 },
                 prompt: "A colorful landscape",
                 size: "1024x1024",
                 controlParameters: model.screenControlParameters(settings),
@@ -167,11 +167,12 @@ if (process.env.IRREGULAR_SCREEN_GENERATION_TEST_CHILD !== "1") {
             await submitScreenGeneration(project, config);
 
             const input = submitted[0].input!;
+            expect(input.config).toMatchObject({ size: "1024x1024" });
             expect(input.referenceImages).toEqual([]);
             expect(input.mask).toBeUndefined();
             expect(input.controlNet).toMatchObject([{
-                image: { storageKey: "resource:control" },
-                mask: { storageKey: "resource:mask" },
+                image: { storageKey: "resource:control", width: 1280, height: 720 },
+                mask: { storageKey: "resource:mask", width: 1280, height: 720 },
                 parameters: {
                     controlType: "inpaint",
                     preprocessor: "inpaint_global_harmonious",

@@ -236,7 +236,6 @@ test("mask repaint lives in image-to-image advanced settings and requires matchi
     expect(inpaint).not.toContain('aria-label="上传内容参考图"');
     expect(inpaint).toContain("1600x900");
     expect(inpaint).toContain('aria-label="输出尺寸"');
-    expect(inpaint).toContain("输出尺寸可按蒙版的相同比例缩放");
     expect(inpaint).toContain("最终屏外保持黑色");
     expect(inpaint).not.toContain("屏外保留原图");
     const regular = render({ generationMode: "img2img", mask });

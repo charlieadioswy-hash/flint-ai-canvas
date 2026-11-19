@@ -5,13 +5,13 @@ import { saveAs } from "file-saver";
 import { useEffectiveConfig, modelOptionName } from "@/stores/use-config-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
+import { imageSizeAllowed, modelCapabilityConfigFor, normalizeImageValue } from "@/lib/model-capabilities";
 import { modelQuoteRequest, requestCreditCost } from "@/lib/model-pricing";
 import { useCanvasModelQuote } from "@/components/canvas/use-canvas-model-quote";
 import { liblibLoraQuoteOptions } from "@/lib/canvas/liblib-lora-quote";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { readNodeGenerationSpec } from "@/lib/canvas/generation-contract";
-import { isIrregularScreenScene, irregularScreenGenerationMode, irregularScreenOutputSizeError, resolveIrregularScreenOutputSize, type ScreenGenerationMode } from "@/lib/canvas/irregular-screen-domain";
+import { isIrregularScreenScene, irregularScreenGenerationMode, parseIrregularScreenOutputSize, resolveIrregularScreenOutputSize, type ScreenGenerationMode, type ScreenOutputSizeMode } from "@/lib/canvas/irregular-screen-domain";
 import { screenPickerConfig, screenDefaultSettings, screenModelDefaults, screenModelError, screenInpaintError, screenControlParameters, screenProviderOptions, screenSettingsFromControl, screenSettingsFromControlSelection, screenSettingsForGenerationMode, screenSettingsFromProvider, screenSettingsForModel } from "@/lib/canvas/irregular-screen-model";
 import { liblibLoraConfigurationError } from "@/lib/canvas/liblib-lora";
 import { applyScreenCarExample, screenCarExample } from "@/lib/canvas/irregular-screen-example";
@@ -46,7 +46,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const draftId = useRef(canvasId);
     const project = projects.find((item) => item.id === (canvasId || draftId.current));
     const [model, setModelValue] = useState("");
-    const [size, setSizeValue] = useState("");
+    const [sizeSelection, setSizeSelection] = useState<{ value: string; mode: ScreenOutputSizeMode } | null>(null);
     const [quality, setQuality] = useState("auto");
     const [imageResolution, setImageResolution] = useState("auto");
     const [prompt, setPrompt] = useState("");
@@ -71,6 +71,18 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     const uploadEpoch = useRef(0);
     const lifetime = useRef<ScreenCreationSession | null>(null);
     const profile = model ? modelCapabilityConfigFor(baseConfig, model).image : undefined;
+    const requestedSize = sizeSelection?.value || "";
+    const modelAllowsSize = profile && profile.size.parameter !== "none" && imageSizeAllowed(profile, requestedSize);
+    const selectedSize = modelAllowsSize && parseIrregularScreenOutputSize(requestedSize) ? sizeSelection : null;
+    let size = selectedSize?.value || "";
+    let sizeError = "";
+    if (!size && mask && profile) {
+        try {
+            size = resolveIrregularScreenOutputSize(mask, profile);
+        } catch (failure) {
+            sizeError = errorText(failure);
+        }
+    }
 
     useLayoutEffect(() => {
         const session = createScreenCreationSession();
@@ -102,7 +114,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         setMaskModeValue("alpha");
         setGenerationModeValue("text2img");
         setInpaint(false);
-        setSizeValue("");
+        setSizeSelection(null);
         setQuality("auto");
         setImageResolution(modelCapabilityConfigFor(baseConfig, initialModel).image?.resolution.default || "auto");
         setModelValue(initialModel);
@@ -142,7 +154,11 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 quality: spec.options.quality,
                 imageResolution: spec.options.imageResolution,
             }, screenModelDefaults(baseConfig, selected).protocol);
-            setSizeValue(restored.size);
+            const savedSize = spec.options.size?.trim();
+            if (savedSize) {
+                // Older scenes only saved the output size, so preserve that choice on replacement.
+                setSizeSelection({ value: savedSize, mode: loaded.creationScene.sizeMode === "auto" ? "auto" : "manual" });
+            }
             setQuality(restored.quality);
             setImageResolution(restored.imageResolution || "auto");
             setMask(images[0]);
@@ -257,25 +273,12 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         };
     }, [project?.nodes, canvasId, userId, newVersion, loading, loadFailed]);
 
-    const chooseSize = (image: ScreenImage, nextModel = model) => {
-        const nextProfile = modelCapabilityConfigFor(baseConfig, nextModel).image;
-        if (!nextProfile) throw new Error("请先选择可用模型");
-        const selected = resolveIrregularScreenOutputSize(image, nextProfile);
-        setSizeValue(selected.size);
-        if (selected.scaled) setStorageNotice(`原图 ${image.width}×${image.height}，输出 ${selected.width}×${selected.height}${selected.aspectRatioAdjusted ? "（像素比例取整）" : ""}`);
-    };
     const setModel = (value: string) => {
         setModelValue(value);
+        setSizeSelection(null);
         setImageResolution(modelCapabilityConfigFor(baseConfig, value).image?.resolution.default || "auto");
         setAdvancedValue((current) => screenSettingsForModel(baseConfig, value, current, generationMode));
         setError("");
-        if (mask)
-            try {
-                chooseSize(mask, value);
-            } catch (failure) {
-                setSizeValue("");
-                setError(errorText(failure));
-            }
     };
     const upload = async (file: File, role: "mask" | "reference") => {
         const session = lifetime.current;
@@ -300,8 +303,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 setMaskModeValue("alpha");
                 setOutputMask({ ...derived.image, uploadKey: nanoid() });
                 setStorageNotice(derived.warnings.join("；"));
-                setSizeValue("");
-                if (model) chooseSize(image);
+                setSizeSelection((selection) => (selection?.mode === "auto" ? null : selection));
             }
         } catch (failure) {
             if (session.isActive() && token === uploadEpoch.current) setError(errorText(failure));
@@ -321,8 +323,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
     if (!disabledReason && !mask) disabledReason = "请上传屏幕蒙版";
     if (!disabledReason && !outputMask) disabledReason = "请先确认有效屏幕区域";
     if (!disabledReason && !prompt.trim()) disabledReason = "请输入画面描述";
-    if (!disabledReason && !size) disabledReason = "当前模型没有与蒙版匹配的输出尺寸";
-    if (!disabledReason && mask) disabledReason = irregularScreenOutputSizeError(mask, size);
+    if (!disabledReason && !parseIrregularScreenOutputSize(size)) disabledReason = sizeError || "请选择有效的输出尺寸";
     if (!disabledReason) disabledReason = controlNetConfigurationError(screenControlParameters(advanced), profile?.controlNet, screenModelDefaults(baseConfig, model).defaults, generationMode);
     try {
         validateControlNetBindings([{ id: "screen", imageBindingId: "screen", parameters: screenControlParameters(advanced) }]);
@@ -359,6 +360,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
                 modelSelection: { kind: "channel", channelId: channel.id, modelKey: modelOptionName(model) },
                 controlParameters: screenControlParameters(advanced),
                 size,
+                sizeMode: selectedSize?.mode || "auto",
                 quality,
                 imageResolution,
                 maskMode,
@@ -464,7 +466,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
         quality,
         imageResolution,
         setSize: (value, nextQuality, nextResolution) => {
-            setSizeValue(value);
+            setSizeSelection({ value, mode: "manual" });
             if (nextQuality) setQuality(nextQuality);
             if (nextResolution !== undefined) setImageResolution(nextResolution);
         },
@@ -476,6 +478,7 @@ export function useScreenCreation(): ScreenCreationWorkspaceProps {
             uploadEpoch.current++;
             setMask(null);
             setOutputMask(null);
+            setSizeSelection((selection) => (selection?.mode === "auto" ? null : selection));
             setUploading(false);
         },
         clearReference: () => {

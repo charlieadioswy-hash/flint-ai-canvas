@@ -220,9 +220,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                             onClear={props.clearReference}
                                         />
                                         {props.inpaint ? (
-                                            <p className="screen-creation-hint">
-                                                内容原图必填；{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"} 输出尺寸可按蒙版的相同比例缩放。
-                                            </p>
+                                            <p className="screen-creation-hint">内容原图必填。{props.mask?.width && props.mask?.height ? `请上传 ${props.mask.width} × ${props.mask.height} 像素的原图。` : "请先上传屏幕蒙版，以确定原图尺寸。"}</p>
                                         ) : null}
                                     </div>
                                 ) : null}
@@ -265,6 +263,7 @@ export function ScreenCreationWorkspace(props: ScreenCreationWorkspaceProps) {
                                                             setSizeOpen(false);
                                                         }}
                                                     />
+                                                    <p className="screen-creation-hint">选择不同画幅时，蒙版会随输出尺寸拉伸。</p>
                                                 </div>
                                             }
                                         >

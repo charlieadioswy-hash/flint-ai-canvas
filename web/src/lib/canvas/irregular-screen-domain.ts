@@ -7,15 +7,17 @@ import { controlNetType } from "./controlnet-options";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
+export type ScreenOutputSizeMode = "auto" | "manual";
+
 export type IrregularScreenScene = {
     kind: "irregular-screen";
     version: 1;
     nodeIds: { controlImage: string; outputMask: string; contentReference?: string; generation: string };
     maskMode?: IrregularScreenMaskMode;
+    sizeMode?: ScreenOutputSizeMode;
 };
 
 export type IrregularScreenImage = { storageKey: string; width: number; height: number; mimeType?: string; name?: string; bytes?: number; assetId?: string };
-export type IrregularScreenOutputSize = { width: number; height: number; size: string; scaled: boolean; aspectRatioAdjusted: boolean };
 export type ScreenGenerationMode = "text2img" | "img2img";
 export type IrregularScreenTemplateInput = {
     generationMode: ScreenGenerationMode;
@@ -27,6 +29,7 @@ export type IrregularScreenTemplateInput = {
     modelSelection?: ModelSelection;
     controlParameters: ControlNetParameters;
     size: string;
+    sizeMode?: ScreenOutputSizeMode;
     quality?: string;
     imageResolution?: string;
     providerOptions?: Record<string, Record<string, unknown>>;
@@ -51,40 +54,33 @@ function validDimensions({ width, height }: { width: number; height: number }) {
     return Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0;
 }
 
-function pixelSize(value: string) {
+export function parseIrregularScreenOutputSize(value: string) {
     const match = /^(\d+)[x×](\d+)$/i.exec(value.trim());
     if (!match) return undefined;
     const result = { width: Number(match[1]), height: Number(match[2]) };
     return validDimensions(result) ? result : undefined;
 }
 
-function sameRatio(a: { width: number; height: number }, b: { width: number; height: number }) {
+function similarRatio(a: { width: number; height: number }, b: { width: number; height: number }) {
     return Math.abs((a.width * b.height) / (b.width * a.height) - 1) <= 0.005;
 }
 
-export function irregularScreenOutputSizeError(source: { width: number; height: number }, size: string) {
-    const output = pixelSize(size);
-    return validDimensions(source) && output && sameRatio(source, output) ? "" : "输出尺寸必须与屏幕原图保持相同比例，不能拉伸或裁剪";
-}
-
-export function resolveIrregularScreenOutputSize(source: { width: number; height: number }, profile: ImageCapabilityConfig): IrregularScreenOutputSize {
+export function resolveIrregularScreenOutputSize(source: { width: number; height: number }, profile: ImageCapabilityConfig): string {
     if (!validDimensions(source)) throw new Error("屏幕图片尺寸无效");
-    if (profile.size.parameter === "none") throw new Error("当前模型不能指定输出尺寸，请选择支持原图比例的结构控制模型");
-    const originalSize = `${source.width}x${source.height}`;
+    if (profile.size.parameter === "none") throw new Error("当前模型不能指定输出尺寸，请选择支持设置尺寸的结构控制模型");
     const candidates = profile.size.values.flatMap((size) => {
-        const dimensions = pixelSize(size);
-        return dimensions && sameRatio(source, dimensions) ? [{ ...dimensions, size }] : [];
+        const dimensions = parseIrregularScreenOutputSize(size);
+        return dimensions ? [{ ...dimensions, size }] : [];
     });
     // Upload resolution describes the screen coordinates, not the default generation budget.
-    const preferred = pixelSize(profile.size.default) || source;
+    const preferred = parseIrregularScreenOutputSize(profile.size.default) || source;
     const preferredPixels = preferred.width * preferred.height;
-    candidates.sort((a, b) => Math.abs(Math.log((a.width * a.height) / preferredPixels)) - Math.abs(Math.log((b.width * b.height) / preferredPixels)));
-    const selected = candidates[0];
-    if (!selected) {
-        if (profile.size.parameter === "size" && profile.size.allowCustom) return { ...source, size: originalSize, scaled: false, aspectRatioAdjusted: false };
-        throw new Error(`当前模型没有与 ${originalSize} 同比例的明确像素规格，请选择支持自定义尺寸的模型`);
-    }
-    return { ...selected, scaled: selected.width !== source.width || selected.height !== source.height, aspectRatioAdjusted: source.width * selected.height !== selected.width * source.height };
+    const similar = candidates.filter((candidate) => similarRatio(source, candidate));
+    similar.sort((a, b) => Math.abs(Math.log((a.width * a.height) / preferredPixels)) - Math.abs(Math.log((b.width * b.height) / preferredPixels)));
+    const selected = similar[0] || candidates.find((candidate) => candidate.size === profile.size.default) || candidates[0];
+    if (selected) return selected.size;
+    if (profile.size.parameter === "size" && profile.size.allowCustom) return `${source.width}x${source.height}`;
+    throw new Error("当前模型没有可用的输出像素尺寸，请选择其他模型");
 }
 
 function requireImage(image: IrregularScreenImage, label: string) {
@@ -117,9 +113,8 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
         if (contentReference.width !== input.outputMask.width || contentReference.height !== input.outputMask.height) throw new Error("蒙版重绘内容原图和屏幕蒙版必须使用完全相同的像素尺寸");
     }
     if (input.controlImage.width !== input.outputMask.width || input.controlImage.height !== input.outputMask.height) throw new Error("结构原图和输出蒙版必须使用完全相同的像素尺寸与坐标");
-    const sizeError = irregularScreenOutputSizeError(input.controlImage, input.size);
-    if (sizeError) throw new Error(sizeError);
-    const output = pixelSize(input.size)!;
+    const output = parseIrregularScreenOutputSize(input.size);
+    if (!output) throw new Error("请选择有效的输出尺寸");
     if (input.controlParameters.resizeMode !== "stretch") throw new Error("异形屏结构控制必须使用一致的完整图片坐标");
     const existing = input.existingProject;
     const scene = isIrregularScreenScene(existing?.creationScene) ? existing.creationScene : undefined;
@@ -177,7 +172,13 @@ export function buildIrregularScreenTemplate(input: IrregularScreenTemplateInput
     return {
         nodes,
         connections,
-        creationScene: { kind: "irregular-screen", version: 1, nodeIds: { controlImage: control.id, outputMask: mask.id, ...(reference ? { contentReference: reference.id } : {}), generation: generationNode.id }, maskMode: input.maskMode },
+        creationScene: {
+            kind: "irregular-screen",
+            version: 1,
+            nodeIds: { controlImage: control.id, outputMask: mask.id, ...(reference ? { contentReference: reference.id } : {}), generation: generationNode.id },
+            maskMode: input.maskMode,
+            ...(input.sizeMode ? { sizeMode: input.sizeMode } : {}),
+        },
         generationNodeId: generationNode.id,
     };
 }
