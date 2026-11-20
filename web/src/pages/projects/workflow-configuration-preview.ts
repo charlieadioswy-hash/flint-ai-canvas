@@ -18,6 +18,7 @@ export function resolveWorkflowConfigurationStyle(prompt: string): DramaStyle | 
 /** 组合没有专属样图时，仅借用相同表现形式与题材的现有示意图。 */
 export function workflowConfigurationSamples(style?: DramaStyle) {
     if (!style) return [];
+    if (style.sampleImages?.length) return style.sampleImages.map((url) => ({ url, label: style.name, illustrative: false }));
     if (style.cover) return [{ url: style.cover, label: style.name, illustrative: false }];
     const composition = getDramaStyleComposition(style.id);
     if (!composition) return [];

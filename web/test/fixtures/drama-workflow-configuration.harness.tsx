@@ -2,6 +2,7 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, createRef, type ReactNode } from "react";
 import type { DramaModelOption, DramaSettings, DramaSummary } from "@/services/api/drama";
+import { findDramaStyle } from "@/lib/drama/drama-styles";
 import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 
 const browser = new Window({ url: "http://localhost" });
@@ -184,6 +185,25 @@ test("本集对白语言置顶且制作参数默认收起，完整长提示词�
         expect(input?.dataset.countMax).toBe(String(DRAMA_STYLE_PROMPT_MAX_LENGTH));
         expect(input?.dataset.count).toBe(String(DRAMA_STYLE_PROMPT_MAX_LENGTH));
         expect(input?.hasAttribute("maxlength")).toBe(false);
+    } finally {
+        await view.close();
+    }
+});
+
+test("补图预设的封面加载失败时，只有对应的卡片图片与预览项显示失败", async () => {
+    const preset = findDramaStyle("live-campus")!;
+    const view = await mount({ ...baseSettings, styleName: preset.name, stylePrompt: preset.prompt }, {});
+    try {
+        const card = view.host.querySelector<HTMLButtonElement>('.drama-workflow-style-options button[aria-pressed="true"]')!;
+        const photos = [...view.host.querySelectorAll<HTMLButtonElement>(".drama-workflow-style-gallery button")];
+        expect(card.querySelector("img")?.getAttribute("src")).toBe(preset.cover!);
+        expect(photos.map((photo) => photo.querySelector("img")?.getAttribute("src"))).toEqual(preset.sampleImages!);
+
+        await act(async () => card.querySelector("img")!.dispatchEvent(new Event("error")));
+
+        expect(card.textContent).toContain("样图不可用");
+        expect(photos.map((photo) => photo.disabled)).toEqual([true, false, false]);
+        expect(photos[0].textContent).toContain("样图暂不可用");
     } finally {
         await view.close();
     }

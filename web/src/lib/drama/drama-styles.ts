@@ -14,6 +14,7 @@ export type DramaStyle = {
     tags: string[];
     description: string;
     cover?: string;
+    sampleImages?: string[];
     palette: [string, string, string];
     prompt: string;
     /** 拆开的美术基线，供详情弹窗分项展示；prompt 由这些字段拼成。 */
@@ -46,6 +47,7 @@ const FORBID: Record<DramaStyleCategory, string> = {
 };
 
 const cover = (name: string) => `/short-drama-styles/${name}.jpg`;
+const sampleImages = (id: string) => [1, 2, 3].map((index) => cover(`${id}-${index}`));
 
 const SPECS: Spec[] = [
     // ===== 真人短剧 =====
@@ -83,6 +85,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["闪婚", "契约", "甜虐"],
         description: "民政局、婚房与家宴，暖金色调的婚恋剧。",
+        sampleImages: sampleImages("live-flash"),
         palette: ["#3f2a1d", "#c08457", "#fbe7c6"],
         world: "婚恋场景：民政局、婚房、家族宴席、公司与公寓",
         look: "暖金与米白主色，室内柔和暖光，情绪戏用特写与浅景深",
@@ -95,6 +98,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["豪门", "身世", "打脸"],
         description: "豪门宴会与家族冲突，华丽高对比。",
+        sampleImages: sampleImages("live-heiress"),
         palette: ["#1f1023", "#9d174d", "#f5d0a9"],
         world: "豪门家族：别墅大厅、宴会厅、珠宝店、名媛下午茶",
         look: "酒红与香槟色主色，水晶吊灯暖光与冷色夜景对比，冲突场面硬光",
@@ -107,6 +111,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["重生", "复仇", "爽剧"],
         description: "冷暖强反差，情绪大特写，节奏感强。",
+        sampleImages: sampleImages("live-rebirth"),
         palette: ["#111827", "#7f1d1d", "#f59e0b"],
         world: "家族宴会、豪宅客厅、医院、雨夜街头",
         look: "冷青阴影与暖橙主光强烈对比，反派场景偏冷压抑，主角高光时刻偏暖明亮",
@@ -119,6 +124,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["战神", "赘婿", "打脸"],
         description: "低饱和硬朗色调，硬光强对比，气势张扬。",
+        sampleImages: sampleImages("live-warlord"),
         palette: ["#1c1917", "#57534e", "#b45309"],
         world: "豪门大宅、宴会厅、军营、街头对峙",
         look: "低饱和褐灰主色配橙铜点缀，硬质顶光与侧光，主角气场镜头用低机位慢动作",
@@ -130,6 +136,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["神医", "都市", "逆袭"],
         description: "都市与山林交错，银针药香的奇人爽剧。",
+        sampleImages: sampleImages("live-doctor"),
         palette: ["#14261c", "#4d7c5a", "#e8dcc0"],
         world: "深山道观、都市医院、豪门病房、中医馆",
         look: "青绿与米黄主色，山林雾气柔光，都市部分偏冷明亮",
@@ -141,6 +148,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["萌宝", "带娃", "甜宠"],
         description: "明亮温馨的家庭色调，萌娃视角。",
+        sampleImages: sampleImages("live-baby"),
         palette: ["#fff7ed", "#fdba74", "#93c5fd"],
         world: "温馨公寓、幼儿园、游乐场、总裁办公室",
         look: "明亮暖白主色，柔和均匀照明，儿童视角低机位",
@@ -168,6 +176,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["修仙", "玄幻", "虐恋"],
         description: "云海仙山、飘逸纱衣与克制的法术光效。",
+        sampleImages: sampleImages("live-xianxia"),
         palette: ["#0e2a3b", "#5b8fa8", "#e6f0f2"],
         world: "云海仙山、悬空宫阙、竹林瀑布、宗门大殿",
         look: "青白与天蓝主色，轻雾与体积光营造仙气，法术以克制的光效与粒子呈现",
@@ -192,6 +201,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["穿越", "种田", "家长里短"],
         description: "古代乡村与田园，温暖治愈的生活流。",
+        sampleImages: sampleImages("live-farm"),
         palette: ["#2f3a1f", "#8aa35a", "#f2e2b3"],
         world: "古代村落、农家小院、田埂、集市、山溪",
         look: "麦黄与嫩绿主色，暖阳自然光，烟火气浓",
@@ -244,6 +254,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["灵异", "惊悚", "民俗"],
         description: "幽绿冷光与浓雾，中式民俗恐怖。",
+        sampleImages: sampleImages("live-horror"),
         palette: ["#050a08", "#1d3b2f", "#9ca3af"],
         world: "老宅、祠堂、荒村、深夜医院、山间古道",
         look: "幽绿与灰黑主色，底光与手电光，浓雾和大面积暗部",
@@ -256,6 +267,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["末世", "丧尸", "系统"],
         description: "灰黄废墟、尘埃体积光、粗粝写实。",
+        sampleImages: sampleImages("live-apocalypse"),
         palette: ["#2a2620", "#6b5d45", "#c2a36b"],
         world: "坍塌城市、废弃商场、临时营地、地下仓库",
         look: "灰黄褪色主色，尘埃与烟雾中的体积光，粗粝材质与污渍",
@@ -267,6 +279,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["校园", "初恋", "成长"],
         description: "通透日光，青绿清新，胶片柔焦。",
+        sampleImages: sampleImages("live-campus"),
         palette: ["#e0f2fe", "#86efac", "#fde68a"],
         world: "教室、操场、天台、林荫道、便利店",
         look: "通透明亮的自然日光，青绿与浅黄配色，轻微柔焦",
@@ -279,6 +292,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["职场", "大女主", "商战"],
         description: "现代办公冷白光，利落干练的商战质感。",
+        sampleImages: sampleImages("live-workplace"),
         palette: ["#0f1720", "#475569", "#e2e8f0"],
         world: "开放办公区、会议室、发布会、高端酒店",
         look: "冷白与石墨灰主色，干净的顶光与窗光，会议对峙用正反打",
@@ -376,6 +390,7 @@ const SPECS: Spec[] = [
         category: "live",
         tags: ["家庭", "婆媳", "现实"],
         description: "老小区、菜市场与饭桌，真实生活质感。",
+        sampleImages: sampleImages("live-family"),
         palette: ["#3f3f46", "#a8a29e", "#fde68a"],
         world: "城市老小区、厨房饭桌、菜市场、医院、学校门口",
         look: "自然写实布光，暖黄室内灯与日光混合，生活杂物丰富，不刻意美化",
@@ -403,6 +418,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["修仙", "玄幻", "国漫"],
         description: "国产 3D 动画 CG，精致建模与华丽法术光效。",
+        sampleImages: sampleImages("3d-guoman"),
         palette: ["#0c1e2e", "#2c6e8f", "#f0c674"],
         medium: "高品质国产 3D 动画 CG 渲染，次世代建模，角色面部精致、保持东方审美，皮肤与布料有次表面散射",
         world: "云海仙山、宗门殿宇、秘境古林",
@@ -416,6 +432,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["玄幻", "热血", "升级"],
         description: "斗气与魂力爆发，高燃战斗特效。",
+        sampleImages: sampleImages("3d-xuanhuan"),
         palette: ["#140c2b", "#7c3aed", "#fb923c"],
         medium: "国产 3D 动画 CG 渲染，强战斗张力，动作夸张有力",
         world: "宗门广场、魔兽山脉、天空擂台、上古遗迹",
@@ -428,6 +445,7 @@ const SPECS: Spec[] = [
         category: "3d",
         tags: ["神话", "封神", "国潮"],
         description: "神魔史诗，金红祥云与宏大场面。",
+        sampleImages: sampleImages("3d-myth"),
         palette: ["#3b0a0a", "#b91c1c", "#facc15"],
         medium: "电影级国产 3D 动画渲染，史诗感构图",
         world: "天庭、龙宫、神山、战场",
@@ -495,6 +513,7 @@ const SPECS: Spec[] = [
         category: "3d",
         tags: ["二次元", "三渲二", "校园"],
         description: "三渲二卡通着色，日系动画观感。",
+        sampleImages: sampleImages("3d-toon"),
         palette: ["#1e1b4b", "#818cf8", "#fbcfe8"],
         medium: "三渲二卡通渲染，描边与色阶阴影，兼具 3D 运镜与日系动画观感",
         world: "城市街道、校园、奇幻场景",
@@ -521,6 +540,7 @@ const SPECS: Spec[] = [
         category: "3d",
         tags: ["机甲", "科幻", "战斗"],
         description: "硬表面机甲与金属反射，工业感。",
+        sampleImages: sampleImages("3d-mecha"),
         palette: ["#0b1120", "#475569", "#38bdf8"],
         medium: "高精度 3D 硬表面渲染，机甲金属材质与磨损细节",
         world: "机库、废墟城市、太空战场",
@@ -533,6 +553,7 @@ const SPECS: Spec[] = [
         category: "3d",
         tags: ["武侠", "江湖", "游戏感"],
         description: "次世代游戏 CG 质感的江湖，衣袂翻飞。",
+        sampleImages: sampleImages("3d-wuxia-game"),
         palette: ["#111827", "#7f1d1d", "#f5d0a9"],
         medium: "次世代武侠游戏 CG 风格 3D 渲染，布料与发丝模拟细腻",
         world: "竹林、客栈、悬崖古道、山门",
@@ -577,6 +598,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["恋爱", "霸总", "逆袭"],
         description: "韩式条漫精致美型，柔和渐变上色。",
+        sampleImages: sampleImages("2d-webtoon"),
         palette: ["#1f1d2b", "#8b5cf6", "#fbcfe8"],
         medium: "韩式条漫风格，角色修长美型、五官精致，线条细腻，柔和渐变上色",
         world: "都市场景，背景简洁并常用光斑虚化",
@@ -590,6 +612,7 @@ const SPECS: Spec[] = [
         hot: true,
         tags: ["都市", "系统", "爽文"],
         description: "国产都市漫画风，利落线条与高对比。",
+        sampleImages: sampleImages("2d-manhua"),
         palette: ["#0f172a", "#2563eb", "#f8fafc"],
         medium: "国产都市漫画动画风，线条利落，阴影块面明确，角色英俊靓丽",
         world: "现代都市、公司、校园、街头",
@@ -602,6 +625,7 @@ const SPECS: Spec[] = [
         category: "2d",
         tags: ["古风", "甜宠", "王爷"],
         description: "粉嫩古风与柔和光晕的甜宠漫。",
+        sampleImages: sampleImages("2d-ancient-sweet"),
         palette: ["#fff1f2", "#fb7185", "#fde68a"],
         medium: "古风甜宠 2D 漫剧风格，线条柔美，上色粉嫩通透",
         world: "王府庭院、花园、集市、闺阁",
@@ -670,6 +694,7 @@ const SPECS: Spec[] = [
         category: "2d",
         tags: ["暗黑", "吸血鬼", "复仇"],
         description: "暗红与黑的哥特美学，阴郁华丽。",
+        sampleImages: sampleImages("2d-dark"),
         palette: ["#0a0507", "#7f1d1d", "#d4d4d8"],
         medium: "暗黑哥特 2D 动画风格，线条锐利，阴影浓重",
         world: "古堡、教堂、月夜墓园",
@@ -697,6 +722,7 @@ const SPECS: Spec[] = [
         category: "2d",
         tags: ["扁平", "知识", "轻喜"],
         description: "简洁几何扁平风，色块干净。",
+        sampleImages: sampleImages("2d-flat"),
         palette: ["#f1f5f9", "#6366f1", "#f97316"],
         medium: "现代扁平插画动画风格，几何化造型，无描边或细描边，纯色块面",
         world: "简化的城市与室内场景",
@@ -735,6 +761,7 @@ const SPECS: Spec[] = [
         category: "2d",
         tags: ["Q 版", "沙雕", "搞笑"],
         description: "大头小身，夸张表情与漫符，节奏轻快。",
+        sampleImages: sampleImages("2d-chibi"),
         palette: ["#fff7ed", "#fb923c", "#38bdf8"],
         medium: "2D Q 版搞笑动画风格，2-3 头身比例，粗描边，夸张表情与漫画符号",
         world: "简化的校园、办公室与家中场景",
@@ -764,6 +791,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["工笔", "宫廷", "国潮"],
         description: "细腻勾线与矿物重彩，富丽典雅。",
+        sampleImages: sampleImages("art-gongbi"),
         palette: ["#3d1c12", "#b45309", "#93c5fd"],
         medium: "中国工笔重彩画风格，细腻勾线，矿物颜料层层渲染，绢本质感",
         world: "宫苑、花鸟、楼阁",
@@ -776,6 +804,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["民俗", "神话", "国潮"],
         description: "红色剪纸镂空与皮影侧身造型。",
+        sampleImages: sampleImages("art-papercut"),
         palette: ["#450a0a", "#dc2626", "#fde68a"],
         medium: "中国剪纸与皮影戏风格，侧身剪影造型与镂空花纹，分层纸片叠加形成纵深",
         world: "民俗与神话场景",
@@ -816,6 +845,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["喜剧", "文艺", "荒诞"],
         description: "严格对称构图与马卡龙配色。",
+        sampleImages: sampleImages("art-wes"),
         palette: ["#fde4cf", "#f4978e", "#90dbf4"],
         medium: "真人电影质感，严格中心对称构图，平移与正面镜头",
         world: "复古酒店、火车、小镇",
@@ -856,6 +886,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["史诗", "欧式", "宫廷"],
         description: "伦勃朗光与厚重油彩，古典庄重。",
+        sampleImages: sampleImages("art-oil"),
         palette: ["#1a120b", "#7c4a1e", "#e7c08a"],
         medium: "欧洲古典油画风格，厚重油彩与细腻罩染，画布纹理",
         world: "宫殿、教堂、庄园",
@@ -868,6 +899,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["游戏", "复古", "搞笑"],
         description: "16-bit 像素画，有限调色板。",
+        sampleImages: sampleImages("art-pixel"),
         palette: ["#111827", "#22c55e", "#f472b6"],
         medium: "16-bit 复古像素画风格，清晰方块像素与抖动渐变",
         world: "经典横版游戏式场景",
@@ -909,6 +941,7 @@ const SPECS: Spec[] = [
         category: "art",
         tags: ["国风", "山水", "仙境"],
         description: "青绿重彩山水，云雾缭绕，适合仙侠与神话。",
+        sampleImages: sampleImages("art-guochao-landscape"),
         palette: ["#134e4a", "#5eead4", "#fef3c7"],
         medium: "中国青绿山水画风格，石青石绿重彩，工整勾勒与渲染",
         world: "仙山、云海、瀑布、亭台楼阁",
@@ -936,7 +969,7 @@ function compile(spec: Spec): DramaStyle {
     const { medium, world, look, wardrobe, forbid, ...style } = spec;
     const detail = { medium: medium || MEDIUM[spec.category], world, look, wardrobe, forbid: `${FORBID[spec.category]}${forbid ? `、${forbid}` : ""}` };
     const prompt = [detail.medium, `题材场景：${world}`, `色彩光影：${look}`, `服化道：${wardrobe}`, `禁止：${detail.forbid}`].join("。");
-    return { ...style, prompt, detail };
+    return { ...style, cover: style.sampleImages?.[0] ?? style.cover, prompt, detail };
 }
 
 export const DRAMA_STYLES: DramaStyle[] = SPECS.map(compile);
