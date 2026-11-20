@@ -67,6 +67,7 @@ mock.module("antd", () => ({
     ),
     Input: ({ prefix: _prefix, allowClear: _allowClear, ...props }: Record<string, unknown>) => createElement("input", props),
     ConfigProvider: Box,
+    Popover: Box,
 }));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 mock.module("@/stores/use-global-agent-store", () => ({ useGlobalAgentStore: agentStore }));
@@ -229,6 +230,16 @@ function basicSummary(guideStep: string): DramaSummary {
         castCount: 0,
     } as unknown as DramaSummary;
 }
+
+function fileDrag(target: EventTarget, type: string, options: { file?: File; relatedTarget?: EventTarget | null } = {}) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+        dataTransfer: { value: { types: ["Files"], files: options.file ? [options.file] : [], dropEffect: "none" } },
+        relatedTarget: { value: options.relatedTarget ?? null },
+    });
+    target.dispatchEvent(event);
+}
+
 afterAll(() => browser.happyDOM.abort());
 
 test("新建入口在 StrictMode 中传入原 File，并保留正文聚焦与主题外壳", async () => {
@@ -363,6 +374,98 @@ test("作品卡区分文字就绪与真正成片，配置作品提供继续配�
         expect(cards[3].querySelector("a")?.getAttribute("href")).toBe(`/projects/new?draft=${encodeURIComponent("空草稿")}`);
         expect(cards[4].querySelector("a")?.getAttribute("href")).toBe(`/projects/${encodeURIComponent("等待分集")}/guide`);
         expect(mounted.host.textContent).not.toContain("创作引导");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("从短剧首页的子元素拖出文件时清除遮罩，在页内移动时保留遮罩", async () => {
+    const mounted = await mount(<ListPage />, "/projects");
+    try {
+        const source = mounted.host.querySelector('[aria-label="正文导入"]')!;
+        const heading = mounted.host.querySelector("h1")!;
+        const overlayVisible = () => Boolean(mounted.host.querySelector(".drama-library-drop"));
+        await act(async () => fileDrag(source, "dragover"));
+        expect(overlayVisible()).toBe(true);
+        await act(async () => fileDrag(source, "dragleave", { relatedTarget: heading }));
+        expect(overlayVisible()).toBe(true);
+        await act(async () => fileDrag(heading, "dragleave", { relatedTarget: document.body }));
+        expect(overlayVisible()).toBe(false);
+        await act(async () => fileDrag(source, "dragover"));
+        expect(overlayVisible()).toBe(true);
+        await act(async () => fileDrag(source, "dragleave"));
+        expect(overlayVisible()).toBe(false);
+        expect(location.pathname).toBe("/projects");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("子上传区接收文件后清除首页遮罩并保留子上传流程", async () => {
+    const mounted = await mount(<ListPage />, "/projects");
+    try {
+        const file = new File(["第一集 正文"], "剧本.txt");
+        const heading = mounted.host.querySelector("h1")!;
+        const uploader = mounted.host.querySelector('[aria-label="正文导入"]')!;
+        let receivedFile: File | undefined;
+        uploader.addEventListener("drop", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            receivedFile = (event as DragEvent).dataTransfer?.files[0];
+        });
+        await act(async () => fileDrag(heading, "dragover"));
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(true);
+        await act(async () => fileDrag(uploader, "drop", { file }));
+        expect(receivedFile).toBe(file);
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(false);
+
+        const nextFile = new File(["第二集 正文"], "第二集.txt");
+        // 两个事件可以在 React 提交首次拖入状态之前到达。
+        await act(async () => {
+            fileDrag(heading, "dragover");
+            fileDrag(uploader, "drop", { file: nextFile });
+        });
+        expect(receivedFile).toBe(nextFile);
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(false);
+        expect(location.pathname).toBe("/projects");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("在短剧首页放下文件时清除遮罩并打开新建入口", async () => {
+    const mounted = await mount(<ListPage />, "/projects");
+    try {
+        const file = new File(["第一集 正文"], "剧本.txt");
+        const heading = mounted.host.querySelector("h1")!;
+        await act(async () => fileDrag(heading, "dragover"));
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(true);
+        await act(async () => fileDrag(heading, "drop"));
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(false);
+        expect(location.pathname).toBe("/projects");
+        await act(async () => fileDrag(heading, "dragover"));
+        await act(async () => fileDrag(heading, "drop", { file }));
+        expect(Boolean(mounted.host.querySelector(".drama-library-drop"))).toBe(false);
+        expect(location.pathname).toBe("/projects/new");
+        expect(location.state.file).toBe(file);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("拖动结束、按 Escape 或窗口失焦时收起短剧首页的拖放遮罩", async () => {
+    const mounted = await mount(<ListPage />, "/projects");
+    try {
+        const source = mounted.host.querySelector('[aria-label="正文导入"]')!;
+        const overlayVisible = () => Boolean(mounted.host.querySelector(".drama-library-drop"));
+        const terminalEvents = [new Event("dragend"), new browser.KeyboardEvent("keydown", { key: "Escape" }), new Event("blur")];
+        for (const event of terminalEvents) {
+            await act(async () => fileDrag(source, "dragover"));
+            expect(overlayVisible()).toBe(true);
+            await act(async () => window.dispatchEvent(event));
+            expect(overlayVisible()).toBe(false);
+        }
+        expect(location.pathname).toBe("/projects");
     } finally {
         await mounted.close();
     }

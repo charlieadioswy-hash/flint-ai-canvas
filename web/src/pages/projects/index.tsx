@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useRef, useState, type DragEvent } from "react";
+import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Dropdown, Input } from "antd";
 import { Clapperboard, ExternalLink, FileUp, MoreHorizontal, Search, Trash2 } from "lucide-react";
@@ -99,6 +99,23 @@ export default function DramaListPage() {
     const counts = data?.statusCounts || {};
     const total = counts.all ?? 0;
     const filtered = Boolean(search || status !== "all");
+    useLayoutEffect(() => {
+        const clearOverlay = () => setDragging(false);
+        const cancelDrag = (event: KeyboardEvent) => {
+            if (event.key === "Escape") clearOverlay();
+        };
+        // 挂载时注册捕获监听，覆盖遮罩渲染前就到达且被内层上传区接走的 drop。
+        window.addEventListener("drop", clearOverlay, true);
+        window.addEventListener("dragend", clearOverlay, true);
+        window.addEventListener("blur", clearOverlay);
+        window.addEventListener("keydown", cancelDrag, true);
+        return () => {
+            window.removeEventListener("drop", clearOverlay, true);
+            window.removeEventListener("dragend", clearOverlay, true);
+            window.removeEventListener("blur", clearOverlay);
+            window.removeEventListener("keydown", cancelDrag, true);
+        };
+    }, []);
     const openFile = (file: File) => navigate("/projects/new", { state: { file } });
     const confirmDelete = (item: DramaListItem) => {
         modal.confirm({
@@ -120,7 +137,9 @@ export default function DramaListPage() {
             }
         },
         onDragLeave: (event: DragEvent) => {
-            if (event.currentTarget === event.target) setDragging(false);
+            const nextTarget = event.relatedTarget;
+            if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+            setDragging(false);
         },
         onDrop: (event: DragEvent) => {
             event.preventDefault();
