@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,13 +19,15 @@ import (
 )
 
 const (
-	arkPrivateAssetAPIVersion = "2024-01-01"
-	arkPrivateAssetGroupType  = "AIGC"
-	arkPrivateAssetStatusNew  = "creating"
-	arkPrivateAssetStatusWait = "processing"
-	arkPrivateAssetStatusLive = "active"
-	arkPrivateAssetStatusFail = "failed"
-	arkPrivateAssetPollLimit  = 3 * time.Minute
+	arkPrivateAssetAPIVersion       = "2024-01-01"
+	arkPrivateAssetGroupType        = "AIGC"
+	arkPrivateAssetStatusNew        = "creating"
+	arkPrivateAssetStatusWait       = "processing"
+	arkPrivateAssetStatusLive       = "active"
+	arkPrivateAssetStatusFail       = "failed"
+	arkPrivateAssetPollLimit        = 3 * time.Minute
+	arkPrivateAssetWriteAttempts    = 3
+	arkPrivateAssetWriteRetryBudget = 2 * time.Minute
 )
 
 // 测试可以注入本地控制面服务；生产环境必须根据管理员显式配置的 Region 推导方舟控制面地址，
@@ -369,6 +372,47 @@ func (s *Service) failArkPrivateAssetBinding(binding *model.ArkPrivateAssetBindi
 }
 
 func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingValue, action string, payload map[string]interface{}) (map[string]interface{}, error) {
+	// Foreground requests keep their existing response time; generation workers can wait for quota.
+	if taskExecutionID(ctx) == "" || action != "CreateAsset" {
+		return requestArkPrivateAssetAPI(ctx, setting, action, payload)
+	}
+	return callArkPrivateAssetAPIWithWait(ctx, setting, action, payload, sleepContext)
+}
+
+func callArkPrivateAssetAPIWithWait(ctx context.Context, setting arkPrivateAssetSettingValue, action string, payload map[string]interface{}, wait func(context.Context, time.Duration) error) (map[string]interface{}, error) {
+	remaining := arkPrivateAssetWriteRetryBudget
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		response, err := requestArkPrivateAssetAPI(ctx, setting, action, payload)
+		var httpErr providerHTTPError
+		if err == nil || action != "CreateAsset" || !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusTooManyRequests {
+			return response, err
+		}
+		delay := httpErr.RetryAfter
+		if delay <= 0 {
+			delay = time.Duration(attempt)*30*time.Second + rand.N(5*time.Second)
+		}
+		if attempt == arkPrivateAssetWriteAttempts || delay > remaining {
+			return nil, arkPrivateAssetRateLimitError{upstream: httpErr, message: "方舟素材库上传限流，请稍后重试"}
+		}
+		if err := wait(ctx, delay); err != nil {
+			return nil, err
+		}
+		remaining -= delay
+	}
+}
+
+type arkPrivateAssetRateLimitError struct {
+	upstream providerHTTPError
+	message  string
+}
+
+func (e arkPrivateAssetRateLimitError) Error() string { return e.message }
+func (e arkPrivateAssetRateLimitError) Unwrap() error { return e.upstream }
+
+func requestArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingValue, action string, payload map[string]interface{}) (map[string]interface{}, error) {
 	// 素材库控制面调用不是模型生成；不能继承视频任务的请求审计或账单上下文，
 	// 否则创建素材组、上传素材和审核查询会被误记为可计费的视频调用。
 	ctx = withoutProviderAnalytics(ctx)
@@ -409,7 +453,11 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 			var body map[string]interface{}
 			if json.Unmarshal([]byte(httpErr.Body), &body) == nil {
 				if detail := arkPrivateAssetUpstreamDetail(body); detail != "" {
-					return nil, fmt.Errorf("方舟素材库请求失败（HTTP %d）：%s", httpErr.StatusCode, detail)
+					message := fmt.Sprintf("方舟素材库请求失败（HTTP %d）：%s", httpErr.StatusCode, detail)
+					if action == "CreateAsset" && httpErr.StatusCode == http.StatusTooManyRequests {
+						return nil, arkPrivateAssetRateLimitError{upstream: httpErr, message: message}
+					}
+					return nil, errors.New(message)
 				}
 			}
 		}

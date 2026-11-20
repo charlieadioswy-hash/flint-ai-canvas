@@ -2,10 +2,37 @@ package app
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/model"
 )
+
+func TestRouteCooldownIsScopedToModelServiceRateLimits(t *testing.T) {
+	upstream := providerHTTPError{StatusCode: http.StatusTooManyRequests, RetryAfter: 3 * time.Minute}
+	for _, test := range []struct {
+		name        string
+		err         error
+		wantBlocked bool
+	}{
+		{name: "model generation", err: upstream, wantBlocked: true},
+		{name: "Ark asset upload", err: fmt.Errorf("上传方舟可信素材失败：%w", arkPrivateAssetRateLimitError{upstream: upstream})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if !safeRouteRejection(test.err) {
+				t.Fatal("generation has not been submitted, so failover must remain safe")
+			}
+			svc := &Service{routeHealthBlocked: map[string]time.Time{}}
+			attempt := &model.RouteAttempt{ChannelID: "channel", ChannelModelID: "video-model", FailureCode: routeFailureCode(test.err)}
+			svc.blockLogicalRouteForFailure(attempt, test.err)
+			other := cachedLogicalRoute{ChannelModel: model.ChannelModel{ID: "other-model", ChannelID: attempt.ChannelID}}
+			if blocked := svc.logicalRouteBlocked(other); blocked != test.wantBlocked {
+				t.Fatalf("same-channel model blocked = %v, want %v (failure code %q)", blocked, test.wantBlocked, attempt.FailureCode)
+			}
+		})
+	}
+}
 
 func TestImagePriceTiersMatchResolutionAndActualReferences(t *testing.T) {
 	channelModel := model.ChannelModel{}

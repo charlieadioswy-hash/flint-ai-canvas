@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/model"
 )
@@ -95,6 +98,121 @@ func TestCallArkPrivateAssetAPIUsesIDForGetAsset(t *testing.T) {
 	}, "GetAsset", map[string]interface{}{"Id": "asset-test", "ProjectName": "project-test"})
 	if err != nil {
 		t.Fatalf("callArkPrivateAssetAPI() error = %v", err)
+	}
+}
+
+func TestCallArkPrivateAssetAPIRetriesOnlyRejectedUploads(t *testing.T) {
+	const rateLimitBody = `{"ResponseMetadata":{"Error":{"Code":"QuotaWriteQPMExceeded","Message":"Create asset rate limit exceeded, please retry later."}}}`
+	cases := []struct {
+		name            string
+		action          string
+		status          int
+		retryAfter      string
+		responseBody    string
+		recoverOnRetry  bool
+		cancelWhileWait bool
+		foreground      bool
+		wantRequests    int32
+		wantWaits       int
+	}{
+		{name: "retries rejected upload with Retry-After", action: "CreateAsset", status: http.StatusTooManyRequests, retryAfter: "45", responseBody: rateLimitBody, recoverOnRetry: true, wantRequests: 2, wantWaits: 1},
+		{name: "bounds upload retries without Retry-After", action: "CreateAsset", status: http.StatusTooManyRequests, responseBody: rateLimitBody, wantRequests: 3, wantWaits: 2},
+		{name: "preserves rejection after retries on an empty response", action: "CreateAsset", status: http.StatusTooManyRequests, wantRequests: 3, wantWaits: 2},
+		{name: "does not retry an ambiguous server failure", action: "CreateAsset", status: http.StatusServiceUnavailable, wantRequests: 1},
+		{name: "does not retry a different control plane action", action: "GetAsset", status: http.StatusTooManyRequests, responseBody: rateLimitBody, wantRequests: 1},
+		{name: "foreground upload returns limit details immediately", action: "CreateAsset", status: http.StatusTooManyRequests, retryAfter: "3600", responseBody: rateLimitBody, foreground: true, wantRequests: 1},
+		{name: "does not retry before a long Retry-After", action: "CreateAsset", status: http.StatusTooManyRequests, retryAfter: "3600", responseBody: rateLimitBody, wantRequests: 1},
+		{name: "preserves rejection on an invalid response beyond the wait budget", action: "CreateAsset", status: http.StatusTooManyRequests, retryAfter: "3600", responseBody: "unparseable response body", wantRequests: 1},
+		{name: "cancellation interrupts the wait", action: "CreateAsset", status: http.StatusTooManyRequests, responseBody: rateLimitBody, cancelWhileWait: true, wantRequests: 1, wantWaits: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1,::1")
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				attempt := attempts.Add(1)
+				if req.URL.Query().Get("Action") != tc.action || !strings.HasPrefix(req.Header.Get("Authorization"), "HMAC-SHA256") {
+					t.Errorf("attempt %d: expected signed %s request", attempt, tc.action)
+				}
+				var body map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body["ProjectName"] != "project-test" {
+					t.Errorf("attempt %d: invalid request body %#v: %v", attempt, body, err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if tc.recoverOnRetry && attempt == 2 {
+					_, _ = w.Write([]byte(`{"Result":{"AssetId":"asset-retried"}}`))
+					return
+				}
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+				if tc.responseBody != "" {
+					_, _ = w.Write([]byte(tc.responseBody))
+				}
+			}))
+			defer server.Close()
+			previousBaseURL := arkPrivateAssetAPIBaseURLOverride
+			arkPrivateAssetAPIBaseURLOverride = server.URL
+			t.Cleanup(func() { arkPrivateAssetAPIBaseURLOverride = previousBaseURL })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var waits []time.Duration
+			setting := arkPrivateAssetSettingValue{
+				Region: "test-region", AccessKeyID: "test-access-key", AccessKeySecret: "test-secret-key",
+			}
+			payload := map[string]any{"ProjectName": "project-test"}
+			wait := func(ctx context.Context, delay time.Duration) error {
+				waits = append(waits, delay)
+				if tc.cancelWhileWait {
+					cancel()
+					return ctx.Err()
+				}
+				return nil
+			}
+			var response map[string]any
+			var err error
+			if tc.foreground {
+				response, err = callArkPrivateAssetAPI(ctx, setting, tc.action, payload)
+			} else {
+				response, err = callArkPrivateAssetAPIWithWait(ctx, setting, tc.action, payload, wait)
+			}
+			if got := attempts.Load(); got != tc.wantRequests || len(waits) != tc.wantWaits {
+				t.Fatalf("made %d requests, waits = %v; want %d requests and %d waits", got, waits, tc.wantRequests, tc.wantWaits)
+			}
+			if tc.retryAfter == "45" && waits[0] != 45*time.Second {
+				t.Fatalf("wait %s did not honor Retry-After", waits[0])
+			}
+			if len(waits) == 2 && (waits[0] <= 0 || waits[1] <= waits[0]) {
+				t.Fatalf("default waits must increase: %v", waits)
+			}
+			switch {
+			case tc.foreground:
+				if err == nil || !strings.Contains(err.Error(), "QuotaWriteQPMExceeded") {
+					t.Fatalf("foreground limit error = %v", err)
+				}
+			case tc.cancelWhileWait:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("canceled error = %v", err)
+				}
+			case tc.recoverOnRetry:
+				if id := arkPrivateAssetResponseField(response, "AssetId"); id != "asset-retried" || err != nil {
+					t.Fatalf("asset = %q, err = %v", id, err)
+				}
+			case tc.action == "CreateAsset" && tc.status == http.StatusTooManyRequests:
+				if err == nil || err.Error() != "方舟素材库上传限流，请稍后重试" {
+					t.Fatalf("terminal limit error = %v", err)
+				}
+				var upstream providerHTTPError
+				if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusTooManyRequests || !safeRouteRejection(err) || routeFailureCode(err) != "ark_asset_429" {
+					t.Fatalf("terminal 429 must remain a safe route rejection, got %T: %v", err, err)
+				}
+			default:
+				if err == nil {
+					t.Fatal("expected upstream error")
+				}
+			}
+		})
 	}
 }
 

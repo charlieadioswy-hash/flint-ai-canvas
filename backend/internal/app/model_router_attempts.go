@@ -1,6 +1,6 @@
 // 任务路由尝试（route attempt）的生命周期：创建、派发、失败切换、重试与收尾。
 //
-// 一个任务可能依次尝试多条路由：上游返回可重试错误时切到下一条，并把失败路由短暂熔断
+// 一个任务可能依次尝试多条路由：上游确认未创建任务时可切到下一条，模型服务自身的限流等故障会短暂熔断
 // （blockLogicalRouteForFailure）。派发结果不确定（请求已发出但没拿到响应）时绝不切换，
 // 避免同一请求在两个供应商处各扣一次费。
 
@@ -494,6 +494,11 @@ func (s *Service) finishTaskRouteAttempt(attempt *model.RouteAttempt, task *mode
 func routeFailureCode(err error) string {
 	if code, _ := ChannelSlotFailureDetails(err); code != "" {
 		return code
+	}
+	var arkAssetLimit arkPrivateAssetRateLimitError
+	if errors.As(err, &arkAssetLimit) {
+		// 素材库的写入配额来自平台配置，独立于当前任务所用的模型渠道。
+		return "ark_asset_429"
 	}
 	var upstream providerHTTPError
 	if errors.As(err, &upstream) {
