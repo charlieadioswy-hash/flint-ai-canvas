@@ -257,7 +257,11 @@ func (s *Service) ConfirmDramaGuide(userID, projectID string, req ConfirmDramaGu
 	if req.Settings != nil {
 		switch req.ExpectedStep {
 		case model.DramaGuideConfiguring:
+			previous := settings
 			settings = *req.Settings
+			if err := preserveDramaStyleSelection(&settings, previous); err != nil {
+				return DramaSummary{}, err
+			}
 		case model.DramaGuideAssets:
 			if selectedEpisodeID != "" {
 				episode, err := s.repo.DramaEpisode(projectID, selectedEpisodeID)

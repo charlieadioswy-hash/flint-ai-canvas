@@ -40,6 +40,7 @@ type UpdateDramaWorkflowStyleRequest struct {
 	ExpectedRevision *int64                     `json:"expectedRevision"`
 	StyleName        string                     `json:"styleName"`
 	StylePrompt      string                     `json:"stylePrompt"`
+	StyleSelection   *DramaStyleSelection       `json:"styleSelection,omitempty"`
 	Drawing          *DramaDrawingConfiguration `json:"drawing,omitempty"`
 }
 
@@ -236,8 +237,12 @@ func (s *Service) UpdateDramaWorkflowStyle(userID, projectID string, req UpdateD
 		if active {
 			return dramaGuideConflict("相关文字任务正在进行，请完成后再修改风格")
 		}
-		settings := applyDramaDrawingConfiguration(parseDramaSettings(p.SettingsJSON), drawing)
-		settings.StyleName, settings.StylePrompt = name, prompt
+		previous := parseDramaSettings(p.SettingsJSON)
+		settings := applyDramaDrawingConfiguration(previous, drawing)
+		settings.StyleName, settings.StylePrompt, settings.StyleSelection = name, prompt, req.StyleSelection
+		if err := preserveDramaStyleSelection(&settings, previous); err != nil {
+			return err
+		}
 		return tx.UpdateDramaGuideIf(projectID, p.Revision, p.GuideStep, map[string]any{"settings_json": encodeDramaSettings(settings)})
 	})
 	if err != nil {

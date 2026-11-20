@@ -49,6 +49,9 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 		if productionRow.GuideStep != model.DramaGuideConfiguring && next.DramaType != current.DramaType {
 			return DramaSummary{}, BadAuthRequest("剧集创建后不能修改类型")
 		}
+		if err := preserveDramaStyleSelection(&next, current); err != nil {
+			return DramaSummary{}, err
+		}
 		if dramaGuideActive(productionRow) {
 			next.MediaMode = DramaMediaManual
 		}
@@ -517,6 +520,9 @@ func (s *Service) UpdateDramaCast(userID string, projectID string, castID string
 	if err != nil {
 		return model.DramaCast{}, dramaLookupError(err)
 	}
+	if err := validateDramaCastPresetSelection(parseDramaSettings(p.SettingsJSON), cast.ImageStyleID, req.ImageStyleID); err != nil {
+		return model.DramaCast{}, err
+	}
 	fields, err := applyDramaCastImageFields(cast, req.ImagePrompt, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt)
 	if err != nil {
 		return model.DramaCast{}, err
@@ -618,6 +624,13 @@ func (s *Service) AddDramaCastLook(userID, projectID, castID string, req DramaCa
 		if err := requireDramaGuideComplete(current); err != nil {
 			return err
 		}
+		settings, err := dramaCastContextSettings(tx, current, req.EpisodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateDramaCastPresetSelection(settings, "", req.ImageStyleID); err != nil {
+			return err
+		}
 		character, err := tx.DramaCast(project.ID, castID)
 		if err != nil {
 			return dramaLookupError(err)
@@ -677,6 +690,9 @@ func (s *Service) UpdateDramaCastLook(userID, projectID, lookID string, req Dram
 	}
 	if look.ImageStatus == model.DramaMediaQueued || look.ImageStatus == model.DramaMediaRunning {
 		return nil, BadAuthRequest("造型正在生成，请完成后再修改")
+	}
+	if err := validateDramaCastPresetSelection(parseDramaSettings(p.SettingsJSON), look.ImageStyleID, req.ImageStyleID); err != nil {
+		return nil, err
 	}
 	fields, err := applyDramaCastImageFields(look, req.ImagePrompt, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt)
 	if err != nil {

@@ -23,11 +23,12 @@ type Chapter struct {
 
 // Settings 是作品级制作意图；模型与审阅模式由服务端解析为具体执行参数。
 type Settings struct {
-	AspectRatio    string `json:"aspectRatio"`
-	EpisodeSeconds int    `json:"episodeSeconds"`
-	StylePrompt    string `json:"stylePrompt"`
-	StyleName      string `json:"styleName"`
-	Language       string `json:"language"`
+	AspectRatio     string `json:"aspectRatio"`
+	EpisodeSeconds  int    `json:"episodeSeconds"`
+	StylePrompt     string `json:"stylePrompt"`
+	VisualDirection string `json:"-"`
+	StyleName       string `json:"styleName"`
+	Language        string `json:"language"`
 	// Assets 是角色/场景参考图方案与约束提示词，开工前选定，之后可在设置里修改。
 	Assets AssetSettings `json:"assets"`
 	// Storyboard 是分镜规则：镜头时长、节奏与转场。
@@ -122,7 +123,9 @@ func BibleWithReferencePrompt(title string, settings Settings, chapters []Chapte
 func biblePrompt(title string, settings Settings, chapters []Chapter, maxChars int, skill *WritingSkill, kind string, reference *Chapter) string {
 	settings = settings.Normalized()
 	var b strings.Builder
-	fmt.Fprintf(&b, "作品：%s\n画幅：%s\n视觉风格：%s\n对白语言：%s\n章节总数：%d\n\n", title, settings.AspectRatio, firstNonEmpty(settings.StylePrompt, "写实电影感"), settings.Language, len(chapters))
+	fmt.Fprintf(&b, "作品：%s\n画幅：%s\n", title, settings.AspectRatio)
+	writeProductionStyle(&b, settings)
+	fmt.Fprintf(&b, "对白语言：%s\n章节总数：%d\n\n", settings.Language, len(chapters))
 	b.WriteString(structuredSkillBlock("提取角色、道具与场景", skill))
 	b.WriteString("【角色说明复用规则】\n先判断文档是否直接定义了该角色。角色说明不限定格式，可能是编号人物卡、Markdown 标题段落、姓名后的冒号说明、表格行、人物小传或其他明确的人物介绍。不能仅因缺少固定标题或字段而忽略已有说明，也不能把普通剧情描写当成直接定义。\n文档已有明确角色说明的角色，sourceDefinition 逐字引用输入中实际可见、直接定义该角色的一段连续原文，必须包含对应的角色姓名标题、表格姓名列或文内姓名，保留原有字段、标点、换行和表格内容；sourceChapterIndex 填该原文所属方括号章节序号。description 逐字复用这段说明，不改写、概括、润色或纠正原文；年龄、性格、背景、身份、外貌和声音均以原始说明为准，不从正文重新推测或补充。role、gender、age、appearance、voice 和 aliases 中的每个值只能逐字摘取 sourceDefinition 内的连续原文片段，不拼接、不推断；说明中没有的字段留空，looks 给空数组，不为满足外观字数要求编造内容。不得拼接不同段落、虚构引文或引用未出现在本次输入中的内容。\n只有没有明确角色说明的角色，才根据文档正文抽取有明确依据的信息，此时 sourceDefinition 留空、sourceChapterIndex 为 0；未写明的信息留空，不按身份或风格猜想。角色说明复用规则优先于写作技能、画风与后面的造型建议；技能不得要求重新设计已定义的人物。\n\n")
 	b.WriteString("人物字幕、出场姓名标签、只写姓名的标题和对白说话人标记不属于完整角色说明，不得单独填入 sourceDefinition。先检查是否另有明确人物说明；没有时 sourceDefinition 留空、sourceChapterIndex 为 0，继续从正文中抽取该角色有明确依据的身份、性格、外观、声音及换装，不因字幕过短而漏掉正文信息。例如“（人物字幕：姓名 身份标签）”仅用于标识出场人物，字幕前后正文已写明的发型和服装应保留，不得只保留字幕、清空外观；未写明的信息仍留空。\n\n")
@@ -328,7 +331,9 @@ func ScriptPrompt(ctx ScriptContext) string {
 	shotTarget := settings.Storyboard.ShotTarget(settings.EpisodeSeconds)
 	maxLine := settings.Storyboard.MaxLineRunes()
 	var b strings.Builder
-	fmt.Fprintf(&b, "作品：%s\n第 %d 集《%s》\n画幅：%s · 单集约 %d 秒 · 对白语言：%s\n视觉风格：%s\n画面规则：%s\n\n", ctx.Title, ctx.EpisodeNumber, ctx.EpisodeTitle, settings.AspectRatio, settings.EpisodeSeconds, settings.Language, firstNonEmpty(settings.StylePrompt, "写实电影感"), firstNonEmpty(ctx.VisualRules, "保持全剧统一"))
+	fmt.Fprintf(&b, "作品：%s\n第 %d 集《%s》\n画幅：%s · 单集约 %d 秒 · 对白语言：%s\n", ctx.Title, ctx.EpisodeNumber, ctx.EpisodeTitle, settings.AspectRatio, settings.EpisodeSeconds, settings.Language)
+	writeProductionStyle(&b, settings)
+	fmt.Fprintf(&b, "画面规则：%s\n\n", firstNonEmpty(ctx.VisualRules, "保持全剧统一"))
 	fmt.Fprintf(&b, "本集大纲：%s\n开场钩子：%s\n结尾悬念：%s\n\n", firstNonEmpty(ctx.Synopsis, "以原文为准"), firstNonEmpty(ctx.Hook, "以原文为准"), firstNonEmpty(ctx.Cliffhanger, "以原文为准"))
 	b.WriteString(structuredSkillBlock("拆分镜头", ctx.Skill))
 	if rule := DirectorTemplateRule(settings.Storyboard.DirectorTemplate); rule != "" {
@@ -385,6 +390,14 @@ func ScriptPrompt(ctx ScriptContext) string {
 		b.WriteString("## " + chapter.Title + "\n" + truncateRunes(chapter.Text, ScriptSourceChapterRunes) + "\n\n")
 	}
 	return b.String()
+}
+
+func writeProductionStyle(b *strings.Builder, settings Settings) {
+	if settings.VisualDirection != "" {
+		b.WriteString(settings.VisualDirection + "\n")
+		return
+	}
+	b.WriteString("视觉风格：" + firstNonEmpty(settings.StylePrompt, "写实电影感") + "\n")
 }
 
 // CastImagePrompt 按作品的参考图方案渲染角色或场景参考图提示词，作为后续镜头的身份锚点。

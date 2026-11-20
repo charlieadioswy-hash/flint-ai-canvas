@@ -4,6 +4,7 @@ import { App, Button, Input } from "antd";
 import { CheckCircle2, Download, FileText, PencilLine, Plus, Save, Upload } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
+import { defaultDramaStyleForType } from "@/lib/drama/drama-styles";
 import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_SOURCE_CHARS, MAX_CHAPTER_WORDS, sourceChars } from "@/lib/drama/novel-parse";
 import { formatDramaSourceMarkdown } from "@/lib/drama/source-reference-markdown";
 import { ApiError } from "@/services/api/request";
@@ -26,6 +27,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { SOURCE_FORMAT_LABEL, SourceFormatPicker } from "./drama-shared";
 import { dramaKeys } from "./studio/use-studio";
 import { DRAMA_SOURCE_FILE_MAX_BYTES, formatDramaSourceFileSize, readDramaSourceFile } from "./drama-source-file";
+import { DRAMA_TYPE_OPTIONS, dramaPresetSettings } from "./drama-style-selection";
 import { episodeAssetsPending } from "./workflow-state";
 
 import "./workflow-source.css";
@@ -36,11 +38,7 @@ type Replacement = { fileName: string; chapters: DramaChapterInput[]; referenceT
 type CreationDraft = { mode: "selected" | "single"; revision: number; format: DramaSourceFormat; name: string; description: string; dramaType: "comic" | "live_action" | "narration"; aspectRatio: string };
 type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; onStoryboardStarted?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
-const DRAMA_TYPES = [
-    { value: "comic" as const, label: "漫剧", cover: "/short-drama-types/comic.jpg" },
-    { value: "live_action" as const, label: "真人剧", cover: "/short-drama-types/live-action.jpg" },
-    { value: "narration" as const, label: "解说漫", cover: "/short-drama-types/narration.jpg" },
-];
+const DEFAULT_CREATION_DRAMA_TYPE = "comic";
 const VIDEO_RATIOS = [
     { value: "16:9", width: 20, height: 11.25 },
     { value: "4:3", width: 20, height: 15 },
@@ -247,8 +245,11 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                 return next;
             };
             let next = checkpoint(await saveDramaGuideSource(projectId, { expectedRevision: input.revision, sourceFormat: input.format }));
-            if (next.production.settings.aspectRatio !== input.aspectRatio || next.production.settings.dramaType !== input.dramaType) {
-                next = checkpoint(await updateDramaSettings(projectId, { expectedRevision: next.production.revision, settings: { ...next.production.settings, aspectRatio: input.aspectRatio, dramaType: input.dramaType } }));
+            const previousType = next.production.settings.dramaType;
+            if (next.production.settings.aspectRatio !== input.aspectRatio || previousType !== input.dramaType) {
+                const selectedDifferentType = (previousType || DEFAULT_CREATION_DRAMA_TYPE) !== input.dramaType;
+                const style = selectedDifferentType ? dramaPresetSettings(defaultDramaStyleForType(input.dramaType)) : {};
+                next = checkpoint(await updateDramaSettings(projectId, { expectedRevision: next.production.revision, settings: { ...next.production.settings, ...style, aspectRatio: input.aspectRatio, dramaType: input.dramaType } }));
             }
             if (next.project.name !== input.name.trim() || next.project.description !== input.description || next.project.aspectRatio !== input.aspectRatio) {
                 const result = await updateProject(projectId, { name: input.name.trim(), description: input.description, aspectRatio: input.aspectRatio });
@@ -316,7 +317,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
             format: metadata.format,
             name: summary.project.name,
             description: summary.project.description || "",
-            dramaType: summary.production.settings.dramaType || "comic",
+            dramaType: summary.production.settings.dramaType || DEFAULT_CREATION_DRAMA_TYPE,
             aspectRatio: summary.production.settings.aspectRatio,
         });
     };
@@ -848,7 +849,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                             </legend>
                             <p className="drama-source-type-help">确认制作方案后不可修改剧集类型。</p>
                             <div className="drama-source-type-cards">
-                                {DRAMA_TYPES.map(({ value, label, cover }) => (
+                                {DRAMA_TYPE_OPTIONS.map(({ value, label, cover }) => (
                                     <label key={value} className={`drama-source-type-card ${creation.dramaType === value ? "is-selected" : ""}`}>
                                         <input type="radio" name={`drama-type-${projectId}`} value={value} checked={creation.dramaType === value} onChange={() => setCreation({ ...creation, dramaType: value })} />
                                         <span className="drama-source-type-art">
@@ -858,6 +859,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                                     </label>
                                 ))}
                             </div>
+                            {creation.dramaType === "narration" ? <p className="drama-source-type-help">当前类型为解说漫，可保留或改选。</p> : null}
                         </fieldset>
                         <div className="drama-source-form-field">
                             <label>导入现有剧本项目</label>

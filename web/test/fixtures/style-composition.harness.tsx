@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { ReactNode } from "react";
+import type { CanvasStylePreset } from "../../src/lib/canvas/canvas-style-system";
 import type { CreateDramaInput, DramaDraft, DramaModelCatalog, DramaSummary } from "../../src/services/api/drama";
 
 const dom = new Window({ url: "http://localhost/projects/new" });
@@ -25,12 +26,12 @@ for (const [key, value] of Object.entries({
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
-const { act, useState } = await import("react");
+const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { MemoryRouter } = await import("react-router");
 const { App } = await import("antd");
-const { DramaStylePicker, StyleCompositionPicker } = await import("../../src/pages/projects/style-picker");
+const { DramaStylePicker } = await import("../../src/pages/projects/style-picker");
 const { composeDramaStyleId, findDramaStyle, parseDramaStyleId } = await import("../../src/lib/drama/drama-styles");
 
 const catalog: DramaModelCatalog = {
@@ -41,7 +42,16 @@ const catalog: DramaModelCatalog = {
         video: [{ choice: { logicalModelId: "video" }, capability: "video", label: "Video", priceLabel: "", tailFrameChain: true, videoRatios: ["9:16", "16:9"] }],
     },
 };
+const myPreset = { id: "library-custom", title: "我的手绘风格", prompt: "细腻的纸张纹理，低饱和暖色光" } as CanvasStylePreset;
 // 本组只替换无关的模型、技能、参考图控件；真实创建页负责草稿回填、settings 构建和提交。
+mock.module("@/components/canvas/canvas-style-picker-modal", () => ({
+    CanvasStylePickerModal: ({ open, onSelect }: { open: boolean; onSelect: (preset: CanvasStylePreset) => void }) =>
+        open ? (
+            <button type="button" onClick={() => onSelect(myPreset)}>
+                采用我的手绘风格
+            </button>
+        ) : null,
+}));
 mock.module("../../src/pages/projects/drama-model-picker", () => ({ useDramaModelCatalog: () => ({ data: catalog }), DramaModelPicker: () => null }));
 mock.module("../../src/pages/projects/asset-scheme", () => ({ useAssetSchemes: () => ({ data: undefined }), defaultAssetSettings: () => undefined, AssetSchemePicker: () => null }));
 mock.module("../../src/pages/projects/step-settings", () => ({ DramaAssetImageModels: () => null, DramaTextSteps: () => null, VideoResolutionField: () => null }));
@@ -75,115 +85,76 @@ afterAll(() => {
 async function render(children: ReactNode) {
     await act(async () => root.render(<App>{children}</App>));
 }
-function ControlledPicker({ initial, compact = false, onChange = () => {} }: { initial: string; compact?: boolean; onChange?: (id: string) => void }) {
-    const [value, setValue] = useState(initial);
-    return (
-        <StyleCompositionPicker
-            value={value}
-            compact={compact}
-            onChange={(id) => {
-                setValue(id);
-                onChange(id);
-            }}
-        />
-    );
-}
 async function click(label: string, scope: ParentNode = host) {
     const button = [...scope.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.getAttribute("aria-label") === label || item.textContent?.replace(/\s/g, "") === label.replace(/\s/g, ""));
     expect(button).toBeDefined();
     await act(async () => button!.click());
 }
-async function choose(label: string, value: string) {
-    const select = host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+
+function presetButton(name: string) {
+    return [...host.querySelectorAll<HTMLElement>(".drama-style-name")].find((item) => item.textContent === name)?.closest<HTMLButtonElement>("button");
+}
+
+test("comic preset picker lists compatible animation formats and removes the composition controls", async () => {
+    await render(<DramaStylePicker dramaType="comic" value="3d-guoman" onChange={() => {}} />);
+    expect(host.querySelector('[aria-label="表现形式"]')).toBeNull();
+    expect(host.querySelector('[aria-label="题材"]')).toBeNull();
+    expect(host.querySelector('[aria-label="风格预设"]')).not.toBeNull();
+    expect(presetButton("3D 国漫仙侠")?.getAttribute("aria-pressed")).toBe("true");
+    expect(presetButton("都市霸总")).toBeUndefined();
+});
+
+test("live action preset picker selects complete presets by id", async () => {
+    const changed = mock();
+    await render(<DramaStylePicker dramaType="live_action" value="live-ceo" onChange={changed} />);
+    expect(presetButton("都市霸总")?.getAttribute("aria-pressed")).toBe("true");
+    expect(presetButton("3D 国漫仙侠")).toBeUndefined();
+    await act(async () => presetButton("甜宠恋爱")!.click());
+    expect(changed).toHaveBeenLastCalledWith("live-sweet");
+});
+
+test("switching drama type recomputes available preset categories", async () => {
+    await render(<DramaStylePicker dramaType="comic" value="" onChange={() => {}} />);
+    await click([...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent?.startsWith("2D 漫剧"))!.textContent!);
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("2D 漫剧");
+    await render(<DramaStylePicker dramaType="live_action" value="" onChange={() => {}} />);
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("全部");
+    expect(presetButton("校园青春")).toBeDefined();
+});
+
+test("preset search cannot expose a preset from the other drama type", async () => {
+    await render(<DramaStylePicker dramaType="live_action" value="" onChange={() => {}} />);
+    const input = host.querySelector<HTMLInputElement>('[aria-label="搜索风格预设"]')!;
     await act(async () => {
-        select.value = value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+        Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!.call(input, "3D 国漫仙侠");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-}
-function axisButton(axis: string, text: string) {
-    return [...host.querySelectorAll<HTMLButtonElement>(`[role="group"][aria-label="${axis}"] button`)].find((button) => button.textContent?.startsWith(text))!;
-}
-async function pressAxis(axis: string, text: string) {
-    const button = axisButton(axis, text);
-    expect(button).toBeDefined();
-    await act(async () => button.click());
-}
-
-// 包含页面入口，确保预设只是辅助入口且自由组合始终可见。
-test("create picker leads with two independent axes and keeps presets collapsed", async () => {
-    await render(<DramaStylePicker value={composeDramaStyleId("3d", "urban")} onChange={() => {}} />);
-    expect(host.querySelector('[role="group"][aria-label="表现形式"]')).not.toBeNull();
-    expect(host.querySelector('[role="group"][aria-label="题材"]')).not.toBeNull();
-    expect(host.querySelector<HTMLDetailsElement>("details")?.open).toBe(false);
-    expect(axisButton("表现形式", "3D 动画").getAttribute("aria-pressed")).toBe("true");
-    expect(axisButton("题材", "都市").getAttribute("aria-pressed")).toBe("true");
+    expect(presetButton("3D 国漫仙侠")).toBeUndefined();
 });
 
-test("switching either axis keeps the other and updates the controlled id", async () => {
+test("disabled picker cannot apply a preset", async () => {
     const changed = mock();
-    await render(<ControlledPicker initial={composeDramaStyleId("3d", "xuanhuan")} onChange={changed} />);
-    await pressAxis("题材", "都市");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("3d", "urban"));
-    await pressAxis("表现形式", "2D 动画");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("2d", "urban"));
-    await pressAxis("表现形式", "写实");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("realistic", "urban"));
-    await pressAxis("题材", "末日");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("realistic", "apocalypse"));
-    expect(host.querySelector('[role="status"]')?.textContent).toContain("写实 · 末日");
-});
-
-test("editing a legacy preset starts a clean composition without retaining fantasy prompts", async () => {
-    const changed = mock();
-    await render(<ControlledPicker initial="3d-guoman" onChange={changed} />);
-    expect(host.textContent).toContain("当前使用预设");
-    await pressAxis("题材", "都市");
-    const id = changed.mock.calls[0][0] as string;
-    expect(id).toBe(composeDramaStyleId("3d", "urban"));
-    expect(findDramaStyle(id)?.prompt).not.toMatch(/玄幻|宗门|古装|法术/);
-    expect(host.textContent).not.toContain("当前使用预设");
-});
-
-test("compact picker restores both axes and changes them independently", async () => {
-    const changed = mock();
-    await render(<ControlledPicker initial={composeDramaStyleId("semi-realistic", "apocalypse")} compact onChange={changed} />);
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="表现形式"]')?.value).toBe("semi-realistic");
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="题材"]')?.value).toBe("apocalypse");
-    await choose("表现形式", "2d");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("2d", "apocalypse"));
-    await choose("题材", "campus");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("2d", "campus"));
-});
-
-test("disabled compact and expanded selectors preserve their values", async () => {
-    const changed = mock();
-    const id = composeDramaStyleId("3d", "urban");
-    await render(<StyleCompositionPicker value={id} onChange={changed} disabled />);
-    expect([...host.querySelectorAll<HTMLSelectElement>("select")].every((select) => select.disabled)).toBe(true);
-    await render(<StyleCompositionPicker value={id} onChange={changed} disabled compact={false} />);
-    expect([...host.querySelectorAll<HTMLButtonElement>("button")].every((button) => button.disabled)).toBe(true);
-    await pressAxis("表现形式", "写实");
+    await render(<DramaStylePicker dramaType="live_action" value="live-ceo" onChange={changed} disabled />);
+    expect(presetButton("甜宠恋爱")?.disabled).toBe(true);
+    await act(async () => presetButton("甜宠恋爱")!.click());
     expect(changed).not.toHaveBeenCalled();
 });
 
-test("empty custom style does not opt in or emit a default until the user chooses", async () => {
+test("an empty selection emits no style change until an actual preset is selected", async () => {
     const changed = mock();
-    await render(<ControlledPicker initial="" compact onChange={changed} />);
+    await render(<DramaStylePicker dramaType="comic" value="" onChange={changed} />);
     expect(changed).not.toHaveBeenCalled();
-    expect(host.querySelector<HTMLSelectElement>('[aria-label="表现形式"]')?.value).toBe("");
-    await choose("题材", "xuanhuan");
-    expect(changed).toHaveBeenLastCalledWith(composeDramaStyleId("realistic", "xuanhuan"));
+    await act(async () => presetButton("3D 国漫仙侠")!.click());
+    expect(changed).toHaveBeenCalledWith("3d-guoman");
 });
 
-test("composition details expose the matching name and prompt", async () => {
+test("historical composition details expose the saved name and prompt", async () => {
     const style = findDramaStyle(composeDramaStyleId("2d", "apocalypse"))!;
-    await render(<DramaStylePicker value={style.id} onChange={() => {}} />);
+    await render(<DramaStylePicker dramaType="comic" value={style.id} onChange={() => {}} />);
     await click("查看风格详情");
     const dialog = document.querySelector('[role="dialog"]')!;
     expect(dialog.textContent).toContain(style.name);
     expect(dialog.textContent).toContain(style.prompt);
-    expect(dialog.textContent).toContain("自由组合");
-    expect(dialog.textContent).not.toContain("真人短剧");
     await click("关闭", dialog);
 });
 
@@ -229,32 +200,29 @@ async function renderDraft(draft: DramaDraft) {
     );
 }
 
-test("create page hydrates a composed draft and persists both style settings and id", async () => {
+test("opening a historical draft preserves its style and adopting a preset writes a compatible id", async () => {
     const original = savedDraft(composeDramaStyleId("3d", "xuanhuan"));
+    original.settings.dramaType = "comic";
     const save = spyOn(api, "saveDramaDraft").mockResolvedValue({ project: { id: original.projectId } } as DramaSummary);
     await renderDraft(original);
-    expect(axisButton("表现形式", "3D 动画").getAttribute("aria-pressed")).toBe("true");
-    expect(axisButton("题材", "玄幻").getAttribute("aria-pressed")).toBe("true");
-    await pressAxis("题材", "都市");
+    expect(host.textContent).toContain(original.settings.styleName);
+    const preset = findDramaStyle("3d-guoman")!;
+    await act(async () => presetButton(preset.name)!.click());
     await click("保存为草稿");
     expect(save).toHaveBeenCalledTimes(1);
     const [projectId, input] = save.mock.calls[0];
-    const id = composeDramaStyleId("3d", "urban");
     expect(projectId).toBe(original.projectId);
-    expect(input.draft).toEqual({ sourceText, styleId: id });
-    expect(input.settings.styleName).toBe(findDramaStyle(id)?.name);
-    expect(input.settings.stylePrompt).toBe(findDramaStyle(id)?.prompt);
-    expect(input.settings.stylePrompt).not.toMatch(/宗门|玄幻|竖屏|横屏/);
+    expect(input.draft).toEqual({ sourceText, styleId: preset.id });
+    expect(input.settings.styleName).toBe(preset.name);
+    expect(input.settings.stylePrompt).toBe(preset.prompt);
+    expect(input.settings.styleSelection).toEqual({ mode: "preset", presetId: preset.id });
     expect(input.settings.aspectRatio).toBe("16:9");
-    // 用实际提交序列化后的数据重新打开真实创建页，验证另一轴和组合提示词没有丢失。
     const stored = JSON.parse(JSON.stringify(input)) as CreateDramaInput;
     await act(async () => root.unmount());
     client.clear();
     root = createRoot(host);
     await renderDraft({ ...original, settings: stored.settings as DramaDraft["settings"], form: stored.draft! });
-    expect(axisButton("表现形式", "3D 动画").getAttribute("aria-pressed")).toBe("true");
-    expect(axisButton("题材", "都市").getAttribute("aria-pressed")).toBe("true");
-    expect(host.querySelector('[role="status"]')?.textContent).toContain("3D 动画 · 都市");
+    expect(presetButton(preset.name)?.getAttribute("aria-pressed")).toBe("true");
 });
 
 test("starting a restored draft uses the composition in settings", async () => {
@@ -269,4 +237,24 @@ test("starting a restored draft uses the composition in settings", async () => {
     expect(input.settings.styleName).toBe("半写实 · 末日");
     expect(input.settings.stylePrompt).toBe(findDramaStyle(draft.form.styleId!)?.prompt);
     expect(parseDramaStyleId(draft.form.styleId!)).toEqual({ formId: "semi-realistic", themeId: "apocalypse" });
+});
+
+test("advanced creation keeps personal styles and saves their original prompt as custom", async () => {
+    const draft = savedDraft(composeDramaStyleId("2d", "urban"));
+    draft.settings.dramaType = "comic";
+    const save = spyOn(api, "saveDramaDraft").mockResolvedValue({ project: { id: draft.projectId } } as DramaSummary);
+    await renderDraft(draft);
+    await click("风格库 / 我的风格");
+    await click("采用我的手绘风格");
+    expect(host.querySelector<HTMLTextAreaElement>('[aria-label="风格说明"]')?.value).toBe(myPreset.prompt);
+    await click("保存为草稿");
+    expect(save).toHaveBeenCalledTimes(1);
+    const input = save.mock.calls[0][1];
+    expect(input.settings).toMatchObject({
+        dramaType: "comic",
+        styleName: myPreset.title,
+        stylePrompt: myPreset.prompt,
+        styleSelection: { mode: "custom" },
+    });
+    expect(input.draft?.styleId).toBeUndefined();
 });

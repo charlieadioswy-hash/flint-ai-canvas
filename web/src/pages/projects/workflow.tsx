@@ -326,7 +326,8 @@ function DramaWorkflowSession({ projectId }: { projectId: string }) {
                 return { scope: "episode" as const, style };
             }
             if (initialConfiguration) return { scope: "project" as const, summary: await updateDramaSettings(ticket.projectId, { expectedRevision: draft.revision, settings: draft.value }) };
-            return { scope: "project" as const, summary: await updateDramaWorkflowStyle(ticket.projectId, { expectedRevision: draft.revision, styleName: draft.value.styleName, stylePrompt: draft.value.stylePrompt, ...drawingChange }) };
+            const styleSelection = draft.value.styleSelection ? { styleSelection: draft.value.styleSelection } : {};
+            return { scope: "project" as const, summary: await updateDramaWorkflowStyle(ticket.projectId, { expectedRevision: draft.revision, styleName: draft.value.styleName, stylePrompt: draft.value.stylePrompt, ...styleSelection, ...drawingChange }) };
         },
         onSuccess: (result, { ticket, draft, automatic }) => {
             if (!operation.isCurrent(ticket)) return;

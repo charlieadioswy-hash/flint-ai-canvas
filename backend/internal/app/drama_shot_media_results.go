@@ -146,12 +146,13 @@ func (s *Service) DramaShotVideoSummaries(userID, projectID, episodeID string, s
 func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error) {
 	var input struct {
 		Metadata struct {
-			Source        string `json:"source"`
-			MediaID       string `json:"dramaShotMediaId"`
-			MediaRevision int64  `json:"dramaShotMediaRevision"`
-			ScriptHash    string `json:"dramaShotScriptHash"`
-			PromptHash    string `json:"dramaShotPromptHash"`
-			CameraVersion int    `json:"dramaShotCameraPromptVersion"`
+			Source          string `json:"source"`
+			MediaID         string `json:"dramaShotMediaId"`
+			MediaRevision   int64  `json:"dramaShotMediaRevision"`
+			ScriptHash      string `json:"dramaShotScriptHash"`
+			PromptHash      string `json:"dramaShotPromptHash"`
+			CameraVersion   int    `json:"dramaShotCameraPromptVersion"`
+			VisualDirection bool   `json:"dramaShotVisualDirection"`
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil || input.Metadata.Source != "drama_shot_media" {
@@ -207,6 +208,9 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 				_, config, err := s.loadDramaShotMedia(repo, *shot, *p, kind)
 				if err != nil {
 					return err
+				}
+				if !input.Metadata.VisualDirection {
+					config.visualDirection = ""
 				}
 				currentInput, err := s.dramaShotMediaInputForCameraVersion(repo, task.UserID, *shot, kind, config, version)
 				if err != nil {

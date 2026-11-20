@@ -46,7 +46,10 @@ func ShotVideoPrompt(in ShotVideoPromptInput) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "第%d镜头视频｜单镜生成\n", number)
 	fmt.Fprintf(&b, "所属剧情段：第%d段《%s》，段内第%d/%d镜。\n", in.Segment.Index+1, fromWritten(firstNonEmpty(in.Segment.Title, "剧情段")), in.ShotIndex+1, len(in.Segment.Shots))
-	fmt.Fprintf(&b, "%d秒｜%s｜%s｜%s对白｜无字幕｜1个镜头\n", seconds, firstNonEmpty(in.Segment.AspectRatio, "9:16"), fromWritten(firstNonEmpty(in.Segment.Style, "写实电影感")), firstNonEmpty(in.Segment.Language, "中文"))
+	fmt.Fprintf(&b, "%d秒｜%s｜%s对白｜无字幕｜1个镜头\n", seconds, firstNonEmpty(in.Segment.AspectRatio, "9:16")+segmentStyleLabel(fromWritten(firstNonEmpty(in.Segment.Style, "写实电影感")), in.Segment.VisualDirection), firstNonEmpty(in.Segment.Language, "中文"))
+	if in.Segment.VisualDirection != "" {
+		b.WriteString(in.Segment.VisualDirection + "\n")
+	}
 	b.WriteString("仅生成当前一个镜头，完整覆盖下方时间范围；保持本场景的服装、道具状态、光线方向和机位轴线连续。\n")
 	writeShotContinuity(&b, in)
 

@@ -142,7 +142,7 @@ export function getDramaWorkflowReadiness(projectId: string, signal?: AbortSigna
     return http.get<DramaWorkflowReadiness>(`${base(projectId)}/workflow/readiness`, { signal });
 }
 
-export function updateDramaWorkflowStyle(projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string; drawing?: DramaDrawingConfiguration }) {
+export function updateDramaWorkflowStyle(projectId: string, input: { expectedRevision: number; styleName: string; stylePrompt: string; styleSelection?: DramaStyleSelection; drawing?: DramaDrawingConfiguration }) {
     return http.patch<DramaSummary>(`${base(projectId)}/workflow/style`, input);
 }
 
@@ -308,12 +308,15 @@ export type DramaTextThinking = Partial<Record<"bible" | "plan" | "script" | "pr
 
 export type DramaTransition = "cut" | "fadeblack" | "fadewhite";
 
+export type DramaStyleSelection = { mode: "preset"; presetId: string } | { mode: "custom"; presetId?: never };
+
 export type DramaSettings = {
     dramaType?: "comic" | "live_action" | "narration";
     aspectRatio: string;
     episodeSeconds: number;
     stylePrompt: string;
     styleName: string;
+    styleSelection?: DramaStyleSelection;
     language: string;
     assets: DramaAssetSettings;
     storyboard: DramaStoryboardSettings;

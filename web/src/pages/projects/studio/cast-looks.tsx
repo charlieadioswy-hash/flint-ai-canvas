@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber } from "antd";
 import { AlertCircle, Check, Pencil, Plus, Shirt, Trash2, X, Play, Upload, Library } from "lucide-react";
 
-import { addDramaCastLook, deleteDramaCastLook, updateDramaCastLook, setDramaCastImage, updateDramaCast, listDramaCast, getDrama, type DramaCast, type DramaCastImageStyle } from "@/services/api/drama";
+import { addDramaCastLook, deleteDramaCastLook, updateDramaCastLook, setDramaCastImage, updateDramaCast, listDramaCast, getDrama, type DramaCast, type DramaCastImageStyle, type DramaSettings } from "@/services/api/drama";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { ApiError } from "@/services/api/request";
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
@@ -45,6 +45,7 @@ function lookInputFromCast(look: DramaCast): LookInput {
 function LookForm({
     projectId,
     episodeId,
+    dramaType,
     initial,
     restyleSegments = false,
     submitting = false,
@@ -55,6 +56,7 @@ function LookForm({
 }: {
     projectId: string;
     episodeId?: string;
+    dramaType?: DramaSettings["dramaType"];
     initial?: DramaCast;
     restyleSegments?: boolean;
     submitting?: boolean;
@@ -188,7 +190,16 @@ function LookForm({
         <div className="drama-look-form">
             <Input value={name} maxLength={60} placeholder="造型名，如 外门弟子、霸道总裁" aria-label="造型名" onChange={(event) => setName(event.target.value)} />
             <Input.TextArea value={appearance} maxLength={1000} autoSize={{ minRows: 2, maxRows: 5 }} placeholder="这套造型的服装、发型与妆容；五官脸型沿用角色本体" aria-label="造型外观" onChange={(event) => setAppearance(event.target.value)} />
-            <CastImageFields projectId={projectId} episodeId={episodeId} castId={initial?.id} appearance={appearance} value={imageFields} disabled={submitting} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+            <CastImageFields
+                projectId={projectId}
+                episodeId={episodeId}
+                dramaType={dramaType}
+                castId={initial?.id}
+                appearance={appearance}
+                value={imageFields}
+                disabled={submitting}
+                onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))}
+            />
             {saveIssue ? <p role="alert">自动保存失败：{saveIssue}。修改仍保留。</p> : null}
             {initial && dirty && !valid ? <p role="alert">请填写造型名和外观，并检查起止章节，修改仍保留。</p> : null}
             <small>以角色本体图保持人物一致。{initial ? "设定会自动保存，" : "确认只保存设定，"}点击“生成图片”才调用模型。</small>
@@ -229,6 +240,7 @@ function LookForm({
 export function CastLooks({
     projectId,
     episodeId,
+    dramaType,
     character,
     looks,
     restyle,
@@ -237,6 +249,7 @@ export function CastLooks({
 }: {
     projectId: string;
     episodeId?: string;
+    dramaType?: DramaSettings["dramaType"];
     character: DramaCast;
     looks: DramaCast[];
     restyle: boolean;
@@ -334,6 +347,7 @@ export function CastLooks({
                         <LookForm
                             projectId={projectId}
                             episodeId={episodeId}
+                            dramaType={dramaType}
                             key={look.id}
                             initial={look}
                             restyleSegments={restyle}
@@ -412,6 +426,7 @@ export function CastLooks({
                     <LookForm
                         projectId={projectId}
                         episodeId={episodeId}
+                        dramaType={dramaType}
                         submitting={add.isPending}
                         onCancel={() => setAdding(false)}
                         onSubmit={(value) => add.mutate(value)}

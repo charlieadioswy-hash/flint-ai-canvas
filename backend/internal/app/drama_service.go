@@ -81,6 +81,9 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 		return nil, BadAuthRequest(err.Error())
 	}
 	settings := req.Settings.normalized()
+	if err := normalizeDramaStyleSelection(&settings); err != nil {
+		return nil, err
+	}
 	if err := settings.TextThinking.validate(); err != nil {
 		return nil, err
 	}
@@ -236,6 +239,9 @@ func (s *Service) SaveDramaDraft(userID string, projectID string, req CreateDram
 	}
 	if productionRow.GuideStep != "" || req.Guided {
 		return DramaSummary{}, BadAuthRequest("请通过短剧引导修改创作内容")
+	}
+	if err := preserveDramaStyleSelection(&req.Settings, parseDramaSettings(productionRow.SettingsJSON)); err != nil {
+		return DramaSummary{}, err
 	}
 	creation, err := s.prepareDramaCreation(userID, project.ID, req)
 	if err != nil {
@@ -1086,6 +1092,7 @@ func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots 
 		groups = append(groups, []model.DramaShot{shot})
 	}
 	drafts := make([]dramaSegmentDraft, 0, len(groups))
+	direction := dramaVisualDirection(settings, "", "")
 	for position, group := range groups {
 		view := DramaSegmentView{Index: group[0].SegmentIndex, Title: firstNonEmpty(group[0].SegmentTitle, group[0].Scene, "剧情段"), ShotIDs: []string{}, Request: DramaSegmentRequest{References: []DramaSegmentReference{}}}
 		characterIDs, propIDs, sceneIDs := []string{}, []string{}, []string{}
@@ -1101,7 +1108,7 @@ func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots 
 				}
 			}
 		}
-		input := production.SegmentPromptInput{Index: position, Count: len(groups), Title: view.Title, AspectRatio: settings.AspectRatio, Style: settings.StylePrompt, VisualRules: meta.VisualRules, Language: settings.Language, PauseMs: settings.Storyboard.DialoguePauseMs(), CharsPerSecond: settings.Storyboard.CharsPerSecond(), Independent: settings.parallelVideo(), Performance: settings.Storyboard.Performance, CameraMotion: settings.Storyboard.CameraMotion}
+		input := production.SegmentPromptInput{Index: position, Count: len(groups), Title: view.Title, AspectRatio: settings.AspectRatio, Style: settings.StylePrompt, VisualDirection: direction, VisualRules: meta.VisualRules, Language: settings.Language, PauseMs: settings.Storyboard.DialoguePauseMs(), CharsPerSecond: settings.Storyboard.CharsPerSecond(), Independent: settings.parallelVideo(), Performance: settings.Storyboard.Performance, CameraMotion: settings.Storyboard.CameraMotion}
 		for _, shot := range group {
 			view.ShotIDs = append(view.ShotIDs, shot.ID)
 			view.DurationMs += shot.DurationMs

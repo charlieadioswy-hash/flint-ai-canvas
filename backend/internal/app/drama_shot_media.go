@@ -36,6 +36,7 @@ type DramaShotMediaConfig struct {
 	LastFrameResourceID  string            `json:"lastFrameResourceId,omitempty"`
 	AudioVoice           string            `json:"audioVoice,omitempty"`
 	AudioInstructions    string            `json:"audioInstructions,omitempty"`
+	visualDirection      string
 }
 
 type DramaShotMediaSaveRequest struct {
@@ -186,7 +187,7 @@ func (s *Service) readDramaShotMediaConfig(repo *repository.Repository, shot mod
 	if err != nil {
 		return config, err
 	}
-	return s.enrichDramaShotVideoPrompt(repo, shot, p, kind, config)
+	return s.enrichDramaShotMediaPrompt(repo, shot, p, kind, config)
 }
 
 func missingDramaShotAspectRatio(ratio string) bool {
@@ -396,7 +397,7 @@ func (s *Service) SaveDramaShotMedia(userID, projectID, shotID, kind string, req
 		if err := repo.LockDramaCastImageReferences(userID, dramaShotMediaReferenceIDs(config)); err != nil {
 			return BadAuthRequest("参考图或首尾帧已变化，请重新选择")
 		}
-		config, err = s.enrichDramaShotVideoPrompt(repo, *shot, *p, kind, config)
+		config, err = s.enrichDramaShotMediaPrompt(repo, *shot, *p, kind, config)
 		if err != nil {
 			return err
 		}
@@ -647,7 +648,7 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	if kind == "video" && config.Operation != "text_to_video" && len(config.ReferenceResourceIDs) == 0 && config.FirstFrameResourceID == "" && config.LastFrameResourceID == "" {
 		return blocked("所选视频模式需要参考图片或首尾帧")
 	}
-	config, err = s.enrichDramaShotVideoPrompt(repo, *shot, *p, kind, config)
+	config, err = s.enrichDramaShotMediaPrompt(repo, *shot, *p, kind, config)
 	plan.view.Config = config
 	if err != nil {
 		return plan, err
@@ -771,7 +772,11 @@ func (s *Service) dramaShotMediaInputForCameraVersion(repo *repository.Repositor
 			metadata[frame.key] = frame.id
 		}
 	}
-	prompt, err := compileDramaShotReferencePrompt(config)
+	promptConfig := config
+	if kind == "video" && config.visualDirection != "" {
+		promptConfig.Prompt = stripDramaVisualDirection(config.Prompt)
+	}
+	prompt, err := compileDramaShotReferencePrompt(promptConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -803,6 +808,19 @@ func (s *Service) dramaShotMediaInputForCameraVersion(repo *repository.Repositor
 				prompt += "\n运镜要求：" + rule
 			}
 		}
+	}
+	if config.visualDirection != "" {
+		direction := config.visualDirection
+		if kind == "video" {
+			profile, _ := s.dramaVideoProfile(config.Model)
+			reserved := 0
+			if prompt != "" {
+				reserved = utf8.RuneCountInString(prompt) + 2
+			}
+			direction = dramaVideoVisualDirection(direction, profile.PromptMaxChars, reserved)
+		}
+		prompt = withDramaVisualDirection(prompt, direction)
+		metadata["dramaShotVisualDirection"] = true
 	}
 	input := map[string]any{"mode": kind, "prompt": prompt, "config": providerConfig, "referenceImages": refs, "metadata": metadata}
 	if len(audios) > 0 {

@@ -91,6 +91,7 @@ function CastEditorDialogSession({ summary, cast, castId, episodeId, onClose, on
                                 <CastEditor
                                     projectId={projectId}
                                     episodeId={episodeId}
+                                    dramaType={summary.production.settings.dramaType}
                                     cast={current}
                                     parent={current.parentId ? cast.find((item) => item.id === current.parentId && item.projectId === projectId) : undefined}
                                     looks={cast.filter((item) => item.parentId === current.id && item.projectId === projectId)}

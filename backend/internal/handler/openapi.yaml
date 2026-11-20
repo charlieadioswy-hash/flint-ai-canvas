@@ -5788,6 +5788,7 @@ components:
         expectedRevision: { type: integer, minimum: 0 }
         styleName: { type: string, minLength: 1, maxLength: 60 }
         stylePrompt: { type: string, minLength: 1, maxLength: 10000, description: 最多 10000 个 Unicode 字符，完整保存并用于后续显式创作，不截短系统预设 }
+        styleSelection: { $ref: "#/components/schemas/DramaStyleSelection" }
         drawing: { $ref: "#/components/schemas/DramaDrawingConfiguration" }
     UpdateDramaSettingsRequest:
       type: object
@@ -5814,6 +5815,13 @@ components:
         videoResolution: { type: string }
         videoContinuity: { type: string, enum: [tail_frame, parallel] }
         referenceLimit: { type: integer, minimum: 0, maximum: 20 }
+    DramaStyleSelection:
+      type: object
+      required: [mode]
+      description: 选择预设时提交与剧集类型匹配的 presetId。自定义风格使用 custom 模式。
+      properties:
+        mode: { type: string, enum: [preset, custom] }
+        presetId: { type: string }
     DramaSettings:
       type: object
       description: 完整制作配置。单集保存画风、模型、模板及制作参数；dramaType、concurrency、reviewMode、mediaMode、episodeMode 和 chaptersPerEpisode 仍由作品控制，单集提交不会覆盖这些作品控制字段。
@@ -5822,6 +5830,7 @@ components:
         episodeSeconds: { type: integer, minimum: 30, maximum: 1200 }
         styleName: { type: string, maxLength: 60 }
         stylePrompt: { type: string, maxLength: 10000, description: 最多 10000 个 Unicode 字符；允许空串，完整保存系统预设 }
+        styleSelection: { $ref: "#/components/schemas/DramaStyleSelection" }
         language: { type: string, maxLength: 30 }
         dramaType: { type: string }
         reviewMode: { type: string }

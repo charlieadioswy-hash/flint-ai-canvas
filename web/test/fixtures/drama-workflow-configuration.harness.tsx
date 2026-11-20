@@ -37,7 +37,12 @@ mock.module("antd", () => ({
         ),
 }));
 mock.module("@/components/ui/product/app-modal", () => ({ AppModal: () => null }));
-mock.module("@/components/canvas/canvas-style-picker-modal", () => ({ CanvasStylePickerModal: () => null, canvasStylePresets: [], userStylePreset: () => undefined }));
+mock.module("@/components/canvas/canvas-style-picker-modal", () => ({
+    CanvasStylePickerModal: ({ open, onSelect }: { open: boolean; onSelect: (style: { title: string; prompt: string; profile: { negativePrompt: string } }) => void }) =>
+        open ? <button onClick={() => onSelect({ title: "我的水墨风格", prompt: "水墨留白", profile: { negativePrompt: "过度锐化" } })}>使用我的水墨风格</button> : null,
+    canvasStylePresets: [],
+    userStylePreset: () => undefined,
+}));
 mock.module("@/services/api/style-profiles", () => ({ listStyleProfiles: async () => ({ profiles: [] }) }));
 mock.module("@/pages/projects/asset-scheme", () => ({ AssetSchemePicker: () => null, useAssetSchemes: () => ({ data: { schemes: [], sceneSchemes: [] } }) }));
 mock.module("@/pages/projects/character-template-picker", () => ({ CharacterTemplatePicker: () => null }));
@@ -192,7 +197,7 @@ test("本集对白语言置顶且制作参数默认收起，完整长提示词�
 
 test("补图预设的封面加载失败时，只有对应的卡片图片与预览项显示失败", async () => {
     const preset = findDramaStyle("live-campus")!;
-    const view = await mount({ ...baseSettings, styleName: preset.name, stylePrompt: preset.prompt }, {});
+    const view = await mount({ ...baseSettings, dramaType: "live_action", styleName: preset.name, stylePrompt: preset.prompt }, {});
     try {
         const card = view.host.querySelector<HTMLButtonElement>('.drama-workflow-style-options button[aria-pressed="true"]')!;
         const photos = [...view.host.querySelectorAll<HTMLButtonElement>(".drama-workflow-style-gallery button")];
@@ -204,6 +209,30 @@ test("补图预设的封面加载失败时，只有对应的卡片图片与预�
         expect(card.textContent).toContain("样图不可用");
         expect(photos.map((photo) => photo.disabled)).toEqual([true, false, false]);
         expect(photos[0].textContent).toContain("样图暂不可用");
+    } finally {
+        await view.close();
+    }
+});
+
+test("剧集类型限定预设风格，仍可套用我的风格", async () => {
+    const current = findDramaStyle("live-campus")!;
+    const next = findDramaStyle("live-family")!;
+    const comic = findDramaStyle("2d-manhua")!;
+    const view = await mount({ ...baseSettings, dramaType: "live_action", styleName: current.name, stylePrompt: current.prompt }, {});
+    try {
+        expect(view.host.textContent).toContain("真人剧");
+        expect(view.host.textContent).not.toContain("自由组合");
+        const cards = [...view.host.querySelectorAll<HTMLButtonElement>(".drama-workflow-style-options button")];
+        expect(cards.some((item) => item.textContent?.includes(comic.name))).toBe(false);
+        await click(cards.find((item) => item.textContent?.includes(next.name))!);
+        expect(view.changes.at(-1)).toMatchObject({ styleName: next.name, stylePrompt: next.prompt, styleSelection: { mode: "preset", presetId: next.id } });
+
+        const button = (label: string) => [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label)!;
+        await click(button("风格库 / 我的风格"));
+        await click(button("使用我的水墨风格"));
+        expect(view.changes.at(-1)).toMatchObject({ styleName: "我的水墨风格", styleSelection: { mode: "custom" } });
+        expect(view.changes.at(-1)?.stylePrompt).toContain("水墨留白");
+        expect(view.changes.at(-1)?.stylePrompt).toContain("过度锐化");
     } finally {
         await view.close();
     }

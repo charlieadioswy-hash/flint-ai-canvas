@@ -3,11 +3,11 @@ import { useMutation } from "@tanstack/react-query";
 import { App, Input, Select } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { createDramaCast, type DramaCast, type DramaCastKind } from "@/services/api/drama";
+import { createDramaCast, type DramaCast, type DramaCastKind, type DramaSettings } from "@/services/api/drama";
 import { CAST_KIND_LABEL } from "../drama-shared";
 import { CastImageFields, type CastImageFieldsValue } from "./cast-image-fields";
 
-export function CastCreateDialog({ projectId, initialKind, onClose, onCreated }: { projectId: string; initialKind: DramaCastKind; onClose: () => void; onCreated: (cast: DramaCast) => void }) {
+export function CastCreateDialog({ projectId, dramaType, initialKind, onClose, onCreated }: { projectId: string; dramaType?: DramaSettings["dramaType"]; initialKind: DramaCastKind; onClose: () => void; onCreated: (cast: DramaCast) => void }) {
     const { message } = App.useApp();
     const [kind, setKind] = useState(initialKind);
     const [name, setName] = useState("");
@@ -59,7 +59,7 @@ export function CastCreateDialog({ projectId, initialKind, onClose, onCreated }:
                         placeholder="描述角色的外貌、场景环境或道具外形"
                     />
                 </label>
-                <CastImageFields projectId={projectId} appearance={appearance} value={imageFields} disabled={create.isPending} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+                <CastImageFields projectId={projectId} dramaType={dramaType} appearance={appearance} value={imageFields} disabled={create.isPending} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
             </div>
         </AppModal>
     );

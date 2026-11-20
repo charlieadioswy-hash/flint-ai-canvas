@@ -76,6 +76,8 @@ func dramaGuideEpisodeInitialSettings(current, previous, next DramaSettings) Dra
 func mergeDramaInitialSettings(current, previous, next DramaSettings) DramaSettings {
 	shotCountMode, targetShotCount := current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount
 	keepShotCount := shotCountMode != previous.Storyboard.ShotCountMode || targetShotCount != previous.Storyboard.TargetShotCount
+	styleSelection, styleName, stylePrompt := current.StyleSelection, current.StyleName, current.StylePrompt
+	keepStyle := styleName != previous.StyleName || stylePrompt != previous.StylePrompt || !reflect.DeepEqual(styleSelection, previous.StyleSelection)
 	var merge func(reflect.Value, reflect.Value, reflect.Value)
 	merge = func(target, old, replacement reflect.Value) {
 		// 渠道、型号与展示信息组成一次模型选择，不能分别从本集和默认值拼接。
@@ -93,6 +95,10 @@ func mergeDramaInitialSettings(current, previous, next DramaSettings) DramaSetti
 	// 镜数模式与参考值组成一次选择，避免把本集的智能估算与新默认的固定模式拼接。
 	if keepShotCount {
 		current.Storyboard.ShotCountMode, current.Storyboard.TargetShotCount = shotCountMode, targetShotCount
+	}
+	// 预设、名称和提示词属于同一次选择，保留或继承时必须一起更新。
+	if keepStyle {
+		current.StyleSelection, current.StyleName, current.StylePrompt = styleSelection, styleName, stylePrompt
 	}
 	return current
 }
@@ -127,7 +133,9 @@ func finalizeDramaInitialSettings(tx *repository.Repository, p *model.DramaProdu
 // 本集后续明确撰写使用本集配置；不重写已有提示词、正文或媒体。
 func dramaEpisodeStyleSettings(settings DramaSettings, meta dramaBibleMeta, episode model.DramaEpisode) (DramaSettings, dramaBibleMeta) {
 	effective := dramaEpisodeSettings(settings, episode)
-	if effective.StyleName != settings.StyleName || effective.StylePrompt != settings.StylePrompt {
+	if effective.StyleSelection != nil {
+		meta.VisualRules = currentDramaVisualRules(effective, meta)
+	} else if effective.StyleName != settings.StyleName || effective.StylePrompt != settings.StylePrompt {
 		meta.VisualRules = "保持本集视觉风格统一"
 	}
 	return effective, meta
@@ -158,6 +166,9 @@ func (s *Service) validateDramaEpisodeSettings(userID string, settings, previous
 		return settings, BadAuthRequest(err.Error())
 	}
 	settings = settings.normalized()
+	if err := preserveDramaStyleSelection(&settings, previous); err != nil {
+		return settings, err
+	}
 	if err := settings.TextThinking.validate(); err != nil {
 		return settings, err
 	}

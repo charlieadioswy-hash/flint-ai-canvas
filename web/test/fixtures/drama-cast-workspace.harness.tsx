@@ -200,8 +200,8 @@ function checkbox(label: string, scope: ParentNode = document) {
 async function check(label: string, scope: ParentNode = document) {
     await act(async () => checkbox(label, scope).click());
 }
-async function chooseAxis(label: string, value: string) {
-    const select = document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+async function chooseImageStyle(value: string) {
+    const select = document.querySelector<HTMLSelectElement>('select[aria-label="参考图风格"]')!;
     expect(select).not.toBeNull();
     await act(async () => {
         select.value = value;
@@ -963,15 +963,13 @@ test("refetching saved appearance and style for the same cast id rehydrates the 
     expect(editor.querySelector<HTMLInputElement>('[aria-label="名称"]')?.value).toBe(refreshed.name);
     expect(editor.querySelector<HTMLTextAreaElement>('[aria-label="外貌描述"]')?.value).toBe(refreshed.appearance);
     expect(editor.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe(refreshed.imagePrompt);
-    expect(editor.querySelector<HTMLSelectElement>('[aria-label="表现形式"]')?.value).toBe("semi-realistic");
-    expect(editor.querySelector<HTMLSelectElement>('[aria-label="题材"]')?.value).toBe("apocalypse");
+    expect(editor.querySelector<HTMLSelectElement>('[aria-label="参考图风格"]')?.selectedOptions[0]?.textContent).toBe(refreshedStyle.name);
     expect(editor.textContent).not.toContain("保存修改");
 
     // 单独更新已保存风格也应回填，不能依赖外观或名称恰好一起变化。
     const styleOnly = findDramaStyle(composeDramaStyleId("realistic", "campus"))!;
     await render(<PanelHarness items={[{ ...refreshed, imageStyleId: styleOnly.id, imageStyleName: styleOnly.name, imageStylePrompt: styleOnly.prompt }]} />);
-    expect(editor.querySelector<HTMLSelectElement>('[aria-label="表现形式"]')?.value).toBe("realistic");
-    expect(editor.querySelector<HTMLSelectElement>('[aria-label="题材"]')?.value).toBe("campus");
+    expect(editor.querySelector<HTMLSelectElement>('[aria-label="参考图风格"]')?.selectedOptions[0]?.textContent).toBe(styleOnly.name);
     expect(editor.querySelector<HTMLTextAreaElement>('[aria-label="外貌描述"]')?.value).toBe(refreshed.appearance);
     expect(save).not.toHaveBeenCalled();
     await fill("外貌描述", `${refreshed.appearance}，增加防护手套`, editor);
@@ -982,14 +980,13 @@ test("refetching saved appearance and style for the same cast id rehydrates the 
 test("media status and lock polling preserve unsaved appearance, prompt and style edits", async () => {
     const savedStyle = findDramaStyle(composeDramaStyleId("2d", "urban"))!;
     const saved = { ...hero, imagePrompt: "已保存提示词", imageStyleId: savedStyle.id, imageStyleName: savedStyle.name, imageStylePrompt: savedStyle.prompt };
-    const editedStyle = findDramaStyle(composeDramaStyleId("3d", "apocalypse"))!;
+    const editedStyle = findDramaStyle("3d-guoman")!;
     const save = spyOn(api, "updateDramaCast").mockResolvedValue({ cast: saved });
     await render(<PanelHarness items={[saved]} />);
     await fill("名称", "编辑中的角色名", host);
     await fill("外貌描述", "编辑中的白色外套", host);
     await fill("参考图生成提示词", "编辑中的暖色光线", host);
-    await chooseAxis("表现形式", "3d");
-    await chooseAxis("题材", "apocalypse");
+    await chooseImageStyle(editedStyle.id);
     const appearanceInput = host.querySelector<HTMLTextAreaElement>('[aria-label="外貌描述"]');
     const updates: Partial<DramaCast>[] = [{ imageStatus: "queued" }, { locked: true }, { imageStatus: "ready", imageVersion: 2, imageResourceId: "newly-polled-image", locked: true }];
     for (const update of updates) {
@@ -998,8 +995,7 @@ test("media status and lock polling preserve unsaved appearance, prompt and styl
         expect(appearanceInput?.value).toBe("编辑中的白色外套");
         expect(host.querySelector<HTMLInputElement>('[aria-label="名称"]')?.value).toBe("编辑中的角色名");
         expect(host.querySelector<HTMLTextAreaElement>('[aria-label="参考图生成提示词"]')?.value).toBe("编辑中的暖色光线");
-        expect(host.querySelector<HTMLSelectElement>('[aria-label="表现形式"]')?.value).toBe("3d");
-        expect(host.querySelector<HTMLSelectElement>('[aria-label="题材"]')?.value).toBe("apocalypse");
+        expect(host.querySelector<HTMLSelectElement>('[aria-label="参考图风格"]')?.value).toBe(editedStyle.id);
     }
     await fill("外貌描述", "编辑中的白色外套，继续补充银色纽扣", host);
     await waitForAutoSave();
@@ -1446,7 +1442,7 @@ async function enableOwnStyle() {
     await act(async () => control!.click());
 }
 
-test("prompt rebuilding uses the currently edited appearance and composed style without saving or generating", async () => {
+test("prompt rebuilding uses the currently edited appearance and compatible preset without saving or generating", async () => {
     const rebuilt = spyOn(api, "rebuildDramaCastImagePrompt").mockResolvedValue({ imagePrompt: "已编排：3D 都市，白色风衣" });
     const save = spyOn(api, "updateDramaCastLook").mockResolvedValue({ look: evening, affectedSegments: 0 });
     const generation = spyGeneration();
@@ -1454,9 +1450,9 @@ test("prompt rebuilding uses the currently edited appearance and composed style 
     await render(<ImageFieldsHarness initial={{ imagePrompt: "手写原提示词" }} onChange={changed} episodeId="episode-b" />);
     await fill("当前外观", "白色风衣，短发，银色耳饰");
     await enableOwnStyle();
-    await chooseAxis("表现形式", "3d");
-    await chooseAxis("题材", "urban");
-    const style = findDramaStyle(composeDramaStyleId("3d", "urban"))!;
+    const style = findDramaStyle("3d-guoman")!;
+    expect(document.querySelector('[aria-label="参考图风格"] option[value="live-sweet"]')).toBeNull();
+    await chooseImageStyle(style.id);
     expect(rebuilt).not.toHaveBeenCalled();
     await click("重新编排提示词");
     expect(rebuilt).not.toHaveBeenCalled();

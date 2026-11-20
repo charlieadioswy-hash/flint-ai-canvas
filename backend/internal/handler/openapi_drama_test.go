@@ -99,6 +99,9 @@ func TestOpenAPIDramaStyleDrawingContracts(t *testing.T) {
 		if request.Properties["drawing"].Ref != "#/components/schemas/DramaDrawingConfiguration" || slices.Contains(request.Required, "drawing") {
 			t.Fatalf("%s must accept optional shared drawing configuration", tc.request)
 		}
+		if request.Properties["styleSelection"].Ref != "#/components/schemas/DramaStyleSelection" || slices.Contains(request.Required, "styleSelection") {
+			t.Fatalf("%s must accept an optional preset or custom style selection", tc.request)
+		}
 		prompt := request.Properties["stylePrompt"]
 		if prompt.MaxLength == nil || *prompt.MaxLength != production.MaxStylePromptRunes {
 			t.Fatalf("%s must use the same style prompt limit as saved and generated settings", tc.request)
@@ -111,6 +114,10 @@ func TestOpenAPIDramaStyleDrawingContracts(t *testing.T) {
 	}
 	if _, exists := request.Properties["mode"]; exists {
 		t.Fatal("episode configuration must not require a user-selected inheritance mode")
+	}
+	settings := spec.Components.Schemas["DramaSettings"]
+	if settings.Properties["styleSelection"].Ref != "#/components/schemas/DramaStyleSelection" || slices.Contains(settings.Required, "styleSelection") {
+		t.Fatal("complete settings must expose style selection and accept legacy snapshots without it")
 	}
 	drawing := spec.Components.Schemas["DramaDrawingConfiguration"]
 	if !slices.Contains(drawing.Required, "assets") || !slices.Contains(drawing.Required, "models") {

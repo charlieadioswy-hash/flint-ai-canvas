@@ -169,9 +169,15 @@ func normalizedDramaSkillRef(value *DramaSkillRef) *DramaSkillRef {
 	return &ref
 }
 
+type DramaStyleSelection struct {
+	Mode     string `json:"mode"`
+	PresetID string `json:"presetId,omitempty"`
+}
+
 type DramaSettings struct {
 	production.Settings
-	DramaType string `json:"dramaType,omitempty"`
+	DramaType      string               `json:"dramaType,omitempty"`
+	StyleSelection *DramaStyleSelection `json:"styleSelection,omitempty"`
 	// PromptSkill 为空时按内置格式撰写段视频提示词。
 	PromptSkill *DramaSkillRef `json:"promptSkill,omitempty"`
 	// BibleSkill / ScriptSkill 是资产提取与分镜拆分的写作技能，为空按内置规则；输出结构始终由系统固定。
@@ -282,6 +288,7 @@ type dramaBibleMeta struct {
 	Logline     string `json:"logline"`
 	Tone        string `json:"tone"`
 	VisualRules string `json:"visualRules"`
+	StyleHash   string `json:"styleHash,omitempty"`
 }
 
 func parseDramaBibleMeta(raw string) dramaBibleMeta {

@@ -32,15 +32,16 @@ type SegmentReference struct {
 
 // SegmentPromptInput 是组装一整段多镜头视频提示词的全部输入。
 type SegmentPromptInput struct {
-	Index       int
-	Count       int
-	Title       string
-	AspectRatio string
-	Style       string
-	VisualRules string
-	Language    string
-	Shots       []SegmentShot
-	References  []SegmentReference
+	Index           int
+	Count           int
+	Title           string
+	AspectRatio     string
+	Style           string
+	VisualDirection string
+	VisualRules     string
+	Language        string
+	Shots           []SegmentShot
+	References      []SegmentReference
 	// FirstFrame 表示请求会附带上一段视频的最后一帧作为本段首帧。
 	FirstFrame bool
 	// Independent 表示各段并行独立生成：不带上一段画面，段尾也不需要为下一段做硬定格。
@@ -54,6 +55,13 @@ type SegmentPromptInput struct {
 	CameraMotion int
 	// MaxChars 是撰写正文的目标字符数上限（视频模型上限扣除系统追加的参考图说明与余量）；0 表示不限。
 	MaxChars int
+}
+
+func segmentStyleLabel(legacy, direction string) string {
+	if direction != "" {
+		return ""
+	}
+	return "｜" + legacy
 }
 
 // pauseText 是写进提示词的气口时长，例如“0.5”。
@@ -182,7 +190,7 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 		fmt.Fprintf(&b, "严格从第%d段视频末尾的站位、朝向、动作、情绪和光线状态继续，不重新摆位\n", in.Index)
 	}
 	fmt.Fprintf(&b, "第%d段视频《%s》\n", in.Index+1, firstNonEmpty(in.Title, "剧情段"))
-	fmt.Fprintf(&b, "%s秒｜%s｜%s｜%s对白｜无字幕｜%d个镜头\n", secondsText(total), firstNonEmpty(in.AspectRatio, "9:16"), style, language, len(in.Shots))
+	fmt.Fprintf(&b, "%s秒｜%s｜%s对白｜无字幕｜%d个镜头\n", secondsText(total), firstNonEmpty(in.AspectRatio, "9:16")+segmentStyleLabel(style, in.VisualDirection), language, len(in.Shots))
 
 	b.WriteString("\n【视觉与首帧】\n")
 	if len(in.Shots) > 0 {
@@ -199,7 +207,11 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 		}
 		b.WriteString(strings.TrimSpace(firstNonEmpty(first.ImagePrompt, first.Action)) + "。\n")
 	}
-	b.WriteString(style + "。")
+	if in.VisualDirection != "" {
+		b.WriteString(in.VisualDirection + "\n")
+	} else {
+		b.WriteString(style + "。")
+	}
 	if rules := strings.TrimSpace(in.VisualRules); rules != "" {
 		b.WriteString(rules + "。")
 	}

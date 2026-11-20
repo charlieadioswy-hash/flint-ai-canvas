@@ -1065,11 +1065,11 @@ test("新建单集保留全部原文章节，类型比例备注真实写入且�
         });
         await tap(view.container, "创建单集");
         expect(view.container.querySelector('[role="dialog"]')?.textContent).toContain("全部章节已加入分集列表");
-        expect(view.container.querySelectorAll(".drama-source-type-card img")).toHaveLength(3);
+        expect(view.container.querySelectorAll(".drama-source-type-card img")).toHaveLength(2);
         await edit(field(view.container, "剧集名称"), "雨夜单集");
         await edit(field(view.container, "剧集备注"), "以解说推进剧情");
         await act(async () => {
-            view.container.querySelector<HTMLInputElement>('input[type="radio"][value="narration"]')!.click();
+            view.container.querySelector<HTMLInputElement>('input[type="radio"][value="live_action"]')!.click();
             view.container.querySelector<HTMLInputElement>('input[type="radio"][value="16:9"]')!.click();
             await settle();
         });
@@ -1083,7 +1083,7 @@ test("新建单集保留全部原文章节，类型比例备注真实写入且�
         expect(sourceWrites[0]?.input.selectedChapters).toBeUndefined();
         expect(settingsWrites).toHaveLength(1);
         expect(settingsWrites[0]?.input.expectedRevision).toBe(5);
-        expect(settingsWrites[0]?.input.settings).toMatchObject({ dramaType: "narration", aspectRatio: "16:9", episodeMode: "auto", chaptersPerEpisode: 3 });
+        expect(settingsWrites[0]?.input.settings).toMatchObject({ dramaType: "live_action", styleSelection: { mode: "preset", presetId: "live-family" }, aspectRatio: "16:9", episodeMode: "auto", chaptersPerEpisode: 3 });
         expect(projectWrites).toEqual([{ projectId: "project-a", input: { name: "雨夜单集", description: "以解说推进剧情", aspectRatio: "16:9" } }]);
         expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.production.revision).toBe(6);
         expect(view.client.getQueryData<DramaSummary>(["drama", "project-a"])?.project.name).toBe("雨夜单集");
@@ -1093,6 +1093,36 @@ test("新建单集保留全部原文章节，类型比例备注真实写入且�
         await view.dispose();
     }
 });
+
+for (const [action, selectedTypes] of [
+    ["直接确认", []],
+    ["切回默认类型后确认", ["live_action", "comic"]],
+] as const) {
+    test(`旧草稿${action}保留原有风格`, async () => {
+        resetFixture();
+        const initial = summaryOf("project-a", 4);
+        const { styleName, stylePrompt, styleSelection } = initial.production.settings;
+        projectSettings.set("project-a", initial.production.settings);
+        const view = await mount((props) => createElement(WorkflowSourceReview, props), initial);
+        try {
+            view.client.setQueryDefaults(["drama", "project-a"], { gcTime: Infinity });
+            await tap(view.container, "创建剧集");
+            expect(view.container.querySelector<HTMLInputElement>('input[type="radio"][value="comic"]')?.checked).toBe(true);
+            for (const type of selectedTypes) {
+                await act(async () => {
+                    view.container.querySelector<HTMLInputElement>(`input[type="radio"][value="${type}"]`)!.click();
+                    await settle();
+                });
+            }
+            await tap(view.container, "新建");
+            expect(settingsWrites).toHaveLength(1);
+            expect(settingsWrites[0]?.input.settings).toMatchObject({ dramaType: "comic", styleName, stylePrompt });
+            expect(settingsWrites[0]?.input.settings?.styleSelection).toEqual(styleSelection);
+        } finally {
+            await view.dispose();
+        }
+    });
+}
 
 test("新建剧集的后续设置失败保留表单与已保存版本，重试使用最新 CAS", async () => {
     resetFixture();
@@ -1691,16 +1721,16 @@ test("未采用创意关闭前确认，保留关闭再打开继续同一草稿�
     }
 });
 
-for (const [label, value] of [
-    ["精品漫", "comic"],
-    ["真人剧", "live_action"],
-    ["漫剧解说", "narration"],
+for (const [label, value, presetId] of [
+    ["漫剧", "comic", "2d-manhua"],
+    ["真人剧", "live_action", "live-family"],
 ] as const) {
     test(`剧集入口${label}将真实类型传给创建并保留原六步`, async () => {
         resetFixture();
         const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
         try {
             await tap(view.container, "剧集");
+            expect(view.container.querySelector('[aria-label="剧集类型"]')?.textContent).not.toContain("解说");
             expect(view.container.querySelector('[aria-label="选择创作方式"]')).toBeNull();
             await tap(view.container, label);
             expect(view.container.querySelector('[aria-label="选择创作方式"]')).not.toBeNull();
@@ -1714,6 +1744,7 @@ for (const [label, value] of [
             await tap(view.container, "保存并确认正文");
             expect(createCalls).toHaveLength(1);
             expect(createCalls[0].settings.dramaType).toBe(value);
+            expect(createCalls[0].settings.styleSelection).toEqual({ mode: "preset", presetId });
             expect(createCalls[0].sourceFormat).toBe("script");
             await act(async () => {
                 pendingCreates[0].resolve(summaryOf("created-entry", 1));
@@ -1848,14 +1879,14 @@ test("顶级入口与来源切换不清正文，上传失败保留草稿和类�
     try {
         await edit(field(view.container, "短剧正文"), "第一章\n不能丢失的人工原文");
         await tap(view.container, "剧集");
-        await tap(view.container, "漫剧解说");
+        await tap(view.container, "真人剧");
         await tap(view.container, "从分镜开始");
         await tap(view.container, "返回");
         await tap(view.container, "剧本");
         expect(field(view.container, "短剧正文").value).toContain("不能丢失的人工原文");
         await tap(view.container, "剧集");
-        expect(view.container.querySelector('[aria-label="剧集类型"] [aria-checked="true"]')?.textContent).toContain("漫剧解说");
-        await tap(view.container, "漫剧解说");
+        expect(view.container.querySelector('[aria-label="剧集类型"] [aria-checked="true"]')?.textContent).toContain("真人剧");
+        await tap(view.container, "真人剧");
         await tap(view.container, "从分镜开始");
         const input = field(view.container, "上传正文文件");
         await act(async () => {
@@ -1877,7 +1908,7 @@ test("顶级入口与来源切换不清正文，上传失败保留草稿和类�
         expect(notices.at(-1)?.text).toBe("无法读取文档");
         await tap(view.container, "保存并确认正文");
         expect(createCalls[0].sourceFormat).toBe("storyboard");
-        expect(createCalls[0].settings.dramaType).toBe("narration");
+        expect(createCalls[0].settings.dramaType).toBe("live_action");
     } finally {
         await view.dispose();
     }
@@ -2154,7 +2185,7 @@ test("取消重名恢复保留上传正文文件及类型来源，重新保存�
             await settle();
         });
         await tap(view.container, "剧集");
-        await tap(view.container, "漫剧解说");
+        await tap(view.container, "真人剧");
         await tap(view.container, "从分镜开始");
         await tap(view.container, "保存并确认正文");
         await rejectCreation(new ApiError("已有同名作品，请换一个名称", { status: 409, reason: "project_name_conflict" }));
@@ -2168,7 +2199,7 @@ test("取消重名恢复保留上传正文文件及类型来源，重新保存�
         expect(navigations).toHaveLength(0);
         await tap(view.container, "保存并确认正文");
         expect(createCalls[1]).toEqual(createCalls[0]);
-        expect(createCalls[1].settings.dramaType).toBe("narration");
+        expect(createCalls[1].settings.dramaType).toBe("live_action");
         expect(createCalls[1].sourceFormat).toBe("storyboard");
         expect(fileReads).toHaveLength(1);
     } finally {

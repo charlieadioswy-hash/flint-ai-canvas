@@ -10,6 +10,7 @@ import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { downloadResource, episodeStatusText, episodeTone, formatDuration, MediaThumb, sourceFormatOf } from "./drama-shared";
+import { dramaTypeLabel } from "./drama-style-selection";
 import { AssetPackageModal } from "./studio/asset-transfer";
 import { AddEpisodeModal } from "./studio/episode-source";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
@@ -59,7 +60,6 @@ function updatedTime(episode: DramaEpisodeRow) {
     return Number.isFinite(time) ? time : 0;
 }
 
-const DRAMA_TYPE_LABEL = { comic: "精品漫", live_action: "真人剧", narration: "漫剧解说" };
 const EPISODE_PROGRESS = [
     { field: "assetsReady", label: "主体" },
     { field: "storyboardReady", label: "分镜" },
@@ -438,7 +438,7 @@ function WorkflowEpisodesSession({ summary, onChanged, onOpenEpisode, onDirtyCha
                                 <div className="drama-workflow-episode-title">
                                     <h3>第 {episode.number} 集</h3>
                                     <p title={episode.title}>{episode.title || "未命名分集"}</p>
-                                    <span className="drama-workflow-episode-type">{summary.production.settings.dramaType ? DRAMA_TYPE_LABEL[summary.production.settings.dramaType] : summary.production.settings.styleName || "未设置剧集类型"}</span>
+                                    <span className="drama-workflow-episode-type">{dramaTypeLabel(summary.production.settings.dramaType) || summary.production.settings.styleName || "未设置剧集类型"}</span>
                                     {updatedTime(episode) ? <time dateTime={episode.updatedAt}>{new Date(updatedTime(episode)).toLocaleString("zh-CN", { hour12: false })}</time> : <span>更新时间未知</span>}
                                 </div>
                             </button>

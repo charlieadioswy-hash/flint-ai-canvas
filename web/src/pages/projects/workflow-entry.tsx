@@ -6,17 +6,18 @@ import { ArrowLeft, Check, ChevronRight, Clapperboard, FileText, PencilLine, Scr
 import { useNavigate } from "react-router";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
+import { defaultDramaStyleForType } from "@/lib/drama/drama-styles";
 import { dramaChoiceKey, dramaVideoOptionFits } from "@/lib/drama/model-choice";
 import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
 import { DEFAULT_STORYBOARD } from "@/lib/drama/storyboard";
-import { createDrama, type DramaSettings, type DramaSourceFormat } from "@/services/api/drama";
+import { createDrama, type DramaSourceFormat } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
 
 import { defaultAssetSettings, useAssetSchemes } from "./asset-scheme";
 import { useDramaModelCatalog } from "./drama-model-picker";
 import { SOURCE_FORMAT_LABEL } from "./drama-shared";
+import { DRAMA_TYPE_OPTIONS, dramaPresetSettings } from "./drama-style-selection";
 import { DRAMA_SOURCE_FILE_MAX_BYTES, formatDramaSourceFileSize, readDramaSourceFile } from "./drama-source-file";
 import { WorkflowIdea } from "./workflow-idea";
 import { WorkflowCanvasEntry } from "./workflow-canvas-entry";
@@ -31,11 +32,6 @@ const FORMATS: Array<{ value: DramaSourceFormat; icon: typeof ScrollText }> = [
 const SOURCE_START = { novel: "从小说开始", script: "从剧本开始", storyboard: "从分镜开始" };
 const SOURCE_DETAIL = { novel: "上传小说，改编创作漫剧", script: "上传已有剧本创作漫剧", storyboard: "直接从分镜开始创作漫剧" };
 const WORKFLOW_TITLES = ["上传剧本", "剧本格式", "风格设置", "角色场景", "漫剧分镜", "视频预览"];
-const DRAMA_TYPES: Array<{ value: NonNullable<DramaSettings["dramaType"]>; label: string; detail: string; cover: string }> = [
-    { value: "comic", label: "精品漫", detail: "以漫剧形式呈现故事", cover: "/short-drama-types/comic.jpg" },
-    { value: "live_action", label: "真人剧", detail: "以真人影像形式创作", cover: "/short-drama-types/live-action.jpg" },
-    { value: "narration", label: "漫剧解说", detail: "以旁白讲述推进故事", cover: "/short-drama-types/narration.jpg" },
-];
 type EntryMode = "script" | "series" | "canvas";
 
 type EntryProps = { initialFile?: File; focusInput?: boolean };
@@ -56,7 +52,7 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
     const [sourceChooser, setSourceChooser] = useState(false);
     const [seriesSource, setSeriesSource] = useState(false);
     const [inputMode, setInputMode] = useState<"upload" | "paste">(focusInput ? "paste" : "upload");
-    const [dramaType, setDramaType] = useState<NonNullable<DramaSettings["dramaType"]>>("comic");
+    const [dramaType, setDramaType] = useState<(typeof DRAMA_TYPE_OPTIONS)[number]["value"]>("comic");
     const [canvasLeave, setCanvasLeave] = useState(false);
     const [canvasBusy, setCanvasBusy] = useState(false);
     const canvasConfirmation = useRef<((confirmed: boolean) => void) | null>(null);
@@ -108,14 +104,13 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
         const fitting = options.video.filter((item) => dramaVideoOptionFits(item, "9:16", "tail_frame"));
         const tailVideo = fitting.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(defaults.video)) || fitting[0];
         const parallel = options.video.find((item) => dramaVideoOptionFits(item, "9:16", "parallel"));
-        const style = findDramaStyle(DEFAULT_DRAMA_STYLE_ID);
+        const style = defaultDramaStyleForType(dramaType);
         return {
             dramaType,
             aspectRatio: "9:16",
             episodeSeconds: 90,
             language: "中文普通话",
-            stylePrompt: style?.prompt || "",
-            styleName: style?.name || "",
+            ...dramaPresetSettings(style),
             mediaMode: "manual" as const,
             reviewMode: "sample" as const,
             videoContinuity: tailVideo ? ("tail_frame" as const) : ("parallel" as const),
@@ -231,7 +226,7 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
     const sourceFrozen = creationBlocked || ideaOpen || Boolean(rename);
     const ready = Boolean(entryMode !== "canvas" && text.trim() && settings && !problem && !sourceFrozen);
     const sourcePage = entryMode === "series" && seriesSource;
-    const selectedType = DRAMA_TYPES.find((item) => item.value === dramaType)!;
+    const selectedType = DRAMA_TYPE_OPTIONS.find((item) => item.value === dramaType)!;
     const submit = () => {
         if (!creating.current && ready) {
             creating.current = true;
@@ -377,7 +372,7 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
             </div>
             <div id={`${entryId}-content`} role="tabpanel" aria-labelledby={`${entryId}-${entryMode}`} className="drama-entry-content">
                 <div className="drama-entry-types" role="radiogroup" aria-label="剧集类型" data-active={entryMode === "series" && !seriesSource} aria-hidden={entryMode !== "series" || seriesSource} inert={entryMode !== "series" || seriesSource}>
-                    {DRAMA_TYPES.map(({ value, label, detail, cover }) => (
+                    {DRAMA_TYPE_OPTIONS.map(({ value, label, detail, cover }) => (
                         <button
                             key={value}
                             type="button"

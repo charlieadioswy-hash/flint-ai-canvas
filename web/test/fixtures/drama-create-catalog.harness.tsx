@@ -49,6 +49,7 @@ mock.module("@/components/layout/workspace-state", () => ({ WorkspaceLoadingStat
 mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({ AntTooltip: ({ children }: { children: ReactNode }) => children }));
 mock.module("@/services/drama-canvas", () => ({ linkCanvasToDrama: async () => ({}) }));
 mock.module("@/pages/projects/style-picker", () => ({ DramaStylePicker: () => null }));
+mock.module("@/components/canvas/canvas-style-picker-modal", () => ({ CanvasStylePickerModal: () => null }));
 mock.module("@/pages/projects/asset-scheme", () => ({
     useAssetSchemes: () => ({ data: undefined }),
     defaultAssetSettings: () => ({ mode: "custom", characterRatio: "16:9", characterPrompt: "角色", scenePrompt: "场景" }),

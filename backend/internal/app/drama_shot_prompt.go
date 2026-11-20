@@ -11,8 +11,17 @@ import (
 
 // A missing marker identifies legacy defaults. An explicit empty marker keeps
 // manual drafts (including deliberately cleared text) out of automatic rebuilds.
-func (s *Service) enrichDramaShotVideoPrompt(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
-	if kind != "video" {
+func (s *Service) enrichDramaShotMediaPrompt(repo *repository.Repository, shot model.DramaShot, p model.DramaProduction, kind string, config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
+	if kind != "video" && kind != "image" {
+		return config, nil
+	}
+	episode, err := repo.DramaEpisode(shot.ProjectID, shot.EpisodeID)
+	if err != nil {
+		return config, err
+	}
+	settings, meta := dramaEpisodeStyleSettings(parseDramaSettings(p.SettingsJSON), parseDramaBibleMeta(p.BibleJSON), *episode)
+	config.visualDirection = dramaVisualDirection(settings, "", "")
+	if kind == "image" {
 		return config, nil
 	}
 	prompt := strings.TrimSpace(config.Prompt)
@@ -28,11 +37,6 @@ func (s *Service) enrichDramaShotVideoPrompt(repo *repository.Repository, shot m
 		return config, nil
 	}
 
-	episode, err := repo.DramaEpisode(shot.ProjectID, shot.EpisodeID)
-	if err != nil {
-		return config, err
-	}
-	settings, meta := dramaEpisodeStyleSettings(parseDramaSettings(p.SettingsJSON), parseDramaBibleMeta(p.BibleJSON), *episode)
 	shots, err := repo.DramaShots(shot.EpisodeID)
 	if err != nil {
 		return config, err

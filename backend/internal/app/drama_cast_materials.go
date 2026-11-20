@@ -41,6 +41,10 @@ func applyDramaCastImageFields(cast *model.DramaCast, prompt, styleID, styleName
 			continue
 		}
 		value := strings.TrimSpace(*field.value)
+		if field.column == "image_prompt" && utf8.RuneCountInString(value) > field.limit {
+			// A rebuilt prompt may include the project style. It is reattached at generation time.
+			value = stripDramaVisualDirection(value)
+		}
 		if err := validateDramaCastText(value, field.label, field.limit, false); err != nil {
 			return nil, err
 		}
@@ -58,19 +62,24 @@ func dramaCastHasImageDefinition(cast model.DramaCast) bool {
 	return strings.TrimSpace(cast.Appearance) != "" || strings.TrimSpace(cast.Description) != "" || strings.TrimSpace(cast.ImagePrompt) != "" || dramaCharacterStructuredText(cast, true) != ""
 }
 
-// 编排函数是预览和实际提交的唯一入口。自定义提示词是完整正文，不再追加作品旧画风。
+// 预览和实际提交使用同一份画风与素材正文。
 func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast model.DramaCast) string {
 	assets := settings.Assets.Normalized()
 	imageOptions, _ := parseDramaCastImageOptions(cast.ImageOptionsJSON)
 	if cast.Kind == "character" && imageOptions.Ratio != "" {
 		assets.CharacterRatio = imageOptions.Ratio
 	}
-	style, rules := settings.StylePrompt, meta.VisualRules
+	style, rules := settings.StylePrompt, currentDramaVisualRules(settings, meta)
 	independentStyle := dramaCastHasImageStyle(cast)
+	direction := dramaVisualDirection(settings, "", "")
 	if independentStyle {
 		style, rules = firstNonEmpty(cast.ImageStylePrompt, cast.ImageStyleName, "写实电影感"), ""
+		direction = dramaVisualDirection(settings, cast.ImageStyleName, style)
 	}
 	style, rules = production.StripFrameDirectives(style), production.StripFrameDirectives(rules)
+	if direction != "" {
+		style = "以剧集画风为准"
+	}
 	prompt := strings.TrimSpace(cast.ImagePrompt)
 	if prompt == "" {
 		appearance := firstNonEmpty(cast.Appearance, cast.Description, cast.Role)
@@ -78,7 +87,7 @@ func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast
 			appearance += "\n已保存的人物补充设定（与旧描述冲突时以此处为准）：\n" + structured
 		}
 		prompt = production.CastImagePrompt(assets, cast.Kind, cast.Name, appearance, style, rules)
-	} else if independentStyle && style != "" && !strings.Contains(prompt, style) {
+	} else if direction == "" && independentStyle && style != "" && !strings.Contains(prompt, style) {
 		prompt = "本素材画风以以下设定为准，覆盖正文中的旧画风要求：" + style + "。\n" + prompt
 	}
 	if cast.ParentID != "" {
@@ -104,7 +113,7 @@ func buildDramaCastImagePrompt(settings DramaSettings, meta dramaBibleMeta, cast
 	if !strings.HasSuffix(prompt, ratioHint) {
 		prompt = production.WithAssetRatio(prompt, ratio)
 	}
-	return prompt
+	return withDramaVisualDirection(prompt, direction)
 }
 
 func (s *Service) PreviewDramaCastImagePrompt(userID, projectID, castID string, req DramaCastImagePromptRequest) (string, error) {
@@ -123,9 +132,6 @@ func (s *Service) PreviewDramaCastImagePrompt(userID, projectID, castID string, 
 		}
 		cast.Appearance = appearance
 	}
-	if _, err := applyDramaCastImageFields(cast, nil, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt); err != nil {
-		return "", err
-	}
 	settings, meta := parseDramaSettings(row.SettingsJSON), parseDramaBibleMeta(row.BibleJSON)
 	if episodeID := strings.TrimSpace(req.EpisodeID); episodeID != "" {
 		episode, err := s.repo.DramaEpisode(project.ID, episodeID)
@@ -133,6 +139,12 @@ func (s *Service) PreviewDramaCastImagePrompt(userID, projectID, castID string, 
 			return "", dramaLookupError(err)
 		}
 		settings, meta = dramaEpisodeStyleSettings(settings, meta, *episode)
+	}
+	if err := validateDramaCastPresetSelection(settings, cast.ImageStyleID, req.ImageStyleID); err != nil {
+		return "", err
+	}
+	if _, err := applyDramaCastImageFields(cast, nil, req.ImageStyleID, req.ImageStyleName, req.ImageStylePrompt); err != nil {
+		return "", err
 	}
 	cast.ImagePrompt = ""
 	return buildDramaCastImagePrompt(settings, meta, *cast), nil

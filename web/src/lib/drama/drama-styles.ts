@@ -1,8 +1,9 @@
+import dramaStyleCatalog from "../../../../backend/internal/app/drama_style_catalog.json";
 import { composeDramaStyleId, DEFAULT_DRAMA_STYLE_ID, findComposedDramaStyle, parseDramaStyleId, type DramaStyleComposition, type DramaStyleFormId, type DramaStyleThemeId } from "./style-composition";
 
 export { composeDramaStyleId, DEFAULT_DRAMA_STYLE_ID, DRAMA_STYLE_FORMS, DRAMA_STYLE_THEMES, parseDramaStyleId, type DramaStyleComposition, type DramaStyleFormId, type DramaStyleThemeId } from "./style-composition";
 
-// 自由组合优先；既有风格保留为可选预设。风格只描述长期稳定的美术基线，画幅、构图与动作由作品设置和分镜决定。
+// 风格描述长期稳定的美术基线，画幅、构图与动作由作品设置和分镜决定。
 
 export type DramaStyleCategory = "live" | "3d" | "2d" | "art";
 
@@ -973,6 +974,22 @@ function compile(spec: Spec): DramaStyle {
 }
 
 export const DRAMA_STYLES: DramaStyle[] = SPECS.map(compile);
+
+function dramaStyleCatalogForType(type?: string) {
+    return type === "live_action" ? dramaStyleCatalog.live_action : dramaStyleCatalog.comic;
+}
+
+export function dramaStylePresetsForType(type?: string): DramaStyle[] {
+    const ids = new Set(dramaStyleCatalogForType(type).presetIds);
+    return DRAMA_STYLES.filter((style) => ids.has(style.id));
+}
+
+export function defaultDramaStyleForType(type?: string): DramaStyle {
+    const { defaultPresetId } = dramaStyleCatalogForType(type);
+    const style = DRAMA_STYLES.find((item) => item.id === defaultPresetId);
+    if (!style) throw new Error(`找不到剧集类型的默认风格：${defaultPresetId}`);
+    return style;
+}
 
 export function findDramaStyle(id: string): DramaStyle | undefined {
     return findComposedDramaStyle(id) || DRAMA_STYLES.find((style) => style.id === id);

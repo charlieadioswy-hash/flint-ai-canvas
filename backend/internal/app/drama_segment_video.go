@@ -136,6 +136,7 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 	}
 	refs := []any{}
 	header := []string{}
+	direction := dramaVisualDirection(settings, "", "")
 	if previous != nil {
 		request.Operation = "image_to_video"
 		request.FirstFramePending = previous.VideoStatus != model.DramaMediaReady || previous.TailFrameResourceID == ""
@@ -281,6 +282,16 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 	}
 	request.Header = strings.Join(header, "\n")
 	resolvedPrompt := resolveDramaSegmentPromptForReferences(segment, draft.view.Request.References, providerContext.References)
+	if direction != "" {
+		resolvedPrompt = stripDramaVisualDirection(resolvedPrompt)
+		request.Header = stripDramaVisualDirection(request.Header)
+		reserved := max(dramaMinPromptBudget, utf8.RuneCountInString(resolvedPrompt)) + 2
+		if request.Header != "" {
+			reserved += utf8.RuneCountInString(request.Header) + 2
+		}
+		style := dramaVideoVisualDirection(direction, request.PromptMaxChars, reserved)
+		request.Header = withDramaVisualDirection(request.Header, style)
+	}
 	if rawPrompt != "" {
 		request.ResolvedPrompt = &resolvedPrompt
 	}
@@ -508,7 +519,7 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 		dramaVideoScreen{Size: request.Size, Resolution: request.Resolution}.apply(config)
 		prompt := strings.TrimSpace(request.Header + "\n\n" + dramaSegmentRequestPrompt(*segment, request))
 		if chars := utf8.RuneCountInString(prompt); request.PromptMaxChars > 0 && chars > request.PromptMaxChars {
-			return nil, false, fmt.Errorf("段提示词与最新资产说明共 %d 个字符，超过所选视频模型上限 %d 个字符；请精简资产描述或提示词，或换用上限更大的模型。原段稿已保留，不会自动重写", chars, request.PromptMaxChars)
+			return nil, false, fmt.Errorf("段提示词、画风与素材说明共 %d 个字符，超过所选视频模型上限 %d 个字符；请精简画风、资产描述或提示词，或换用上限更大的模型。原段稿已保留，不会自动重写", chars, request.PromptMaxChars)
 		}
 		payload, _ := json.Marshal(dramaRevisionPayload{Revision: segment.Revision, VideoRevision: segment.VideoRevision, Seconds: request.Seconds})
 		job.PayloadJSON = string(payload)

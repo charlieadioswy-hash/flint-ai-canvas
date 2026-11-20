@@ -332,6 +332,7 @@ export function CastPanel({
                     <CastEditor
                         key={active.id}
                         projectId={projectId}
+                        dramaType={summary.data?.production.settings.dramaType}
                         cast={active}
                         parent={active.parentId ? cast.find((item) => item.id === active.parentId) : undefined}
                         looks={cast.filter((item) => item.parentId === active.id)}
@@ -349,6 +350,7 @@ export function CastPanel({
             {creating ? (
                 <CastCreateDialog
                     projectId={projectId}
+                    dramaType={summary.data?.production.settings.dramaType}
                     initialKind={kind === "look" ? "character" : kind}
                     onClose={() => setCreating(false)}
                     onCreated={(item) => {
@@ -366,6 +368,7 @@ export function CastPanel({
 type CastEditorProps = {
     projectId: string;
     episodeId?: string;
+    dramaType?: DramaSettings["dramaType"];
     cast: DramaCast;
     parent?: DramaCast;
     looks: DramaCast[];
@@ -414,6 +417,7 @@ function CastEditorSession(props: CastEditorProps) {
 function CastEditorForm({
     projectId,
     episodeId,
+    dramaType,
     cast,
     parent,
     looks,
@@ -844,7 +848,16 @@ function CastEditorForm({
                 <div className="drama-editor-image-settings">
                     {layout === "workspace" ? <h3>生图设置</h3> : null}
                     <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={editBlocked} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
-                    <CastImageFields projectId={projectId} episodeId={episodeId} castId={cast.id} appearance={appearance} value={imageFields} disabled={editBlocked} onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))} />
+                    <CastImageFields
+                        projectId={projectId}
+                        episodeId={episodeId}
+                        dramaType={dramaType}
+                        castId={cast.id}
+                        appearance={appearance}
+                        value={imageFields}
+                        disabled={editBlocked}
+                        onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))}
+                    />
                 </div>
             </section>
             <div className="drama-editor-actions">
@@ -972,6 +985,7 @@ function CastEditorForm({
                     <CastLooks
                         projectId={projectId}
                         episodeId={episodeId}
+                        dramaType={dramaType}
                         character={cast}
                         looks={looks}
                         restyle={restyle}

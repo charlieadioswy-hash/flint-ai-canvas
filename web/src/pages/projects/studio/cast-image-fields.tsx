@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, Switch } from "antd";
 import { RefreshCw } from "lucide-react";
 
-import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
-import { rebuildDramaCastImagePrompt, type DramaCastImageStyle } from "@/services/api/drama";
-import { StyleCompositionPicker } from "../style-picker";
+import { defaultDramaStyleForType, dramaStylePresetsForType, findDramaStyle } from "@/lib/drama/drama-styles";
+import { rebuildDramaCastImagePrompt, type DramaCastImageStyle, type DramaSettings } from "@/services/api/drama";
 import { useDramaOperationScope } from "./use-drama-operation-scope";
 
 export type CastImageFieldsValue = DramaCastImageStyle & { imagePrompt?: string };
@@ -13,6 +12,7 @@ export function CastImageFields({
     projectId,
     episodeId,
     castId,
+    dramaType,
     appearance,
     value,
     onChange,
@@ -21,6 +21,7 @@ export function CastImageFields({
     projectId: string;
     episodeId?: string;
     castId?: string;
+    dramaType?: DramaSettings["dramaType"];
     appearance: string;
     value: CastImageFieldsValue;
     onChange: (patch: CastImageFieldsValue) => void;
@@ -36,6 +37,8 @@ export function CastImageFields({
     const latest = useRef(snapshot);
     latest.current = snapshot;
     const ownStyle = Boolean(value.imageStyleId || value.imageStyleName || value.imageStylePrompt);
+    const presets = dramaStylePresetsForType(dramaType);
+    const currentPreset = presets.find((style) => style.id === value.imageStyleId);
     const chooseStyle = (id: string) => {
         const style = findDramaStyle(id);
         if (style) onChange({ imageStyleId: style.id, imageStyleName: style.name, imageStylePrompt: style.prompt });
@@ -96,16 +99,25 @@ export function CastImageFields({
     return (
         <div className="drama-cast-image-fields">
             <label className="drama-switch-label">
-                <Switch
-                    size="small"
-                    checked={ownStyle}
-                    disabled={disabled || building}
-                    onChange={(checked) => (checked ? chooseStyle(value.imageStyleId || DEFAULT_DRAMA_STYLE_ID) : onChange({ imageStyleId: "", imageStyleName: "", imageStylePrompt: "" }))}
-                />
+                <Switch size="small" checked={ownStyle} disabled={disabled || building} onChange={(checked) => (checked ? chooseStyle(defaultDramaStyleForType(dramaType).id) : onChange({ imageStyleId: "", imageStyleName: "", imageStylePrompt: "" }))} />
                 为此设定单独设置风格
             </label>
             {ownStyle ? (
-                <StyleCompositionPicker value={value.imageStyleId || DEFAULT_DRAMA_STYLE_ID} onChange={chooseStyle} disabled={disabled || building} />
+                <label className="drama-field">
+                    <span className="drama-field-label">参考图风格</span>
+                    <select aria-label="参考图风格" value={currentPreset?.id || ""} disabled={disabled || building} onChange={(event) => chooseStyle(event.target.value)}>
+                        {currentPreset ? null : (
+                            <option value="" disabled>
+                                {value.imageStyleName || "当前风格"}
+                            </option>
+                        )}
+                        {presets.map((style) => (
+                            <option key={style.id} value={style.id}>
+                                {style.name}
+                            </option>
+                        ))}
+                    </select>
+                </label>
             ) : (
                 <small className="drama-editor-note">沿用{episodeId ? "本集" : "作品"}风格；穿越、幼年或不同世界的造型可在此单独选择。</small>
             )}

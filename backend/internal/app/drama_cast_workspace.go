@@ -43,6 +43,9 @@ func (s *Service) saveDramaCastWorkspace(userID, projectID, castID string, req U
 			return dramaGuideConflict("资产配置已改变，请刷新后重新编辑")
 		}
 		original := *cast
+		if err := validateDramaCastPresetSelection(settings, original.ImageStyleID, req.ImageStyleID); err != nil {
+			return err
+		}
 		if lookReq != nil {
 			if err := requireDramaGuideComplete(p); err != nil {
 				return err

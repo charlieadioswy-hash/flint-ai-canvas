@@ -28,6 +28,107 @@ func saveDramaEpisodeStyle(t *testing.T, svc *Service, projectID, episodeID, nam
 	return view
 }
 
+func TestDramaTypedStylePersistsAcrossGuideAndEpisodeSettings(t *testing.T) {
+	svc, _ := newDramaTestService(t)
+	comic := DramaSettings{
+		Settings:       production.Settings{StyleName: "韩漫条漫", StylePrompt: "二维动画及柔和色调"},
+		DramaType:      "comic",
+		StyleSelection: &DramaStyleSelection{Mode: "preset", PresetID: "2d-webtoon"},
+		Models:         fakeDramaModels,
+	}
+	draft, err := svc.CreateDrama("usr-drama", CreateDramaRequest{
+		Name: "有剧集类型的短剧", Guided: true, SourceFormat: production.SourceScript, Settings: comic,
+		Chapters: []DramaChapterInput{{Title: "第一集", Text: "角色甲在雨夜推开门。"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := draft.Project.ID
+	created := draft.Production.Settings
+	if !reflect.DeepEqual(created.StyleSelection, comic.StyleSelection) || created.StylePrompt != comic.StylePrompt {
+		t.Fatalf("creation must persist the complete style selection: %+v", created)
+	}
+
+	campus := &DramaStyleSelection{Mode: "preset", PresetID: "live-campus"}
+	_, err = svc.UpdateDramaWorkflowStyle("usr-drama", projectID, UpdateDramaWorkflowStyleRequest{
+		ExpectedRevision: &draft.Production.Revision, StyleName: "校园青春", StylePrompt: "胶片柔焦", StyleSelection: campus,
+	})
+	if err == nil {
+		t.Fatal("project workflow must reject a live action preset for a comic")
+	}
+	afterRejected := guideSummary(t, svc, projectID)
+	if afterRejected.Production.Revision != draft.Production.Revision || !reflect.DeepEqual(afterRejected.Production.Settings.StyleSelection, comic.StyleSelection) {
+		t.Fatal("rejected style should not change the project revision or selection")
+	}
+
+	next := created
+	next.DramaType, next.StyleName, next.StylePrompt, next.StyleSelection = "live_action", "校园青春", "胶片柔焦", campus
+	updated, err := svc.UpdateDramaSettings("usr-drama", projectID, UpdateDramaSettingsRequest{
+		Settings: &next, ExpectedRevision: &draft.Production.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyConfirm := updated.Production.Settings
+	legacyConfirm.StyleSelection = nil
+	confirmed, err := svc.ConfirmDramaGuide("usr-drama", projectID, ConfirmDramaGuideRequest{
+		ExpectedStep: updated.Production.GuideStep, ExpectedRevision: updated.Production.Revision, Settings: &legacyConfirm,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode, err := svc.DramaEpisodeStyle("usr-drama", projectID, confirmed.Episodes[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if episode.Settings.DramaType != "live_action" || !reflect.DeepEqual(episode.Settings.StyleSelection, campus) || episode.Settings.StylePrompt != "胶片柔焦" {
+		t.Fatalf("the initial episode must snapshot the new type and preserve the selection on text-only confirmation: %+v", episode.Settings)
+	}
+
+	runDramaTicks(t, svc, projectID, 8)
+	episode, err = svc.DramaEpisodeStyle("usr-drama", projectID, episode.EpisodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	custom := episode.Settings
+	custom.StyleName, custom.StylePrompt = "我的暖色电影感", "自然皮肤质感，窗边暖色逆光"
+	custom.StyleSelection = &DramaStyleSelection{Mode: "custom"}
+	saved, err := svc.UpdateDramaEpisodeStyle("usr-drama", projectID, episode.EpisodeID, UpdateDramaEpisodeStyleRequest{
+		ExpectedRevision: &episode.Revision, ExpectedEpisodeRevision: &episode.EpisodeRevision, Settings: &custom,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(saved.Settings.StyleSelection, custom.StyleSelection) || saved.Settings.StylePrompt != custom.StylePrompt {
+		t.Fatalf("the episode must save its custom style and text: %+v", saved.Settings)
+	}
+	if settings := guideSummary(t, svc, projectID).Production.Settings; !reflect.DeepEqual(settings.StyleSelection, campus) || settings.StylePrompt != "胶片柔焦" {
+		t.Fatalf("episode custom style must not overwrite project selection: %+v", settings)
+	}
+}
+
+func TestDramaInitialSettingsKeepsTypedStyleSelectionAndSnapshotTogether(t *testing.T) {
+	previous := DramaSettings{
+		Settings:       production.Settings{StyleName: "韩漫条漫", StylePrompt: "柔和色调"},
+		StyleSelection: &DramaStyleSelection{Mode: "preset", PresetID: "2d-webtoon"},
+	}
+	next := DramaSettings{
+		Settings:       production.Settings{StyleName: "3D 国漫仙侠", StylePrompt: "精细立体建模"},
+		StyleSelection: &DramaStyleSelection{Mode: "preset", PresetID: "3d-guoman"},
+	}
+	current := previous
+	current.StylePrompt = "清晰线稿和深色背景"
+	current.StyleSelection = &DramaStyleSelection{Mode: "custom"}
+	kept := mergeDramaInitialSettings(current, previous, next)
+	if kept.StyleName != current.StyleName || kept.StylePrompt != current.StylePrompt || !reflect.DeepEqual(kept.StyleSelection, current.StyleSelection) {
+		t.Fatalf("initial setting merge must keep the edited style as a whole: %+v", kept)
+	}
+	inherited := mergeDramaInitialSettings(previous, previous, next)
+	if inherited.StyleName != next.StyleName || inherited.StylePrompt != next.StylePrompt || !reflect.DeepEqual(inherited.StyleSelection, next.StyleSelection) {
+		t.Fatalf("untouched episode must inherit the entire new style: %+v", inherited)
+	}
+}
+
 func TestDramaEpisodeStyleSnapshotsFirstSettingsAndIsolatesEpisodeEdits(t *testing.T) {
 	svc, fake, projectID, detail := dramaStudioFixture(t)
 	episodes, _ := svc.repo.DramaEpisodes(projectID)

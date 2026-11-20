@@ -180,7 +180,7 @@ func (s *Service) prepareDramaSceneSplit(repo *repository.Repository, userID, pr
 	// The selected saved shots are the bounded source. No unrelated chapter is
 	// supplied, and the model cannot expand the operation into a whole episode.
 	source, _ := json.Marshal(group)
-	prompt := production.ScriptPrompt(production.ScriptContext{Title: "本段分镜重拆", EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Settings: settings.Settings, SourceFormat: production.SourceScript, Skill: skill, CastSummary: string(castJSON), SourceChapters: []production.Chapter{{Title: group[0].SegmentTitle, Text: string(source)}}})
+	prompt := production.ScriptPrompt(production.ScriptContext{Title: "本段分镜重拆", EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Settings: dramaPromptSettings(settings), SourceFormat: production.SourceScript, Skill: skill, CastSummary: string(castJSON), SourceChapters: []production.Chapter{{Title: group[0].SegmentTitle, Text: string(source)}}})
 	scenes := []string{}
 	for _, shot := range group {
 		if !containsString(scenes, shot.Scene) {

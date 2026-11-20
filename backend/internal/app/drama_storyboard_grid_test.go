@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -108,6 +109,9 @@ func TestDramaStoryboardAdmissionUsesRealImageTaskAndQuote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if task.Prompt != board.Config.Prompt {
+		t.Fatalf("legacy storyboard prompt changed: %q", task.Prompt)
+	}
 	replay, err := s.ExecuteDramaStoryboard("user", "drama-project", board.ID, request)
 	if err != nil || replay.ID != task.ID || task.Type != "canvas_image" {
 		t.Fatalf("image admission/replay = %+v %v", replay, err)
@@ -124,6 +128,53 @@ func TestDramaStoryboardAdmissionUsesRealImageTaskAndQuote(t *testing.T) {
 	request.ConfirmationToken = "different"
 	if _, err := s.ExecuteDramaStoryboard("user", "drama-project", board.ID, request); !isAppErrorStatus(err, 409) {
 		t.Fatalf("changed operation payload = %v", err)
+	}
+}
+
+func TestDramaStoryboardUsesEpisodeVisualDirection(t *testing.T) {
+	s, db, board := storyboardFixture(t, 2, 2, 2)
+	p, err := s.repo.DramaProduction(board.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	episode, err := s.repo.DramaEpisode(board.ProjectID, board.EpisodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := parseDramaSettings(p.SettingsJSON)
+	defaults.DramaType = "comic"
+	defaults.StyleSelection = &DramaStyleSelection{Mode: "custom"}
+	defaults.StyleName, defaults.StylePrompt = "全剧冷光", "全剧使用冷白墙面与蓝灰光线"
+	if err := db.Model(p).Update("settings_json", encodeDramaSettings(defaults)).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := dramaEpisodeSettings(defaults, *episode)
+	settings.StyleSelection = &DramaStyleSelection{Mode: "custom"}
+	settings.StyleName, settings.StylePrompt = "本集暖光", "本集使用明橙色纸张与暖黄灯光"
+	if err := db.Model(episode).Update("settings_json", encodeDramaSettings(settings)).Error; err != nil {
+		t.Fatal(err)
+	}
+	draft := board.Config
+	draft.Prompt = "写实电影光线"
+	quote, err := s.QuoteDramaStoryboard("user", board.ProjectID, DramaStoryboardCreateRequest{ShotIDs: board.ShotIDs, Rows: board.Rows, Columns: board.Columns, Config: draft})
+	if err != nil || !quote.Ready {
+		t.Fatalf("storyboard quote = %+v %v", quote, err)
+	}
+	request := storyboardConfirmed(t, s, board)
+	plan, err := s.prepareDramaStoryboard(s.repo, "user", board.ProjectID, board.ID, request)
+	if err != nil || plan.view.ScopeHash != quote.ScopeHash || plan.view.ConfirmationToken != request.ConfirmationToken {
+		t.Fatalf("storyboard quote and preflight differ: %+v / %+v %v", quote, plan.view, err)
+	}
+	task, err := s.ExecuteDramaStoryboard("user", board.ProjectID, board.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Prompt != plan.request.Prompt || !strings.Contains(task.Prompt, "剧集类型：漫剧") || !strings.Contains(task.Prompt, settings.StylePrompt) || strings.Contains(task.Prompt, defaults.StylePrompt) || !strings.HasSuffix(task.Prompt, board.Config.Prompt) {
+		t.Fatalf("storyboard generated with an unexpected prompt: %q", task.Prompt)
+	}
+	stored, err := s.DramaStoryboard("user", board.ProjectID, board.ID)
+	if err != nil || stored.Config.Prompt != board.Config.Prompt {
+		t.Fatalf("saved storyboard text changed: %q %v", stored.Config.Prompt, err)
 	}
 }
 

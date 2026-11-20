@@ -166,6 +166,9 @@ func (s *Service) prepareDramaStudioActionWithOptions(repo *repository.Repositor
 				}
 				cast.Appearance = strings.TrimSpace(*req.CastDraft.Appearance)
 			}
+			if err := validateDramaCastPresetSelection(settings, cast.ImageStyleID, req.CastDraft.ImageStyleID); err != nil {
+				return plan, err
+			}
 			if _, err := applyDramaCastImageFields(cast, req.CastDraft.ImagePrompt, req.CastDraft.ImageStyleID, req.CastDraft.ImageStyleName, req.CastDraft.ImageStylePrompt); err != nil {
 				return plan, err
 			}

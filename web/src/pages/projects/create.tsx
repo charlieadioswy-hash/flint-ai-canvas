@@ -7,7 +7,9 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
+import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-modal";
+import { defaultDramaStyleForType, findDramaStyle, type DramaStyle } from "@/lib/drama/drama-styles";
+import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
 import { groupChapterEpisodes } from "@/lib/drama/chapter-selection";
 import { ApiError } from "@/services/api/request";
@@ -26,6 +28,7 @@ import {
     type DramaMediaMode,
     type DramaModels,
     type DramaReviewMode,
+    type DramaSettings,
     type DramaSkillRef,
     type DramaSourceFormat,
     type DramaTextThinking,
@@ -39,6 +42,7 @@ import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./step-settings";
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { DramaStylePicker } from "./style-picker";
+import { DRAMA_TYPE_OPTIONS, dramaLibraryStyleInstructions, dramaPresetSettings, type DramaStyleSettings } from "./drama-style-selection";
 import { readDramaSourceFile } from "./drama-source-file";
 import "./drama.css";
 
@@ -115,7 +119,13 @@ export default function DramaCreatePage() {
     const [name, setName] = useState("");
     const [aspectRatio, setAspectRatio] = useState("9:16");
     const [episodeSeconds, setEpisodeSeconds] = useState(90);
-    const [styleId, setStyleId] = useState(DEFAULT_DRAMA_STYLE_ID);
+    const [dramaType, setDramaType] = useState<DramaSettings["dramaType"]>("comic");
+    const [styleSettings, setStyleSettings] = useState<DramaStyleSettings & { styleId?: string }>(() => {
+        const preset = defaultDramaStyleForType("comic");
+        return { ...dramaPresetSettings(preset), styleId: preset.id };
+    });
+    const [libraryOpen, setLibraryOpen] = useState(false);
+    const [customStyle, setCustomStyle] = useState(false);
     const [language, setLanguage] = useState(LANGUAGES[0]);
     const [reviewMode, setReviewMode] = useState<DramaReviewMode>("sample");
     // 默认先只跑文本：先看剧情、镜头、设定和段提示词对不对，再决定花钱生成参考图与视频。
@@ -134,7 +144,16 @@ export default function DramaCreatePage() {
     const assets = assetDraft || defaultAssetSettings(assetCatalog.data);
     const [previewIndex, setPreviewIndex] = useState(0);
 
-    const style = findDramaStyle(styleId);
+    const { styleId, ...styleSnapshot } = styleSettings;
+    const selectPreset = (preset: DramaStyle) => {
+        setStyleSettings({ ...dramaPresetSettings(preset), styleId: preset.id });
+        setCustomStyle(false);
+    };
+    const selectDramaType = (type: (typeof DRAMA_TYPE_OPTIONS)[number]["value"]) => {
+        if (type === dramaType) return;
+        setDramaType(type);
+        selectPreset(defaultDramaStyleForType(type));
+    };
     const catalogQuery = useDramaModelCatalog();
     const resolvedModels = useMemo<DramaModels | undefined>(() => {
         const catalog = catalogQuery.data;
@@ -162,10 +181,10 @@ export default function DramaCreatePage() {
     // 服务端只在支持图生视频时下发 tailFrameChain，缺省即不支持。
     const tailFrameProblem = videoContinuity === "tail_frame" && Boolean(videoOption) && !videoOption?.tailFrameChain;
     const settings = {
+        dramaType,
         aspectRatio,
         episodeSeconds,
-        stylePrompt: style?.prompt || "",
-        styleName: style?.name || "",
+        ...styleSnapshot,
         language,
         reviewMode,
         mediaMode,
@@ -275,7 +294,9 @@ export default function DramaCreatePage() {
         if (saved.chaptersPerEpisode) setGroupSize(saved.chaptersPerEpisode);
         if (saved.aspectRatio) setAspectRatio(saved.aspectRatio);
         if (saved.episodeSeconds) setEpisodeSeconds(saved.episodeSeconds);
-        if (draft.form.styleId && findDramaStyle(draft.form.styleId)) setStyleId(draft.form.styleId);
+        setDramaType(saved.dramaType);
+        setStyleSettings({ styleId: saved.styleSelection?.presetId || draft.form.styleId, styleName: saved.styleName, stylePrompt: saved.stylePrompt, styleSelection: saved.styleSelection });
+        setCustomStyle(saved.styleSelection?.mode === "custom");
         if (saved.language) setLanguage(saved.language);
         if (saved.reviewMode) setReviewMode(saved.reviewMode);
         if (saved.mediaMode) setMediaMode(saved.mediaMode);
@@ -337,7 +358,12 @@ export default function DramaCreatePage() {
     const referenceTooLong = Boolean(analysis?.referenceText && sourceChars(analysis.referenceText) > DRAMA_REFERENCE_SOURCE_CHARS);
     const tooLong = longSelected > 0 || referenceTooLong || Boolean(oversizedGroup);
     // 草稿不要求模型齐全（服务端只在开工时检查），但画幅与续接方式仍会被服务端校验；分辨率给不出时按模型默认。
-    const canSaveDraft = Boolean(analysis && selectedIndexes.length && name.trim() && resolvedModels && !videoRatioProblem && !tailFrameProblem && !tooLong && !create.isPending);
+    let styleIssue = "";
+    if (styleSettings.styleSelection?.mode === "custom") {
+        if (!styleSettings.styleName.trim() || !styleSettings.stylePrompt.trim()) styleIssue = "请填写风格名称与风格说明";
+        else if (sourceChars(styleSettings.stylePrompt) > DRAMA_STYLE_PROMPT_MAX_LENGTH) styleIssue = `风格说明最多可输入 ${DRAMA_STYLE_PROMPT_MAX_LENGTH} 字`;
+    }
+    const canSaveDraft = Boolean(analysis && selectedIndexes.length && name.trim() && resolvedModels && !styleIssue && !videoRatioProblem && !tailFrameProblem && !tooLong && !create.isPending);
     const canStart = canSaveDraft && missingCapabilities.length === 0;
     const issues = useMemo(() => {
         if (!analysis) return [];
@@ -538,7 +564,70 @@ export default function DramaCreatePage() {
                             ) : null}
                         </div>
                     </section>
-                    <DramaStylePicker value={styleId} onChange={setStyleId} disabled={create.isPending} />
+                    <section>
+                        <div className="drama-section-title">
+                            <h2>剧集类型</h2>
+                        </div>
+                        <div className="drama-media-modes is-row is-two" role="radiogroup" aria-label="剧集类型">
+                            {DRAMA_TYPE_OPTIONS.map(({ value, label, detail }) => (
+                                <button key={value} type="button" role="radio" aria-checked={dramaType === value} className="drama-media-mode" disabled={create.isPending} onClick={() => selectDramaType(value)}>
+                                    <strong>{label}</strong>
+                                    <span>{detail}</span>
+                                </button>
+                            ))}
+                        </div>
+                        {dramaType === "narration" ? <p>当前类型为解说漫，可保留或改选。</p> : null}
+                    </section>
+                    <DramaStylePicker
+                        value={styleId || ""}
+                        dramaType={dramaType}
+                        disabled={create.isPending}
+                        onChange={(id) => {
+                            const selected = findDramaStyle(id);
+                            if (selected) selectPreset(selected);
+                        }}
+                    />
+                    <div className="drama-workflow-style-library-actions flex gap-2">
+                        <Button size="small" disabled={create.isPending} onClick={() => setLibraryOpen(true)}>
+                            风格库 / 我的风格
+                        </Button>
+                        <Button size="small" disabled={create.isPending} aria-pressed={customStyle} onClick={() => setCustomStyle((current) => !current)}>
+                            自定义风格
+                        </Button>
+                    </div>
+                    {customStyle ? (
+                        <div className="grid gap-2">
+                            <Input
+                                aria-label="风格名称"
+                                value={styleSettings.styleName}
+                                maxLength={60}
+                                disabled={create.isPending}
+                                onChange={(event) => setStyleSettings((current) => ({ ...current, styleId: undefined, styleName: event.target.value, styleSelection: { mode: "custom" } }))}
+                            />
+                            <Input.TextArea
+                                aria-label="风格说明"
+                                value={styleSettings.stylePrompt}
+                                disabled={create.isPending}
+                                autoSize={{ minRows: 3, maxRows: 8 }}
+                                count={{ max: DRAMA_STYLE_PROMPT_MAX_LENGTH, show: true, strategy: (value) => Array.from(value).length }}
+                                onChange={(event) => setStyleSettings((current) => ({ ...current, styleId: undefined, stylePrompt: event.target.value, styleSelection: { mode: "custom" } }))}
+                            />
+                        </div>
+                    ) : null}
+                    {styleIssue ? (
+                        <p className="drama-cfg-note" role="alert">
+                            {styleIssue}
+                        </p>
+                    ) : null}
+                    <CanvasStylePickerModal
+                        open={libraryOpen && !create.isPending}
+                        onClose={() => setLibraryOpen(false)}
+                        onSelect={(preset) => {
+                            setStyleSettings({ styleName: preset.title, stylePrompt: dramaLibraryStyleInstructions(preset), styleSelection: { mode: "custom" } });
+                            setCustomStyle(true);
+                            setLibraryOpen(false);
+                        }}
+                    />
                     <section>
                         <div className="drama-section-title">
                             <h2>文字步骤</h2>
@@ -560,7 +649,7 @@ export default function DramaCreatePage() {
                         </div>
                         <div className="grid gap-3">
                             <DramaAssetImageModels models={resolvedModels} onModelsChange={(patch) => setModels((current) => ({ ...current, ...patch }))} assets={assets} onAssetsChange={setAssetDraft} />
-                            <AssetSchemePicker value={assets} onChange={setAssetDraft} sample={{ style: style?.prompt || "", characterName: "主角", sceneName: "主场景" }} layout="compact" imageModel={imageOption} />
+                            <AssetSchemePicker value={assets} onChange={setAssetDraft} sample={{ style: styleSettings.stylePrompt, characterName: "主角", sceneName: "主场景" }} layout="compact" imageModel={imageOption} />
                         </div>
                     </section>
                     <section>

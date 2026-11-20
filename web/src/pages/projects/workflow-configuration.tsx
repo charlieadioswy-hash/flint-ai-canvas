@@ -4,9 +4,9 @@ import { Check, ImageIcon, Maximize2, SlidersHorizontal } from "lucide-react";
 import { Button, Input, Select } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { CanvasStylePickerModal, canvasStylePresets, userStylePreset, type CanvasStylePreset } from "@/components/canvas/canvas-style-picker-modal";
+import { CanvasStylePickerModal, canvasStylePresets, userStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoOptionFits, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
-import { DRAMA_STYLE_CATEGORIES, filterDramaStyles, findDramaStyle, type DramaStyleCategory } from "@/lib/drama/drama-styles";
+import { DRAMA_STYLE_CATEGORIES, dramaStylePresetsForType, findDramaStyle, type DramaStyleCategory } from "@/lib/drama/drama-styles";
 import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import type { DramaSettings, DramaSummary } from "@/services/api/drama";
 import { listStyleProfiles } from "@/services/api/style-profiles";
@@ -14,7 +14,7 @@ import { listStyleProfiles } from "@/services/api/style-profiles";
 import { AssetSchemePicker, useAssetSchemes } from "./asset-scheme";
 import { CharacterTemplatePicker } from "./character-template-picker";
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
-import { DramaStylePicker } from "./style-picker";
+import { dramaLibraryStyleInstructions, dramaPresetSettings, dramaTypeLabel } from "./drama-style-selection";
 import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./step-settings";
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { resolveWorkflowConfigurationStyle, workflowConfigurationSamples } from "./workflow-configuration-preview";
@@ -26,10 +26,6 @@ const RATIOS = [
     { value: "16:9", label: "横屏 16:9" },
     { value: "1:1", label: "方形 1:1" },
 ];
-
-function styleInstructions(preset: CanvasStylePreset) {
-    return [preset.prompt, preset.profile?.negativePrompt ? `禁止：${preset.profile.negativePrompt}` : ""].filter(Boolean).join("\n");
-}
 
 export type WorkflowConfigurationHandle = { focusIssue: () => void };
 
@@ -52,10 +48,10 @@ export function WorkflowConfiguration({
 }) {
     const catalog = useDramaModelCatalog();
     const schemes = useAssetSchemes();
-    const [pickerOpen, setPickerOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
     const [category, setCategory] = useState<"all" | "hot" | DramaStyleCategory>("all");
-    const [custom, setCustom] = useState(false);
+    const [chosenMode, setChosenMode] = useState<"preset" | "custom">();
+    const custom = (chosenMode ?? settings.styleSelection?.mode) === "custom";
     const [previewImage, setPreviewImage] = useState<string>();
     const [unavailableImages, setUnavailableImages] = useState<Set<string>>(() => new Set());
     const [parametersOpen, setParametersOpen] = useState(false);
@@ -64,19 +60,23 @@ export function WorkflowConfiguration({
     const resolutionField = useRef<HTMLDivElement>(null);
     const continuityField = useRef<HTMLDivElement>(null);
     const profiles = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles });
-    const style = resolveWorkflowConfigurationStyle(settings.stylePrompt);
+    const style = settings.styleSelection?.mode === "preset" ? findDramaStyle(settings.styleSelection.presetId) : settings.styleSelection ? undefined : resolveWorkflowConfigurationStyle(settings.stylePrompt);
     const libraryStyle = [
         ...canvasStylePresets,
         ...(profiles.data?.profiles || []).flatMap((item) => {
             const found = userStylePreset(item);
             return found ? [found] : [];
         }),
-    ].find((item) => item.title === settings.styleName && styleInstructions(item) === settings.stylePrompt);
+    ].find((item) => item.title === settings.styleName && dramaLibraryStyleInstructions(item) === settings.stylePrompt);
     const image = libraryStyle?.profile ? libraryStyle.profile.coverUrl : libraryStyle?.imageUrl;
     const directImages = [...new Set([image, ...(libraryStyle?.profile?.assets.flatMap((asset) => asset.referenceUrls || []) || [])].filter((url): url is string => Boolean(url)))];
     const previewImages = directImages.length ? directImages.map((url) => ({ url, label: settings.styleName, illustrative: false })) : workflowConfigurationSamples(style);
     const imageFailed = (url: string) => setUnavailableImages((current) => new Set([...current, url]));
-    const availableStyles = filterDramaStyles(category, "");
+    const typeLabel = dramaTypeLabel(settings.dramaType);
+    const compatible = dramaStylePresetsForType(settings.dramaType);
+    const categories = DRAMA_STYLE_CATEGORIES.filter((item) => item.key === "all" || compatible.some((style) => (item.key === "hot" ? style.hot : style.category === item.key)));
+    const activeCategory = categories.some((item) => item.key === category) ? category : "all";
+    const availableStyles = compatible.filter((style) => activeCategory === "all" || (activeCategory === "hot" ? style.hot : style.category === activeCategory));
     const videoOption = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings.models.video));
     const imageChoice = dramaChoiceKey(settings.models.characterImage) ? settings.models.characterImage : settings.models.image;
     const imageOption = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(imageChoice));
@@ -107,6 +107,7 @@ export function WorkflowConfiguration({
                 ...settings,
                 styleName: change.styleName ?? settings.styleName,
                 stylePrompt: change.stylePrompt ?? settings.stylePrompt,
+                styleSelection: change.styleSelection ?? settings.styleSelection,
                 assets: change.assets ?? settings.assets,
                 models: { ...settings.models, ...(change.models ? { image: change.models.image, characterImage: change.models.characterImage, sceneImage: change.models.sceneImage } : {}) },
             });
@@ -269,11 +270,12 @@ export function WorkflowConfiguration({
                 </fieldset>
                 <fieldset disabled={disabled} inert={disabled}>
                     <legend>绘图风格</legend>
+                    {typeLabel ? <p className="drama-workflow-notice">剧集类型 · {typeLabel}</p> : null}
                     <div className="drama-workflow-style-modes" role="group" aria-label="风格来源">
-                        <button type="button" aria-pressed={!custom} onClick={() => setCustom(false)}>
+                        <button type="button" aria-pressed={!custom} onClick={() => setChosenMode("preset")}>
                             预设风格
                         </button>
-                        <button type="button" aria-pressed={custom} onClick={() => setCustom(true)}>
+                        <button type="button" aria-pressed={custom} onClick={() => setChosenMode("custom")}>
                             自定义风格
                         </button>
                     </div>
@@ -281,7 +283,7 @@ export function WorkflowConfiguration({
                         <>
                             <label>
                                 <span>风格名称</span>
-                                <Input value={settings.styleName} maxLength={60} onChange={(event) => patch({ styleName: event.target.value })} />
+                                <Input value={settings.styleName} maxLength={60} onChange={(event) => patch({ styleName: event.target.value, styleSelection: { mode: "custom" } })} />
                             </label>
                             <label>
                                 <span>风格说明</span>
@@ -289,7 +291,7 @@ export function WorkflowConfiguration({
                                     value={settings.stylePrompt}
                                     count={{ max: DRAMA_STYLE_PROMPT_MAX_LENGTH, show: true, strategy: (value) => Array.from(value).length }}
                                     autoSize={{ minRows: 5, maxRows: 12 }}
-                                    onChange={(event) => patch({ stylePrompt: event.target.value })}
+                                    onChange={(event) => patch({ stylePrompt: event.target.value, styleSelection: { mode: "custom" } })}
                                     placeholder="描述画面质感、色调、光线与服化道"
                                 />
                             </label>
@@ -297,15 +299,15 @@ export function WorkflowConfiguration({
                     ) : (
                         <>
                             <div className="drama-workflow-style-categories" role="group" aria-label="风格分类">
-                                {DRAMA_STYLE_CATEGORIES.map((item) => (
-                                    <button key={item.key} type="button" aria-pressed={category === item.key} onClick={() => setCategory(item.key)}>
+                                {categories.map((item) => (
+                                    <button key={item.key} type="button" aria-pressed={activeCategory === item.key} onClick={() => setCategory(item.key)}>
                                         {item.label}
                                     </button>
                                 ))}
                             </div>
                             <div className="drama-workflow-style-options" role="group" aria-label="预设风格">
                                 {availableStyles.map((item) => (
-                                    <button key={item.id} type="button" aria-pressed={item.id === style?.id} title={item.description} onClick={() => patch({ styleName: item.name, stylePrompt: item.prompt })}>
+                                    <button key={item.id} type="button" aria-pressed={item.id === style?.id} title={item.description} onClick={() => patch(dramaPresetSettings(item))}>
                                         {item.cover && !unavailableImages.has(item.cover) ? (
                                             <img src={item.cover} alt="" loading="lazy" onError={() => imageFailed(item.cover!)} />
                                         ) : (
@@ -322,9 +324,6 @@ export function WorkflowConfiguration({
                         </>
                     )}
                     <div className="drama-workflow-style-library-actions">
-                        <Button size="small" disabled={disabled} onClick={() => setPickerOpen(true)}>
-                            自由组合风格
-                        </Button>
                         <Button size="small" disabled={disabled} onClick={() => setLibraryOpen(true)}>
                             风格库 / 我的风格
                         </Button>
@@ -390,24 +389,13 @@ export function WorkflowConfiguration({
             <AppModal open={Boolean(previewImage)} title={`${settings.styleName || "风格"}参考样图`} onCancel={() => setPreviewImage(undefined)} footer={null} width="min(1100px, calc(100vw - 32px))">
                 <img className="drama-workflow-style-lightbox" src={previewImage} alt={`${settings.styleName}参考样图`} />
             </AppModal>
-            <AppModal open={pickerOpen && !disabled} title="选择视觉风格" onCancel={() => setPickerOpen(false)} footer={null} width="min(960px, calc(100vw - 32px))" rootClassName="drama-root">
-                <DramaStylePicker
-                    value={style?.id || ""}
-                    disabled={disabled}
-                    onChange={(id) => {
-                        const selected = findDramaStyle(id);
-                        if (!selected) return;
-                        patch({ styleName: selected.name, stylePrompt: selected.prompt });
-                        setPickerOpen(false);
-                    }}
-                />
-            </AppModal>
             <CanvasStylePickerModal
                 open={libraryOpen && !disabled}
                 value={libraryStyle?.id}
                 onClose={() => setLibraryOpen(false)}
                 onSelect={(selected) => {
-                    patch({ styleName: selected.title, stylePrompt: styleInstructions(selected) });
+                    patch({ styleName: selected.title, stylePrompt: dramaLibraryStyleInstructions(selected), styleSelection: { mode: "custom" } });
+                    setChosenMode("custom");
                     setLibraryOpen(false);
                 }}
             />

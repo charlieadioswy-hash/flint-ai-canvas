@@ -48,7 +48,7 @@ func SegmentWriterPrompt(in SegmentPromptInput, draft string, previousEnding str
 		fmt.Fprintf(&b, "严格从第%d段视频末尾的实际站位、朝向、动作和情绪状态继续，不重新摆位\n", in.Index)
 	}
 	fmt.Fprintf(&b, `第%d段视频《段名·点题副标题》——一句话概括本段的戏剧转折
-%s秒｜%s｜%s｜%s对白｜无字幕｜%d个主镜头
+%s秒｜%s｜%s对白｜无字幕｜%d个主镜头
 
 【视觉与首帧】
 %s；渲染质感与画风用一两句概括，不要重复上面的风格全文；本段前段、中段、末尾的情绪与视觉变化；明确禁止项一句带过（无额外滤镜噪点、无游戏 UI、无字幕水印、无全屏闪白等）。
@@ -71,7 +71,10 @@ func SegmentWriterPrompt(in SegmentPromptInput, draft string, previousEnding str
 起—止：按 2–3 秒切成时间片，逐片写清动作、面部表情变化（眼神、眉、嘴角、呼吸）、肢体反应与镜头运动。
 角色名（此刻的情绪 + 说话方式，例如压低声音咬着字、声音发颤、冷笑着拖长尾音）：“台词”
 台词前写说话人开口前的表情反应，说完写听者的反应；%s台词后“留%s秒气口”已计入时长，开口前的情绪停顿也要落在本镜头时长内，台词不能溢出镜头。每个镜头写动作音或环境音。
-`, in.Index+1, secondsText(total), firstNonEmpty(in.AspectRatio, "9:16"), firstNonEmpty(in.Style, "写实电影感"), firstNonEmpty(in.Language, "中文"), len(in.Shots), firstFrameRule(in), in.speechRateClause(), in.pauseText())
+`, in.Index+1, secondsText(total), firstNonEmpty(in.AspectRatio, "9:16")+segmentStyleLabel(firstNonEmpty(in.Style, "写实电影感"), in.VisualDirection), firstNonEmpty(in.Language, "中文"), len(in.Shots), firstFrameRule(in), in.speechRateClause(), in.pauseText())
+	if in.VisualDirection != "" {
+		b.WriteString("【剧集画风】由生成请求统一附加。按它撰写本段光线与画面变化，输出正文时省略这个完整区块。\n\n")
+	}
 	// 尾帧续接时末尾只收势不凝固：整段凝固会在成片的每个段落衔接处留下静止画面。并行出片时下一段不取本段尾帧，不需要收势。
 	if in.Index < in.Count-1 && !in.Independent {
 		fmt.Fprintf(&b, "最后一个镜头的末0.5秒动作收住、镜头停稳，写清此刻每个人物的位置、朝向和情绪状态，作为第%d段的接续起点；人物保留呼吸、眨眼等细微动态，不要写“全场凝固”“完全静止”“硬定格”。\n", in.Index+2)

@@ -331,6 +331,12 @@ func (s *Service) prepareDramaStoryboardBoard(repo *repository.Repository, userI
 	if err != nil || config.Model.Empty() || config.Prompt == "" {
 		return blocked("故事板模型、提示词或参考图不可用")
 	}
+	episode, err := repo.DramaEpisode(projectID, board.EpisodeID)
+	if err != nil {
+		return plan, dramaLookupError(err)
+	}
+	settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
+	config.Prompt = withDramaVisualDirection(config.Prompt, dramaVisualDirection(settings, "", ""))
 	providerConfig := map[string]any{"size": config.AspectRatio, "imageResolution": config.Resolution, "count": "1"}
 	if config.Model.ChannelID != "" {
 		providerConfig["channelId"], providerConfig["model"], providerConfig["channelModelKey"] = config.Model.ChannelID, config.Model.ModelKey, config.Model.ModelKey

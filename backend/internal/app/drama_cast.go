@@ -81,10 +81,12 @@ func (s *Service) CreateDramaCast(userID, projectID string, req CreateDramaCastR
 				return err
 			}
 		}
-		if req.EpisodeID != "" {
-			if _, err := tx.DramaEpisode(project.ID, req.EpisodeID); err != nil {
-				return dramaLookupError(err)
-			}
+		settings, err := dramaCastContextSettings(tx, current, req.EpisodeID)
+		if err != nil {
+			return err
+		}
+		if err := validateDramaCastPresetSelection(settings, "", &req.ImageStyleID); err != nil {
+			return err
 		}
 		casts, err := tx.DramaCasts(project.ID)
 		if err != nil {

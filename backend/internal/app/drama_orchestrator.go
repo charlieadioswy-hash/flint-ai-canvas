@@ -1068,7 +1068,7 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 		})
 	}
 	var missingInitialAssets bool
-	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
+	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules, StyleHash: dramaStyleHash(r.settings)})
 	if source.initial != nil || source.reference != nil {
 		if err := r.s.repo.Transaction(func(tx *repository.Repository) error {
 			if _, err := tx.DramaProductionForUpdate(r.project.ID); err != nil {
@@ -1891,7 +1891,7 @@ const dramaPromptCondenseAttempts = 2
 // dramaMinPromptBudget 是段提示词正文至少要有的字符数；参考图说明占掉太多时直接报错，不写一段注定被拒的提示词。
 const dramaMinPromptBudget = 300
 
-// segmentPromptBudget 是本段提示词正文的字符上限：视频模型提示词上限减去提交时加在开头的参考图说明。
+// segmentPromptBudget 是本段提示词正文的字符上限：视频模型提示词上限减去提交时添加的画风与素材说明。
 // 按当前动态资产说明预留空间；之后资产变化导致超长时仅阻止提交并保留段稿。返回 0 表示不限。
 func (r *dramaRun) segmentPromptBudget(settings DramaSettings, profile dramaVideoProfile, draft dramaSegmentDraft, segment *model.DramaSegment, rows []model.DramaSegment, casts map[string]model.DramaCast) (int, error) {
 	if profile.PromptMaxChars <= 0 {
@@ -1908,7 +1908,7 @@ func (r *dramaRun) segmentPromptBudget(settings DramaSettings, profile dramaVide
 	header := utf8.RuneCountInString(request.Header)
 	budget := profile.PromptMaxChars - header - 2
 	if budget < dramaMinPromptBudget {
-		return 0, fmt.Errorf("开头的参考图说明占用 %d 个字符，所选视频模型的提示词上限只有 %d 个字符，放不下本段正文；请减少本段参考图，或换用提示词上限更大的视频模型", header, profile.PromptMaxChars)
+		return 0, fmt.Errorf("开头的画风与素材说明占用 %d 个字符，所选视频模型的提示词上限只有 %d 个字符，放不下本段正文；请精简画风、减少本段参考图，或换用提示词上限更大的视频模型", header, profile.PromptMaxChars)
 	}
 	return budget, nil
 }
@@ -2110,13 +2110,14 @@ func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
 	}
 	var prompt string
 	systemPrompt := production.BibleSystemPrompt()
+	settings := dramaPromptSettings(r.settings)
 	if scope != nil {
-		prompt = production.BibleExtractionSourcePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, scope.AssetKind, source.reference)
+		prompt = production.BibleExtractionSourcePrompt(r.project.Name, settings, chapters, dramaBibleSampleRunes, skill, scope.AssetKind, source.reference)
 		systemPrompt = production.BibleExtractionSystemPrompt(scope.AssetKind)
 	} else if source.reference != nil {
-		prompt = production.BibleWithReferencePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, *source.reference, source.initial != nil)
+		prompt = production.BibleWithReferencePrompt(r.project.Name, settings, chapters, dramaBibleSampleRunes, skill, *source.reference, source.initial != nil)
 	} else {
-		prompt = production.BiblePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill)
+		prompt = production.BiblePrompt(r.project.Name, settings, chapters, dramaBibleSampleRunes, skill)
 	}
 	input := map[string]any{
 		"config":      map[string]any{"systemPrompt": systemPrompt},
@@ -2230,7 +2231,7 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 	}
 	prompt := production.ScriptPrompt(production.ScriptContext{
 		Segment: settings.Storyboard.SegmentLimits(profile.Durations),
-		Title:   r.project.Name, Settings: settings.Settings, VisualRules: meta.VisualRules,
+		Title:   r.project.Name, Settings: dramaPromptSettings(settings), VisualRules: meta.VisualRules,
 		EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Synopsis: episode.Synopsis, Hook: episode.Hook, Cliffhanger: episode.Cliffhanger,
 		CastSummary: r.castSummary("character", 30), PropSummary: r.castSummary("prop", 20), SceneSummary: r.castSummary("scene", 20), SourceChapters: chapters,
 		SourceFormat: episode.SourceFormat, Skill: skill,
