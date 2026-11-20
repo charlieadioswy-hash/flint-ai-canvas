@@ -1,5 +1,5 @@
 import type { CanvasStylePreset } from "@/lib/canvas/canvas-style-system";
-import type { DramaStyle } from "@/lib/drama/drama-styles";
+import { findDramaStyleByLegacyPrompt, type DramaStyle } from "@/lib/drama/drama-styles";
 import type { DramaSettings } from "@/services/api/drama";
 
 export const DRAMA_TYPE_OPTIONS = [
@@ -19,4 +19,14 @@ export function dramaPresetSettings(style: DramaStyle): DramaStyleSettings {
 
 export function dramaLibraryStyleInstructions(preset: CanvasStylePreset) {
     return [preset.prompt, preset.profile?.negativePrompt ? `禁止：${preset.profile.negativePrompt}` : ""].filter(Boolean).join("\n");
+}
+
+/** 旧风格库选择以自定义文本保存，预览时也要核对单独追加的禁用词。 */
+export function matchesLegacyLibraryStyle(preset: CanvasStylePreset, name: string, prompt: string) {
+    if (preset.title !== name) return false;
+    const negative = preset.profile?.negativePrompt;
+    const suffix = negative ? `\n禁止：${negative}` : "";
+    if (suffix && !prompt.endsWith(suffix)) return false;
+    const savedPrompt = suffix ? prompt.slice(0, -suffix.length) : prompt;
+    return findDramaStyleByLegacyPrompt(savedPrompt)?.prompt === preset.prompt;
 }

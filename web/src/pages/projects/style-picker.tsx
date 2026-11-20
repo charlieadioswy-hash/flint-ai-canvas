@@ -1,21 +1,24 @@
 import { useMemo, useState } from "react";
 import { Check, Flame, Info, Search, X } from "lucide-react";
 
-import { DRAMA_STYLE_CATEGORIES, dramaStylePresetsForType, filterDramaStyles, findDramaStyle, styleCoverBackground, type DramaStyleCategory } from "@/lib/drama/drama-styles";
+import { dramaStylePresetsForType, dramaStyleTagsForType, filterDramaStylePresets, findDramaStyle, styleCoverBackground, type DramaStyleTag } from "@/lib/drama/drama-styles";
 import type { DramaSettings } from "@/services/api/drama";
 import { dramaTypeLabel } from "./drama-style-selection";
 import { DramaStyleDetailModal } from "./style-detail-modal";
 
-type CategoryKey = "all" | "hot" | DramaStyleCategory;
+type Props = { value: string; onChange: (id: string) => void; dramaType?: DramaSettings["dramaType"]; disabled?: boolean };
 
-export function DramaStylePicker({ value, onChange, dramaType, disabled = false }: { value: string; onChange: (id: string) => void; dramaType?: DramaSettings["dramaType"]; disabled?: boolean }) {
-    const [category, setCategory] = useState<CategoryKey>("hot");
+export function DramaStylePicker(props: Props) {
+    return <DramaStylePickerSession key={props.dramaType} {...props} />;
+}
+
+function DramaStylePickerSession({ value, onChange, dramaType, disabled = false }: Props) {
+    const [tag, setTag] = useState<"all" | DramaStyleTag>("all");
     const [query, setQuery] = useState("");
     const [detailId, setDetailId] = useState<string | null>(null);
     const compatibleIds = useMemo(() => new Set(dramaStylePresetsForType(dramaType).map((style) => style.id)), [dramaType]);
-    const counts = useMemo(() => Object.fromEntries(DRAMA_STYLE_CATEGORIES.map((item) => [item.key, filterDramaStyles(item.key, "").filter((style) => compatibleIds.has(style.id)).length])), [compatibleIds]);
-    const activeCategory = counts[category] ? category : "all";
-    const styles = useMemo(() => filterDramaStyles(query ? "all" : activeCategory, query).filter((style) => compatibleIds.has(style.id)), [activeCategory, compatibleIds, query]);
+    const tags = dramaStyleTagsForType(dramaType);
+    const styles = filterDramaStylePresets(dramaType, tag, query);
     const selected = findDramaStyle(value);
     return (
         <section className="drama-styles">
@@ -40,22 +43,10 @@ export function DramaStylePicker({ value, onChange, dramaType, disabled = false 
                     </button>
                 ) : null}
             </label>
-            <div className="drama-styles-tabs" role="tablist" aria-label="风格预设分类">
-                {DRAMA_STYLE_CATEGORIES.filter((item) => counts[item.key] > 0).map((item) => (
-                    <button
-                        key={item.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={!query && activeCategory === item.key}
-                        className="drama-styles-tab"
-                        onClick={() => {
-                            setQuery("");
-                            setCategory(item.key);
-                        }}
-                    >
-                        {item.key === "hot" ? <Flame className="size-3.5" /> : null}
+            <div className="drama-styles-tabs" role="tablist" aria-label="风格标签">
+                {tags.map((item) => (
+                    <button key={item.key} type="button" role="tab" aria-selected={tag === item.key} className="drama-styles-tab" onClick={() => setTag(item.key)}>
                         {item.label}
-                        <span>{counts[item.key]}</span>
                     </button>
                 ))}
             </div>
@@ -90,7 +81,7 @@ export function DramaStylePicker({ value, onChange, dramaType, disabled = false 
                         </button>
                     </div>
                 ))}
-                {!styles.length ? <div className="col-span-full py-10 text-center text-[var(--fs-label)] text-foreground/45">没有找到“{query}”相关的风格</div> : null}
+                {!styles.length ? <div className="col-span-full py-10 text-center text-[var(--fs-label)] text-foreground/45">{query.trim() ? `没有找到“${query.trim()}”相关的风格` : "当前标签下暂无预设风格"}</div> : null}
             </div>
             <DramaStyleDetailModal
                 styleId={detailId}

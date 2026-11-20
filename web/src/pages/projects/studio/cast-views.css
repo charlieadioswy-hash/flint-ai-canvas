@@ -54,6 +54,24 @@
     object-fit: contain;
 }
 
+.drama-cast-view-history-preview {
+    display: grid;
+    place-items: center;
+    width: 72px;
+    height: 72px;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: var(--muted);
+    cursor: zoom-in;
+}
+
+.drama-cast-view-history-preview:focus-visible {
+    outline: var(--focus-ring-width) solid var(--ring);
+    outline-offset: 2px;
+}
+
 .drama-cast-view-form {
     border: 0;
     padding: 0;

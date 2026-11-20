@@ -119,7 +119,10 @@ test("a character starts with its base image and no automatically added look", a
     expect(host.querySelector(".drama-look-item")).toBeNull();
     expect(host.querySelector(".drama-look-form")).toBeNull();
     expect(add).not.toHaveBeenCalled();
-    await click("添加造型");
+    const addTile = host.querySelector("button.drama-cast-add-tile");
+    expect(addTile).not.toBeNull();
+    expect(addTile?.textContent?.trim()).toBe("添加妆造");
+    await click("添加妆造");
     expect(host.querySelector(".drama-look-form")).not.toBeNull();
     expect(add).not.toHaveBeenCalled();
 });
@@ -149,7 +152,7 @@ test("new appearance requires confirmation and saves a custom prompt without gen
     const add = spyOn(api, "addDramaCastLook").mockResolvedValue({ look });
     const generate = spyOn(api, "regenerateDramaCast").mockResolvedValue({ affectedSegments: 0 });
     await renderLooks([]);
-    await click("添加造型");
+    await click("添加妆造");
     await fillLookField("造型名", "舞台妆");
     await fillLookField("造型外观", "红色长裙，盘发，淡金眼妆");
     await fillLookField("参考图生成提示词", "保持人物五官，红色丝绸长裙，柔和舞台光");
@@ -175,7 +178,7 @@ test("本集新增造型携带当前集并在保存成功后刷新，切集后�
     const changed = mock();
     for (const [index, episodeId] of ["episode-1", "episode-2"].entries()) {
         await renderLooks([], changed, episodeId);
-        await click("添加造型");
+        await click("添加妆造");
         await fillLookField("造型名", "晚宴");
         await fillLookField("造型外观", "黑色礼服");
         await click("确认保存");

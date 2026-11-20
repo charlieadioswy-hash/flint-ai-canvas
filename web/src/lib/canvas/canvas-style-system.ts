@@ -20,6 +20,8 @@ export type CanvasStylePreset = {
     tags: string[];
     prompt: string;
     imageUrl: string;
+    sampleImages?: string[];
+    aliases?: string[];
     selection?: ProjectStyleSelection;
     profile?: StyleProfileSnapshot;
 };

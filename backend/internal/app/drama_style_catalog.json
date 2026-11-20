@@ -27,7 +27,20 @@
       "2d-flat",
       "2d-fantasy-adventure",
       "2d-watercolor",
-      "2d-chibi"
+      "2d-chibi",
+      "art-gongbi",
+      "2d-cinematic-anime",
+      "2d-folk-horror",
+      "2d-gothic-mystery",
+      "2d-republic-steampunk",
+      "2d-classical-history",
+      "2d-period-city",
+      "2d-monochrome-comic",
+      "2d-low-key",
+      "2d-eastern-fantasy",
+      "3d-cyber-game",
+      "3d-soda-characters",
+      "3d-ethereal-gufeng"
     ]
   },
   "live_action": {
@@ -60,13 +73,21 @@
       "live-tearjerker",
       "live-neo-chinese",
       "live-family",
-      "live-western-fantasy"
+      "live-western-fantasy",
+      "live-neutral",
+      "live-urban",
+      "live-period-aesthetic",
+      "live-western-urban",
+      "live-nature",
+      "live-korean-soft",
+      "live-blockbuster",
+      "live-western-dream",
+      "live-western-luxury"
     ]
   },
   "unclassified": {
     "presetIds": [
       "art-ink",
-      "art-gongbi",
       "art-papercut",
       "art-noir",
       "art-film",

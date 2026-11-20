@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { ReactNode } from "react";
-import type { DramaCast, DramaListPage, DramaSummary, DramaWorkflowImpact } from "../../src/services/api/drama";
+import type { DramaCast, DramaListPage, DramaSummary, DramaTake, DramaWorkflowImpact } from "../../src/services/api/drama";
 import type { CastImageFieldsValue } from "../../src/pages/projects/studio/cast-image-fields";
 import type { CastView } from "../../src/services/api/drama-cast-views";
 
@@ -45,6 +45,7 @@ const characterApi = await import("../../src/services/api/drama-character-librar
 const { dramaKeys } = await import("../../src/lib/drama/drama-query-keys");
 const viewState = await import("../../src/pages/projects/studio/cast-views-state");
 const resources = await import("../../src/services/api/resources");
+const imageStorage = await import("../../src/services/image-storage");
 const { ApiError } = await import("../../src/services/api/request");
 const { useUserStore } = await import("../../src/stores/use-user-store");
 
@@ -215,6 +216,118 @@ async function waitForAutoSave() {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 420)));
     await settle();
 }
+
+function castHistoryTake(version: number, resourceId: string, current: boolean): DramaTake {
+    return { id: `hero-take-${version}`, ownerId: hero.id, kind: "cast", version, resourceId, current, createdAt: "2026-11-20T04:00:00Z", prompt: "", source: "pipeline" };
+}
+
+test("参考图历史打开所选原图，并使用当前参考图的缩放预览", async () => {
+    const original = { ...hero, imageVersion: 3, imageResourceId: "current-hero-image" };
+    const historyResourceId = "history-hero-image";
+    const originalImageUrl = (storageKey?: string) => `https://example.test/${storageKey?.replace(/^resource:/, "")}.png`;
+    const resolveImage = spyOn(imageStorage, "resolveImageUrl").mockImplementation(async (storageKey) => originalImageUrl(storageKey));
+    spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [castHistoryTake(3, original.imageResourceId, true), castHistoryTake(2, historyResourceId, false)] });
+    const onClose = mock();
+    await render(<DialogHarness castId={hero.id} items={[original]} onClose={onClose} />);
+    const editor = document.querySelector(".drama-cast-dialog")!;
+    const currentTrigger = button(`放大查看${hero.name}的参考图`, editor);
+    await act(async () => currentTrigger.click());
+    await settleUntil(() => Boolean(document.querySelector(".canvas-image-preview-modal img")));
+    const currentPreview = document.querySelector(".canvas-image-preview-modal")!;
+    expect(currentPreview.querySelector<HTMLImageElement>("img")?.src).toBe(originalImageUrl(`resource:${original.imageResourceId}`));
+    await act(async () => currentPreview.querySelector<HTMLButtonElement>(".ant-modal-close")!.click());
+    await settleUntil(() => !document.querySelector(".canvas-image-preview-modal"));
+
+    const historyPanel = editor.querySelector('[aria-label="参考图历史"]')!;
+    await settleUntil(() => Boolean(historyPanel.querySelector('[aria-label="放大查看 V2"]')));
+    const historyTrigger = button("放大查看 V2", historyPanel);
+    historyTrigger.focus();
+    await act(async () => historyTrigger.click());
+    await settleUntil(() => Boolean(document.querySelector(".canvas-image-preview-modal img")));
+    const historyPreview = document.querySelector(".canvas-image-preview-modal")!;
+    const image = historyPreview.querySelector<HTMLImageElement>("img")!;
+    expect(resolveImage).toHaveBeenCalledWith(`resource:${historyResourceId}`, "");
+    expect(image.src).toBe(originalImageUrl(`resource:${historyResourceId}`));
+    await act(async () => image.dispatchEvent(new Event("load")));
+    await click("放大图片", historyPreview);
+    const zoom = historyPreview.querySelector('[aria-label="相对适应窗口的缩放比例"]');
+    expect(Number.parseInt(zoom?.textContent || "", 10)).toBeGreaterThan(100);
+
+    const previewStage = historyPreview.querySelector<HTMLElement>('[role="region"]')!;
+    previewStage.focus();
+    expect(document.activeElement).toBe(previewStage);
+    await act(async () => previewStage.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 }) as unknown as Event));
+    await settleUntil(() => !document.querySelector(".canvas-image-preview-modal"));
+    expect(document.querySelector(".drama-cast-dialog")).toBe(editor);
+    expect(document.activeElement).toBe(historyTrigger);
+    expect(onClose).not.toHaveBeenCalled();
+});
+
+for (const outcome of ["ready", "failed"] as const) {
+    test(`资产生成${outcome === "ready" ? "完成" : "未采用结果"}时，已打开的版本记录自动刷新`, async () => {
+        const original = { ...hero, imageVersion: 1 };
+        const previousTake = castHistoryTake(1, hero.imageResourceId!, true);
+        const history = spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [previousTake] });
+        await render(<DialogHarness castId={hero.id} items={[original]} />);
+        const historyPanel = document.querySelector('[aria-label="参考图历史"]')!;
+        await settleUntil(() => historyPanel.querySelector(".is-current b")?.textContent === "V1");
+
+        await render(<DialogHarness castId={hero.id} items={[{ ...original, imageStatus: "running" }]} />);
+        const adopted = outcome === "ready";
+        const newImage = "new-hero-image";
+        history.mockResolvedValue({ takes: [castHistoryTake(2, newImage, adopted), { ...previousTake, current: !adopted }] });
+        const completed = { ...original, imageStatus: outcome, ...(adopted && { imageVersion: 2, imageResourceId: newImage }) };
+        await render(<DialogHarness castId={hero.id} items={[completed]} />);
+
+        await settleUntil(() => historyPanel.querySelector("li:first-child b")?.textContent === "V2");
+        expect(historyPanel.querySelector(".is-current b")?.textContent).toBe(adopted ? "V2" : "V1");
+        expect(document.querySelector('[aria-label="参考图历史"]')).toBe(historyPanel);
+    });
+}
+
+test("轮询只看到重试前后的失败状态时，版本记录仍显示保留的新图", async () => {
+    const failed = { ...hero, imageStatus: "failed" as const, imageVersion: 1, updatedAt: "2026-11-20T04:00:00Z" };
+    const previousTake = castHistoryTake(1, hero.imageResourceId!, true);
+    const history = spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [previousTake] });
+    await render(<DialogHarness castId={hero.id} items={[failed]} />);
+    const historyPanel = document.querySelector('[aria-label="参考图历史"]')!;
+    await settleUntil(() => historyPanel.querySelector(".is-current b")?.textContent === "V1");
+
+    history.mockResolvedValue({ takes: [castHistoryTake(2, "rejected-retry-image", false), previousTake] });
+    await render(<DialogHarness castId={hero.id} items={[{ ...failed, updatedAt: "2026-11-20T04:01:00Z" }]} />);
+
+    await settleUntil(() => historyPanel.querySelector("li:first-child b")?.textContent === "V2");
+    expect(historyPanel.querySelector(".is-current b")?.textContent).toBe("V1");
+    expect(document.querySelector('[aria-label="参考图历史"]')).toBe(historyPanel);
+});
+
+test("资产新图出现时，迟到的首个历史响应不能覆盖新版本", async () => {
+    const original = { ...hero, imageVersion: 1 };
+    const previousTake = castHistoryTake(1, hero.imageResourceId!, true);
+    const newImage = "new-hero-image";
+    let completeOldHistory!: (value: { takes: DramaTake[] }) => void;
+    let firstSignal: AbortSignal | undefined;
+    const history = spyOn(api, "listDramaTakes")
+        .mockImplementationOnce((_projectId, _ownerId, _kind, signal) => {
+            firstSignal = signal;
+            return new Promise((resolve) => {
+                completeOldHistory = resolve;
+            });
+        })
+        .mockResolvedValue({ takes: [castHistoryTake(2, newImage, true), { ...previousTake, current: false }] });
+    await render(<DialogHarness castId={hero.id} items={[original]} />);
+    await settleUntil(() => history.mock.calls.length === 1);
+    const historyPanel = document.querySelector('[aria-label="参考图历史"]')!;
+    expect(historyPanel.textContent).toContain("正在读取版本");
+
+    await render(<DialogHarness castId={hero.id} items={[{ ...original, imageVersion: 2, imageResourceId: newImage }]} />);
+    await settleUntil(() => historyPanel.querySelector(".is-current b")?.textContent === "V2");
+    expect(firstSignal?.aborted).toBe(true);
+
+    await act(async () => completeOldHistory({ takes: [previousTake] }));
+    await settle();
+    expect(historyPanel.querySelector(".is-current b")?.textContent).toBe("V2");
+});
 
 test("资产文字与图片全部自动保存，底部状态与操作分行且无保存按钮", async () => {
     const target = { ...hero, imageOptionsJson: JSON.stringify({ subjectReferenceIds: ["subject-reference"] }) };
@@ -1451,7 +1564,22 @@ test("prompt rebuilding uses the currently edited appearance and compatible pres
     await fill("当前外观", "白色风衣，短发，银色耳饰");
     await enableOwnStyle();
     const style = findDramaStyle("3d-guoman")!;
-    expect(document.querySelector('[aria-label="参考图风格"] option[value="live-sweet"]')).toBeNull();
+    const presets = document.querySelector<HTMLSelectElement>('select[aria-label="参考图风格"]')!;
+    expect(presets.querySelector('option[value="live-sweet"]')).toBeNull();
+    expect(presets.querySelector('option[value="2d-webtoon"]')).not.toBeNull();
+    const selectedPreset = presets.value;
+    const changesBeforeFilter = changed.mock.calls.length;
+    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="题材筛选"]')!;
+    await act(async () => {
+        filter.value = "xianxia";
+        filter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(changed).toHaveBeenCalledTimes(changesBeforeFilter);
+    expect(presets.value).toBe(selectedPreset);
+    expect(presets.selectedOptions[0]?.disabled).toBe(true);
+    expect(presets.querySelector('option[value="2d-webtoon"]')).toBeNull();
+    expect(presets.querySelector('option[value="live-sweet"]')).toBeNull();
+    expect(presets.querySelector('option[value="3d-guoman"]')).not.toBeNull();
     await chooseImageStyle(style.id);
     expect(rebuilt).not.toHaveBeenCalled();
     await click("重新编排提示词");
@@ -1701,6 +1829,38 @@ for (const target of [hero, room, castFixture("prop", "玉佩", { kind: "prop" }
     });
 }
 
+test("独立视图右侧版本可预览历史原图，关闭后停留在当前视图", async () => {
+    const front = independentView(hero, "front-view", "正面图");
+    const oldImage = front.takes[0].resourceId!;
+    const oldImageUrl = "https://example.test/front-view-old.png";
+    const resolveImage = spyOn(imageStorage, "resolveImageUrl").mockResolvedValue(oldImageUrl);
+    spyOn(viewApi, "listDramaCastViews").mockResolvedValue({ views: [front] });
+    const adopt = spyOn(viewApi, "adoptDramaCastView").mockResolvedValue(front);
+    const onClose = mock();
+    await render(<DialogHarness castId={hero.id} items={[hero]} onClose={onClose} />);
+    await click("选择正面图独立视图");
+    const workspace = document.querySelector('[aria-label="正面图工作区"]')!;
+    const historyPanel = workspace.querySelector('[aria-label="独立视图版本记录"]')!;
+    const trigger = button("放大查看正面图版本 8", historyPanel);
+    trigger.focus();
+    await act(async () => trigger.click());
+    await settleUntil(() => Boolean(document.querySelector(".canvas-image-preview-modal img")));
+    const preview = document.querySelector(".canvas-image-preview-modal")!;
+    expect(resolveImage).toHaveBeenCalledWith(`resource:${oldImage}`, "");
+    expect(preview.querySelector<HTMLImageElement>("img")?.src).toBe(oldImageUrl);
+    expect(adopt).not.toHaveBeenCalled();
+
+    const previewStage = preview.querySelector<HTMLElement>('[role="region"]')!;
+    previewStage.focus();
+    expect(document.activeElement === previewStage).toBe(true);
+    await act(async () => previewStage.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 }) as unknown as Event));
+    await settleUntil(() => !document.querySelector(".canvas-image-preview-modal"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="正面图工作区"]') === workspace).toBe(true);
+    expect(document.activeElement === trigger).toBe(true);
+    expect(button("采用此版本", historyPanel)).toBeDefined();
+});
+
 test("独立视图在当前工作区单独保存、报价后一键生成和采用版本，主体dirty阻止切换", async () => {
     let row = independentView(hero, "front-view", "正面图");
     spyOn(viewApi, "listDramaCastViews").mockImplementation(async () => ({ views: [row] }));
@@ -1817,8 +1977,12 @@ test("独立视图新增与删除直接在工作区完成，不自动生成", as
     });
     const generation = spyGeneration();
     await render(<DialogHarness castId={hero.id} items={[hero]} />);
-    await settleUntil(() => !button("新增视图").disabled);
-    await click("新增视图");
+    await settleUntil(() => !button("添加视图").disabled);
+    const addTile = button("添加视图");
+    expect(addTile.classList.contains("drama-cast-add-tile")).toBe(true);
+    expect(addTile.textContent?.trim()).toBe("添加视图");
+    expect(document.body.textContent).not.toContain("暂无独立视图，可按需新增。");
+    await click("添加视图");
     await fill("视图名称", "新增正面");
     await waitForAutoSave();
     await settleUntil(() => Boolean(document.querySelector('[aria-label="新增正面工作区"]')));
@@ -1868,9 +2032,9 @@ test("独立视图作品配置读取失败时主视觉旁可刷新状态，恢�
     const read = spyOn(api, "getDrama").mockRejectedValue(new Error("暂时断线"));
     await render(<DialogHarness castId={hero.id} items={[hero]} />);
     await settleUntil(() => Boolean(document.body.textContent?.includes("作品配置读取失败")));
-    expect(button("新增视图").disabled).toBe(true);
+    expect(button("添加视图").disabled).toBe(true);
     read.mockResolvedValue(dialogSummary);
     await click("刷新视图状态");
-    await settleUntil(() => !button("新增视图").disabled);
+    await settleUntil(() => !button("添加视图").disabled);
     expect(document.body.textContent).not.toContain("作品配置读取失败");
 });

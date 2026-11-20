@@ -199,7 +199,7 @@ export function WorkflowStoryboardPage({
                                 <div className="drama-storyboard-action-group" role="group" aria-label="本段制作">
                                     <span>制作</span>
                                     <Button size="small" icon={<RefreshCw className="size-4" />} disabled={currentBusy} onClick={() => onWriteSegmentPrompt(segment)}>
-                                        {writing ? "撰写中" : segment.promptStatus === "failed" ? "重试本段提示词" : "撰写本段提示词"}
+                                        {writing ? "撰写中" : segment.promptStatus === "failed" ? "重试本段提示词" : "重新撰写本段提示词"}
                                     </Button>
                                     <QuotedMediaButton
                                         size="small"

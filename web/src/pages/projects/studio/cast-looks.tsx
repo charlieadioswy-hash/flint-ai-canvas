@@ -433,9 +433,10 @@ export function CastLooks({
                         onDirtyChange={(dirty, busy) => setFormState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
                     />
                 ) : looks.length < MAX_LOOKS ? (
-                    <Button size="small" icon={<Plus className="size-3.5" />} disabled={busy} onClick={() => setAdding(true)}>
-                        添加造型
-                    </Button>
+                    <button type="button" className="drama-cast-add-tile" disabled={busy} onClick={() => setAdding(true)}>
+                        <Plus className="size-5" aria-hidden />
+                        <span>添加妆造</span>
+                    </button>
                 ) : null}
             </div>
             <input

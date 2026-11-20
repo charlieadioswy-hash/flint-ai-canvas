@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Image as ImageIcon, LoaderCircle, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -138,6 +138,14 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt: altProp, onClose
                 body: { display: "flex", flex: 1, minHeight: 0 },
             }}
             onCancel={onClose}
+            wrapProps={{
+                onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+                    if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+                    // 嵌套预览优先处理自身焦点内的 Esc，避免关闭底层编辑窗口。
+                    event.stopPropagation();
+                    onClose();
+                },
+            }}
             className="canvas-image-preview-modal"
         >
             <div

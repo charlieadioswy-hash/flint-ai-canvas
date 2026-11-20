@@ -5,10 +5,12 @@ import { App, Button, Input } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { nanoid } from "nanoid";
 
+import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { StyleProfileEditorModal } from "@/components/canvas/style-profile-editor-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { createStyleProfileSnapshot, parseStyleProfile, serializeStyleProfile, type StyleProfileSnapshot } from "@/lib/canvas/style-profile";
 import { compileCanvasStylePreset, customCanvasStylePreset, recommendedCanvasStylePresets, type CanvasStylePreset, type ProjectStyleSelection } from "@/lib/canvas/canvas-style-system";
+import { dramaReferenceStyles, type DramaStyle } from "@/lib/drama/drama-styles";
 import { createStyleProfile, deleteStyleProfile, listStyleProfiles, setStyleProfileFavorite, touchStyleProfile, updateStyleProfile, type UserStyleProfile } from "@/services/api/style-profiles";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
@@ -386,13 +388,68 @@ const resolvedLegacyCanvasStylePresets = legacyCanvasStylePresets.map((preset) =
     return { ...upgraded, profile: createStyleProfileSnapshot({ ...compiled.profile!, presetId: preset.id }) };
 });
 
-const resolvableCanvasStylePresets: CanvasStylePreset[] = [...recommendedCanvasStylePresets, ...resolvedLegacyCanvasStylePresets];
+const canvasReferenceAliases = new Map([
+    ["live-urban", "urban-live-action"],
+    ["live-period-aesthetic", "period-live-action"],
+    ["live-hk", "retro-hong-kong"],
+    ["live-nature", "nature-healing"],
+    ["2d-guofeng", "chinese-2d"],
+    ["3d-guoman", "fantasy-3d"],
+    ["3d-pixar", "three-d-cartoon"],
+    ["2d-comic", "comic-pop"],
+]);
+const baseCanvasStylePresets = [...recommendedCanvasStylePresets, ...resolvedLegacyCanvasStylePresets];
+const canvasReferenceByPrompt = new Map<string, DramaStyle>();
+const additionalCanvasStylePresets: CanvasStylePreset[] = [];
+const canvasReferenceCategories = { live: "真人实拍", "2d": "二维动画", "3d": "三维动画", art: "插画动画" };
+for (const style of dramaReferenceStyles) {
+    const alias = canvasReferenceAliases.get(style.id);
+    const existing = baseCanvasStylePresets.find((preset) => preset.id === alias);
+    if (existing) {
+        canvasReferenceByPrompt.set(existing.prompt, style);
+        continue;
+    }
+    const preset: CanvasStylePreset = {
+        id: style.id,
+        title: style.name,
+        description: style.description,
+        category: canvasReferenceCategories[style.category],
+        tags: style.tags,
+        aliases: style.aliases,
+        prompt: style.prompt,
+        imageUrl: style.cover || style.sampleImages?.[0] || "/short-drama-styles/real-life.jpg",
+        sampleImages: style.sampleImages,
+    };
+    additionalCanvasStylePresets.push({ ...preset, profile: createStyleProfileSnapshot({ ...preset, coverUrl: preset.imageUrl }) });
+}
+
+const resolvableCanvasStylePresets: CanvasStylePreset[] = [
+    ...baseCanvasStylePresets.map((preset) => {
+        const style = canvasReferenceByPrompt.get(preset.prompt);
+        if (!style) return preset;
+        const updated: CanvasStylePreset = {
+            ...preset,
+            description: style.description,
+            imageUrl: style.cover || preset.imageUrl,
+            tags: [...new Set([...style.tags, ...preset.tags])],
+            aliases: [...new Set([style.name, ...(style.aliases || [])])],
+            prompt: style.prompt,
+            sampleImages: style.sampleImages,
+        };
+        return {
+            ...updated,
+            profile: createStyleProfileSnapshot({ ...preset.profile, presetId: preset.id, title: updated.title, description: updated.description, tags: updated.tags, prompt: updated.prompt, coverUrl: updated.imageUrl }),
+        };
+    }),
+    ...additionalCanvasStylePresets,
+];
 
 // 风格中心不靠重复卡片虚增数量；旧 ID 仍留在解析集合中，保证历史项目可以恢复。
 export const canvasStylePresets: CanvasStylePreset[] = resolvableCanvasStylePresets.filter((preset, index, presets) => presets.findIndex((candidate) => candidate.prompt === preset.prompt) === index);
 
 export function resolveCanvasStylePreset(id?: string) {
-    return resolvableCanvasStylePresets.find((preset) => preset.id === id) || customCanvasStylePreset(id);
+    const presetId = (id && canvasReferenceAliases.get(id)) || id;
+    return resolvableCanvasStylePresets.find((preset) => preset.id === presetId) || customCanvasStylePreset(id);
 }
 
 export function resolveProjectCanvasStyle(presetId?: string, profileJson?: string | null): CanvasStylePreset | undefined {
@@ -407,6 +464,7 @@ export function resolveProjectCanvasStyle(presetId?: string, profileJson?: strin
         tags: [...profile.tags],
         prompt: profile.prompt,
         imageUrl: profile.coverUrl || preset?.imageUrl || "/short-drama-styles/real-life.jpg",
+        sampleImages: preset?.sampleImages,
         selection: preset?.selection,
         profile,
     };
@@ -505,7 +563,9 @@ function StyleCenter({ open, value, currentProfile, startInEditor = false, apply
                           ...recentIds.flatMap((id) => systemItems.filter((item) => item.preset.id === id)),
                       ];
         if (tab === "system" && category !== "全部") source = source.filter((item) => item.preset.category === category);
-        if (keyword) source = source.filter((item) => `${item.preset.title} ${item.preset.category} ${item.preset.description} ${item.preset.tags.join(" ")}`.toLocaleLowerCase("zh-CN").includes(keyword));
+        if (keyword) {
+            source = source.filter(({ preset }) => [preset.title, preset.category, preset.description, ...preset.tags, ...(preset.aliases || [])].join(" ").toLocaleLowerCase("zh-CN").includes(keyword));
+        }
         return source;
     }, [category, query, recentIds, systemFavoriteIds, systemItems, tab, userItems]);
 
@@ -891,9 +951,15 @@ function editableCopy(profile: StyleProfileSnapshot, entityId?: string, title?: 
 
 export function CanvasStyleDetailModal({ open, preset, selected = false, onClose, onSelect }: { open: boolean; preset: CanvasStylePreset | null; selected?: boolean; onClose: () => void; onSelect?: (preset: CanvasStylePreset) => void }) {
     const theme = canvasThemes[useActiveTheme()];
+    const [preview, setPreview] = useState<{ src: string; alt: string }>();
     const sections = preset ? parseStyleSections(preset.prompt) : [];
+    const sampleImages = [...new Set(preset?.sampleImages)].filter((url) => url !== preset?.imageUrl);
+    const close = () => {
+        setPreview(undefined);
+        onClose();
+    };
     return (
-        <AppModal rootClassName="canvas-style-detail-modal" open={open} title={null} footer={null} centered destroyOnHidden width="min(820px, calc(100vw - 24px))" onCancel={onClose} flush>
+        <AppModal rootClassName="canvas-style-detail-modal" open={open} title={null} footer={null} centered destroyOnHidden width="min(820px, calc(100vw - 24px))" onCancel={close} flush>
             {preset ? (
                 <div className="canvas-style-detail-shell flex flex-col overflow-hidden" style={{ color: theme.node.text, background: theme.node.panel }}>
                     <div className="flex h-44 shrink-0 items-center justify-center overflow-hidden border-b sm:h-52" style={{ borderColor: theme.node.stroke, background: theme.canvas.background }}>
@@ -918,6 +984,37 @@ export function CanvasStyleDetailModal({ open, preset, selected = false, onClose
                         <StyleDetailMetric label="快照版本" value={`r${preset.profile?.revision || 1}`} muted={theme.node.muted} />
                     </div>
                     <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-5">
+                        {preset.tags.length ? (
+                            <div className="flex flex-wrap gap-1 border-b py-3" aria-label="风格标签" style={{ borderColor: theme.node.stroke }}>
+                                {preset.tags.map((tag, index) => (
+                                    <span key={index} className="rounded bg-foreground/5 px-2 py-0.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                                        {tag}
+                                    </span>
+                                ))}
+                            </div>
+                        ) : null}
+                        {sampleImages.length ? (
+                            <section className="border-b py-3" style={{ borderColor: theme.node.stroke }}>
+                                <h3 className="text-xs font-semibold">画风样图</h3>
+                                <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                                    {sampleImages.map((src, index) => {
+                                        const alt = `${preset.title}样图 ${index + 1}`;
+                                        return (
+                                            <button
+                                                key={src}
+                                                type="button"
+                                                aria-label={`放大${alt}`}
+                                                className="aspect-square min-w-0 cursor-zoom-in overflow-hidden rounded-md border focus-visible:outline-2 focus-visible:outline-offset-2"
+                                                style={{ borderColor: theme.node.stroke, background: theme.canvas.background, outlineColor: theme.node.activeStroke }}
+                                                onClick={() => setPreview({ src, alt })}
+                                            >
+                                                <img src={src} alt="" loading="lazy" className="h-full w-full object-contain" />
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </section>
+                        ) : null}
                         {preset.profile?.assets.length ? (
                             <section className="border-b py-3" style={{ borderColor: theme.node.stroke }}>
                                 <h3 className="text-xs font-semibold">执行资产</h3>
@@ -956,13 +1053,14 @@ export function CanvasStyleDetailModal({ open, preset, selected = false, onClose
                         ) : null}
                     </div>
                     <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t px-4 py-3 sm:px-5" style={{ borderColor: theme.node.stroke }}>
-                        <Button onClick={onClose}>关闭</Button>
+                        <Button onClick={close}>关闭</Button>
                         {onSelect ? (
                             <Button type="primary" disabled={selected} icon={selected ? <Check className="size-3.5" /> : <Palette className="size-3.5" />} onClick={() => onSelect(preset)}>
                                 {selected ? "当前画风" : "选择该画风"}
                             </Button>
                         ) : null}
                     </footer>
+                    {open && preview ? <CanvasImagePreview src={preview.src} alt={preview.alt} onClose={() => setPreview(undefined)} /> : null}
                 </div>
             ) : null}
         </AppModal>

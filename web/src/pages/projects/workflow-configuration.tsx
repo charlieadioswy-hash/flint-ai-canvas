@@ -6,7 +6,7 @@ import { Button, Input, Select } from "antd";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { CanvasStylePickerModal, canvasStylePresets, userStylePreset } from "@/components/canvas/canvas-style-picker-modal";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoOptionFits, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
-import { DRAMA_STYLE_CATEGORIES, dramaStylePresetsForType, findDramaStyle, type DramaStyleCategory } from "@/lib/drama/drama-styles";
+import { dramaStyleTagsForType, filterDramaStylePresets, type DramaStyleTag } from "@/lib/drama/drama-styles";
 import { DRAMA_STYLE_PROMPT_MAX_LENGTH } from "@/lib/drama/style-limits";
 import type { DramaSettings, DramaSummary } from "@/services/api/drama";
 import { listStyleProfiles } from "@/services/api/style-profiles";
@@ -14,7 +14,7 @@ import { listStyleProfiles } from "@/services/api/style-profiles";
 import { AssetSchemePicker, useAssetSchemes } from "./asset-scheme";
 import { CharacterTemplatePicker } from "./character-template-picker";
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
-import { dramaLibraryStyleInstructions, dramaPresetSettings, dramaTypeLabel } from "./drama-style-selection";
+import { dramaLibraryStyleInstructions, dramaPresetSettings, dramaTypeLabel, matchesLegacyLibraryStyle } from "./drama-style-selection";
 import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./step-settings";
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { resolveWorkflowConfigurationStyle, workflowConfigurationSamples } from "./workflow-configuration-preview";
@@ -49,7 +49,7 @@ export function WorkflowConfiguration({
     const catalog = useDramaModelCatalog();
     const schemes = useAssetSchemes();
     const [libraryOpen, setLibraryOpen] = useState(false);
-    const [category, setCategory] = useState<"all" | "hot" | DramaStyleCategory>("all");
+    const [tag, setTag] = useState<"all" | DramaStyleTag>("all");
     const [chosenMode, setChosenMode] = useState<"preset" | "custom">();
     const custom = (chosenMode ?? settings.styleSelection?.mode) === "custom";
     const [previewImage, setPreviewImage] = useState<string>();
@@ -60,23 +60,23 @@ export function WorkflowConfiguration({
     const resolutionField = useRef<HTMLDivElement>(null);
     const continuityField = useRef<HTMLDivElement>(null);
     const profiles = useQuery({ queryKey: ["style-profiles"], queryFn: listStyleProfiles });
-    const style = settings.styleSelection?.mode === "preset" ? findDramaStyle(settings.styleSelection.presetId) : settings.styleSelection ? undefined : resolveWorkflowConfigurationStyle(settings.stylePrompt);
-    const libraryStyle = [
-        ...canvasStylePresets,
-        ...(profiles.data?.profiles || []).flatMap((item) => {
-            const found = userStylePreset(item);
-            return found ? [found] : [];
-        }),
-    ].find((item) => item.title === settings.styleName && dramaLibraryStyleInstructions(item) === settings.stylePrompt);
+    const style = resolveWorkflowConfigurationStyle(settings.stylePrompt, settings.styleSelection);
+    const libraryStyle =
+        [
+            ...canvasStylePresets,
+            ...(profiles.data?.profiles || []).flatMap((item) => {
+                const found = userStylePreset(item);
+                return found ? [found] : [];
+            }),
+        ].find((item) => item.title === settings.styleName && dramaLibraryStyleInstructions(item) === settings.stylePrompt) || canvasStylePresets.find((item) => matchesLegacyLibraryStyle(item, settings.styleName, settings.stylePrompt));
     const image = libraryStyle?.profile ? libraryStyle.profile.coverUrl : libraryStyle?.imageUrl;
-    const directImages = [...new Set([image, ...(libraryStyle?.profile?.assets.flatMap((asset) => asset.referenceUrls || []) || [])].filter((url): url is string => Boolean(url)))];
+    const directImages = [...new Set([image, ...(libraryStyle?.sampleImages || []), ...(libraryStyle?.profile?.assets.flatMap((asset) => asset.referenceUrls || []) || [])].filter((url): url is string => Boolean(url)))];
     const previewImages = directImages.length ? directImages.map((url) => ({ url, label: settings.styleName, illustrative: false })) : workflowConfigurationSamples(style);
     const imageFailed = (url: string) => setUnavailableImages((current) => new Set([...current, url]));
     const typeLabel = dramaTypeLabel(settings.dramaType);
-    const compatible = dramaStylePresetsForType(settings.dramaType);
-    const categories = DRAMA_STYLE_CATEGORIES.filter((item) => item.key === "all" || compatible.some((style) => (item.key === "hot" ? style.hot : style.category === item.key)));
-    const activeCategory = categories.some((item) => item.key === category) ? category : "all";
-    const availableStyles = compatible.filter((style) => activeCategory === "all" || (activeCategory === "hot" ? style.hot : style.category === activeCategory));
+    const tags = dramaStyleTagsForType(settings.dramaType);
+    const activeTag = tags.some((item) => item.key === tag) ? tag : "all";
+    const availableStyles = filterDramaStylePresets(settings.dramaType, activeTag);
     const videoOption = catalog.data?.options.video.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(settings.models.video));
     const imageChoice = dramaChoiceKey(settings.models.characterImage) ? settings.models.characterImage : settings.models.image;
     const imageOption = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(imageChoice));
@@ -84,6 +84,8 @@ export function WorkflowConfiguration({
     const ratioIssue = dramaVideoRatioIssue(videoOption, settings.aspectRatio);
     const resolutionIssue = dramaVideoResolutionIssue(videoOption, settings.videoResolution);
     const continuityIssue = videoOption && continuity === "tail_frame" && !videoOption.tailFrameChain ? "当前视频模型不支持尾帧续接" : "";
+
+    useEffect(() => setTag("all"), [settings.dramaType]);
 
     useEffect(() => {
         if (styleOnly) return;
@@ -298,9 +300,9 @@ export function WorkflowConfiguration({
                         </>
                     ) : (
                         <>
-                            <div className="drama-workflow-style-categories" role="group" aria-label="风格分类">
-                                {categories.map((item) => (
-                                    <button key={item.key} type="button" aria-pressed={activeCategory === item.key} onClick={() => setCategory(item.key)}>
+                            <div className="drama-workflow-style-categories" role="group" aria-label="风格标签">
+                                {tags.map((item) => (
+                                    <button key={item.key} type="button" aria-pressed={activeTag === item.key} onClick={() => setTag(item.key)}>
                                         {item.label}
                                     </button>
                                 ))}

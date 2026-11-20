@@ -7,5 +7,5 @@ test("按剧集类型选择预设风格及恢复旧草稿在独立 DOM 中通过
     const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
     expect(result.exitCode, output).toBe(0);
     expect(output).toContain("0 fail");
-    expect(output).toContain("10 pass");
+    expect(output).toContain("13 pass");
 }, 60000);

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { App, Button, Input, Switch } from "antd";
 import { RefreshCw } from "lucide-react";
 
-import { defaultDramaStyleForType, dramaStylePresetsForType, findDramaStyle } from "@/lib/drama/drama-styles";
+import { defaultDramaStyleForType, dramaStyleTagsForType, filterDramaStylePresets, findDramaStyle, type DramaStyleTag } from "@/lib/drama/drama-styles";
 import { rebuildDramaCastImagePrompt, type DramaCastImageStyle, type DramaSettings } from "@/services/api/drama";
 import { useDramaOperationScope } from "./use-drama-operation-scope";
 
@@ -30,6 +30,7 @@ export function CastImageFields({
     const { message, modal } = App.useApp();
     const operation = useDramaOperationScope(projectId);
     const [building, setBuilding] = useState(false);
+    const [tag, setTag] = useState<"all" | DramaStyleTag>("all");
     const buildingRef = useRef(false);
     const confirmation = useRef<{ destroy: () => void } | undefined>(undefined);
     useEffect(() => () => confirmation.current?.destroy(), []);
@@ -37,8 +38,11 @@ export function CastImageFields({
     const latest = useRef(snapshot);
     latest.current = snapshot;
     const ownStyle = Boolean(value.imageStyleId || value.imageStyleName || value.imageStylePrompt);
-    const presets = dramaStylePresetsForType(dramaType);
-    const currentPreset = presets.find((style) => style.id === value.imageStyleId);
+    const tags = dramaStyleTagsForType(dramaType);
+    const activeTag = tags.some((item) => item.key === tag) ? tag : "all";
+    const presets = filterDramaStylePresets(dramaType, activeTag);
+    const selectedStyleId = value.imageStyleId || "";
+    const selectedPresetVisible = presets.some((style) => style.id === selectedStyleId);
     const chooseStyle = (id: string) => {
         const style = findDramaStyle(id);
         if (style) onChange({ imageStyleId: style.id, imageStyleName: style.name, imageStylePrompt: style.prompt });
@@ -103,21 +107,33 @@ export function CastImageFields({
                 为此设定单独设置风格
             </label>
             {ownStyle ? (
-                <label className="drama-field">
-                    <span className="drama-field-label">参考图风格</span>
-                    <select aria-label="参考图风格" value={currentPreset?.id || ""} disabled={disabled || building} onChange={(event) => chooseStyle(event.target.value)}>
-                        {currentPreset ? null : (
-                            <option value="" disabled>
-                                {value.imageStyleName || "当前风格"}
-                            </option>
-                        )}
-                        {presets.map((style) => (
-                            <option key={style.id} value={style.id}>
-                                {style.name}
-                            </option>
-                        ))}
-                    </select>
-                </label>
+                <>
+                    <label className="drama-field">
+                        <span className="drama-field-label">题材筛选</span>
+                        <select aria-label="题材筛选" value={activeTag} disabled={disabled || building} onChange={(event) => setTag(event.target.value as "all" | DramaStyleTag)}>
+                            {tags.map(({ key, label }) => (
+                                <option key={key} value={key}>
+                                    {label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="drama-field">
+                        <span className="drama-field-label">参考图风格</span>
+                        <select aria-label="参考图风格" value={selectedStyleId} disabled={disabled || building} onChange={(event) => chooseStyle(event.target.value)}>
+                            {!selectedPresetVisible ? (
+                                <option value={selectedStyleId} disabled>
+                                    {value.imageStyleName || findDramaStyle(selectedStyleId)?.name || "当前风格"}
+                                </option>
+                            ) : null}
+                            {presets.map((style) => (
+                                <option key={style.id} value={style.id}>
+                                    {style.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </>
             ) : (
                 <small className="drama-editor-note">沿用{episodeId ? "本集" : "作品"}风格；穿越、幼年或不同世界的造型可在此单独选择。</small>
             )}

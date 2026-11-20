@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button, InputNumber, Select } from "antd";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { DRAMA_STYLES } from "@/lib/drama/drama-styles";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, dramaVideoResolutionTiers, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
 import { shotTarget } from "@/lib/drama/storyboard";
@@ -13,6 +12,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
+import { resolveWorkflowConfigurationStyle } from "./workflow-configuration-preview";
 import "./workflow-mode-dialog.css";
 
 type GenerationMode = "reference_video" | "grid_image" | "smart_director" | "storyboard";
@@ -76,7 +76,8 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
     const [error, setError] = useState("");
     const catalog = useDramaModelCatalog();
     const selected = MODES.find((item) => item.value === mode)!;
-    const sample = DRAMA_STYLES.find((item) => item.name === draft.styleName && item.prompt === draft.stylePrompt)?.cover || "/short-drama-styles/chinese-2d.jpg";
+    const preset = resolveWorkflowConfigurationStyle(draft.stylePrompt, draft.styleSelection?.mode === "preset" ? draft.styleSelection : undefined);
+    const sample = (preset?.name === draft.styleName ? preset.cover : undefined) || "/short-drama-styles/chinese-2d.jpg";
     const videoOptions = catalog.data?.options.video || [];
     const videoModel = videoOptions.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.models.video));
     const videoResolution = dramaVideoResolutionValue(videoModel, draft.videoResolution);
@@ -410,7 +411,7 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
                         取消
                     </Button>
                     <Button type="primary" loading={busy} disabled={stale || mediaSaving || generationDirty || Boolean(configIssue)} onClick={() => void confirm()}>
-                        确认并进入漫剧分镜
+                        确认并进入分镜
                     </Button>
                 </footer>
             </div>

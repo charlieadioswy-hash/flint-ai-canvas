@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { App, Button } from "antd";
 import { Check, ChevronLeft, ChevronRight, Copy, Flame, X } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { DRAMA_STYLE_CATEGORIES, DRAMA_STYLE_FORMS, findDramaStyle, parseDramaStyleId, styleCoverBackground } from "@/lib/drama/drama-styles";
+import { DRAMA_STYLE_CATEGORIES, DRAMA_STYLE_FORMS, findDramaStyle, parseDramaStyleId, styleCoverBackground, type DramaStyle } from "@/lib/drama/drama-styles";
 
 const DETAIL_ROWS = [
     { key: "medium", label: "画面媒介" },
@@ -13,7 +13,41 @@ const DETAIL_ROWS = [
     { key: "forbid", label: "避免出现" },
 ] as const;
 
-/** 风格详情：大图 + 分项美术基线 + 完整提示词；左右键在当前筛选结果里切换。 */
+function DramaStyleDetailMedia({ style }: { style: DramaStyle }) {
+    const images = [...new Set([...(style.cover ? [style.cover] : []), ...(style.sampleImages ?? [])])];
+    const [selectedImage, setSelectedImage] = useState<string>();
+    const currentImage = selectedImage && images.includes(selectedImage) ? selectedImage : images[0];
+
+    return (
+        <div className="drama-style-detail-media">
+            <div className="drama-style-detail-cover" style={currentImage ? undefined : { background: styleCoverBackground(style) }}>
+                {currentImage ? (
+                    <img src={currentImage} alt={`${style.name}样图`} />
+                ) : (
+                    <span className="drama-style-detail-glyph" aria-hidden>
+                        {style.name.replace(/^3D\s*/, "").slice(0, 2)}
+                    </span>
+                )}
+                <div className="drama-style-detail-palette" aria-label="主色">
+                    {style.palette.map((color) => (
+                        <span key={color} style={{ background: color }} title={color} />
+                    ))}
+                </div>
+            </div>
+            {images.length > 1 ? (
+                <div className="drama-style-detail-gallery thin-scrollbar" role="group" aria-label="风格样图">
+                    {images.map((url, index) => (
+                        <button key={url} type="button" aria-pressed={url === currentImage} aria-label={`查看样图 ${index + 1}`} onClick={() => setSelectedImage(url)}>
+                            <img src={url} alt="" loading="lazy" />
+                        </button>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+/** 左右键在当前筛选结果里切换预设。 */
 export function DramaStyleDetailModal({
     styleId,
     selectedId,
@@ -66,18 +100,7 @@ export function DramaStyleDetailModal({
         <AppModal open={Boolean(style)} onCancel={onClose} footer={null} title={null} closable={false} flush centered width="min(880px, calc(100vw - 48px))" rootClassName="drama-root" aria-label="风格详情">
             {style ? (
                 <div className="drama-style-detail">
-                    <div className="drama-style-detail-cover" style={{ background: styleCoverBackground(style) }}>
-                        {!style.cover ? (
-                            <span className="drama-style-detail-glyph" aria-hidden>
-                                {style.name.replace(/^3D\s*/, "").slice(0, 2)}
-                            </span>
-                        ) : null}
-                        <div className="drama-style-detail-palette" aria-label="主色">
-                            {style.palette.map((color) => (
-                                <span key={color} style={{ background: color }} title={color} />
-                            ))}
-                        </div>
-                    </div>
+                    <DramaStyleDetailMedia key={style.id} style={style} />
                     <div className="drama-style-detail-body">
                         <header className="drama-style-detail-head">
                             <div className="min-w-0">
@@ -123,7 +146,7 @@ export function DramaStyleDetailModal({
                                 <dd className="is-prompt">{style.prompt}</dd>
                             </div>
                         </dl>
-                        <p className="drama-style-detail-note">风格只锁定全剧的画风、色调与服化道，具体构图和动作由分镜决定。{style.cover ? "" : "该风格暂无样图，左侧为主色示意。"}</p>
+                        <p className="drama-style-detail-note">风格只锁定全剧的画风、色调与服化道，具体构图和动作由分镜决定。{style.cover || style.sampleImages?.length ? "" : "该风格暂无样图，色块为主色示意。"}</p>
                         <footer className="drama-style-detail-foot">
                             <Button icon={<ChevronLeft className="size-4" />} disabled={!prevId} onClick={() => prevId && onNavigate(prevId)} aria-label="上一个风格" />
                             <Button icon={<ChevronRight className="size-4" />} disabled={!nextId} onClick={() => nextId && onNavigate(nextId)} aria-label="下一个风格" />

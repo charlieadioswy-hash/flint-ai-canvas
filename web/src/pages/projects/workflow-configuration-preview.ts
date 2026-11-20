@@ -1,4 +1,5 @@
-import { composeDramaStyleId, DRAMA_STYLES, DRAMA_STYLE_FORMS, DRAMA_STYLE_THEMES, findDramaStyle, getDramaStyleComposition, type DramaStyle } from "@/lib/drama/drama-styles";
+import { composeDramaStyleId, DRAMA_STYLES, DRAMA_STYLE_FORMS, DRAMA_STYLE_THEMES, findDramaStyleByLegacyPrompt, findDramaStyle, getDramaStyleComposition, type DramaStyle } from "@/lib/drama/drama-styles";
+import type { DramaSettings } from "@/services/api/drama";
 
 const configurationStyles = [
     ...DRAMA_STYLES,
@@ -11,8 +12,10 @@ const configurationStyles = [
 ];
 
 /** 已保存的提示词是识别依据；同名的手动改写不能被当作原预设。 */
-export function resolveWorkflowConfigurationStyle(prompt: string): DramaStyle | undefined {
-    return prompt.trim() ? configurationStyles.find((style) => style.prompt.trim() === prompt.trim()) : undefined;
+export function resolveWorkflowConfigurationStyle(prompt: string, selection?: DramaSettings["styleSelection"]): DramaStyle | undefined {
+    if (selection) return selection.mode === "preset" ? findDramaStyle(selection.presetId) : undefined;
+    const saved = prompt.trim();
+    return saved ? configurationStyles.find((style) => style.prompt === saved) || findDramaStyleByLegacyPrompt(saved) : undefined;
 }
 
 /** 组合没有专属样图时，仅借用相同表现形式与题材的现有示意图。 */

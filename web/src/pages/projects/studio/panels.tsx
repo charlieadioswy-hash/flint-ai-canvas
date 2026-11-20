@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Checkbox, Input, InputNumber, Select, Switch } from "antd";
 import { useBlocker } from "react-router";
 import {
@@ -387,9 +387,30 @@ export function CastEditor(props: CastEditorProps) {
 }
 
 function CastEditorSession(props: CastEditorProps) {
+    const { projectId, cast } = props;
+    const { id, imageVersion, imageResourceId, imageStatus, updatedAt } = cast;
+    const queryClient = useQueryClient();
+    const { capture, isCurrent } = useDramaOperationScope(projectId);
     // 同资产保存后的表单回填不能取消尚未完成的生成；切换资产时由会话边界清理。
-    const regenerationGuard = useCastRegenerationGuard(props.projectId);
+    const regenerationGuard = useCastRegenerationGuard(projectId);
     const [mainState, setMainState] = useState({ dirty: false, busy: false });
+    const previousImage = useRef({ imageVersion, imageResourceId, imageStatus, updatedAt });
+    useEffect(() => {
+        const previous = previousImage.current;
+        previousImage.current = { imageVersion, imageResourceId, imageStatus, updatedAt };
+        const imageChanged = previous.imageVersion !== imageVersion || previous.imageResourceId !== imageResourceId;
+        const generationFinished = previous.imageStatus !== imageStatus && (imageStatus === "ready" || imageStatus === "failed");
+        // 轮询可能跳过重试的中间状态，失败结果仍可能写入版本记录。
+        const failureUpdated = imageStatus === "failed" && previous.updatedAt !== updatedAt;
+        if (!imageChanged && !generationFinished && !failureUpdated) return;
+
+        const ticket = capture();
+        const filter = { queryKey: dramaKeys.takes(projectId, "cast", id), exact: true };
+        // 首次读取也可能在生成完成前发出，取消后再刷新以免复用旧请求。
+        void queryClient.cancelQueries(filter).then(() => {
+            if (isCurrent(ticket)) return queryClient.invalidateQueries(filter);
+        });
+    }, [capture, id, imageResourceId, imageStatus, imageVersion, isCurrent, projectId, queryClient, updatedAt]);
     if (props.layout !== "workspace") return <CastEditorForm {...props} regenerationGuard={regenerationGuard} />;
     return (
         <CastViewWorkspace
@@ -445,7 +466,7 @@ function CastEditorForm({
             mounted.current = false;
         };
     }, []);
-    const [previewing, setPreviewing] = useState(false);
+    const [previewImage, setPreviewImage] = useState<{ resourceId: string; alt: string }>();
     const [name, setName] = useState(cast.lookName || cast.name);
     const [aliases, setAliases] = useState(parseList(cast.aliasesJson));
     const [appearance, setAppearance] = useState(cast.appearance);
@@ -660,6 +681,11 @@ function CastEditorForm({
     const adoptLibraryImage = async (resourceId: string) => imageAdopted(await setDramaCastImage(projectId, cast.id, resourceId, restyle));
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
+    const previewReferenceImage = (resourceId: string | undefined, version?: number) => {
+        if (!resourceId) return;
+        const label = `${cast.lookName || cast.name} · ${kindLabel}参考图`;
+        setPreviewImage({ resourceId, alt: version === undefined ? label : `${label} · V${version}` });
+    };
     const saving = autoSave.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
     const editBlocked = regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
     const busy = saving || mediaBusy(cast.imageStatus) || dirty;
@@ -762,7 +788,7 @@ function CastEditorForm({
                 <div className="drama-cast-hero" style={castRatio(cast.kind, ratios).style}>
                     {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt={cast.name} loading={castImageLoading} failed={castImageFailed} /> : null}
                     {cast.imageResourceId ? (
-                        <button type="button" className="drama-cast-hero-zoom" aria-label={`放大查看${cast.lookName || cast.name}的参考图`} title="点击放大查看" onClick={() => setPreviewing(true)}>
+                        <button type="button" className="drama-cast-hero-zoom" aria-label={`放大查看${cast.lookName || cast.name}的参考图`} title="点击放大查看" onClick={() => previewReferenceImage(cast.imageResourceId)}>
                             <span className="drama-cast-hero-zoom-hint" aria-hidden="true">
                                 <Maximize2 className="size-3.5" />
                             </span>
@@ -1001,10 +1027,10 @@ function CastEditorForm({
                         <h3>版本记录</h3>
                     </div>
                 ) : null}
-                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" showHeading={layout !== "workspace"} />
+                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" showHeading={layout !== "workspace"} onPreviewImage={previewReferenceImage} />
                 {layout === "workspace" ? <p className="drama-editor-note">生成、上传与画布精修产生的图片会保留在这里。</p> : null}
             </aside>
-            {previewing && cast.imageResourceId ? <CanvasImagePreview storageKey={`resource:${cast.imageResourceId}`} alt={`${cast.lookName || cast.name} · ${kindLabel}参考图`} onClose={() => setPreviewing(false)} /> : null}
+            {previewImage ? <CanvasImagePreview storageKey={`resource:${previewImage.resourceId}`} alt={previewImage.alt} onClose={() => setPreviewImage(undefined)} /> : null}
         </div>
     );
 }

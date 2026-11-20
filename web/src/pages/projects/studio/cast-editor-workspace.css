@@ -13,7 +13,7 @@
 
 .drama-editor.is-workspace {
     grid-template-columns: minmax(260px, 22%) minmax(0, 1fr) minmax(180px, 18%);
-    grid-template-rows: minmax(200px, 1fr) auto minmax(140px, 24%);
+    grid-template-rows: minmax(0, max-content) auto minmax(140px, 1fr);
     grid-template-areas: "settings preview history" "settings actions history" "settings extras history";
     height: 100%;
     min-height: 0;
@@ -83,26 +83,35 @@
 
 .drama-editor.is-workspace > .drama-editor-preview {
     grid-area: preview;
-    grid-template-rows: auto minmax(0, 1fr);
-    height: 100%;
+    --drama-preview-image-max-height: max(140px, 52dvh);
     min-height: 0;
-    padding: var(--space-4);
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
     background: var(--surface-hover);
 }
 
 .drama-editor.is-workspace .drama-cast-hero {
-    height: 100%;
-    max-height: none;
+    height: auto;
+    max-height: var(--drama-preview-image-max-height);
     min-height: 0;
-    aspect-ratio: auto;
+    aspect-ratio: var(--drama-cast-ratio, 16 / 9);
     border: 0;
     border-radius: 0;
     background: transparent;
 }
 
+.drama-editor.is-workspace .drama-cast-hero:has(> .cached-resource-image-shell > img) {
+    aspect-ratio: auto;
+}
+
+.drama-editor.is-workspace .drama-cast-hero > .cached-resource-image-shell:has(> img) {
+    position: static;
+    display: block;
+}
+
 .drama-editor.is-workspace .drama-cast-hero img {
-    width: 100%;
-    height: 100%;
+    height: auto;
+    max-height: min(100%, var(--drama-preview-image-max-height));
     object-fit: contain;
 }
 
@@ -278,6 +287,35 @@
     opacity: 0.6;
 }
 
+.drama-cast-add-tile {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: var(--space-1);
+    flex: 0 0 auto;
+    align-self: start;
+    width: 104px;
+    max-width: 100%;
+    aspect-ratio: 1;
+    border: 1px dashed var(--drama-line-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+    cursor: pointer;
+}
+
+.drama-cast-add-tile:enabled:hover {
+    border-color: var(--control-selected-border);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.drama-cast-add-tile:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .drama-editor.is-workspace.is-view {
     grid-template-columns: minmax(280px, 28%) minmax(0, 1fr) minmax(180px, 18%);
 }
@@ -358,16 +396,6 @@
         max-height: none;
         height: auto;
         overflow: visible;
-    }
-
-    .drama-editor.is-workspace > .drama-editor-preview {
-        height: auto;
-    }
-
-    .drama-editor.is-workspace .drama-cast-hero {
-        height: auto;
-        min-height: 240px;
-        aspect-ratio: var(--drama-cast-ratio, 16 / 9);
     }
 
     .drama-editor.is-workspace .drama-takes-list {

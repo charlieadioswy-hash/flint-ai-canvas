@@ -207,7 +207,7 @@ test("补图预设的封面加载失败时，只有对应的卡片图片与预�
         await act(async () => card.querySelector("img")!.dispatchEvent(new Event("error")));
 
         expect(card.textContent).toContain("样图不可用");
-        expect(photos.map((photo) => photo.disabled)).toEqual([true, false, false]);
+        expect(photos.filter((photo) => photo.disabled)).toEqual([photos[0]!]);
         expect(photos[0].textContent).toContain("样图暂不可用");
     } finally {
         await view.close();
@@ -218,13 +218,22 @@ test("剧集类型限定预设风格，仍可套用我的风格", async () => {
     const current = findDramaStyle("live-campus")!;
     const next = findDramaStyle("live-family")!;
     const comic = findDramaStyle("2d-manhua")!;
+    const suspense = findDramaStyle("live-suspense")!;
     const view = await mount({ ...baseSettings, dramaType: "live_action", styleName: current.name, stylePrompt: current.prompt }, {});
     try {
         expect(view.host.textContent).toContain("真人剧");
         expect(view.host.textContent).not.toContain("自由组合");
-        const cards = [...view.host.querySelectorAll<HTMLButtonElement>(".drama-workflow-style-options button")];
-        expect(cards.some((item) => item.textContent?.includes(comic.name))).toBe(false);
-        await click(cards.find((item) => item.textContent?.includes(next.name))!);
+        const cards = () => [...view.host.querySelectorAll<HTMLButtonElement>(".drama-workflow-style-options button")];
+        const tag = (label: string) => [...view.host.querySelectorAll<HTMLButtonElement>('[aria-label="风格标签"] button')].find((item) => item.textContent?.trim() === label)!;
+        expect(cards().some((item) => item.textContent?.includes(comic.name))).toBe(false);
+        expect(tag("全部").getAttribute("aria-pressed")).toBe("true");
+        await click(tag("悬疑诡异"));
+        expect(tag("悬疑诡异").getAttribute("aria-pressed")).toBe("true");
+        expect(cards().map((item) => item.textContent?.trim())).toContain(suspense.name);
+        expect(cards().map((item) => item.textContent?.trim())).not.toContain(current.name);
+        expect(view.changes).toHaveLength(0);
+        await click(tag("全部"));
+        await click(cards().find((item) => item.textContent?.includes(next.name))!);
         expect(view.changes.at(-1)).toMatchObject({ styleName: next.name, stylePrompt: next.prompt, styleSelection: { mode: "preset", presetId: next.id } });
 
         const button = (label: string) => [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === label)!;

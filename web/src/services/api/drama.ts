@@ -671,6 +671,7 @@ export type DramaCast = {
     imageResourceId?: string;
     imageStatus: DramaMediaStatus;
     imageVersion: number;
+    updatedAt?: string;
     locked: boolean;
     position: number;
     /** 角色指定的声音（声音库条目）与样本音频；支持参考音频的视频模型在该角色开口的剧情段带上样本。 */

@@ -32,7 +32,7 @@ const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query
 const { MemoryRouter } = await import("react-router");
 const { App } = await import("antd");
 const { DramaStylePicker } = await import("../../src/pages/projects/style-picker");
-const { composeDramaStyleId, findDramaStyle, parseDramaStyleId } = await import("../../src/lib/drama/drama-styles");
+const { composeDramaStyleId, filterDramaStylePresets, findDramaStyle, parseDramaStyleId } = await import("../../src/lib/drama/drama-styles");
 
 const catalog: DramaModelCatalog = {
     defaults: { text: { logicalModelId: "text" }, image: { logicalModelId: "image" }, video: { logicalModelId: "video" } },
@@ -95,10 +95,23 @@ function presetButton(name: string) {
     return [...host.querySelectorAll<HTMLElement>(".drama-style-name")].find((item) => item.textContent === name)?.closest<HTMLButtonElement>("button");
 }
 
+function searchInput() {
+    return host.querySelector<HTMLInputElement>('[aria-label="搜索风格预设"]')!;
+}
+
+async function searchPresets(query: string) {
+    const input = searchInput();
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+}
+
 test("comic preset picker lists compatible animation formats and removes the composition controls", async () => {
     await render(<DramaStylePicker dramaType="comic" value="3d-guoman" onChange={() => {}} />);
     expect(host.querySelector('[aria-label="表现形式"]')).toBeNull();
     expect(host.querySelector('[aria-label="题材"]')).toBeNull();
+    expect(host.querySelector('[aria-label="风格标签"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="风格预设"]')).not.toBeNull();
     expect(presetButton("3D 国漫仙侠")?.getAttribute("aria-pressed")).toBe("true");
     expect(presetButton("都市霸总")).toBeUndefined();
@@ -113,23 +126,49 @@ test("live action preset picker selects complete presets by id", async () => {
     expect(changed).toHaveBeenLastCalledWith("live-sweet");
 });
 
-test("switching drama type recomputes available preset categories", async () => {
+test("switching drama type resets the tag and query", async () => {
     await render(<DramaStylePicker dramaType="comic" value="" onChange={() => {}} />);
-    await click([...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent?.startsWith("2D 漫剧"))!.textContent!);
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("2D 漫剧");
+    await click("玄幻仙侠");
+    await searchPresets("3D 国漫仙侠");
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("玄幻仙侠");
     await render(<DramaStylePicker dramaType="live_action" value="" onChange={() => {}} />);
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("全部");
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("全部");
+    expect(searchInput().value).toBe("");
     expect(presetButton("校园青春")).toBeDefined();
+});
+
+test("a tag and preset search narrow the same grid without changing the selection", async () => {
+    const changed = mock();
+    await render(<DramaStylePicker dramaType="comic" value="3d-guoman" onChange={changed} />);
+    expect(presetButton("韩漫条漫")).toBeDefined();
+    await click("玄幻仙侠");
+    expect(presetButton("韩漫条漫")).toBeUndefined();
+    expect(presetButton("3D 国漫仙侠")?.getAttribute("aria-pressed")).toBe("true");
+    expect(presetButton("3D 玄幻热血")).toBeDefined();
+
+    await searchPresets("韩漫条漫");
+    expect(presetButton("韩漫条漫")).toBeUndefined();
+    expect(host.textContent).toContain("没有找到“韩漫条漫”相关的风格");
+    await click("全部");
+    expect(searchInput().value).toBe("韩漫条漫");
+    expect(presetButton("韩漫条漫")).toBeDefined();
+    expect(presetButton("3D 国漫仙侠")).toBeUndefined();
+    expect(changed).not.toHaveBeenCalled();
 });
 
 test("preset search cannot expose a preset from the other drama type", async () => {
     await render(<DramaStylePicker dramaType="live_action" value="" onChange={() => {}} />);
-    const input = host.querySelector<HTMLInputElement>('[aria-label="搜索风格预设"]')!;
-    await act(async () => {
-        Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!.call(input, "3D 国漫仙侠");
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await searchPresets("3D 国漫仙侠");
     expect(presetButton("3D 国漫仙侠")).toBeUndefined();
+});
+
+test("导入风格的题材可用于搜索并显示在卡片及详情", async () => {
+    await render(<DramaStylePicker dramaType="comic" value="" onChange={() => {}} />);
+    await click("悬疑诡异");
+    await searchPresets("悬疑诡异");
+    expect(presetButton("民俗诡谭")?.querySelector(".drama-style-tags")?.textContent).toContain("悬疑诡异");
+    await click("查看“民俗诡谭”详情");
+    expect(document.querySelector('[role="dialog"] .drama-style-detail-tags')?.textContent).toContain("悬疑诡异");
 });
 
 test("disabled picker cannot apply a preset", async () => {
@@ -156,6 +195,31 @@ test("historical composition details expose the saved name and prompt", async ()
     expect(dialog.textContent).toContain(style.name);
     expect(dialog.textContent).toContain(style.prompt);
     await click("关闭", dialog);
+});
+
+test("preset details show all samples and reserve arrow keys for preset navigation", async () => {
+    const presets = filterDramaStylePresets("live_action");
+    const index = presets.findIndex((preset) => preset.id === "live-campus");
+    const preset = presets[index];
+    const next = presets[index + 1];
+    const images = [...new Set([preset.cover!, ...preset.sampleImages!])];
+    expect(images.length).toBeGreaterThan(1);
+    await render(<DramaStylePicker dramaType="live_action" value={preset.id} onChange={() => {}} />);
+    await click("查看风格详情");
+
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const previewImage = () => dialog.querySelector(".drama-style-detail-cover > img");
+    expect([...dialog.querySelectorAll('[aria-label="风格样图"] img')].map((image) => image.getAttribute("src"))).toEqual(images);
+    expect(previewImage()?.getAttribute("src")).toBe(images[0]);
+    await click("查看样图 2", dialog);
+    expect(previewImage()?.getAttribute("src")).toBe(images[1]);
+    expect(dialog.querySelector('button[aria-label="查看样图 2"]')?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => dom.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "ArrowRight" })));
+    expect(dialog.querySelector("h3")?.textContent).toBe(next.name);
+    await act(async () => dom.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "ArrowLeft" })));
+    expect(dialog.querySelector("h3")?.textContent).toBe(preset.name);
+    expect(previewImage()?.getAttribute("src")).toBe(images[0]);
 });
 
 const sourceText = `第一章 回家\n${"林溪走进街角的咖啡馆，与许久未见的朋友聊起新的工作。".repeat(12)}`;

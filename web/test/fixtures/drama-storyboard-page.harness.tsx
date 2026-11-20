@@ -617,7 +617,7 @@ test("首次编排弹窗只展示参考生视频，旧模式也要确认后才�
         for (const mode of ["宫格图模式", "智能导演模式", "故事板模式"]) expect(view.host.textContent).not.toContain(mode);
         expect(view.host.querySelector("[aria-label='分镜视频与生图比例']")).toBeTruthy();
         expect(saved).toHaveLength(0);
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(saved).toHaveLength(1);
         expect(saved[0]).toMatchObject({ aspectRatio: "16:9", videoResolution: "720p", models: settings.models, storyboard: { generationMode: "reference_video", directorTemplate: "" } });
     } finally {
@@ -639,10 +639,10 @@ test("统一确认失败仍保留同一弹窗与所选模式，可修复后重�
         />,
     );
     try {
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(view.host.textContent).toContain("当前设置有冲突");
         expect(view.host.querySelector("[role='dialog']")).toBeTruthy();
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(attempts).toBe(2);
     } finally {
         await view.close();
@@ -671,7 +671,7 @@ test("模式同帧重复确认只提交一次，提交未结束不能取消", as
     );
     try {
         const buttons = [...view.host.querySelectorAll<HTMLButtonElement>("button")];
-        const confirm = buttons.find((button) => button.textContent === "确认并进入漫剧分镜")!;
+        const confirm = buttons.find((button) => button.textContent === "确认并进入分镜")!;
         const cancel = buttons.find((button) => button.textContent === "取消")!;
         await act(async () => {
             confirm.click();
@@ -722,12 +722,12 @@ test("分镜模式更换视频模型协调分辨率与衔接，保留比例并�
         expect(Array.from(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")!.options, (option) => option.value)).toEqual(["720p"]);
         expect(view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频衔接']")!.value).toBe("parallel");
         expect(view.host.textContent).toContain("不支持 16:9 画幅");
-        expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!.disabled).toBe(true);
+        expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入分镜")!.disabled).toBe(true);
         await choose("分镜视频与生图比例", "9:16");
-        expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!.disabled).toBe(true);
+        expect([...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入分镜")!.disabled).toBe(true);
         await choose("分镜视频分辨率", "720p");
         await waitGeneration();
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(saved).toHaveLength(1);
         expect(saved[0]).toMatchObject({ aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel", models: { video: { logicalModelId: "new" } } });
     } finally {
@@ -747,7 +747,7 @@ test("编排弹窗的旧空分辨率或不支持的档位须先选择有效档�
             const view = await mount(<WorkflowModeDialog open summary={summary} episodeStyle={episodeStyle} onCancel={() => undefined} onConfirm={(value) => confirmed.push(value)} />);
             try {
                 const select = view.host.querySelector<HTMLSelectElement>("[aria-label='分镜视频分辨率']")!;
-                const confirm = [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入漫剧分镜")!;
+                const confirm = [...view.host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "确认并进入分镜")!;
                 expect(Array.from(select.options, (option) => option.value)).toEqual(["720p", "1080p"]);
                 expect(confirm.disabled).toBe(true);
                 expect(episodeWrites).toHaveLength(0);
@@ -758,7 +758,7 @@ test("编排弹窗的旧空分辨率或不支持的档位须先选择有效档�
                 expect(episodeWrites).toHaveLength(1);
                 expect(episodeWrites[0]).toMatchObject({ episodeId: "e", input: { settings: { videoResolution: "1080p" } } });
                 expect(confirm.disabled).toBe(false);
-                await click(view.host, "确认并进入漫剧分镜");
+                await click(view.host, "确认并进入分镜");
                 expect(confirmed).toHaveLength(1);
                 expect(confirmed[0].videoResolution).toBe("1080p");
             } finally {
@@ -793,7 +793,7 @@ test("参考生视频窗口的生成配置自动生效，镜头数量仍待确�
         expect(generationWrites[0]).toEqual({ expectedRevision: 2, generation: { models: { image: settings.models.image, video: videoChoice("video-new") }, aspectRatio: "9:16", videoResolution: "720p", videoContinuity: "parallel" } });
         expect(saved).toHaveLength(0);
         expect(view.host.textContent).not.toContain("作品设置已有更新");
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(saved).toHaveLength(1);
         expect(saved[0]).toMatchObject({ storyboard: { generationMode: "reference_video", directorTemplate: "", shotCountMode: "fixed", targetShotCount: 24 }, models: { video: { modelKey: "video-new" } }, aspectRatio: "9:16" });
     } finally {
@@ -845,7 +845,7 @@ test("重编窗口带入本集参数，媒体自动保存时保留旧模式，�
         expect(generationWrites).toHaveLength(0);
         expect(episodeWrites).toEqual([{ projectId: "p", episodeId: "e", input: { expectedRevision: 2, expectedEpisodeRevision: 8, settings: { ...episodeStyle.settings, models: { ...episodeStyle.settings.models, video: videoChoice("video-new") } } } }]);
         expect(confirmed).toHaveLength(0);
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(episodeWrites).toHaveLength(2);
         expect(episodeWrites[1]).toMatchObject({
             projectId: "p",
@@ -878,15 +878,15 @@ test("重编设置写入失败时不编排，成功后编排失败可直接重�
     );
     try {
         await choose(view.host, "分镜数量方式", "fixed");
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(view.host.textContent).toContain("本集配置写入失败");
         expect(attempts).toBe(0);
         episodeWriteFailure = false;
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(view.host.textContent).toContain("重编暂时失败");
         expect(attempts).toBe(1);
         expect(episodeWrites).toHaveLength(2);
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(attempts).toBe(2);
         expect(episodeWrites).toHaveLength(2);
     } finally {
@@ -907,7 +907,7 @@ test("已有参考镜头数默认智能，切换固定再切回智能仍保留�
         expect(view.host.querySelector<HTMLInputElement>("[aria-label='目标镜头数']")!.value).toBe("27");
         await choose(view.host, "分镜数量方式", "smart");
         expect(view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!.value).toBe("27");
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(saved[0].storyboard).toMatchObject({ shotCountMode: "smart", targetShotCount: 27 });
     } finally {
         await view.close();
@@ -928,7 +928,7 @@ test("智能参考数清空后自动估算，切到固定按当前时长和节�
         expect(view.host.querySelector<HTMLInputElement>("[aria-label='参考镜头数']")!.placeholder).toBe("自动估算 27 镜");
         await choose(view.host, "分镜数量方式", "fixed");
         expect(view.host.querySelector<HTMLInputElement>("[aria-label='目标镜头数']")!.value).toBe("27");
-        await click(view.host, "确认并进入漫剧分镜");
+        await click(view.host, "确认并进入分镜");
         expect(saved[0].storyboard).toMatchObject({ shotCountMode: "fixed", targetShotCount: 27 });
     } finally {
         await view.close();
