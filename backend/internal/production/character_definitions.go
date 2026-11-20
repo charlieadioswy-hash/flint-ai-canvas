@@ -13,12 +13,12 @@ func RestoreCharacterDefinitions(characters []BibleCharacter, chapters []Chapter
 		if character.SourceDefinition == "" && character.SourceChapterIndex == 0 {
 			continue
 		}
-		if strings.TrimSpace(character.SourceDefinition) == "" || character.SourceChapterIndex <= 0 {
+		if strings.TrimSpace(character.SourceDefinition) == "" || character.SourceChapterIndex < 0 {
 			return nil, fmt.Errorf("角色“%s”的原文设定引用不完整，请提供说明原文及所属章节序号", character.Name)
 		}
 		var source string
 		for _, chapter := range chapters {
-			if chapter.Index != int(character.SourceChapterIndex) {
+			if chapter.Index != int(character.SourceChapterIndex) || chapter.Index == 0 && !chapter.IsReference {
 				continue
 			}
 			if source = characterDefinitionSource(chapter, character.SourceDefinition); source != "" {
@@ -26,6 +26,9 @@ func RestoreCharacterDefinitions(characters []BibleCharacter, chapters []Chapter
 			}
 		}
 		if source == "" {
+			if character.SourceChapterIndex == 0 {
+				return nil, fmt.Errorf("角色“%s”的设定引用与作品参考资料不一致，请保留原文字句与格式", character.Name)
+			}
 			return nil, fmt.Errorf("角色“%s”的设定引用与第 %d 章原文不一致，请保留原文字句与格式", character.Name, character.SourceChapterIndex)
 		}
 		aliases := make([]string, 0, len(character.Aliases))
@@ -105,6 +108,9 @@ func characterDefinitionIsLabel(source string, names []string) bool {
 func characterDefinitionSource(chapter Chapter, quote string) string {
 	if strings.Contains(chapter.Text, quote) {
 		return quote
+	}
+	if chapter.IsReference {
+		return ""
 	}
 	// 导入将标题与正文分开保存；还原跨过两者边界的原文，宿主章节标记不属于人设。
 	for _, suffix := range []string{"", "（节选）"} {

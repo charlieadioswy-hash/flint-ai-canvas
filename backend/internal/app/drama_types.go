@@ -306,6 +306,7 @@ type CreateDramaRequest struct {
 	Brief              string              `json:"brief,omitempty"`
 	Name               string              `json:"name"`
 	Chapters           []DramaChapterInput `json:"chapters"`
+	ReferenceText      string              `json:"referenceText,omitempty"`
 	Settings           DramaSettings       `json:"settings"`
 	BudgetMicrocredits int64               `json:"budgetMicrocredits"`
 	Start              bool                `json:"start"`

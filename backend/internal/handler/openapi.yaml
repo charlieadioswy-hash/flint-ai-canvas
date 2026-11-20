@@ -200,8 +200,8 @@ paths:
   /dramas/{id}/guide/source:
     put:
       tags: [dramas]
-      summary: 保存引导项目的正式章节正文
-      description: 仅允许当前用户的 configuring 引导项目；同事务替换章节与未启动分集，不提交生成任务。传统项目与引导已启动项目拒绝此操作。
+      summary: 保存引导项目的正式正文和作品参考资料
+      description: 仅允许当前用户的 configuring 引导项目。提交 chapters 时在同一事务中替换章节、作品参考资料和未启动分集。省略 chapters 时保留正文与参考资料，只更新素材类型和分集目录。保存不提交生成任务。
       parameters:
         - {in: path, name: id, required: true, schema: {type: string}}
       requestBody:
@@ -211,10 +211,11 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [expectedRevision, chapters]
+              required: [expectedRevision]
               properties:
                 expectedRevision: {type: integer, minimum: 1}
                 sourceFormat: {type: string, enum: [novel, script, storyboard]}
+                referenceText: {type: string, maxLength: 12000, description: 随 chapters 提交的作品资料。省略时保留旧资料，明确提交空串时清除。剧集目录与分镜使用正式正文。}
                 chapters:
                   type: array
                   minItems: 1
@@ -232,11 +233,21 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/source-export:
+    get:
+      tags: [dramas]
+      summary: 读取同一版本的素材类型、全部章节和参考资料以导出整部作品
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "成功信封，data 包含 revision、sourceFormat、referenceText 和按原文顺序排列的 chapters（每章含 id、title、text）。无资料时 referenceText 为空串。"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /dramas/{id}/guide/confirm:
     post:
       tags: [dramas]
       summary: 确认当前引导阶段并放行下一段文字流程
-      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings 与当前 episodeId；确认前校验该集属于当前作品，目录重建后按原集号映射新集，只从其原文建立首次角色、场景和道具，来源快照与初次任务在同一事务入队，省略时取当前目录第一集；智能规划尚无目录时仅取首章。首次作业重试沿用固定来源，旧无来源快照作业仍按原全剧范围回收。assets 等待作品圣经落库，可同时保存默认分镜模式、导演模板、镜数、图片/视频模型、比例、分辨率和连续性，其余设置保持当前值，并只启动 episodeId 指定集的缺失分镜，省略时选择第一集；其余未开工集保持 draft。智能规划尚无剧集时仅放行规划，新集等待逐集 ensure。story 等待已开工集的文字就绪。模式保存不创建收费媒体任务。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
+      description: 按 expectedStep 和 production.revision 原子校验、推进并返回最新概览。configuring 可提交最终 settings 与当前 episodeId。目录重建后按原集号映射新集，首次资产提取读取本集原文和已存的作品参考资料。仅在资料中出现的资产进入作品资产库。来源快照与初次任务在同一事务入队，省略 episodeId 时取当前目录第一集。智能规划尚无目录时取首章。首次作业重试沿用固定来源，旧无来源快照作业仍按原全剧范围回收。assets 等待作品圣经落库，可同时保存默认分镜模式、导演模板、镜数、图片/视频模型、比例、分辨率和连续性，其余设置保持当前值，并只启动 episodeId 指定集的缺失分镜，省略时选择第一集。其余未开工集保持 draft。智能规划尚无剧集时仅放行规划，新集等待逐集 ensure。story 等待已开工集的文字就绪。模式保存不创建收费媒体任务。结束引导不放行视频或成片，零图片可完成。传统项目拒绝此操作。
       parameters:
         - {in: path, name: id, required: true, schema: {type: string}}
       requestBody:

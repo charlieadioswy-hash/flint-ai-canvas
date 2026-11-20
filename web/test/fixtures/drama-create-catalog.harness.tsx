@@ -2,7 +2,8 @@ import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
-import type { DramaDraft, DramaEpisodeRow, DramaModelCatalog } from "@/services/api/drama";
+import { formatDramaSourceMarkdown } from "@/lib/drama/source-reference-markdown";
+import type { DramaDraft, DramaEpisodeRow, DramaModelCatalog, DramaSourceFormat } from "@/services/api/drama";
 
 const browser = new Window({ url: "http://localhost/projects/new" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -82,7 +83,7 @@ mock.module("@/pages/projects/drama-shared", () => ({
 const sourceText = Array.from({ length: 9 }, (_, index) => `第${index + 1}集 测试${index + 1}\n△角色走进场景${index + 1}。\n角色：这是第${index + 1}集。`).join("\n\n");
 let draft: DramaDraft | undefined;
 const estimates: Array<{ chapterCount: number }> = [];
-const saves: Array<{ id?: string; input: { chapters: Array<{ title: string; text: string }>; selectedChapters?: number[]; start: boolean } }> = [];
+const saves: Array<{ id?: string; input: { chapters: Array<{ title: string; text: string }>; referenceText?: string; sourceFormat: DramaSourceFormat; selectedChapters?: number[]; start: boolean } }> = [];
 mock.module("@/services/api/drama", () => ({
     getDramaDraft: async () => draft,
     estimateDrama: async (input: { chapterCount: number }) => {
@@ -165,9 +166,10 @@ test("新建九集原文全部进入报价与提交，点击第九集只切预�
     }
 });
 
-test("旧草稿原来只选第一集，重新保存仍包含全部九集", async () => {
+test("旧草稿重新保存包含全部九集，并单独保存开头的参考资料", async () => {
     estimates.length = 0;
     saves.length = 0;
+    const referenceText = "人物小传\n秦子文：随身带一把柴刀。";
     draft = {
         projectId: "old-draft",
         name: "旧草稿",
@@ -176,24 +178,47 @@ test("旧草稿原来只选第一集，重新保存仍包含全部九集", async
         selectedChapters: [0],
         budgetMicrocredits: 0,
         settings: { models: catalog.defaults, videoContinuity: "tail_frame", aspectRatio: "9:16", episodeMode: "chapter" },
-        form: { sourceText },
+        form: { sourceText: referenceText + "\n" + sourceText },
     } as DramaDraft;
     const view = await mount(<DramaCreatePage />, ["/projects/new?draft=old-draft"]);
     try {
         await flushQueries();
         await flushQueries();
         expect(view.host.querySelectorAll("nav[aria-label='原文章节目录'] button")).toHaveLength(9);
+        expect(view.host.textContent).toContain("已识别作品参考资料");
         expect(estimates.at(-1)?.chapterCount).toBe(9);
         await act(() => saveButton(view.host).click());
         await flushQueries();
         expect(saves).toHaveLength(1);
         expect(saves[0].id).toBe("old-draft");
         expect(saves[0].input.chapters).toHaveLength(9);
+        expect(saves[0].input.referenceText).toBe(referenceText);
         expect(saves[0].input.selectedChapters).toBeUndefined();
         expect(saves[0].input.start).toBe(false);
     } finally {
         draft = undefined;
         await view.close();
+    }
+});
+
+test("导入 Markdown 时还原标题和素材类型，预填素材类型优先", async () => {
+    const referenceText = "人物小传\n守塔人罗森随身带着地图。";
+    const chapters = [{ title: "夜渡", text: "罗森登船。\n\n---\n\n雨开始落下。" }];
+    const text = formatDramaSourceMarkdown({ sourceFormat: "storyboard", referenceText, chapters });
+    for (const sourceFormat of [undefined, "script"] as const) {
+        saves.length = 0;
+        const view = await mount(<DramaCreatePage />, [{ pathname: "/projects/new", state: { prefill: { name: "夜航", sourceFormat, text } } }]);
+        try {
+            await flushQueries();
+            await act(() => saveButton(view.host).click());
+            await flushQueries();
+            expect(saves).toHaveLength(1);
+            expect(saves[0].input.chapters).toEqual(chapters);
+            expect(saves[0].input.referenceText).toBe(referenceText);
+            expect(saves[0].input.sourceFormat).toBe(sourceFormat || "storyboard");
+        } finally {
+            await view.close();
+        }
     }
 });
 

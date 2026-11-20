@@ -4,9 +4,22 @@ import { App, Button, Input } from "antd";
 import { CheckCircle2, Download, FileText, PencilLine, Plus, Save, Upload } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
-import { analyzeNovel, EPISODE_SOURCE_CHARS, MAX_CHAPTER_WORDS, sourceChars } from "@/lib/drama/novel-parse";
+import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_SOURCE_CHARS, MAX_CHAPTER_WORDS, sourceChars } from "@/lib/drama/novel-parse";
+import { formatDramaSourceMarkdown } from "@/lib/drama/source-reference-markdown";
 import { ApiError } from "@/services/api/request";
-import { getDramaChapter, getDramaEpisode, listDramaChapters, rescriptDramaEpisode, saveDramaGuideSource, updateDramaChapter, updateDramaSettings, type DramaChapterInput, type DramaSourceFormat, type DramaSummary } from "@/services/api/drama";
+import {
+    getDramaChapter,
+    getDramaEpisode,
+    getDramaSourceExport,
+    listDramaChapters,
+    rescriptDramaEpisode,
+    saveDramaGuideSource,
+    updateDramaChapter,
+    updateDramaSettings,
+    type DramaChapterInput,
+    type DramaSourceFormat,
+    type DramaSummary,
+} from "@/services/api/drama";
 import { updateProject } from "@/services/api/projects";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -19,7 +32,7 @@ import "./workflow-source.css";
 
 type ChapterDraft = { id: string; title: string; text: string; baseline: string; baselineTitle: string; revision: number };
 type MetadataDraft = { format: DramaSourceFormat; baseline: DramaSourceFormat; revision: number };
-type Replacement = { fileName: string; chapters: DramaChapterInput[]; revision: number };
+type Replacement = { fileName: string; chapters: DramaChapterInput[]; referenceText?: string; revision: number };
 type CreationDraft = { mode: "selected" | "single"; revision: number; format: DramaSourceFormat; name: string; description: string; dramaType: "comic" | "live_action" | "narration"; aspectRatio: string };
 type SourceProps = { summary: DramaSummary; step?: "source" | "review"; episodeId?: string; onChanged: () => void; onContinue?: () => void; onStoryboardStarted?: () => void; busy?: boolean; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
 
@@ -197,7 +210,8 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
             if (!current()) throw new Error("登录状态已变更，请重新操作");
             if (input.revision !== revision) throw new Error("正文已有更新，请重新上传后再替换");
             if (input.chapters.some((chapter) => sourceChars(chapter.text) > EPISODE_SOURCE_CHARS)) throw new Error("单章不能超过 1.2 万字，请拆分正文后再导入");
-            return saveDramaGuideSource(projectId, { expectedRevision: input.revision, chapters: input.chapters, sourceFormat: metadata?.format || serverFormat });
+            if (input.referenceText && sourceChars(input.referenceText) > DRAMA_REFERENCE_SOURCE_CHARS) throw new Error("请将作品参考资料缩短到 1.2 万字以内");
+            return saveDramaGuideSource(projectId, { expectedRevision: input.revision, chapters: input.chapters, referenceText: input.referenceText, sourceFormat: metadata?.format || serverFormat });
         },
         onSuccess: () => {
             if (!current()) return;
@@ -288,6 +302,7 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
     const working = busy || reading || reloading || downloading || save.isPending || replace.isPending || saveMetadata.isPending || createEpisodes.isPending || storyboard.isPending;
     const totalChapters = chapters.data?.chapters.length || 0;
     const chapterScopeSummary = `原文共 ${totalChapters} 章 · 共 ${summary.episodes.length} 集`;
+    const replacementReferenceTooLong = Boolean(replacement?.referenceText && sourceChars(replacement.referenceText) > DRAMA_REFERENCE_SOURCE_CHARS);
     useEffect(() => {
         latest.current.onDirtyChange?.(dirty, working);
     }, [dirty, working]);
@@ -307,10 +322,12 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
     };
 
     const previewReplacement = (content: string, fileName: string) => {
-        const parsed = analyzeNovel(content, { perEpisode: true }).chapters.map(({ title, text }) => ({ title, text }));
-        if (!parsed.length) throw new Error("没有可导入的正文");
-        if (parsed.some((chapter) => sourceChars(chapter.text) > MAX_CHAPTER_WORDS)) throw new Error("新正文单章超过 6 万字，请拆分后再导入");
-        setReplacement({ fileName, chapters: parsed, revision });
+        const format = metadata?.format || serverFormat;
+        const parsed = analyzeNovel(content, { perEpisode: true, script: format === "script", novelReference: format !== "script" });
+        if (!parsed.chapters.length) throw new Error(parsed.issues.find(({ kind }) => kind === "invalid_export" || kind === "reference_only")?.message || "没有可导入的正文");
+        if (parsed.chapters.some((chapter) => sourceChars(chapter.text) > MAX_CHAPTER_WORDS)) throw new Error("新正文单章超过 6 万字，请拆分后再导入");
+        const chapters = parsed.chapters.map(({ title, text }) => ({ title, text }));
+        setReplacement({ fileName, chapters, referenceText: parsed.referenceText, revision });
     };
     const loadReplacement = async (file: File) => {
         if (working || chapterDraftDirty || replacement || pasteText.trim() || !configuring || episodeId) return;
@@ -345,16 +362,42 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
         if (working || !visibleChapters?.length) return;
         setDownloading(true);
         try {
-            const texts = await Promise.all(
-                visibleChapters.map(async (chapter) => {
+            let exportChapters: DramaChapterInput[];
+            let sourceFormat: DramaSourceFormat;
+            let referenceText: string | undefined;
+            if (episodeId) {
+                exportChapters = await Promise.all(
+                    visibleChapters.map(async (chapter) => {
+                        const local = drafts[chapter.id];
+                        if (local) return { title: local.title, text: local.text };
+                        const result = await queryClient.fetchQuery({ queryKey: ["drama", projectId, "chapter", chapter.id, userId, revision], queryFn: ({ signal }) => getDramaChapter(projectId, chapter.id, signal) });
+                        return { title: result.chapter.title, text: result.chapter.sourceText };
+                    }),
+                );
+                sourceFormat = episode.data?.episode.sourceFormat || serverFormat;
+            } else {
+                const snapshot = await getDramaSourceExport(projectId);
+                const stored = new Map(snapshot.chapters.map((chapter) => [chapter.id, chapter]));
+                const edits = Object.values(drafts).filter(isDirty);
+                const staleEdit = edits.some((edit) => {
+                    const original = stored.get(edit.id);
+                    return edit.revision !== snapshot.revision || original?.title !== edit.baselineTitle || original?.text !== edit.baseline;
+                });
+                const formatEdit = metadataDirty ? metadata : null;
+                if (staleEdit || (formatEdit && (formatEdit.revision !== snapshot.revision || formatEdit.baseline !== snapshot.sourceFormat))) {
+                    throw new Error("作品已被更新。请核对未保存的修改后再下载。");
+                }
+                exportChapters = snapshot.chapters.map((chapter) => {
                     const local = drafts[chapter.id];
-                    if (local) return `# ${local.title}\n\n${local.text}`;
-                    const result = await queryClient.fetchQuery({ queryKey: ["drama", projectId, "chapter", chapter.id, userId, revision], queryFn: ({ signal }) => getDramaChapter(projectId, chapter.id, signal) });
-                    return `# ${result.chapter.title}\n\n${result.chapter.sourceText}`;
-                }),
-            );
+                    return local && isDirty(local) ? { title: local.title, text: local.text } : chapter;
+                });
+                sourceFormat = formatEdit?.format ?? snapshot.sourceFormat;
+                referenceText = snapshot.referenceText;
+            }
             if (!current()) return;
-            const url = URL.createObjectURL(new Blob([texts.join("\n\n---\n\n")], { type: "text/markdown;charset=utf-8" }));
+            if (!exportChapters.length) throw new Error("作品当前没有可下载的正文");
+            const text = formatDramaSourceMarkdown({ sourceFormat, referenceText, chapters: exportChapters });
+            const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
             try {
                 const link = document.createElement("a");
                 link.href = url;
@@ -593,6 +636,13 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                 <div className="drama-source-replacement" aria-label="替换正文预览">
                     <h3>替换预览：{replacement.fileName}</h3>
                     <p>解析出 {replacement.chapters.length} 章，全部加入分集列表。确认后会替换原正文与待制作分集。</p>
+                    {replacementReferenceTooLong ? (
+                        <p role="alert">请将作品参考资料缩短到 1.2 万字以内</p>
+                    ) : replacement.referenceText ? (
+                        <p>已识别作品参考资料，供角色、场景和道具提取。</p>
+                    ) : replacement.referenceText === "" ? (
+                        <p>导出文件的参考资料为空，确认后会清除作品原有的参考资料。</p>
+                    ) : null}
                     {replacement.chapters.map((chapter, index) => (
                         <div key={index} className="drama-source-replacement-item">
                             {chapter.title} · {sourceChars(chapter.text).toLocaleString()} 字{sourceChars(chapter.text) > EPISODE_SOURCE_CHARS ? "（请先拆分正文）" : ""}
@@ -602,7 +652,12 @@ function SourceReview({ summary, step = "review", episodeId, onChanged, onContin
                         <Button disabled={working} onClick={() => setReplacement(null)}>
                             取消替换
                         </Button>
-                        <Button type="primary" disabled={working || replacement.chapters.some((chapter) => sourceChars(chapter.text) > EPISODE_SOURCE_CHARS)} loading={replace.isPending} onClick={() => replace.mutate(replacement)}>
+                        <Button
+                            type="primary"
+                            disabled={working || replacementReferenceTooLong || replacement.chapters.some((chapter) => sourceChars(chapter.text) > EPISODE_SOURCE_CHARS)}
+                            loading={replace.isPending}
+                            onClick={() => replace.mutate(replacement)}
+                        >
                             确认替换正文
                         </Button>
                     </div>

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,10 +28,11 @@ type ExtractDramaAssetsResult struct {
 }
 
 type dramaAssetExtractionPayload struct {
-	Scope            string   `json:"scope"`
-	AssetKind        string   `json:"assetKind"`
-	SourceChapterIDs []string `json:"sourceChapterIds"`
-	SourceEpisodeIDs []string `json:"sourceEpisodeIds,omitempty"`
+	Scope              string   `json:"scope"`
+	AssetKind          string   `json:"assetKind"`
+	SourceChapterIDs   []string `json:"sourceChapterIds"`
+	SourceEpisodeIDs   []string `json:"sourceEpisodeIds,omitempty"`
+	ReferenceChapterID string   `json:"referenceChapterId,omitempty"`
 }
 
 func dramaAssetExtraction(job *model.DramaJob) (*dramaAssetExtractionPayload, error) {
@@ -46,6 +48,9 @@ func dramaAssetExtraction(job *model.DramaJob) (*dramaAssetExtractionPayload, er
 	}
 	if payload.Scope != dramaAssetExtractionScope || !validDramaCastKind(payload.AssetKind) || len(payload.SourceChapterIDs) == 0 {
 		return nil, BadAuthRequest("资产提取类型或来源范围无效")
+	}
+	if id := payload.ReferenceChapterID; id != "" && (id != strings.TrimSpace(id) || len(payload.SourceEpisodeIDs) != 0 || slices.Contains(payload.SourceChapterIDs, id)) {
+		return nil, BadAuthRequest("资产查漏参考资料范围无效")
 	}
 	return &payload, nil
 }
@@ -191,7 +196,16 @@ func dramaAssetExtractionSource(tx *repository.Repository, projectID string, req
 	}
 	label := map[string]string{"character": "角色", "scene": "场景", "prop": "道具"}[req.Kind] + "增量提取 / 重新查漏："
 	if req.AllChapters {
-		label += fmt.Sprintf("全部原文（%d 章）", len(payload.SourceChapterIDs))
+		reference, err := tx.DramaSourceReference(projectID)
+		if err != nil {
+			return payload, "", err
+		}
+		if reference == nil {
+			label += fmt.Sprintf("全部原文（%d 章）", len(payload.SourceChapterIDs))
+		} else {
+			payload.ReferenceChapterID = reference.ID
+			label += fmt.Sprintf("全部原文（%d 章和作品参考资料）", len(payload.SourceChapterIDs))
+		}
 	} else if len(episodeNumbers) > 0 {
 		label += "第 " + strings.Join(episodeNumbers, "、") + " 集"
 	} else {

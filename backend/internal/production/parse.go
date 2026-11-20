@@ -204,13 +204,9 @@ func ParseBibleForKind(raw string, kind string, chapters ...Chapter) (Bible, err
 
 func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 	var bible Bible
-	text, err := ExtractJSONObject(raw)
+	text, err := extractBibleJSON(raw)
 	if err != nil {
-		var recovered bool
-		text, recovered = repairBibleJSON(raw)
-		if !recovered {
-			return bible, err
-		}
+		return bible, err
 	}
 	if kind != "" {
 		text, err = scopeBibleJSON(text, kind)
@@ -221,6 +217,74 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 	if err := json.Unmarshal([]byte(text), &bible); err != nil {
 		return bible, err
 	}
+	bible, err = normalizeBible(bible, kind == "", chapters)
+	if err == nil && kind == "" && len(bible.Characters) == 0 {
+		err = errors.New("作品圣经没有识别到角色")
+	}
+	return bible, err
+}
+
+func extractBibleJSON(raw string) (string, error) {
+	text, err := ExtractJSONObject(raw)
+	if err != nil {
+		if recovered, ok := repairBibleJSON(raw); ok {
+			return recovered, nil
+		}
+	}
+	return text, err
+}
+
+// ParseBibleWithReference validates the two asset lists against their respective sources.
+func ParseBibleWithReference(raw string, reference Chapter, chapters []Chapter) (Bible, Bible, error) {
+	text, err := extractBibleJSON(raw)
+	if err != nil {
+		return Bible{}, Bible{}, err
+	}
+	var result struct {
+		Bible
+		ReferenceAssets *Bible `json:"referenceAssets"`
+	}
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return Bible{}, Bible{}, err
+	}
+	if result.ReferenceAssets == nil || result.ReferenceAssets.Characters == nil || result.ReferenceAssets.Props == nil || result.ReferenceAssets.Scenes == nil {
+		return Bible{}, Bible{}, errors.New("作品圣经未返回参考资料的角色、道具与场景数组")
+	}
+	if result.Characters == nil || result.Props == nil || result.Scenes == nil {
+		return Bible{}, Bible{}, errors.New("作品圣经未返回正式正文的角色、道具与场景数组")
+	}
+	referenceAssets, err := normalizeBible(*result.ReferenceAssets, false, []Chapter{reference})
+	if err != nil {
+		return Bible{}, Bible{}, err
+	}
+	ordinary, err := normalizeBible(result.Bible, true, append([]Chapter{reference}, chapters...))
+	if err != nil {
+		return Bible{}, Bible{}, err
+	}
+	if !bibleHasAssets(ordinary) && !bibleHasAssets(referenceAssets) {
+		return Bible{}, Bible{}, errors.New("作品圣经没有识别到角色、场景或道具")
+	}
+	// 如果模型重复返回同一个角色，正式正文资产仍使用已核对的原文档案。
+	definitions := make(map[string]BibleCharacter, len(referenceAssets.Characters))
+	for _, character := range referenceAssets.Characters {
+		if character.SourceDefinition != "" {
+			definitions[NormalizeName(character.Name)] = character
+		}
+	}
+	for i, character := range ordinary.Characters {
+		if definition, ok := definitions[NormalizeName(character.Name)]; ok && character.SourceDefinition == "" {
+			ordinary.Characters[i] = definition
+		}
+	}
+	return ordinary, referenceAssets, nil
+}
+
+func bibleHasAssets(bible Bible) bool {
+	return len(bible.Characters) > 0 || len(bible.Scenes) > 0 || len(bible.Props) > 0
+}
+
+func normalizeBible(bible Bible, limitAssets bool, chapters []Chapter) (Bible, error) {
+	var err error
 	bible.Characters, err = RestoreCharacterDefinitions(bible.Characters, chapters)
 	if err != nil {
 		return bible, err
@@ -247,7 +311,7 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		character.Looks = normalizeBibleLooks(character)
 		characters = append(characters, character)
-		if kind == "" && len(characters) >= 24 {
+		if limitAssets && len(characters) >= 24 {
 			break
 		}
 	}
@@ -262,7 +326,7 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		sceneSeen[key] = true
 		scenes = append(scenes, scene)
-		if kind == "" && len(scenes) >= 16 {
+		if limitAssets && len(scenes) >= 16 {
 			break
 		}
 	}
@@ -277,14 +341,11 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 		}
 		propSeen[key] = true
 		props = append(props, prop)
-		if kind == "" && len(props) >= 20 {
+		if limitAssets && len(props) >= 20 {
 			break
 		}
 	}
 	bible.Props = props
-	if kind == "" && len(bible.Characters) == 0 {
-		return bible, errors.New("作品圣经没有识别到角色")
-	}
 	return bible, nil
 }
 

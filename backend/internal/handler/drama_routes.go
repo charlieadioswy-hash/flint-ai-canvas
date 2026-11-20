@@ -259,6 +259,9 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 		chapters, err := svc.DramaChapterOutline(userID, c.Param("id"))
 		return gin.H{"chapters": chapters}, err
 	}))
+	r.GET("/dramas/:id/source-export", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.DramaSourceExport(userID, c.Param("id"))
+	}))
 	// 章节 ID 列表上限 3000 个，每个 36 字符加 JSON 引号与逗号。
 	r.POST("/dramas/:id/chapters/produce", dramaRoute(svc, 256<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.ProduceDramaChaptersRequest

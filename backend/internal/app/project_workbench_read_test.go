@@ -148,6 +148,46 @@ func TestProjectOverviewCountsSucceededTimelineRenders(t *testing.T) {
 	}
 }
 
+func TestProjectOverviewExcludesDramaSourceReference(t *testing.T) {
+	service, fake := newDramaTestService(t)
+	chapter := DramaChapterInput{Title: "第一集", Text: "小雨冒雨回家。"}
+	draft, err := service.CreateDrama("usr-drama", CreateDramaRequest{
+		Name: "带小传的剧本", Guided: true, SourceFormat: "script", Settings: DramaSettings{Models: fakeDramaModels},
+		ReferenceText: "人物小传：小雨二十岁。", Chapters: []DramaChapterInput{chapter},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := draft.Project.ID
+	overview, err := service.ProjectOverview("usr-drama", projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Units) != 1 || overview.Units[0].Unit.Title != chapter.Title {
+		t.Fatalf("unexpected overview units: %+v", overview.Units)
+	}
+	if metrics := overview.Metrics; metrics.UnitCount != 1 || metrics.TotalWordCount != int64(len([]rune(chapter.Text))) || metrics.UnitsWithoutShots != 1 {
+		t.Fatalf("unexpected overview metrics: %+v", metrics)
+	}
+
+	// 旧工作台记录允许 kind 为空，列表、详情和统计须一致。
+	chapterID := overview.Units[0].Unit.ID
+	if err := fake.db.Model(&model.ProjectUnit{}).Where("id = ?", chapterID).UpdateColumn("kind", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := service.ProjectUnitSummaries("usr-drama", projectID)
+	if err != nil || len(summaries.Units) != 1 || summaries.Units[0].ID != chapterID {
+		t.Fatalf("legacy summaries: %+v, %v", summaries, err)
+	}
+	if _, err := service.GetProjectUnit("usr-drama", projectID, chapterID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = service.ProjectOverview("usr-drama", projectID)
+	if err != nil || overview.Metrics.UnitCount != 1 || len(overview.Units) != 1 || overview.Units[0].Unit.ID != chapterID {
+		t.Fatalf("legacy overview: %+v, %v", overview, err)
+	}
+}
+
 func TestProjectUnitWorkspaceIsolatesShotsAndBoundAssetsByUnit(t *testing.T) {
 	service, db := newProjectWorkbenchReadTestService(t)
 	project := seedWorkbenchProject(t, db)

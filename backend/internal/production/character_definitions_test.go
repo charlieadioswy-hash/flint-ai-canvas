@@ -188,7 +188,7 @@ func TestRestoreCharacterDefinitionsSupportsImportedTitle(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "sampled title" {
-				chapters := []Chapter{{Index: 1, Text: strings.Repeat("文", 8000)}, chapter}
+				chapters := []Chapter{{Index: 1, Text: strings.Repeat("文", 11000)}, chapter}
 				if !strings.Contains(SampleNovel(chapters, 10000), quote) {
 					t.Fatal("fixture must match the actual sampled heading")
 				}

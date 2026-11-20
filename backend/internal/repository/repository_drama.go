@@ -94,7 +94,7 @@ func (r *Repository) ReplaceDramaDraft(project *model.Project, chapters []model.
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ? AND kind = ?", project.ID, model.ProjectUnitKindChapter).Delete(&model.ProjectUnit{}).Error; err != nil {
+		if err := tx.Where("project_id = ? AND kind IN ?", project.ID, []model.ProjectUnitKind{model.ProjectUnitKindChapter, model.ProjectUnitKindSourceReference}).Delete(&model.ProjectUnit{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("project_id = ?", project.ID).Delete(&model.DramaEpisode{}).Error; err != nil {
@@ -498,8 +498,20 @@ func (r *Repository) DramaChaptersByIDs(projectID string, ids []string) ([]model
 	if len(ids) == 0 {
 		return units, nil
 	}
-	err := r.db.Where("project_id = ? AND id IN ?", projectID, ids).Order("position asc").Find(&units).Error
+	err := r.db.Where("project_id = ? AND kind = ? AND id IN ?", projectID, model.ProjectUnitKindChapter, ids).Order("position asc").Find(&units).Error
 	return units, err
+}
+
+func (r *Repository) DramaSourceReference(projectID string) (*model.ProjectUnit, error) {
+	var unit model.ProjectUnit
+	err := r.db.Where("project_id = ? AND kind = ?", projectID, model.ProjectUnitKindSourceReference).Take(&unit).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &unit, nil
 }
 
 func (r *Repository) DramaCasts(projectID string) ([]model.DramaCast, error) {
@@ -1668,7 +1680,7 @@ func (r *Repository) retryDramaResultJobs(projectID string, jobIDs []string) err
 		// 这类作业不能重放原任务，否则会再次解析同一份截断 JSON；保留原任务
 		// 作为历史记录，清空绑定后让调度器重新提交一次生成。
 		if err := jobs().
-			Where("kind IN ? AND (error LIKE ? OR (kind = ? AND error LIKE ?))", []string{model.DramaJobBible, model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt}, "%模型没有返回可解析的 JSON%", model.DramaJobScript, "%分镜脚本解析失败：%").
+			Where("kind IN ? AND (error LIKE ? OR (kind = ? AND error LIKE ?))", []string{model.DramaJobPlan, model.DramaJobScript, model.DramaJobSegmentPrompt}, "%模型没有返回可解析的 JSON%", model.DramaJobScript, "%分镜脚本解析失败：%").
 			Updates(map[string]any{"status": model.DramaJobQueued, "task_id": "", "error": "", "finished_at": nil, "started_at": nil, "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
@@ -1679,6 +1691,22 @@ func (r *Repository) retryDramaResultJobs(projectID string, jobIDs []string) err
 		}
 		replayIDs := make([]string, 0, len(candidates))
 		for _, job := range candidates {
+			if job.Kind == model.DramaJobBible && (job.ResultUnusable() ||
+				strings.Contains(job.Error, "模型没有返回可解析的 JSON") ||
+				strings.Contains(job.Error, "作品圣经解析失败：作品圣经未返回参考资料的角色、道具与场景数组") ||
+				strings.Contains(job.Error, "作品圣经解析失败：作品圣经未返回正式正文的角色、道具与场景数组") ||
+				strings.Contains(job.Error, "作品圣经解析失败：作品圣经没有识别到角色、场景或道具")) {
+				if err := job.ClearResultUnusable(); err != nil {
+					return err
+				}
+				if err := jobs().Where("id = ?", job.ID).Updates(map[string]any{
+					"status": model.DramaJobQueued, "task_id": "", "error": "", "finished_at": nil,
+					"started_at": nil, "payload_json": job.PayloadJSON, "updated_at": time.Now(),
+				}).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			if job.Kind == model.DramaJobSegmentVideo {
 				var segment model.DramaSegment
 				err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND project_id = ? AND episode_id = ?", job.ShotID, job.ProjectID, job.EpisodeID).First(&segment).Error

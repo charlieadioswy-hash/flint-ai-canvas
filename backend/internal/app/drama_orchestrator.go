@@ -1034,17 +1034,22 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 	}
 	text, err := dramaTaskText(task)
 	if err != nil {
-		return err
+		return bibleResultIssue(job, task, err)
 	}
 	scope, chapters := source.extraction, source.chapters
-	var bible production.Bible
+	var bible, referenceAssets production.Bible
 	if scope != nil {
+		if source.reference != nil {
+			chapters = append([]production.Chapter{*source.reference}, chapters...)
+		}
 		bible, err = production.ParseBibleForKind(text, scope.AssetKind, chapters...)
+	} else if source.reference != nil {
+		bible, referenceAssets, err = production.ParseBibleWithReference(text, *source.reference, chapters)
 	} else {
 		bible, err = production.ParseBible(text, chapters...)
 	}
 	if err != nil {
-		return fmt.Errorf("作品圣经解析失败：%w", err)
+		return bibleResultIssue(job, task, fmt.Errorf("作品圣经解析失败：%w", err))
 	}
 	if scope != nil {
 		return r.s.repo.Transaction(func(tx *repository.Repository) error {
@@ -1052,7 +1057,7 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 				return err
 			}
 			// 只增量添加本类资产；共用版本仍代表正文与制作配置，其他类型的查漏不会使其失效。
-			ids, err := r.applyBibleCasts(tx, bible, true)
+			ids, err := r.applyBibleCasts(tx, bible, true, nil)
 			if err != nil {
 				return err
 			}
@@ -1062,18 +1067,34 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 			return tx.MergeDramaEpisodeAssets(r.project.ID, scope.SourceEpisodeIDs, ids)
 		})
 	}
+	var missingInitialAssets bool
 	meta, _ := json.Marshal(dramaBibleMeta{Logline: bible.Logline, Tone: bible.Tone, VisualRules: bible.VisualRules})
-	if source.initial != nil {
+	if source.initial != nil || source.reference != nil {
 		if err := r.s.repo.Transaction(func(tx *repository.Repository) error {
 			if _, err := tx.DramaProductionForUpdate(r.project.ID); err != nil {
 				return err
 			}
-			ids, err := r.applyBibleCasts(tx, bible, false)
+			ids, err := r.applyBibleCasts(tx, bible, false, job)
 			if err != nil {
 				return err
 			}
-			if err := tx.MergeDramaEpisodeAssets(r.project.ID, source.initial.SourceEpisodeIDs, ids); err != nil {
-				return err
+			if source.reference != nil {
+				missingInitialAssets = len(ids) == 0
+				var acceptedJob *model.DramaJob
+				if !missingInitialAssets {
+					acceptedJob = job
+				}
+				if _, err := r.applyBibleCasts(tx, referenceAssets, true, acceptedJob); err != nil {
+					return err
+				}
+			}
+			if missingInitialAssets {
+				return nil
+			}
+			if source.initial != nil {
+				if err := tx.MergeDramaEpisodeAssets(r.project.ID, source.initial.SourceEpisodeIDs, ids); err != nil {
+					return err
+				}
 			}
 			if err := tx.UpdateDramaProduction(r.project.ID, map[string]any{"bible_json": string(meta), "stage": model.DramaStageProduce}); err != nil {
 				return err
@@ -1082,19 +1103,39 @@ func (r *dramaRun) applyBibleJob(job *model.DramaJob, task *model.Task) error {
 		}); err != nil {
 			return err
 		}
-	} else if _, err := r.applyBibleCasts(r.s.repo, bible, false); err != nil {
+	} else if _, err := r.applyBibleCasts(r.s.repo, bible, false, nil); err != nil {
 		return err
+	}
+	if missingInitialAssets {
+		return bibleResultIssue(job, task, errors.New("已保存作品参考资料中的资产，但未识别到正式正文中的资产，请重试首次资产提取"))
 	}
 	r.production.BibleJSON = string(meta)
 	r.meta = parseDramaBibleMeta(string(meta))
 	r.production.Stage = model.DramaStageProduce
-	if source.initial != nil {
+	if source.initial != nil || source.reference != nil {
 		return nil
 	}
 	return r.s.repo.AdvanceDramaGuideRevision(r.project.ID)
 }
 
-func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production.Bible, scoped bool) ([]string, error) {
+func bibleResultIssue(job *model.DramaJob, task *model.Task, cause error) error {
+	if job != nil {
+		if err := job.MarkResultUnusable(task.ID); err != nil {
+			return err
+		}
+	}
+	return &dramaResultIssue{message: cause.Error()}
+}
+
+// 首次建档期间只有这条作业能自动添加资料资产。自动建档版本从 0 开始，
+// 人工新建和导入从 1 开始；工作台编辑会递增版本，其他写入也会更新修改时间。
+func unchangedReferenceFromEarlierAttempt(cast model.DramaCast, job *model.DramaJob) bool {
+	return job != nil && job.StartedAt != nil &&
+		!cast.CreatedAt.Before(job.CreatedAt) && cast.CreatedAt.Before(*job.StartedAt) &&
+		cast.Revision == 0 && cast.UpdatedAt.Equal(cast.CreatedAt) && cast.ImageStatus == model.DramaMediaDraft
+}
+
+func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production.Bible, scoped bool, initialJob *model.DramaJob) ([]string, error) {
 	existing, err := repo.DramaCasts(r.project.ID)
 	if err != nil {
 		return nil, err
@@ -1155,6 +1196,36 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		linkAsset(cast)
 		return cast
 	}
+	linkExisting := func(base model.DramaCast, character *production.BibleCharacter) error {
+		linkAsset(base)
+		if !unchangedReferenceFromEarlierAttempt(base, initialJob) {
+			return nil
+		}
+		fields := map[string]any{}
+		if !scoped {
+			// 重试确认在正式正文出场后，此资产也参加作品的普通参考图流程。
+			fields["image_status"] = ""
+		}
+		if character != nil && character.SourceDefinition != "" {
+			fields["definition_json"] = dramaExtractedCharacterDefinition(*character).DefinitionJSON
+			fields["description"] = character.SourceDefinition
+			fields["role"] = truncateRunes(character.Role, 60)
+			fields["aliases_json"] = encodeStringList(character.Aliases)
+			fields["appearance"] = strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，")
+			fields["voice_instructions"] = strings.Join(nonEmpty(character.Gender, character.Age, character.Voice), "，")
+		}
+		if len(fields) == 0 {
+			return nil
+		}
+		current, err := repo.DramaCastForUpdate(base.ProjectID, base.ID)
+		if err != nil {
+			return err
+		}
+		if !unchangedReferenceFromEarlierAttempt(*current, initialJob) {
+			return nil
+		}
+		return repo.UpdateDramaCastFields(base.ID, fields)
+	}
 	for index, character := range bible.Characters {
 		name := truncateRunes(character.Name, 60)
 		matches := byName["character|"+production.NormalizeName(name)]
@@ -1167,7 +1238,9 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		var base model.DramaCast
 		if len(matches) == 1 {
 			base = matches[0]
-			linkAsset(base)
+			if err := linkExisting(base, &character); err != nil {
+				return nil, err
+			}
 		} else {
 			instructions := strings.TrimSpace(strings.Join(nonEmpty(character.Gender, character.Age, character.Voice), "，"))
 			description := truncateRunes(character.Description, 1000)
@@ -1212,7 +1285,9 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		if len(matches) == 0 {
 			addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "prop", Name: name, AliasesJSON: "[]", Description: truncateRunes(prop.Description, 1000), Appearance: truncateRunes(prop.Appearance, 1000), CreatedAt: now, UpdatedAt: now})
 		} else if len(matches) == 1 {
-			linkAsset(matches[0])
+			if err := linkExisting(matches[0], nil); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, scene := range bible.Scenes {
@@ -1221,7 +1296,9 @@ func (r *dramaRun) applyBibleCasts(repo *repository.Repository, bible production
 		if len(matches) == 0 {
 			addBase(model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "scene", Name: name, AliasesJSON: "[]", Description: truncateRunes(scene.Description, 1000), Appearance: truncateRunes(scene.Appearance, 1000), CreatedAt: now, UpdatedAt: now})
 		} else if len(matches) == 1 {
-			linkAsset(matches[0])
+			if err := linkExisting(matches[0], nil); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := repo.CreateDramaCasts(casts); err != nil {
@@ -2031,11 +2108,15 @@ func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	prompt := production.BiblePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill)
+	var prompt string
 	systemPrompt := production.BibleSystemPrompt()
 	if scope != nil {
-		prompt = production.BibleExtractionPrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, scope.AssetKind)
+		prompt = production.BibleExtractionSourcePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, scope.AssetKind, source.reference)
 		systemPrompt = production.BibleExtractionSystemPrompt(scope.AssetKind)
+	} else if source.reference != nil {
+		prompt = production.BibleWithReferencePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill, *source.reference, source.initial != nil)
+	} else {
+		prompt = production.BiblePrompt(r.project.Name, r.settings.Settings, chapters, dramaBibleSampleRunes, skill)
 	}
 	input := map[string]any{
 		"config":      map[string]any{"systemPrompt": systemPrompt},

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { createElement, StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
+import { analyzeNovel } from "@/lib/drama/novel-parse";
+import { formatDramaSourceMarkdown } from "@/lib/drama/source-reference-markdown";
 import type { CreateDramaInput, DramaChapterRef, DramaModelCatalog, DramaSettings, DramaSourceFormat, DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import type { LocalUser } from "@/stores/use-user-store";
@@ -54,8 +56,10 @@ const chapterWrites: Array<{ projectId: string; chapterId: string; patch: { titl
 const notices: Array<{ kind: string; text: string }> = [];
 const navigations: string[] = [];
 const createCalls: CreateDramaInput[] = [];
-type SourceWrite = { expectedRevision: number; chapters?: Array<{ title: string; text: string }>; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] };
+type SourceWrite = { expectedRevision: number; chapters?: Array<{ title: string; text: string }>; referenceText?: string; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] };
 const sourceWrites: Array<{ projectId: string; input: SourceWrite }> = [];
+const sourceReferences = new Map<string, string>();
+const sourceRevisions = new Map<string, number>();
 const settingsWrites: Array<{ projectId: string; input: { settings?: DramaSettings; expectedRevision?: number } }> = [];
 const projectWrites: Array<{ projectId: string; input: { name?: string; description?: string; aspectRatio?: string } }> = [];
 const projectSettings = new Map<string, DramaSettings>();
@@ -291,6 +295,15 @@ mock.module("@/pages/projects/asset-scheme", () => ({
 }));
 mock.module("@/services/api/drama", () => ({
     listDramaChapters: async (projectId: string) => ({ chapters: chapterLists.get(projectId) || [] }),
+    getDramaSourceExport: async (projectId: string) => ({
+        revision: sourceRevisions.get(projectId) ?? 4,
+        sourceFormat: "novel",
+        referenceText: sourceReferences.get(projectId) || "",
+        chapters: (chapterLists.get(projectId) || []).map(({ id }) => {
+            const { title, sourceText } = chapterBodies.get(chapterKey(projectId, id))!;
+            return { id, title, text: sourceText };
+        }),
+    }),
     getDramaEpisode: async (projectId: string, episodeId: string) => ({
         episode: { id: episodeId, number: 2, title: "第二集", stage: draftEpisodes.has(episodeId) ? "draft" : "script", chapterIdsJson: JSON.stringify(episodeChapterIDs.get(`${projectId}:${episodeId}`) || []) },
     }),
@@ -458,6 +471,8 @@ function resetFixture() {
     navigations.length = 0;
     createCalls.length = 0;
     sourceWrites.length = 0;
+    sourceReferences.clear();
+    sourceRevisions.clear();
     settingsWrites.length = 0;
     projectWrites.length = 0;
     projectSettings.clear();
@@ -589,12 +604,78 @@ test("StrictMode 空白入口允许连续输入正文并保存，效果重放不
         await tap(view.container, "保存并确认正文");
         expect(createCalls).toHaveLength(1);
         expect(createCalls[0].chapters[0].text).toContain("窗外突然变成了森林。");
+        expect(createCalls[0].sourceFormat).toBe("novel");
+        expect(createCalls[0].referenceText).toBeUndefined();
         expect(fileReads).toHaveLength(0);
         await act(async () => {
             pendingCreates[0].resolve(summaryOf("strict-created", 1));
             await settle();
         });
         expect(navigations).toEqual(["/projects/strict-created/guide?step=review"]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("快捷导入识别首集前的梗概、小传和正式分集", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        const reference = "梗概\n小区落在了森林里。\n人物小传\n秦子文：随身带一把柴刀。";
+        await edit(field(view.container, "短剧正文"), reference + "\n第1集\n秦子文推开门。\n第2集\n秦子武走到窗边。");
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0]).toMatchObject({
+            sourceFormat: "script",
+            referenceText: reference,
+            chapters: [
+                { title: "第1集", text: "秦子文推开门。" },
+                { title: "第2集", text: "秦子武走到窗边。" },
+            ],
+        });
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("快捷导入保留小说类型与叙事序章，并单独保存作品设定", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        const reference = "风格设定\n画面以冷青色为主。\n场景设定\n林家的客厅摆着一盏海蓝色台灯。\n人物小传\n林晚一直在寻找姐姐。";
+        const prologue = "林晚推开家门，去找姐姐。";
+        await edit(field(view.container, "短剧正文"), reference + "\n序章\n" + prologue + "\n第一章\n她打着伞走过街角。");
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0]).toMatchObject({
+            sourceFormat: "novel",
+            referenceText: reference,
+            chapters: [
+                { title: "序章", text: prologue },
+                { title: "第一章", text: "她打着伞走过街角。" },
+            ],
+        });
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("快捷导入读取 Markdown 中的小说类型、章名及原文", async () => {
+    resetFixture();
+    const view = await mount(() => createElement(DramaWorkflowEntry), summaryOf("project-a", 1));
+    try {
+        const source = {
+            sourceFormat: "novel" as const,
+            referenceText: "人物小传\n林晚一直在寻找姐姐。",
+            chapters: [
+                { title: "第一集", text: "林晚推开家门。\n\n---\n\n她打着伞走过街角。" },
+                { title: "夜渡", text: "她向码头走去。" },
+            ],
+        };
+        await edit(field(view.container, "短剧正文"), formatDramaSourceMarkdown(source));
+        await tap(view.container, "保存并确认正文");
+        expect(createCalls).toHaveLength(1);
+        expect(createCalls[0]).toMatchObject(source);
     } finally {
         await view.dispose();
     }
@@ -856,6 +937,7 @@ test("粘贴来源先解析与预览，确认才写入并沿用原有分集设�
                 { title: "第1集", text: "林晚推门。" },
                 { title: "第2集", text: "顾言走进房间。" },
             ],
+            referenceText: undefined,
             sourceFormat: "novel",
         });
         expect(initial.production.settings.episodeMode).toBe("auto");
@@ -866,8 +948,52 @@ test("粘贴来源先解析与预览，确认才写入并沿用原有分集设�
     }
 });
 
-test("下载剧本包含全部章节和当前草稿，不触发正文保存", async () => {
+test("替换剧本预览只显示正式集，参考资料随正文一并保存", async () => {
     resetFixture();
+    const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step: "source" }), summaryOf("project-a", 4, "script"));
+    try {
+        const reference = "人物小传\n秦子文：随身带一把柴刀。";
+        await tap(view.container, "手动输入 / 粘贴");
+        await edit(field(view.container, "粘贴新的来源正文"), reference);
+        await tap(view.container, "解析正文");
+        expect(notices.at(-1)?.text).toContain("请补充正式剧情正文");
+        expect(view.container.querySelector(".drama-source-replacement")).toBeNull();
+        expect(field(view.container, "粘贴新的来源正文").value).toBe(reference);
+        await edit(field(view.container, "粘贴新的来源正文"), reference + "\n第1集\n秦子文推开门。");
+        await tap(view.container, "解析正文");
+        expect(view.container.textContent).toContain("已识别作品参考资料");
+        expect(Array.from(view.container.querySelectorAll(".drama-source-replacement-item")).map((item) => item.textContent)).toEqual([expect.stringContaining("第1集")]);
+        expect(sourceWrites).toHaveLength(0);
+        await tap(view.container, "确认替换正文");
+        expect(sourceWrites).toEqual([{ projectId: "project-a", input: { expectedRevision: 4, chapters: [{ title: "第1集", text: "秦子文推开门。" }], referenceText: reference, sourceFormat: "script" } }]);
+    } finally {
+        await view.dispose();
+    }
+});
+
+test("整部导出的空资料区清除旧资料，单集文件只替换正文", async () => {
+    resetFixture();
+    const source = { sourceFormat: "novel" as const, chapters: [{ title: "夜渡", text: "阿宁从码头登船。" }] };
+    for (const referenceText of [undefined, ""]) {
+        const view = await mount((props) => createElement(WorkflowSourceReview, { ...props, step: "source" }), summaryOf("project-a", 4));
+        try {
+            await tap(view.container, "手动输入 / 粘贴");
+            await edit(field(view.container, "粘贴新的来源正文"), formatDramaSourceMarkdown({ ...source, referenceText }));
+            await tap(view.container, "解析正文");
+            expect(view.container.textContent?.includes("确认后会清除作品原有的参考资料")).toBe(referenceText === "");
+            await tap(view.container, "确认替换正文");
+            expect(sourceWrites.at(-1)?.input.chapters).toEqual(source.chapters);
+            expect(sourceWrites.at(-1)?.input.referenceText).toBe(referenceText);
+        } finally {
+            await view.dispose();
+        }
+    }
+});
+
+test("下载剧本包含全部章节、当前草稿和可重新导入的参考资料", async () => {
+    resetFixture();
+    const reference = "人物小传\n秦子文随身带一把刀。\n\n~~~md\n# 正文\n~~~";
+    sourceReferences.set("project-a", reference);
     const originalCreate = URL.createObjectURL;
     const originalRevoke = URL.revokeObjectURL;
     const originalClick = browser.HTMLAnchorElement.prototype.click;
@@ -887,10 +1013,25 @@ test("下载剧本包含全部章节和当前草稿，不触发正文保存", as
         await tap(view.container, "下载剧本");
         expect(downloads).toHaveLength(1);
         const text = await downloads[0].text();
+        const parsed = analyzeNovel(text, { perEpisode: true, novelReference: true });
+        expect(parsed.referenceText).toBe(reference);
+        expect(parsed.sourceFormat).toBe("novel");
+        expect(parsed.chapters.map(({ title, text }) => ({ title, text }))).toEqual([
+            { title: "第一章 A", text: "第一章尚未保存的内容" },
+            { title: "第二章 B", text: "B的服务器正文" },
+        ]);
         expect(text).toContain("# 第一章 A\n\n第一章尚未保存的内容");
         expect(text).toContain("# 第二章 B\n\nB的服务器正文");
         expect(fileNames).toEqual(["正文回归.md"]);
         expect(chapterWrites).toHaveLength(0);
+
+        sourceRevisions.set("project-a", 5);
+        sourceReferences.set("project-a", "另一标签页保存的新参考资料");
+        seedChapters("project-a", [{ id: "chapter-new", title: "夜渡", text: "已替换的正文", episodeNumber: 1 }]);
+        await tap(view.container, "下载剧本");
+        expect(downloads).toHaveLength(1);
+        expect(notices).toContainEqual({ kind: "error", text: "作品已被更新。请核对未保存的修改后再下载。" });
+        expect(field(view.container, "章节正文").value).toBe("第一章尚未保存的内容");
     } finally {
         await view.dispose();
         URL.createObjectURL = originalCreate;

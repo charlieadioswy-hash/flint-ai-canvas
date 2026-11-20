@@ -38,3 +38,25 @@ func (job DramaJob) ResultUnusable() bool {
 	var taskID string
 	return json.Unmarshal(payload[dramaJobUnusableResultKey], &taskID) == nil && taskID == job.TaskID
 }
+
+// ClearResultUnusable 移除已重新排队的结果标记，恢复没有范围参数的历史作业。
+func (job *DramaJob) ClearResultUnusable() error {
+	if !job.ResultUnusable() {
+		return nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(job.PayloadJSON), &payload); err != nil {
+		return err
+	}
+	delete(payload, dramaJobUnusableResultKey)
+	if len(payload) == 0 {
+		job.PayloadJSON = ""
+		return nil
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	job.PayloadJSON = string(encoded)
+	return nil
+}

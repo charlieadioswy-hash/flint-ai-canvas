@@ -761,6 +761,8 @@ export type DramaEstimate = {
 export type CreateDramaInput = {
     name: string;
     chapters: DramaChapterInput[];
+    /** 从导入原文中识别出的作品参考资料，用于提取主体资产。 */
+    referenceText?: string;
     guided?: boolean;
     brief?: string;
     settings: Partial<DramaSettings>;
@@ -842,8 +844,12 @@ export function updateDramaSettings(projectId: string, input: { settings?: Drama
     return http.patch<DramaSummary>(`${base(projectId)}/settings`, input);
 }
 
-export function saveDramaGuideSource(projectId: string, input: { expectedRevision: number; chapters?: DramaChapterInput[]; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] }) {
+export function saveDramaGuideSource(projectId: string, input: { expectedRevision: number; chapters?: DramaChapterInput[]; referenceText?: string; sourceFormat?: DramaSourceFormat; selectedChapters?: number[] }) {
     return http.put<DramaSummary>(`${base(projectId)}/guide/source`, input);
+}
+
+export function getDramaSourceExport(projectId: string) {
+    return http.get<{ revision: number; sourceFormat: DramaSourceFormat; referenceText: string; chapters: Array<DramaChapterInput & { id: string }> }>(`${base(projectId)}/source-export`);
 }
 
 export function confirmDramaGuide(projectId: string, input: { expectedStep: DramaGuideStep; expectedRevision: number; settings?: DramaSettings; episodeId?: string }) {

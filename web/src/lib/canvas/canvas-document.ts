@@ -13,11 +13,9 @@ const chapterHeadingPatterns = [
 
 export type ImportedNovelChapter = { title: string; plainText: string };
 
-function chapterTitleFromLine(line: string) {
-    const trimmed = line.trim();
-    if (!trimmed || Array.from(trimmed).length > maxChapterHeadingLength) return null;
-
-    const title = trimmed
+export function sourceHeading(line: string) {
+    const title = line
+        .trim()
         .replace(/^[#＃]{1,6}\s*/, "")
         .replace(/^[\s=_*~\-—–]+|[\s=_*~\-—–]+$/g, "")
         .trim();
@@ -26,7 +24,13 @@ function chapterTitleFromLine(line: string) {
         .replace(/[【】\[\]「」『』〈〉《》〖〗]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
+    return { title, candidate };
+}
 
+export function chapterTitleFromLine(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed || Array.from(trimmed).length > maxChapterHeadingLength) return null;
+    const { title, candidate } = sourceHeading(trimmed);
     // 只把较短且整行符合章节结构的文本当作标题，避免正文中提到“第一章”时误切分。
     return chapterHeadingPatterns.some((pattern) => pattern.test(candidate)) ? title : null;
 }
@@ -45,7 +49,7 @@ export function decodeNovelText(buffer: ArrayBuffer) {
     }
 }
 
-export function splitTextIntoChapters(text: string) {
+export function splitTextIntoChapters(text: string, headingFromLine = chapterTitleFromLine) {
     const normalized = text.replace(/\r\n?/g, "\n").trim();
     if (!normalized) return [{ title: "第 1 章", plainText: "" }];
     const lines = normalized.split("\n");
@@ -54,7 +58,7 @@ export function splitTextIntoChapters(text: string) {
     const preface: string[] = [];
 
     for (const line of lines) {
-        const chapterTitle = chapterTitleFromLine(line);
+        const chapterTitle = headingFromLine(line);
         if (chapterTitle) {
             if (current) sections.push(current);
             current = { title: chapterTitle, lines: [] };

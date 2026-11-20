@@ -119,6 +119,10 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 	// 按章分集时建档即写好各集；交给模型分集时由调度循环分批规划。
 	perChapter := settings.EpisodeMode == DramaEpisodeModeChapter
 	now := time.Now()
+	reference, err := dramaSourceReferenceUnit(projectID, req.ReferenceText, now)
+	if err != nil {
+		return nil, err
+	}
 	project := model.Project{ID: projectID, UserID: userID, Name: name, Type: "short-drama", AspectRatio: settings.AspectRatio, SourceType: format, Status: model.ProjectStatusActive, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	chapters := make([]model.ProjectUnit, 0, len(req.Chapters))
 	produced := make([]model.ProjectUnit, 0, len(req.Chapters))
@@ -198,6 +202,9 @@ func (s *Service) prepareDramaCreation(userID string, projectID string, req Crea
 		draftJSON = string(encoded)
 	}
 	productionRow.DraftJSON = draftJSON
+	if reference != nil {
+		chapters = append(chapters, *reference)
+	}
 	return &dramaCreation{project: project, chapters: chapters, production: productionRow, episodes: episodes}, nil
 }
 

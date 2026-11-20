@@ -12,6 +12,33 @@ import (
 
 var ErrDramaGuideChanged = errors.New("短剧引导已更新，请刷新后重试")
 
+type DramaSourceExportRow struct {
+	Revision   int64
+	SourceType string
+	ID         string
+	Kind       model.ProjectUnitKind
+	Title      string
+	SourceText string
+}
+
+// DramaSourceExport 以同一条查询读取版本、素材类型、正文和参考资料。
+func (r *Repository) DramaSourceExport(userID, projectID string) ([]DramaSourceExportRow, error) {
+	var rows []DramaSourceExportRow
+	result := r.db.Table("drama_productions").
+		Select("drama_productions.revision, projects.source_type, project_units.id, project_units.kind, project_units.title, project_units.source_text").
+		Joins("JOIN projects ON projects.id = drama_productions.project_id").
+		Joins("LEFT JOIN project_units ON project_units.project_id = projects.id AND project_units.kind IN ?", []model.ProjectUnitKind{model.ProjectUnitKindChapter, model.ProjectUnitKindSourceReference}).
+		Where("projects.id = ? AND projects.user_id = ?", projectID, userID).
+		Order("project_units.position ASC, project_units.id ASC").Scan(&rows)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return rows, nil
+}
+
 // Text results advance the shared workflow snapshot used by concurrent edits.
 func (r *Repository) AdvanceDramaGuideRevision(projectID string) error {
 	return r.db.Model(&model.DramaProduction{}).
@@ -63,8 +90,12 @@ func (r *Repository) dramaTextJobsActive(projectID string, kinds []string) (bool
 }
 
 // ReplaceDramaGuideSource only replaces unstarted draft data; generated entities never enter this path.
-func (r *Repository) ReplaceDramaGuideSource(projectID, sourceFormat string, chapters []model.ProjectUnit, episodes []model.DramaEpisode, cursor int, done bool) error {
-	if err := r.db.Where("project_id = ? AND kind = ?", projectID, model.ProjectUnitKindChapter).Delete(&model.ProjectUnit{}).Error; err != nil {
+func (r *Repository) ReplaceDramaGuideSource(projectID, sourceFormat string, chapters []model.ProjectUnit, episodes []model.DramaEpisode, cursor int, done, replaceReference bool) error {
+	kinds := []model.ProjectUnitKind{model.ProjectUnitKindChapter}
+	if replaceReference {
+		kinds = append(kinds, model.ProjectUnitKindSourceReference)
+	}
+	if err := r.db.Where("project_id = ? AND kind IN ?", projectID, kinds).Delete(&model.ProjectUnit{}).Error; err != nil {
 		return err
 	}
 	if len(chapters) > 0 {

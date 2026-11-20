@@ -138,8 +138,9 @@ const (
 	ProjectStatusActive   ProjectStatus = "active"
 	ProjectStatusArchived ProjectStatus = "archived"
 
-	ProjectUnitKindChapter ProjectUnitKind = "chapter"
-	ProjectUnitKindEpisode ProjectUnitKind = "episode"
+	ProjectUnitKindChapter         ProjectUnitKind = "chapter"
+	ProjectUnitKindEpisode         ProjectUnitKind = "episode"
+	ProjectUnitKindSourceReference ProjectUnitKind = "source_reference"
 
 	ProjectUnitStatusDraft     ProjectUnitStatus = "draft"
 	ProjectUnitStatusReady     ProjectUnitStatus = "ready"

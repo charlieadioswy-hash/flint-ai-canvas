@@ -130,7 +130,9 @@ Cell 的 `(board_id,index)` 唯一，保存原图 Resource、独立 PNG Resource
 
 版本 98 `drama_draft_form` 给 `drama_productions` 增加 `draft_json`（text，默认空串）。创建页“保存为草稿”（`start=false` 且带 `draft`）时写入 `{ sourceText, styleId }`：导入的原始正文和画风 ID，回到创建页时按当时的分集方式重新拆章。只在 `status=draft` 时有值，开工（创建或草稿替换时 `start=true`、制作台“开始制作”）时清空。旧作品为空串，草稿只能在制作台开工。
 
-重存草稿在同一事务内删掉该作品的原著章节（`project_units.kind=chapter`）和 `drama_episodes`，按新表单重新写入，并更新 `projects` 的名称、画幅和素材类型以及 `drama_productions` 整行；仍是草稿且没有任何 `drama_jobs` 时才执行。
+重存草稿在同一事务内替换作品的原著章节、作品参考资料和 `drama_episodes`，并更新 `projects` 的名称、画幅和素材类型以及 `drama_productions` 整行。仍是草稿且没有任何 `drama_jobs` 时才执行。
+
+作品参考资料复用 `project_units`，以 `kind=source_reference` 保存，每部作品最多一行。正式章节使用 `kind=chapter`，参与分集和分镜。首次资产提取独立读取参考资料，引导任务保存该行 ID 供结果采用和重试使用。引导配置阶段提交新正文和资料时同事务替换。既有数据库可直接保存此单元类型。
 
 ## 视频参考视频计费（Schema 96）
 

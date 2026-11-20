@@ -23,6 +23,7 @@ type UpdateDramaGuideSourceRequest struct {
 	ExpectedRevision int64               `json:"expectedRevision"`
 	Chapters         []DramaChapterInput `json:"chapters,omitempty"`
 	SourceFormat     string              `json:"sourceFormat,omitempty"`
+	ReferenceText    *string             `json:"referenceText,omitempty"`
 	// 引导始终按全部正文建集；保留此字段仅供旧客户端提交。
 	SelectedChapters []int `json:"selectedChapters,omitempty"`
 }
@@ -397,6 +398,9 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 	if p.GuideStep != model.DramaGuideConfiguring {
 		return DramaSummary{}, BadAuthRequest("正文替换仅限制作方案确认前")
 	}
+	if req.Chapters == nil && req.ReferenceText != nil {
+		return DramaSummary{}, BadAuthRequest("请将作品参考资料和正式正文一并提交")
+	}
 	format := strings.TrimSpace(req.SourceFormat)
 	if format == "" {
 		format = production.NormalizeSourceFormat(project.SourceType)
@@ -429,7 +433,8 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 				input = append(input, DramaChapterInput{Title: chapter.Title, Text: chapter.SourceText})
 			}
 		}
-		chapters, episodes, cursor, done, err := prepareDramaSource(projectID, input, nil, settings, format, existing, time.Now())
+		now := time.Now()
+		chapters, episodes, cursor, done, err := prepareDramaSource(projectID, input, nil, settings, format, existing, now)
 		if err != nil {
 			return err
 		}
@@ -446,8 +451,19 @@ func (s *Service) UpdateDramaGuideSource(userID, projectID string, req UpdateDra
 			if err := tx.ResetDramaGuideEpisodes(projectID, format, episodes, cursor, done); err != nil {
 				return err
 			}
-		} else if err := tx.ReplaceDramaGuideSource(projectID, format, chapters, episodes, cursor, done); err != nil {
-			return err
+		} else {
+			if req.ReferenceText != nil {
+				reference, err := dramaSourceReferenceUnit(projectID, *req.ReferenceText, now)
+				if err != nil {
+					return err
+				}
+				if reference != nil {
+					chapters = append(chapters, *reference)
+				}
+			}
+			if err := tx.ReplaceDramaGuideSource(projectID, format, chapters, episodes, cursor, done, req.ReferenceText != nil); err != nil {
+				return err
+			}
 		}
 		return tx.UpdateDramaGuideDraftFields(projectID, map[string]any{"settings_json": encodeDramaSettings(settings)})
 	})

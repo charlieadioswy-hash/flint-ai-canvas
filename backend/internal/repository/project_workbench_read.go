@@ -49,13 +49,15 @@ func (r *Repository) ProjectUnitCanvasCounts(projectID string) (map[string]int64
 
 func (r *Repository) ProjectOverviewMetrics(projectID string) (ProjectOverviewMetrics, error) {
 	var metrics ProjectOverviewMetrics
+	units := r.projectWorkbenchUnits(projectID).Select("id", "project_id", "word_count", "status")
 	err := r.db.Raw(`
+		WITH visible_units AS (?)
 		SELECT
-			(SELECT COUNT(*) FROM project_units WHERE project_id = ?) AS unit_count,
-			(SELECT COUNT(*) FROM project_units WHERE project_id = ? AND status = ?) AS completed_unit_count,
-			(SELECT COALESCE(SUM(word_count), 0) FROM project_units WHERE project_id = ?) AS total_word_count,
-			(SELECT COUNT(*) FROM project_units WHERE project_id = ? AND word_count = 0) AS units_without_text,
-			(SELECT COUNT(*) FROM project_units pu WHERE pu.project_id = ? AND pu.status <> ? AND NOT EXISTS (SELECT 1 FROM shots s WHERE s.project_id = pu.project_id AND s.unit_id = pu.id)) AS units_without_shots,
+			(SELECT COUNT(*) FROM visible_units) AS unit_count,
+			(SELECT COUNT(*) FROM visible_units WHERE status = ?) AS completed_unit_count,
+			(SELECT COALESCE(SUM(word_count), 0) FROM visible_units) AS total_word_count,
+			(SELECT COUNT(*) FROM visible_units WHERE word_count = 0) AS units_without_text,
+			(SELECT COUNT(*) FROM visible_units pu WHERE pu.status <> ? AND NOT EXISTS (SELECT 1 FROM shots s WHERE s.project_id = pu.project_id AND s.unit_id = pu.id)) AS units_without_shots,
 			(SELECT COUNT(*) FROM canvas_projects WHERE project_id = ?) AS canvas_count,
 			(SELECT COUNT(*) FROM project_asset_links WHERE project_id = ?) AS asset_count,
 			(SELECT COUNT(*) FROM shots WHERE project_id = ?) AS shot_count,
@@ -65,7 +67,7 @@ func (r *Repository) ProjectOverviewMetrics(projectID string) (ProjectOverviewMe
 			(SELECT COUNT(DISTINCT shot_id) FROM shot_artifacts WHERE project_id = ? AND type = 'video' AND selected = ? AND status = 'ready') AS ready_video_count,
 			(SELECT COUNT(*) FROM tasks WHERE project_id = ? AND type = ? AND status = ?) AS timeline_render_succeeded_count,
 			(SELECT COUNT(*) FROM shot_artifacts WHERE project_id = ? AND status = 'stale') AS stale_artifact_count
-`, projectID, projectID, model.ProjectUnitStatusCompleted, projectID, projectID, projectID, model.ProjectUnitStatusDraft, projectID, projectID, projectID, projectID, projectID, true, projectID, true, projectID, true, projectID, model.TaskTypeTimelineRender, model.TaskStatusSucceeded, projectID).Scan(&metrics).Error
+`, units, model.ProjectUnitStatusCompleted, model.ProjectUnitStatusDraft, projectID, projectID, projectID, projectID, projectID, true, projectID, true, projectID, true, projectID, model.TaskTypeTimelineRender, model.TaskStatusSucceeded, projectID).Scan(&metrics).Error
 	return metrics, err
 }
 
@@ -79,11 +81,10 @@ func (r *Repository) ProjectOverviewUnits(projectID string, limit int) ([]Projec
 			(SELECT COUNT(*) FROM shots s WHERE s.project_id = pu.project_id AND s.unit_id = pu.id) AS shot_count,
 			(SELECT COUNT(*) FROM project_asset_candidates pac WHERE pac.project_id = pu.project_id AND pac.unit_id = pu.id) AS candidate_count,
 			(SELECT COUNT(DISTINCT cul.canvas_id) FROM canvas_unit_links cul WHERE cul.project_id = pu.project_id AND cul.unit_id = pu.id) AS canvas_count
-		FROM project_units pu
-		WHERE pu.project_id = ?
+		FROM (?) pu
 		ORDER BY pu.position ASC, pu.created_at ASC
 		LIMIT ?
-	`, projectID, limit).Scan(&rows).Error
+	`, r.projectWorkbenchUnits(projectID), limit).Scan(&rows).Error
 	return rows, err
 }
 

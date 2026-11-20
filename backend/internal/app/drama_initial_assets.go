@@ -12,9 +12,10 @@ import (
 )
 
 type dramaInitialAssetsPayload struct {
-	InitialAssets    bool     `json:"initialAssets"`
-	SourceChapterIDs []string `json:"sourceChapterIds"`
-	SourceEpisodeIDs []string `json:"sourceEpisodeIds,omitempty"`
+	InitialAssets      bool     `json:"initialAssets"`
+	SourceChapterIDs   []string `json:"sourceChapterIds"`
+	SourceEpisodeIDs   []string `json:"sourceEpisodeIds,omitempty"`
+	ReferenceChapterID string   `json:"referenceChapterId,omitempty"`
 }
 
 func dramaInitialAssets(job *model.DramaJob) (*dramaInitialAssetsPayload, error) {
@@ -42,6 +43,9 @@ func dramaInitialAssets(job *model.DramaJob) (*dramaInitialAssetsPayload, error)
 		if id == "" || id != strings.TrimSpace(id) {
 			return nil, BadAuthRequest("首次资产提取剧集范围无效")
 		}
+	}
+	if id := payload.ReferenceChapterID; id != strings.TrimSpace(id) || seen[id] {
+		return nil, BadAuthRequest("首次资产提取参考资料范围无效")
 	}
 	return &payload, nil
 }
@@ -75,6 +79,13 @@ func enqueueDramaInitialAssets(tx *repository.Repository, projectID string, chap
 		}
 		payload.SourceChapterIDs = []string{chapters[0].ID}
 	}
+	reference, err := tx.DramaSourceReference(projectID)
+	if err != nil {
+		return err
+	}
+	if reference != nil {
+		payload.ReferenceChapterID = reference.ID
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -85,6 +96,7 @@ func enqueueDramaInitialAssets(tx *repository.Repository, projectID string, chap
 
 type dramaBibleSource struct {
 	chapters   []production.Chapter
+	reference  *production.Chapter
 	extraction *dramaAssetExtractionPayload
 	initial    *dramaInitialAssetsPayload
 }
@@ -103,13 +115,16 @@ func (r *dramaRun) loadBibleSource(job *model.DramaJob) (dramaBibleSource, error
 		return source, err
 	}
 	var ids []string
+	var referenceID string
 	if source.extraction != nil {
 		if source.initial != nil {
 			return source, BadAuthRequest("资产提取范围不能同时指定首次和增量任务")
 		}
 		ids = source.extraction.SourceChapterIDs
+		referenceID = source.extraction.ReferenceChapterID
 	} else if source.initial != nil {
 		ids = source.initial.SourceChapterIDs
+		referenceID = source.initial.ReferenceChapterID
 		for _, episodeID := range source.initial.SourceEpisodeIDs {
 			episode, err := r.s.repo.DramaEpisode(r.project.ID, episodeID)
 			if err != nil {
@@ -131,8 +146,24 @@ func (r *dramaRun) loadBibleSource(job *model.DramaJob) (dramaBibleSource, error
 		}
 	}
 	source.chapters, err = r.loadChapters(ids)
-	if err == nil && ids != nil && len(source.chapters) != len(ids) {
-		err = BadAuthRequest("资产提取来源正文已变化，请刷新后重试")
+	if err != nil {
+		return source, err
 	}
-	return source, err
+	if ids != nil && len(source.chapters) != len(ids) {
+		return source, BadAuthRequest("资产提取来源正文已变化，请刷新后重试")
+	}
+	if referenceID == "" && ids != nil {
+		return source, nil
+	}
+	reference, err := r.s.repo.DramaSourceReference(r.project.ID)
+	if err != nil {
+		return source, err
+	}
+	if referenceID != "" && (reference == nil || reference.ID != referenceID) {
+		return source, BadAuthRequest("资产提取参考资料已变化，请刷新后重试")
+	}
+	if reference != nil {
+		source.reference = &production.Chapter{ID: reference.ID, Title: reference.Title, Text: reference.SourceText, IsReference: true}
+	}
+	return source, nil
 }

@@ -104,6 +104,70 @@ func TestDramaAssetExtractionScopesAndPreservesExistingAssets(t *testing.T) {
 	}
 }
 
+func TestDramaAssetExtractionAllOriginalIncludesProjectReference(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	const reference = "人物小传\n王小莉\n年龄：28岁"
+	source, err := svc.CreateDrama("usr-drama", CreateDramaRequest{Name: "作品资产查漏", Guided: true, SourceFormat: "script", ReferenceText: reference, Settings: DramaSettings{Models: fakeDramaModels}, Chapters: []DramaChapterInput{
+		{Title: "第一集", Text: "正式正文甲：秦子文在大厅。"},
+		{Title: "第二集", Text: "正式正文乙：秦子武拿起手电。"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := source.Project.ID
+	if err := svc.repo.UpdateDramaProduction(projectID, map[string]any{"guide_step": model.DramaGuideAssets, "stage": model.DramaStageProduce, "status": model.DramaStatusPaused}); err != nil {
+		t.Fatal(err)
+	}
+	source = guideSummary(t, svc, projectID)
+	result, err := svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "character", AllChapters: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := svc.repo.DramaJob(projectID, result.Job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := dramaAssetExtraction(job)
+	refRow, refErr := svc.repo.DramaSourceReference(projectID)
+	if err != nil || refErr != nil || refRow == nil || scope == nil || scope.ReferenceChapterID != refRow.ID || len(scope.SourceChapterIDs) != 2 || len(scope.SourceEpisodeIDs) != 0 {
+		t.Fatalf("whole-project extraction needs a separate reference snapshot: %+v %+v %v %v", scope, refRow, err, refErr)
+	}
+	svc.dramaTaskHook = func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error) {
+		task, err := fake.submit(userID, req, timeline)
+		if err != nil || !strings.Contains(req.Prompt, "【作品参考资料】") {
+			return task, err
+		}
+		encoded, err := json.Marshal(map[string]string{"mode": "text", "text": `{"characters":[{"name":"王小莉","sourceDefinition":"王小莉\n年龄：28岁","sourceChapterIndex":0}],"props":[],"scenes":[]}`})
+		if err != nil {
+			return nil, err
+		}
+		task.ResultJSON = string(encoded)
+		return task, fake.db.Model(task).UpdateColumn("result_json", task.ResultJSON).Error
+	}
+	runDramaTicks(t, svc, projectID, 2)
+	if len(fake.requests) != 1 || !strings.Contains(fake.requests[0].Prompt, reference) || !strings.Contains(fake.requests[0].Prompt, "正式正文甲") || !strings.Contains(fake.requests[0].Prompt, "正式正文乙") || strings.Contains(fake.requests[0].Prompt, "referenceAssets") {
+		t.Fatalf("project-wide request must include the reference under the usual one-kind output: %+v", fake.requests)
+	}
+	casts, err := svc.repo.DramaCasts(projectID)
+	if err != nil || len(casts) != 1 || casts[0].Name != "王小莉" || casts[0].Description != "王小莉\n年龄：28岁" || casts[0].ImageStatus != model.DramaMediaDraft {
+		t.Fatalf("project-wide re-extraction did not persist the verified reference-only cast: %+v %v", casts, err)
+	}
+	for _, episode := range source.Episodes {
+		stored, err := svc.repo.DramaEpisode(projectID, episode.ID)
+		if err != nil || stored.AssetIDsJSON != "" {
+			t.Fatalf("project-wide extraction linked assets to an episode: %+v %v", stored, err)
+		}
+	}
+	_, err = svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "prop", EpisodeIDs: []string{source.Episodes[1].ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDramaTicks(t, svc, projectID, 2)
+	if len(fake.requests) != 2 || !strings.Contains(fake.requests[1].Prompt, "正式正文乙") || strings.Contains(fake.requests[1].Prompt, "正式正文甲") || strings.Contains(fake.requests[1].Prompt, "【作品参考资料】") {
+		t.Fatalf("single-episode extraction must preserve its selected-source contract: %+v", fake.requests)
+	}
+}
+
 func TestDramaAssetExtractionAllChaptersIncludesReservedWithoutProducingThem(t *testing.T) {
 	for _, kind := range []string{"character", "scene", "prop"} {
 		t.Run(kind, func(t *testing.T) {

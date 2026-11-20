@@ -175,15 +175,19 @@ func (r *Repository) BumpProjectRevision(projectID string) error {
 	return r.db.Model(&model.Project{}).Where("id = ?", projectID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
 }
 
+func (r *Repository) projectWorkbenchUnits(projectID string) *gorm.DB {
+	return r.db.Model(&model.ProjectUnit{}).Where("project_id = ? AND (kind IS NULL OR kind <> ?)", projectID, model.ProjectUnitKindSourceReference)
+}
+
 func (r *Repository) ProjectUnits(projectID string) ([]model.ProjectUnit, error) {
 	var units []model.ProjectUnit
-	err := r.db.Where("project_id = ?", projectID).Order("position asc, created_at asc").Find(&units).Error
+	err := r.projectWorkbenchUnits(projectID).Order("position asc, created_at asc").Find(&units).Error
 	return units, err
 }
 
 func (r *Repository) ProjectUnitSummaries(projectID string) ([]model.ProjectUnit, error) {
 	var units []model.ProjectUnit
-	err := r.db.Select("id", "project_id", "kind", "title", "word_count", "status", "position", "created_at", "updated_at").Where("project_id = ?", projectID).Order("position asc, created_at asc").Find(&units).Error
+	err := r.projectWorkbenchUnits(projectID).Select("id", "project_id", "kind", "title", "word_count", "status", "position", "created_at", "updated_at").Order("position asc, created_at asc").Find(&units).Error
 	return units, err
 }
 
@@ -225,7 +229,7 @@ func (r *Repository) ReorderProjectUnits(projectID string, unitIDs []string) err
 
 func (r *Repository) ProjectUnit(projectID string, id string) (*model.ProjectUnit, error) {
 	var unit model.ProjectUnit
-	if err := r.db.First(&unit, "id = ? AND project_id = ?", id, projectID).Error; err != nil {
+	if err := r.projectWorkbenchUnits(projectID).First(&unit, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &unit, nil

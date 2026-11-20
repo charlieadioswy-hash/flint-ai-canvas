@@ -8,7 +8,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
-import { analyzeNovel, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
+import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
 import { groupChapterEpisodes } from "@/lib/drama/chapter-selection";
 import { ApiError } from "@/services/api/request";
 import { linkCanvasToDrama } from "@/services/drama-canvas";
@@ -83,6 +83,11 @@ export default function DramaCreatePage() {
     const draftId = searchParams.get("draft") || "";
     const [sourceText, setSourceText] = useState("");
     const [sourceFormat, setSourceFormat] = useState<DramaSourceFormat>("novel");
+    const explicitSourceFormat = useRef<DramaSourceFormat>(undefined);
+    const chooseSourceFormat = (format: DramaSourceFormat) => {
+        explicitSourceFormat.current = format;
+        setSourceFormat(format);
+    };
     // 默认按原文章节建立完整分集目录。
     const [chapterMode, setChapterMode] = useState<DramaEpisodeMode>("chapter");
     const [groupSize, setGroupSize] = useState(1);
@@ -90,7 +95,7 @@ export default function DramaCreatePage() {
     const perEpisode = episodeMode === "chapter";
     // 剧本与分镜每个标题就是一集；小说按章分集时可每 N 章合成一集。
     const chaptersPerEpisode = sourceFormat === "novel" && perEpisode ? groupSize : 1;
-    const analysis = useMemo(() => (sourceText ? analyzeNovel(sourceText, { perEpisode }) : null), [perEpisode, sourceText]);
+    const analysis = useMemo(() => (sourceText ? analyzeNovel(sourceText, { perEpisode, script: sourceFormat === "script", novelReference: sourceFormat !== "script" }) : null), [perEpisode, sourceFormat, sourceText]);
     const selectedIndexes = useMemo(() => analysis?.chapters.map((_, index) => index) || [], [analysis]);
     const selectedWords = useMemo(() => selectedIndexes.reduce((sum, index) => sum + (analysis?.chapters[index]?.words || 0), 0), [analysis, selectedIndexes]);
     const episodeGroups = useMemo(
@@ -105,7 +110,7 @@ export default function DramaCreatePage() {
     );
     const oversizedGroup = episodeGroups.find((group) => group.chars > EPISODE_GROUP_CHARS);
     // 此页可直接启动整部作品，所有章节都需要满足改编长度限制。
-    const longChapters = useMemo(() => (analysis && perEpisode ? analysis.chapters.flatMap((chapter, index) => (sourceChars(chapter.text) > EPISODE_SOURCE_CHARS ? [index] : [])) : []), [analysis, perEpisode]);
+    const longChapters = useMemo(() => (analysis && (perEpisode || analysis.sourceFormat) ? analysis.chapters.flatMap((chapter, index) => (sourceChars(chapter.text) > EPISODE_SOURCE_CHARS ? [index] : [])) : []), [analysis, perEpisode]);
     const longSelected = longChapters.length;
     const [name, setName] = useState("");
     const [aspectRatio, setAspectRatio] = useState("9:16");
@@ -201,16 +206,25 @@ export default function DramaCreatePage() {
         if (estimate && budgetCredits === null && estimate.maxMicrocredits > 0) setBudgetCredits(Math.ceil(estimate.maxMicrocredits / 1_000_000));
     }, [estimate, budgetCredits]);
 
-    const loadText = (text: string, fileName?: string) => {
+    const loadText = (text: string, fileName?: string, preferredFormat?: DramaSourceFormat) => {
         if (!fileName) {
             fileReadSequence.current += 1;
             setReadingFile(false);
         }
-        const result = analyzeNovel(text, { perEpisode });
+        const explicitFormat = preferredFormat || explicitSourceFormat.current;
+        const format = explicitFormat || sourceFormat;
+        const result = analyzeNovel(text, { perEpisode: format !== "novel" || chapterMode === "chapter", script: format === "script", novelReference: format !== "script" });
         if (!result.chapters.length) {
-            message.error("没有读取到正文，请检查文件内容");
+            const issue = result.issues.find(({ kind }) => kind === "invalid_export" || kind === "reference_only");
+            if (issue?.kind === "reference_only") {
+                setSourceFormat(format);
+                setPasteMode(true);
+                setPasteText(text);
+            }
+            message.error(issue?.message || "没有读取到正文，请检查文件内容");
             return;
         }
+        setSourceFormat(explicitFormat || result.sourceFormat || format);
         setSourceText(text);
         setBudgetCredits(null);
         if (fileName && !name) setName(titleFromFileName(fileName));
@@ -240,8 +254,7 @@ export default function DramaCreatePage() {
         handedRef.current = true;
         if (handedFile) void loadFile(handedFile);
         else if (prefill) {
-            if (prefill.sourceFormat) setSourceFormat(prefill.sourceFormat);
-            loadText(prefill.text);
+            loadText(prefill.text, undefined, prefill.sourceFormat);
             // loadText 在没有名称时会取首章标题，这里在它之后设置，以画布带来的名称为准。
             if (prefill.name?.trim()) setName(prefill.name.trim().slice(0, 80));
             linkCanvasRef.current = prefill.canvasId;
@@ -257,7 +270,7 @@ export default function DramaCreatePage() {
         hydratedRef.current = draft.projectId;
         const saved = draft.settings;
         setName(draft.name);
-        setSourceFormat(draft.sourceFormat);
+        chooseSourceFormat(draft.sourceFormat);
         if (saved.episodeMode) setChapterMode(saved.episodeMode);
         if (saved.chaptersPerEpisode) setGroupSize(saved.chaptersPerEpisode);
         if (saved.aspectRatio) setAspectRatio(saved.aspectRatio);
@@ -291,6 +304,7 @@ export default function DramaCreatePage() {
             const input = {
                 name: name.trim(),
                 chapters: analysis!.chapters.map((chapter) => ({ title: chapter.title, text: chapter.text })),
+                referenceText: analysis!.referenceText,
                 settings: { ...settings, models: resolvedModels },
                 budgetMicrocredits: Math.max(0, Math.round((budgetCredits || 0) * 1_000_000)),
                 start,
@@ -320,7 +334,8 @@ export default function DramaCreatePage() {
         },
         onError: (error) => message.error(error instanceof ApiError || error instanceof Error ? error.message : "创建失败"),
     });
-    const tooLong = longSelected > 0 || Boolean(oversizedGroup);
+    const referenceTooLong = Boolean(analysis?.referenceText && sourceChars(analysis.referenceText) > DRAMA_REFERENCE_SOURCE_CHARS);
+    const tooLong = longSelected > 0 || referenceTooLong || Boolean(oversizedGroup);
     // 草稿不要求模型齐全（服务端只在开工时检查），但画幅与续接方式仍会被服务端校验；分辨率给不出时按模型默认。
     const canSaveDraft = Boolean(analysis && selectedIndexes.length && name.trim() && resolvedModels && !videoRatioProblem && !tailFrameProblem && !tooLong && !create.isPending);
     const canStart = canSaveDraft && missingCapabilities.length === 0;
@@ -329,8 +344,9 @@ export default function DramaCreatePage() {
         const list: Array<{ key: string; message: string; blocking: boolean }> = analysis.issues.filter((issue) => issue.kind !== "too_long").map((issue) => ({ key: issue.kind, message: issue.message, blocking: false }));
         const limit = `${EPISODE_SOURCE_CHARS / 10_000} 万字`;
         if (longSelected) list.push({ key: "too_long", message: `${longSelected} ${perEpisode && chaptersPerEpisode === 1 ? "集" : "章"}原文超过 ${limit}，请用“第 N 集”标题拆开`, blocking: true });
+        if (referenceTooLong) list.push({ key: "reference_too_long", message: "请将作品参考资料缩短到 1.2 万字以内", blocking: true });
         return list;
-    }, [analysis, chaptersPerEpisode, longChapters.length, longSelected, perEpisode]);
+    }, [analysis, chaptersPerEpisode, longChapters.length, longSelected, perEpisode, referenceTooLong]);
     const chapterItems = useMemo(
         () =>
             (analysis?.chapters || []).map((chapter, index) => ({
@@ -374,7 +390,7 @@ export default function DramaCreatePage() {
                         <h1>新建短剧</h1>
                     </header>
                     <div className="drama-compose-formats">
-                        <SourceFormatPicker value={sourceFormat} onChange={setSourceFormat} row />
+                        <SourceFormatPicker value={sourceFormat} onChange={chooseSourceFormat} row />
                     </div>
                     <div
                         className={`drama-drop ${dragOver ? "is-over" : ""}`}
@@ -473,7 +489,7 @@ export default function DramaCreatePage() {
                             <div className="drama-stat-label">集</div>
                         </div>
                     </div>
-                    {issues.length ? (
+                    {issues.length || (analysis.referenceText && !referenceTooLong) ? (
                         <div className="drama-issues">
                             {issues.map((issue) => (
                                 <div key={issue.key} className={`drama-issue ${issue.blocking ? "is-blocking" : ""}`} role={issue.blocking ? "alert" : undefined}>
@@ -481,6 +497,7 @@ export default function DramaCreatePage() {
                                     {issue.message}
                                 </div>
                             ))}
+                            {analysis.referenceText && !referenceTooLong ? <p className="drama-issue">已识别作品参考资料，供角色、场景和道具提取。</p> : null}
                         </div>
                     ) : null}
                     <ChapterDirectory items={chapterItems} previewIndex={previewIndex} onPreview={setPreviewIndex} />
@@ -491,10 +508,10 @@ export default function DramaCreatePage() {
                     <section>
                         <div className="drama-section-title">
                             <h2>素材与分集</h2>
-                            <span>{sourceFormat === "novel" ? "引号里的对白逐字保留为台词，不会被改写" : "剧本与分镜每个标题就是一集，台词逐字保留"}</span>
+                            <span>{sourceFormat === "novel" ? "引号里的对白逐字保留为台词，不会被改写" : sourceFormat === "script" ? "剧本按编号标题分集，台词逐字保留" : "分镜每个标题就是一集，台词逐字保留"}</span>
                         </div>
                         <div className="grid gap-3">
-                            <SourceFormatPicker value={sourceFormat} onChange={setSourceFormat} row />
+                            <SourceFormatPicker value={sourceFormat} onChange={chooseSourceFormat} row />
                             {sourceFormat === "novel" ? (
                                 <div className="drama-media-modes is-row is-two" role="radiogroup" aria-label="分集方式">
                                     {EPISODE_MODES.map((mode) => (

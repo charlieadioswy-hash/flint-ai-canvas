@@ -8,7 +8,7 @@ import { useNavigate } from "react-router";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
 import { dramaChoiceKey, dramaVideoOptionFits } from "@/lib/drama/model-choice";
-import { analyzeNovel, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
+import { analyzeNovel, DRAMA_REFERENCE_SOURCE_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
 import { DEFAULT_STORYBOARD } from "@/lib/drama/storyboard";
 import { createDrama, type DramaSettings, type DramaSourceFormat } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
@@ -62,7 +62,8 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
     const canvasConfirmation = useRef<((confirmed: boolean) => void) | null>(null);
     const inputModality = useRef<"keyboard" | "pointer">("keyboard");
     const lastSourceMode = useRef<EntryMode>("script");
-    const [format, setFormat] = useState<DramaSourceFormat>("novel");
+    const [chosenFormat, setFormat] = useState<DramaSourceFormat>();
+    const format = chosenFormat || "novel";
     const [text, setText] = useState("");
     const [fileName, setFileName] = useState("");
     const [rename, setRename] = useState<{ name: string; error: string } | null>(null);
@@ -136,9 +137,10 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
             if (!settings) throw new Error("默认制作配置还没准备好，请稍后重试");
             if (!name.trim()) throw new Error("请填写作品名称");
             if (Array.from(name.trim()).length > 80) throw new Error("作品名称不能超过 80 字");
-            const analysis = analyzeNovel(input, { perEpisode: true });
+            const analysis = analyzeNovel(input, { perEpisode: true, script: chosenFormat ? chosenFormat === "script" : "auto", novelReference: chosenFormat !== "script" });
             const chapters = analysis.chapters.map(({ title, text: chapterText }) => ({ title, text: chapterText }));
-            if (!chapters.length) throw new Error("没有读取到正文");
+            if (!chapters.length) throw new Error(analysis.issues.find((issue) => issue.kind === "invalid_export" || issue.kind === "reference_only")?.message || "没有读取到正文");
+            if (analysis.referenceText && sourceChars(analysis.referenceText) > DRAMA_REFERENCE_SOURCE_CHARS) throw new Error("请将作品参考资料缩短到 1.2 万字以内");
             if (chapters.some((chapter) => sourceChars(chapter.text) > EPISODE_SOURCE_CHARS)) {
                 throw new Error("单章正文超过 1.2 万字，请用章节标题拆分后再导入");
             }
@@ -146,10 +148,11 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
                 name: name.trim(),
                 guided: true,
                 chapters,
+                referenceText: analysis.referenceText,
                 settings,
                 budgetMicrocredits: 0,
                 start: false,
-                sourceFormat: format,
+                sourceFormat: chosenFormat || analysis.sourceFormat || (analysis.detectedScript ? "script" : "novel"),
                 episodeMode: "chapter",
             });
         },
@@ -522,12 +525,14 @@ function WorkflowEntry({ initialFile, focusInput = false, userId }: EntryProps &
                                     <>
                                         <li>以“第”字开头，“章”字结尾</li>
                                         <li>章节标题独立成行</li>
+                                        <li>简介、人物小传和场景设定可放在正文前，供主体资产提取参考</li>
                                     </>
                                 ) : format === "script" ? (
                                     <>
                                         <li>以“第”字开头，“集”字结尾</li>
                                         <li>“第X集”内部不留空格，独立成行</li>
                                         <li>X 为阿拉伯数字或汉字</li>
+                                        <li>第一集之前可放梗概和人物小传，供角色、场景和道具提取参考</li>
                                     </>
                                 ) : (
                                     <>
