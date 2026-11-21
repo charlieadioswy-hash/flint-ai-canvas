@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Checkbox, Input, InputNumber, Select, Switch } from "antd";
+import { App, Button, Checkbox, Dropdown, Input, InputNumber, Select, Switch } from "antd";
 import { useBlocker } from "react-router";
 import {
     AlertCircle,
@@ -15,6 +15,7 @@ import {
     Lock,
     MapPinned,
     Maximize2,
+    MoreHorizontal,
     PauseCircle,
     RefreshCw,
     RotateCcw,
@@ -75,7 +76,7 @@ import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoiceField, CastVoicePreview } from "./cast-voice";
 import { CastImageOptions, castImageOptionsDraft } from "./cast-image-options";
-import { CastViews, CastViewWorkspace } from "./cast-views";
+import { CastViews, CastViewWorkspace, type SelectedCastView } from "./cast-views";
 import { CastHistoryDragProvider, useCastHistoryDrag, type CastHistoryImage } from "./cast-history-drag";
 import { CastLooks } from "./cast-looks";
 import { useCastRegenerationGuard } from "./use-cast-regeneration-guard";
@@ -402,6 +403,7 @@ function CastEditorSession(props: CastEditorProps) {
     // 同资产保存后的表单回填不能取消尚未完成的生成；切换资产时由会话边界清理。
     const regenerationGuard = useCastRegenerationGuard(projectId);
     const [mainState, setMainState] = useState({ dirty: false, busy: false });
+    const [viewState, setViewState] = useState({ dirty: false, busy: false });
     const [restyle, setRestyle] = useState(true);
     const adopting = useRef(false);
     const previousImage = useRef({ imageVersion, imageResourceId, imageStatus, updatedAt });
@@ -452,16 +454,23 @@ function CastEditorSession(props: CastEditorProps) {
         },
     });
     const editorBusy = mainState.dirty || mainState.busy || adoptMain.isPending;
+    const stateChange = useRef(props.onDirtyChange);
+    stateChange.current = props.onDirtyChange;
+    useEffect(() => {
+        stateChange.current?.(mainState.dirty || viewState.dirty, mainState.busy || viewState.busy || adoptMain.isPending);
+    }, [mainState, viewState, adoptMain.isPending]);
+    useEffect(() => () => stateChange.current?.(false, false), []);
     const mainDropDisabled = editorBusy || mediaBusy(imageStatus) || typeof cast.revision !== "number";
     const dropOnMain = (source: CastHistoryImage) => {
         if (mainDropDisabled || adopting.current || typeof cast.revision !== "number") return;
         adopting.current = true;
         adoptMain.mutate({ ...source, expectedCastRevision: cast.revision, expectedImageVersion: imageVersion, restyleSegments: restyle, ticket: capture() });
     };
-    const renderMain = (viewSelector?: ReactNode, viewBusy = false) => (
+    const renderWorkspace = (viewSelector?: ReactNode, viewBusy = false, selectedView?: SelectedCastView) => (
         <CastEditorForm
             {...props}
             viewSelector={viewSelector}
+            selectedView={selectedView}
             regenerationGuard={regenerationGuard}
             restyle={restyle}
             setRestyle={setRestyle}
@@ -469,13 +478,10 @@ function CastEditorSession(props: CastEditorProps) {
             onDropOnMain={dropOnMain}
             mainDropDisabled={mainDropDisabled}
             adoptionError={adoptMain.isError && !adoptMain.variables?.sourceViewId ? (adoptMain.error instanceof Error ? adoptMain.error.message : "设置主视图失败，请重试") : undefined}
-            onDirtyChange={(dirty, busy) => {
-                setMainState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }));
-                props.onDirtyChange?.(dirty, busy);
-            }}
+            onDirtyChange={(dirty, busy) => setMainState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
         />
     );
-    if (props.layout !== "workspace") return renderMain();
+    if (props.layout !== "workspace") return renderWorkspace();
     return (
         <CastViewWorkspace
             projectId={props.projectId}
@@ -483,8 +489,8 @@ function CastEditorSession(props: CastEditorProps) {
             cast={props.cast}
             disabled={editorBusy}
             onChanged={props.onChanged}
-            onDirtyChange={props.onDirtyChange}
-            renderMain={renderMain}
+            onDirtyChange={(dirty, busy) => setViewState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+            renderWorkspace={renderWorkspace}
             onDropOnMain={dropOnMain}
             mainDropDisabled={mainDropDisabled}
             mainDropPending={adoptMain.isPending}
@@ -508,6 +514,7 @@ function CastEditorForm({
     onDirtyChange,
     regenerationGuard,
     viewSelector,
+    selectedView,
     restyle,
     setRestyle,
     viewBusy,
@@ -517,6 +524,7 @@ function CastEditorForm({
 }: CastEditorProps & {
     regenerationGuard: ReturnType<typeof useCastRegenerationGuard>;
     viewSelector?: ReactNode;
+    selectedView?: SelectedCastView;
     restyle: boolean;
     setRestyle: (value: boolean) => void;
     viewBusy: boolean;
@@ -526,6 +534,9 @@ function CastEditorForm({
 }) {
     const { message, modal } = App.useApp();
     const historyDrag = useCastHistoryDrag();
+    const [viewActionStatus, setViewActionStatus] = useState<HTMLDivElement | null>(null);
+    const [viewSecondaryActions, setViewSecondaryActions] = useState<HTMLDivElement | null>(null);
+    const [viewActionButtons, setViewActionButtons] = useState<HTMLDivElement | null>(null);
     const { cancelBeforeExecution } = regenerationGuard;
     const operation = useDramaOperationScope(projectId);
     useEffect(() => () => cancelBeforeExecution(), [cancelBeforeExecution]);
@@ -575,7 +586,7 @@ function CastEditorForm({
         revision: summary.data?.production.revision,
         draft: { name, appearance, ...imageFields, imageOptions: imageOptions.options },
         failedLooks: isLook ? [] : looks.filter((look) => look.imageStatus === "failed"),
-        enabled: Boolean(summary.data) && !cast.locked && !mediaBusy(cast.imageStatus) && !imageOptions.corrupt && generationNotice?.kind !== "uncertain",
+        enabled: !selectedView && Boolean(summary.data) && !cast.locked && !mediaBusy(cast.imageStatus) && !imageOptions.corrupt && generationNotice?.kind !== "uncertain",
     });
     const acceptIndependentUpdate = useCallback((updated: DramaCast) => {
         if (!mounted.current) return;
@@ -750,15 +761,34 @@ function CastEditorForm({
     const adoptLibraryImage = async (resourceId: string) => imageAdopted(await setDramaCastImage(projectId, cast.id, resourceId, restyle));
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
+    const previewResource = selectedView ? selectedView.resourceId : cast.imageResourceId;
+    const previewTitle = selectedView?.title || "当前参考图";
+    const previewStatus = selectedView?.status || (cast.imageStatus === "failed" ? "生成失败" : mediaBusy(cast.imageStatus) ? "生成中" : cast.imageStatus === "stale" ? "待更新" : cast.imageResourceId ? "已就绪" : "待生成");
     const previewReferenceImage = (resourceId: string | undefined, take?: DramaTake) => {
         if (!resourceId) return;
         const label = `${cast.lookName || cast.name} · ${kindLabel}参考图`;
         setPreviewImage({ resourceId, alt: take ? `${label} · V${take.version}` : label });
     };
-    const editBlocked = regenerate.isPending || upload.isPending || viewBusy || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
-    const saving = autoSave.isPending || regenerate.isPending || upload.isPending || viewBusy || lock.isPending || lookState.busy || regenerationGuard.busy;
-    const busy = saving || mediaBusy(cast.imageStatus) || dirty;
-    const dropDisabled = busy || mainDropDisabled;
+    const editBlocked = Boolean(selectedView) || regenerate.isPending || upload.isPending || viewBusy || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
+    const saving = autoSave.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
+    const busy = saving || viewBusy || mediaBusy(cast.imageStatus) || dirty;
+    const dropDisabled = selectedView ? selectedView.dropDisabled : busy || mainDropDisabled;
+    const mainActions = [
+        { key: "upload", label: "上传形象图", icon: <Upload className="size-4" />, onClick: () => fileRef.current?.click(), loading: upload.isPending },
+        { key: "library", label: "从素材库选择", icon: <FolderOpen className="size-4" />, onClick: () => setLibraryOpen(true) },
+        { key: "canvas", label: "在画布中精修", icon: <Brush className="size-4" />, onClick: onOpenCanvas, loading: canvasOpening, title: dirty ? "正在自动保存设定" : undefined },
+    ];
+    const deleteLook = () =>
+        modal.confirm({
+            title: `删除造型「${cast.lookName}」？`,
+            content: "引用这套造型的镜头将回到角色基础造型。",
+            okText: "删除造型",
+            cancelText: "取消",
+            onOk: async () => {
+                await deleteDramaCastLook(projectId, cast.id, restyle);
+                onChanged();
+            },
+        });
     const startAutoSave = () => {
         if (saveInFlight.current || !validDraft || !versionReady) return;
         saveInFlight.current = true;
@@ -847,24 +877,39 @@ function CastEditorForm({
         }
     };
     return (
-        <div className={`drama-editor${layout === "workspace" ? ` is-workspace is-${cast.kind}` : ""}`}>
-            <section className="drama-editor-preview" aria-label="当前参考图" tabIndex={historyDrag.keyboardActive && !dropDisabled ? 0 : undefined} {...historyDrag.targetProps(onDropOnMain, dropDisabled)}>
+        <div className={`drama-editor${layout === "workspace" ? ` is-workspace is-${cast.kind}` : ""}`} aria-label={selectedView ? `${selectedView.title}工作区` : undefined}>
+            <section
+                className="drama-editor-preview"
+                aria-label={selectedView ? "当前独立视图" : "当前参考图"}
+                tabIndex={historyDrag.keyboardActive && !dropDisabled ? 0 : undefined}
+                {...historyDrag.targetProps(selectedView?.onDrop || onDropOnMain, dropDisabled)}
+            >
                 {layout === "workspace" ? (
                     <div className="drama-editor-workspace-heading">
-                        <h3>当前参考图</h3>
-                        <span>{cast.imageStatus === "failed" ? "生成失败" : mediaBusy(cast.imageStatus) ? "生成中" : cast.imageStatus === "stale" ? "待更新" : cast.imageResourceId ? "已就绪" : "待生成"}</span>
+                        <h3>{previewTitle}</h3>
+                        <span>{previewStatus}</span>
                     </div>
                 ) : null}
                 <div className="drama-cast-hero" style={castRatio(cast.kind, ratios).style}>
-                    {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt={cast.name} loading={castImageLoading} failed={castImageFailed} /> : null}
-                    {cast.imageResourceId ? (
-                        <button type="button" className="drama-cast-hero-zoom" aria-label={`放大查看${cast.lookName || cast.name}的参考图`} title="点击放大查看" onClick={() => previewReferenceImage(cast.imageResourceId)}>
+                    {previewResource ? <MediaThumb resourceId={previewResource} alt={selectedView?.title || cast.name} loading={castImageLoading} failed={castImageFailed} /> : null}
+                    {previewResource ? (
+                        <button
+                            type="button"
+                            className="drama-cast-hero-zoom"
+                            aria-label={selectedView ? `放大查看${selectedView.title}` : `放大查看${cast.lookName || cast.name}的参考图`}
+                            title="点击放大查看"
+                            onClick={() => (selectedView ? setPreviewImage({ resourceId: previewResource, alt: selectedView.title }) : previewReferenceImage(previewResource))}
+                        >
                             <span className="drama-cast-hero-zoom-hint" aria-hidden="true">
                                 <Maximize2 className="size-3.5" />
                             </span>
                         </button>
                     ) : null}
-                    {!cast.imageResourceId || mediaBusy(cast.imageStatus) || cast.imageStatus === "failed" ? (
+                    {selectedView ? (
+                        !previewResource ? (
+                            <div className="drama-shot-placeholder">{selectedView.status}</div>
+                        ) : null
+                    ) : !cast.imageResourceId || mediaBusy(cast.imageStatus) || cast.imageStatus === "failed" ? (
                         <div className={`drama-shot-placeholder ${mediaBusy(cast.imageStatus) ? "is-busy" : ""}`}>
                             {cast.imageStatus === "failed" ? (
                                 <span className="drama-cast-card-failed">
@@ -882,14 +927,18 @@ function CastEditorForm({
             </section>
             <section className="drama-editor-settings" aria-label={`${kindLabel}文字与生成设置`}>
                 <div className="drama-editor-row">
-                    <span className="drama-eyebrow">{kindLabel}设定</span>
+                    <span className="drama-eyebrow">
+                        {kindLabel}设定{selectedView ? " · 在主视图编辑" : ""}
+                    </span>
                     <label className="drama-switch-label">
                         <Lock className="size-3.5" />
                         锁定形象
                         <Switch size="small" checked={cast.locked} disabled={busy} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
                     </label>
                 </div>
-                <div className="drama-editor-assistance">{tools}</div>
+                <div className="drama-editor-assistance" inert={Boolean(selectedView)}>
+                    {tools}
+                </div>
                 <div className="drama-editor-text-settings">
                     {isLook ? <p className="drama-editor-note">所属角色：{parent?.name || cast.name}。造型使用角色的多视图参考图方案，服装、年龄和风格可独立设置。</p> : null}
                     {cast.sourceProjectId ? (
@@ -924,127 +973,149 @@ function CastEditorForm({
                     ) : null}
                     {isCharacter ? (
                         <Field label="声音样本" hint="支持参考音频的视频模型会在该角色开口的剧情段带上这段声音">
-                            <CastVoiceField
-                                projectId={projectId}
-                                cast={cast}
-                                restyle={restyle}
-                                onChanged={(updated) => {
-                                    acceptIndependentUpdate(updated);
-                                    onChanged();
-                                }}
-                            />
+                            {selectedView ? (
+                                <CastVoicePreview name={cast.name} resourceId={cast.voiceSampleResourceId} />
+                            ) : (
+                                <CastVoiceField
+                                    projectId={projectId}
+                                    cast={cast}
+                                    restyle={restyle}
+                                    onChanged={(updated) => {
+                                        acceptIndependentUpdate(updated);
+                                        onChanged();
+                                    }}
+                                />
+                            )}
                         </Field>
                     ) : null}
                     <div className="drama-editor-impact">
-                        <Checkbox checked={restyle} disabled={busy} onChange={(event) => setRestyle(event.target.checked)}>
+                        <Checkbox checked={restyle} disabled={Boolean(selectedView) || busy} onChange={(event) => setRestyle(event.target.checked)}>
                             将引用视频标记为待更新
                         </Checkbox>
                     </div>
                 </div>
-                <div className="drama-editor-image-settings">
+                <div className="drama-editor-image-settings" aria-label={selectedView ? "独立视图配置" : undefined}>
                     {layout === "workspace" ? <h3>生图设置</h3> : null}
-                    <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={editBlocked} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
-                    <CastImageFields
-                        projectId={projectId}
-                        episodeId={episodeId}
-                        dramaType={dramaType}
-                        castId={cast.id}
-                        appearance={appearance}
-                        value={imageFields}
-                        disabled={editBlocked}
-                        onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))}
-                    />
+                    {selectedView ? (
+                        selectedView.renderSettings({ status: viewActionStatus, secondary: viewSecondaryActions, buttons: viewActionButtons })
+                    ) : (
+                        <>
+                            <CastImageOptions projectId={projectId} episodeId={episodeId} cast={cast} disabled={editBlocked} onChanged={onChanged} value={imageOptions} onChange={setImageOptions} />
+                            <CastImageFields
+                                projectId={projectId}
+                                episodeId={episodeId}
+                                dramaType={dramaType}
+                                castId={cast.id}
+                                appearance={appearance}
+                                value={imageFields}
+                                disabled={editBlocked}
+                                onChange={(patch) => setImageFields((current) => ({ ...current, ...patch }))}
+                            />
+                        </>
+                    )}
                 </div>
             </section>
             <div className="drama-editor-actions">
-                <div className="drama-editor-status">
-                    {persistenceError ? (
-                        <p role="alert">
-                            自动保存失败：{persistenceError}。修改已保留。
-                            <Button size="small" type="link" disabled={autoSave.isPending || editBlocked || !validDraft || (!versionReady && summary.isFetching)} onClick={() => (versionReady ? startAutoSave() : void summary.refetch())}>
-                                重试保存
-                            </Button>
-                        </p>
-                    ) : dirty ? (
-                        <p className="drama-editor-note" role="status">
-                            {validDraft ? "正在自动保存…" : "请补全名称和描述，并检查图片设置与章节范围；修改已保留。"}
-                        </p>
-                    ) : null}
-                    {generationNotice ? (
-                        <div className="drama-editor-note" role={generationNotice.kind === "submitted" ? "status" : "alert"}>
-                            <p>{generationNotice.text}</p>
-                            {generationNotice.kind === "uncertain" ? (
-                                <Button loading={checkingGeneration} onClick={() => void checkGeneration()}>
-                                    核对生成状态
-                                </Button>
+                <div className="drama-editor-status" ref={setViewActionStatus}>
+                    {selectedView ? (
+                        selectedView.error && <p role="alert">{selectedView.error}</p>
+                    ) : (
+                        <>
+                            {persistenceError ? (
+                                <p role="alert">
+                                    自动保存失败：{persistenceError}。修改已保留。
+                                    <Button size="small" type="link" disabled={autoSave.isPending || editBlocked || !validDraft || (!versionReady && summary.isFetching)} onClick={() => (versionReady ? startAutoSave() : void summary.refetch())}>
+                                        重试保存
+                                    </Button>
+                                </p>
+                            ) : dirty ? (
+                                <p className="drama-editor-note" role="status">
+                                    {validDraft ? "正在自动保存…" : "请补全名称和描述，并检查图片设置与章节范围；修改已保留。"}
+                                </p>
                             ) : null}
-                        </div>
-                    ) : null}
-                    {imageQuote.data?.reason || imageQuote.error ? (
-                        <p className="drama-editor-note" role="status">
-                            {imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : "图片计价失败")}
-                            {imageQuote.isError ? (
-                                <Button size="small" type="link" disabled={busy || imageQuote.isFetching} onClick={() => void imageQuote.refetch()}>
-                                    重新计价
-                                </Button>
+                            {generationNotice ? (
+                                <div className="drama-editor-note" role={generationNotice.kind === "submitted" ? "status" : "alert"}>
+                                    <p>{generationNotice.text}</p>
+                                    {generationNotice.kind === "uncertain" ? (
+                                        <Button loading={checkingGeneration} onClick={() => void checkGeneration()}>
+                                            核对生成状态
+                                        </Button>
+                                    ) : null}
+                                </div>
                             ) : null}
-                        </p>
-                    ) : null}
+                            {imageQuote.data?.reason || imageQuote.error ? (
+                                <p className="drama-editor-note" role="status">
+                                    {imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : "图片计价失败")}
+                                    {imageQuote.isError ? (
+                                        <Button size="small" type="link" disabled={busy || imageQuote.isFetching} onClick={() => void imageQuote.refetch()}>
+                                            重新计价
+                                        </Button>
+                                    ) : null}
+                                </p>
+                            ) : null}
+                        </>
+                    )}
                 </div>
-                <div className="drama-editor-action-buttons">
-                    <Button icon={<Upload className="size-4" />} disabled={busy} loading={upload.isPending} onClick={() => fileRef.current?.click()}>
-                        上传形象图
-                    </Button>
-                    <Button className="drama-editor-wide" icon={<FolderOpen className="size-4" />} disabled={busy} onClick={() => setLibraryOpen(true)}>
-                        从素材库选择
-                    </Button>
-                    <Button className="drama-editor-wide" icon={<Brush className="size-4" />} disabled={busy} title={dirty ? "正在自动保存设定" : undefined} loading={canvasOpening} onClick={onOpenCanvas}>
-                        在画布中精修
-                    </Button>
-                    {isLook ? (
+                <div className="drama-editor-action-buttons" ref={setViewActionButtons}>
+                    <div className="drama-editor-secondary-actions" ref={setViewSecondaryActions}>
+                        {selectedView ? (
+                            selectedView.secondaryActions
+                        ) : (
+                            <div className="drama-editor-main-actions">
+                                {mainActions.map(({ key, label, icon, onClick, loading, title }) => (
+                                    <Button key={key} icon={icon} disabled={busy} loading={loading} title={title} onClick={() => onClick()}>
+                                        {label}
+                                    </Button>
+                                ))}
+                                {isLook ? (
+                                    <Button danger icon={<Trash2 className="size-4" />} disabled={busy} onClick={deleteLook}>
+                                        删除造型
+                                    </Button>
+                                ) : null}
+                            </div>
+                        )}
+                        {layout === "workspace" && !selectedView ? (
+                            <Dropdown
+                                autoFocus
+                                trigger={["click"]}
+                                placement="topRight"
+                                menu={{
+                                    items: [
+                                        ...mainActions.map(({ key, label, icon, onClick, loading }) => ({ key, label, icon, disabled: busy || loading, onClick })),
+                                        ...(isLook ? [{ key: "delete", label: "删除造型", icon: <Trash2 className="size-4" />, disabled: busy, danger: true, onClick: deleteLook }] : []),
+                                    ],
+                                }}
+                            >
+                                <Button className="drama-editor-more-actions" aria-haspopup="menu" aria-label="更多操作" icon={<MoreHorizontal className="size-4" />} disabled={busy} loading={upload.isPending || canvasOpening}>
+                                    更多
+                                </Button>
+                            </Dropdown>
+                        ) : null}
+                    </div>
+                    {!selectedView ? (
                         <Button
-                            danger
-                            className="drama-editor-wide"
-                            icon={<Trash2 className="size-4" />}
-                            disabled={busy}
-                            onClick={() =>
-                                modal.confirm({
-                                    title: `删除造型「${cast.lookName}」？`,
-                                    content: "引用这套造型的镜头将回到角色基础造型。",
-                                    okText: "删除造型",
-                                    cancelText: "取消",
-                                    onOk: async () => {
-                                        await deleteDramaCastLook(projectId, cast.id, restyle);
-                                        onChanged();
-                                    },
-                                })
+                            type="primary"
+                            className="drama-editor-wide drama-editor-generate"
+                            icon={<RefreshCw className="size-4" />}
+                            disabled={
+                                cast.locked ||
+                                busy ||
+                                dirty ||
+                                imageQuote.disabled ||
+                                imageOptions.corrupt ||
+                                generationNotice?.kind === "uncertain" ||
+                                !parentReady ||
+                                !name.trim() ||
+                                !appearance.trim() ||
+                                (dirty && (!summary.data || typeof baselineCast.revision !== "number"))
                             }
+                            title={!parentReady ? "请先生成或上传角色本体图" : imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : undefined)}
+                            loading={regenerate.isPending || regenerationGuard.busy || mediaBusy(cast.imageStatus)}
+                            onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
                         >
-                            删除造型
+                            {generationLabel("生成图片", imageQuote.data, imageQuote.isFetching)}
                         </Button>
                     ) : null}
-                    <Button
-                        type="primary"
-                        className="drama-editor-wide"
-                        icon={<RefreshCw className="size-4" />}
-                        disabled={
-                            cast.locked ||
-                            busy ||
-                            dirty ||
-                            imageQuote.disabled ||
-                            imageOptions.corrupt ||
-                            generationNotice?.kind === "uncertain" ||
-                            !parentReady ||
-                            !name.trim() ||
-                            !appearance.trim() ||
-                            (dirty && (!summary.data || typeof baselineCast.revision !== "number"))
-                        }
-                        title={!parentReady ? "请先生成或上传角色本体图" : imageQuote.data?.reason || (imageQuote.error instanceof Error ? imageQuote.error.message : undefined)}
-                        loading={regenerate.isPending || regenerationGuard.busy || mediaBusy(cast.imageStatus)}
-                        onClick={() => void regenerationGuard.request({ castId: cast.id, name: cast.lookName || cast.name, restyleSegments: restyle, execute: (isCurrent) => regenerate.mutateAsync(isCurrent) })}
-                    >
-                        {generationLabel("生成图片", imageQuote.data, imageQuote.isFetching)}
-                    </Button>
                 </div>
                 {libraryOpen ? <CastLibraryPicker open={libraryOpen} cast={cast} onClose={() => setLibraryOpen(false)} onPick={adoptLibraryImage} /> : null}
                 <input
@@ -1078,37 +1149,44 @@ function CastEditorForm({
                 ) : null}
                 {viewSelector || <CastViews projectId={projectId} episodeId={episodeId} cast={cast} disabled={busy} onChanged={onChanged} />}
                 {isCharacter ? (
-                    <CastLooks
-                        projectId={projectId}
-                        episodeId={episodeId}
-                        dramaType={dramaType}
-                        character={cast}
-                        looks={looks}
-                        restyle={restyle}
-                        onChanged={onChanged}
-                        onDirtyChange={(dirty, busy) => setLookState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
-                    />
+                    <div inert={viewBusy}>
+                        <CastLooks
+                            projectId={projectId}
+                            episodeId={episodeId}
+                            dramaType={dramaType}
+                            character={cast}
+                            looks={looks}
+                            restyle={restyle}
+                            onChanged={onChanged}
+                            onDirtyChange={(dirty, busy) => setLookState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
+                        />
+                    </div>
                 ) : null}
                 <p className="drama-editor-note">上传或从画布采用的形象图会自动锁定。旧图片保留在版本记录中，锁定后需先解锁再重新生成。</p>
             </section>
-            <aside className="drama-editor-history" aria-label="参考图历史">
+            <aside className="drama-editor-history" aria-label={selectedView ? "独立视图版本记录" : "参考图历史"}>
                 {layout === "workspace" ? (
                     <div className="drama-editor-workspace-heading">
-                        <h3>版本记录</h3>
+                        <h3>{selectedView ? `${selectedView.title} · 版本记录` : "版本记录"}</h3>
                     </div>
                 ) : null}
                 <p className="drama-editor-note" role={historyDrag.keyboardActive ? "status" : undefined}>
                     {historyDrag.keyboardActive ? "按 Tab 选择目标，再按 Enter 确认" : layout === "workspace" ? "拖到主视图或已创建的视图" : "拖到当前参考图以切换版本"}
                 </p>
-                <DramaTakeList
-                    projectId={projectId}
-                    ownerId={cast.id}
-                    kind="cast"
-                    showHeading={layout !== "workspace"}
-                    onPreviewImage={(take) => previewReferenceImage(take.resourceId, take)}
-                    imageDrag={{ sourceProps: (take) => historyDrag.sourceProps({ takeId: take.id }, dropDisabled), error: adoptionError }}
-                />
+                {selectedView ? (
+                    selectedView.history
+                ) : (
+                    <DramaTakeList
+                        projectId={projectId}
+                        ownerId={cast.id}
+                        kind="cast"
+                        showHeading={layout !== "workspace"}
+                        onPreviewImage={(take) => previewReferenceImage(take.resourceId, take)}
+                        imageDrag={{ sourceProps: (take) => historyDrag.sourceProps({ takeId: take.id }, dropDisabled), error: adoptionError }}
+                    />
+                )}
             </aside>
+            {selectedView?.preview}
             {previewImage ? <CanvasImagePreview storageKey={`resource:${previewImage.resourceId}`} alt={previewImage.alt} onClose={() => setPreviewImage(undefined)} /> : null}
         </div>
     );

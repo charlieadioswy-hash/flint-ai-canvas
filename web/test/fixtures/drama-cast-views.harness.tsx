@@ -61,7 +61,7 @@ mock.module("antd", () => ({
     },
     Button: ({ children, loading: _loading, type: _type, size: _size, icon: _icon, danger: _danger, ...props }: Record<string, unknown>) => createElement("button", props, children as ReactNode),
     Input,
-    Select: ({ options, onChange, ...props }: { options: { value: string; label: string }[]; onChange: (value: string) => void }) =>
+    Select: ({ options, onChange, labelRender: _labelRender, ...props }: { options: { value: string; label: string }[]; onChange: (value: string) => void; labelRender?: unknown }) =>
         createElement(
             "select",
             { ...props, onChange: (event: { target: { value: string } }) => onChange(event.target.value) },
@@ -88,7 +88,6 @@ mock.module("@/pages/projects/studio/cast-library-picker", () => ({
         <button onClick={() => void onPick(`chosen-${referenceGroup}`).then(onClose)}>选择{referenceGroup}图片</button>
     ),
 }));
-mock.module("@/pages/projects/studio/cast-image-options", () => ({ readCastImageOptions: () => ({ model: {}, ratio: "", resolution: "", subjectReferenceIds: ["inherited-subject"], styleReferenceIds: ["inherited-style"] }) }));
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 const scope = await import("@/lib/user-scope");
 mock.module("@/lib/user-scope", () => ({ ...scope, getActiveUserScope: () => userStore.getState().user.id }));
@@ -107,6 +106,9 @@ mock.module("@/services/api/drama", () => ({
     getDrama: async () => ({ project: { id: "project-a", userId: userStore.getState().user.id }, production: { revision, settings: { models: { image: { channelId: "system", modelKey: "image-new" } } } } }),
     getDramaEpisodeStyle: async () => {
         throw new Error("作品级视图不应读取单集配置");
+    },
+    updateDramaCastImageOptions: async () => {
+        throw new Error("独立视图不应保存主体图片配置");
     },
 }));
 mock.module("@/services/api/drama-cast-views", () => ({
@@ -155,6 +157,7 @@ mock.module("@/services/api/drama-cast-views", () => ({
     },
 }));
 const { CastViews } = await import("@/pages/projects/studio/cast-views");
+const { CastHistoryDragProvider } = await import("@/pages/projects/studio/cast-history-drag");
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
 async function waitForAutoSave() {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 450)));
@@ -178,11 +181,22 @@ async function mount(options: { preserve?: boolean; rows?: CastView[]; cast?: Pa
     document.body.append(host);
     const root = createRoot(host);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const cast = { id: "cast-a", projectId: "project-a", kind: "character", name: "秦子文", appearance: "26岁", revision: 2, ...options.cast } as DramaCast;
+    const cast = {
+        id: "cast-a",
+        projectId: "project-a",
+        kind: "character",
+        name: "秦子文",
+        appearance: "26岁",
+        revision: 2,
+        imageOptionsJson: JSON.stringify({ subjectReferenceIds: ["inherited-subject"], styleReferenceIds: ["inherited-style"] }),
+        ...options.cast,
+    } as DramaCast;
     await act(async () => {
         root.render(
             <QueryClientProvider client={client}>
-                <CastViews projectId="project-a" cast={cast} disabled={false} onChanged={() => changed++} />
+                <CastHistoryDragProvider>
+                    <CastViews projectId="project-a" cast={cast} disabled={false} onChanged={() => changed++} />
+                </CastHistoryDragProvider>
             </QueryClientProvider>,
         );
         await settle();
@@ -414,10 +428,18 @@ test("网络不确定提交重开后仍用原操作标识", async () => {
 
 test("采用视图真实历史版本只发送视图与结果归属", async () => {
     const ui = await mount({ rows: [view({ resourceId: "current-image", takes: [{ id: "take-real", resourceId: "history-image", taskId: "history-task", version: 1, status: "ready", current: false }] as CastView["takes"] })] });
-    await click(ui.host, "采用此版本");
+    const history = ui.host.querySelector<HTMLDetailsElement>("details")!;
+    history.open = true;
+    const source = history.querySelector<HTMLButtonElement>('[aria-label="放大查看角色背面版本 1"]')!;
+    await act(async () => source.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, key: "Enter", shiftKey: true })));
+    const target = ui.host.querySelector<HTMLElement>('[aria-label="角色背面当前图片"][data-cast-history-target]')!;
+    await act(async () => {
+        target.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+        await settle();
+    });
     expect(adoptions).toEqual([{ viewId: "view-a", input: { expectedRevision: 3, viewRevision: 1, takeId: "take-real" } }]);
     expect(saves).toHaveLength(0);
-    expect(ui.host.textContent).toContain("已采用该视图历史图片");
+    expect(ui.host.textContent).toContain("已将图片设为「角色背面」的当前版本");
     await ui.close();
 });
 

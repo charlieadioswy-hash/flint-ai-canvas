@@ -89,8 +89,25 @@
     min-width: 0;
 }
 
+.drama-cast-view-form.drama-cast-image-options-body {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
 .drama-cast-view-form .ant-select {
     width: 100%;
+}
+
+.drama-cast-view-form label > small {
+    color: var(--text-secondary);
+    font-size: var(--fs-label);
+}
+
+.drama-cast-view-identity {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: var(--space-3);
 }
 
 .drama-cast-view-generation {

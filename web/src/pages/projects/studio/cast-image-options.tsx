@@ -5,7 +5,7 @@ import { Plus, X } from "lucide-react";
 
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { getDrama, getDramaEpisodeStyle, updateDramaCastImageOptions, type DramaCast, type DramaCastImageOptions } from "@/services/api/drama";
+import { getDrama, getDramaEpisodeStyle, updateDramaCastImageOptions, type DramaCast, type DramaCastImageOptions, type DramaModelOption, type DramaSettings } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
 import { MediaThumb } from "../drama-shared";
@@ -34,6 +34,19 @@ export function castImageOptionsDraft(value?: string): CastImageOptionsDraft {
     } catch {
         return { options: readCastImageOptions(), corrupt: true };
     }
+}
+
+export function resolveCastImageSpecifications(kind: DramaCast["kind"], options: Pick<DramaCastImageOptions, "model" | "ratio" | "resolution">, settings: DramaSettings | undefined, models: readonly DramaModelOption[] | undefined) {
+    const inheritedModel = kind === "character" ? settings?.models.characterImage : kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
+    const effectiveModel = dramaChoiceKey(options.model) ? options.model : dramaChoiceKey(inheritedModel) ? inheritedModel : settings?.models.image;
+    const model = models?.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(effectiveModel));
+    // 场景和道具采用资产图片的默认画幅。
+    const inheritedRatio = settings ? (kind === "character" ? settings.assets?.characterRatio : "16:9") : undefined;
+    const inheritedResolution = kind === "character" ? settings?.assets?.resolution : kind === "scene" ? settings?.assets?.sceneResolution : settings?.assets?.propResolution;
+    const defaultResolution = inheritedResolution || model?.defaultImageResolution;
+    const ratios = [...new Set([...(model?.imageRatios || []), options.ratio].filter(Boolean))];
+    const resolutions = [...new Set([...(model?.imageResolutions || []), options.resolution].filter(Boolean))];
+    return { effectiveModel, model, inheritedRatio, inheritedResolution, defaultResolution, ratios, resolutions };
 }
 
 export function CastImageOptions({
@@ -111,20 +124,12 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
     }, [dirty, saving, onDirtyChange]);
     const settings = episodeId ? episodeSettings.data?.settings : summary.data?.production.settings;
     const configurationScope = episodeId ? "本集" : "作品";
-    const inheritedModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
-    const effectiveModel = dramaChoiceKey(options.model) ? options.model : inheritedModel && dramaChoiceKey(inheritedModel) ? inheritedModel : settings?.models.image;
-    const model = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(effectiveModel));
-    // 与服务端资产生成使用相同回退；场景和道具不使用视频画幅。
-    const inheritedRatio = settings ? (cast.kind === "character" ? settings.assets?.characterRatio : "16:9") : undefined;
-    const inheritedResolution = cast.kind === "character" ? settings?.assets?.resolution : cast.kind === "scene" ? settings?.assets?.sceneResolution : settings?.assets?.propResolution;
-    const defaultResolution = inheritedResolution || model?.defaultImageResolution;
+    const { effectiveModel, inheritedRatio, inheritedResolution, defaultResolution, ratios, resolutions } = resolveCastImageSpecifications(cast.kind, options, settings, catalog.data?.options.image);
     const configurationStatus = summary.isError || episodeSettings.isError ? "配置读取失败" : "正在读取…";
     const defaultRatioLabel = inheritedRatio || (settings ? "未配置画幅" : configurationStatus);
     const defaultResolutionLabel = defaultResolution?.toUpperCase() || (!settings ? configurationStatus : catalog.isError ? "模型读取失败" : catalog.isPending ? "正在读取…" : "未提供分辨率");
     const ratioLabel = options.ratio || defaultRatioLabel;
     const resolutionLabel = options.resolution?.toUpperCase() || defaultResolutionLabel;
-    const ratios = [...new Set([...(model?.imageRatios || []), options.ratio].filter(Boolean))];
-    const resolutions = [...new Set([...(model?.imageResolutions || []), options.resolution].filter(Boolean))];
     const referenceCount = options.subjectReferenceIds.length + options.styleReferenceIds.length;
     const save = async () => {
         if (disabled || savingRef.current || !current() || !dirty || corrupt || !summary.data || typeof cast.revision !== "number") return;

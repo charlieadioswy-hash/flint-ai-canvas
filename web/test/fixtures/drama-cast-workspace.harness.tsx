@@ -2121,31 +2121,86 @@ test("多视图弹窗可将历史图拖到其他独立视图", async () => {
 });
 
 for (const target of [hero, room, castFixture("prop", "玉佩", { kind: "prop" }), evening]) {
-    test(`${target.parentId ? "look" : target.kind}底部选择联动独立视图配置、预览与版本，再返回主视觉`, async () => {
-        const front = independentView(target, "front-view", "正面图");
-        const back = independentView(target, "back-view", "背面图");
+    test(`${target.parentId ? "look" : target.kind}在同一工作区切换视图的配置、预览与版本`, async () => {
+        const cast = { ...target, imageOptionsJson: JSON.stringify({ ratio: "4:3", resolution: "2k" }) };
+        const front = independentView(cast, "front-view", "正面图");
+        const back = independentView(cast, "back-view", "背面图");
+        back.config = { ...back.config, direction: "back", imageOptions: { model: {}, ratio: "3:2", resolution: "1k" } };
+        back.takes = back.takes.map((take) => ({ ...take, version: 2 }));
         spyOn(viewApi, "listDramaCastViews").mockResolvedValue({ views: [front, back] });
+        spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [{ ...castHistoryTake(7, "main-old-image", true), ownerId: cast.id }] });
         const save = spyOn(viewApi, "saveDramaCastView").mockResolvedValue(front);
+        const saveCast = spyOn(api, "updateDramaCast").mockResolvedValue({ cast });
+        const submitView = spyOn(viewApi, "executeDramaCastView").mockRejectedValue(new Error("切换视图不应提交生成"));
         const generation = spyGeneration();
-        await render(<DialogHarness castId={target.id} items={[hero, target]} />);
+        await render(<DialogHarness castId={cast.id} items={cast.id === hero.id ? [cast, evening] : [hero, cast]} />);
+        const workspace = document.querySelector(".drama-editor.is-workspace")!;
+        expect(workspace.classList.contains(`is-${cast.kind}`)).toBe(true);
+        const layoutAreas = ["settings", "preview", "actions", "extras", "history"];
+        const areas = Object.fromEntries(layoutAreas.map((area) => [area, workspace.querySelector(`:scope > .drama-editor-${area}`)!]));
+        const viewTabs = workspace.querySelector('[role="tablist"][aria-label="主视觉与独立视图"]');
+        const looks = cast.id === hero.id ? button("添加妆造", areas.extras) : undefined;
+        const expectStableLayout = () => {
+            expect(document.querySelector(".drama-editor.is-workspace")).toBe(workspace);
+            for (const area of layoutAreas) {
+                expect(areas[area]).not.toBeNull();
+                expect(workspace.querySelector(`:scope > .drama-editor-${area}`)).toBe(areas[area]);
+            }
+            expect(areas.extras.querySelector('[role="tablist"][aria-label="主视觉与独立视图"]')).toBe(viewTabs);
+            if (looks) expect(button("添加妆造", areas.extras)).toBe(looks);
+            const buttons = [...workspace.querySelectorAll<HTMLButtonElement>(".drama-editor-generate")];
+            expect(buttons).toHaveLength(1);
+            expect(buttons[0].closest(".drama-editor-action-buttons")?.closest(".drama-editor-actions")).toBe(areas.actions);
+        };
+        const selectedSpec = (label: string) => areas.settings.querySelector(`[aria-label="${label}"]`)?.closest("label")?.textContent;
+        expectStableLayout();
+        expect(areas.history.querySelector('[aria-label="放大查看 V7"]')).not.toBeNull();
         await click("选择正面图独立视图");
-        const workspace = document.querySelector('[aria-label="正面图工作区"]')!;
-        expect(workspace).not.toBeNull();
-        expect(workspace.querySelector<HTMLInputElement>('[aria-label="视图名称"]')?.value).toBe("正面图");
-        expect(workspace.querySelector('[aria-label="放大查看正面图"]')).not.toBeNull();
-        expect(workspace.querySelector('[aria-label="独立视图版本记录"]')?.textContent).toContain("正面图 · 版本记录");
-        expect(workspace.querySelector('[aria-label="独立视图版本记录"]')?.textContent).toContain("版本 8");
+        expectStableLayout();
+        expect(workspace.getAttribute("aria-label")).toBe("正面图工作区");
+        expect(areas.settings.querySelector<HTMLInputElement>('[aria-label="视图名称"]')?.value).toBe("正面图");
+        expect(selectedSpec("视图画幅")).toContain("4:3");
+        expect(selectedSpec("视图画幅")).toContain("沿用本资产");
+        expect(selectedSpec("视图分辨率")).toContain("2K");
+        expect(selectedSpec("视图分辨率")).toContain("沿用本资产");
+        expect(areas.preview.querySelector('[aria-label="放大查看正面图"]')).not.toBeNull();
+        expect(areas.history.textContent).toContain("正面图 · 版本记录");
+        expect(areas.history.textContent).toContain("版本 8");
         expect(button("选择正面图独立视图").getAttribute("aria-selected")).toBe("true");
+
         await click("选择背面图独立视图");
-        expect(document.querySelector<HTMLInputElement>('[aria-label="视图名称"]')?.value).toBe("背面图");
-        expect(document.querySelector('[aria-label="独立视图版本记录"]')?.textContent).toContain("背面图 · 版本记录");
+        expectStableLayout();
+        expect(areas.settings.querySelector<HTMLInputElement>('[aria-label="视图名称"]')?.value).toBe("背面图");
+        expect(selectedSpec("视图画幅")).toContain("3:2");
+        expect(selectedSpec("视图分辨率")).toContain("1K");
+        expect(areas.preview.querySelector('[aria-label="放大查看背面图"]')).not.toBeNull();
+        expect(areas.history.textContent).toContain("背面图 · 版本记录");
+        expect(areas.history.textContent).toContain("版本 2");
+        expect(areas.history.textContent).not.toContain("版本 8");
+
         await click("选择主视觉");
-        expect(document.querySelector('[aria-label="当前参考图"]')).not.toBeNull();
-        expect(document.querySelector('[aria-label="参考图历史"]')).not.toBeNull();
+        expectStableLayout();
+        expect(areas.preview.getAttribute("aria-label")).toBe("当前参考图");
+        expect(areas.history.getAttribute("aria-label")).toBe("参考图历史");
+        expect(areas.history.querySelector('[aria-label="放大查看 V7"]')).not.toBeNull();
+        await waitForAutoSave();
         expect(save).not.toHaveBeenCalled();
+        expect(saveCast).not.toHaveBeenCalled();
+        expect(submitView).not.toHaveBeenCalled();
         expectNoGeneration(generation);
     });
 }
+
+test("主视图的更多操作可打开当前资产的参考图素材库", async () => {
+    const generation = spyGeneration();
+    await render(<DialogHarness castId={hero.id} items={[hero]} />);
+    await click("更多操作");
+    const libraryItem = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("从素材库选择"));
+    await settleUntil(() => Boolean(libraryItem()));
+    await act(async () => libraryItem()!.click());
+    await settleUntil(() => Boolean(document.body.textContent?.includes(`选择「${hero.name}」的角色参考图`)));
+    expectNoGeneration(generation);
+});
 
 test("独立视图右侧版本可预览历史原图，关闭后停留在当前视图", async () => {
     const front = independentView(hero, "front-view", "正面图");

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Select } from "antd";
 import { Images, Plus, RefreshCw, X } from "lucide-react";
@@ -29,7 +30,7 @@ import { MediaThumb } from "../drama-shared";
 import { generationLabel } from "../workflow-generation";
 import { useCastHistoryDrag, type CastHistoryImage } from "./cast-history-drag";
 import { CastLibraryPicker } from "./cast-library-picker";
-import { readCastImageOptions } from "./cast-image-options";
+import { readCastImageOptions, resolveCastImageSpecifications } from "./cast-image-options";
 import { clearCastViewPending, readCastViewPending, writeCastViewPending, type PendingCastView } from "./cast-views-state";
 import { useDramaOperationScope } from "./use-drama-operation-scope";
 import "./cast-views.css";
@@ -46,8 +47,21 @@ const DIRECTIONS: { value: CastViewDirection; label: string }[] = [
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已就绪", stale: "设定已更新", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
 type Props = { projectId: string; episodeId?: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
 type CastViewSubmission = { submitted: boolean; message?: string };
+type CastViewActionSlots = { status: HTMLDivElement | null; secondary: HTMLDivElement | null; buttons: HTMLDivElement | null };
+export type SelectedCastView = {
+    title: string;
+    status: string;
+    resourceId?: string;
+    error?: string;
+    dropDisabled: boolean;
+    onDrop: (source: CastHistoryImage) => void;
+    renderSettings: (slots: CastViewActionSlots) => ReactNode;
+    secondaryActions: ReactNode;
+    history: ReactNode;
+    preview: ReactNode;
+};
 type Workspace = {
-    renderMain: (selector: ReactNode, viewBusy: boolean) => ReactNode;
+    renderWorkspace: (selector: ReactNode, viewBusy: boolean, view?: SelectedCastView) => ReactNode;
     onDropOnMain: (source: CastHistoryImage) => void;
     mainDropDisabled: boolean;
     mainDropPending: boolean;
@@ -153,8 +167,8 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         setPreview({ resourceId, label });
     };
     useEffect(() => {
-        if (workspace && selected) stateChange.current?.(editorState.dirty, Boolean(busy) || editorState.busy || workspace.mainDropPending);
-    }, [workspace, selected, editorState, busy]);
+        if (workspace) stateChange.current?.(Boolean(selected && editorState.dirty), Boolean(busy) || Boolean(selected && editorState.busy));
+    }, [Boolean(workspace), selected, editorState, busy]);
     useEffect(() => {
         if (workspace && selected && selected !== "new" && query.isSuccess && !selectedRow) {
             setSelected(undefined);
@@ -291,6 +305,42 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
             ))}
         </div>
     );
+    const renderWorkspaceHistory = (row: CastView) => (
+        <ol className="drama-takes-list">
+            {row.takes.map((take) => {
+                const metadata = (
+                    <>
+                        <b>版本 {take.version}</b>
+                        <span className="drama-take-source">{STATUS[take.status] || take.status}</span>
+                        {take.current ? <em>当前使用</em> : null}
+                    </>
+                );
+                const label = `放大查看${row.config.name}版本 ${take.version}`;
+                return (
+                    <li key={take.id} className={take.current ? "is-current" : undefined}>
+                        {take.resourceId ? (
+                            <button
+                                type="button"
+                                className="drama-take-preview"
+                                aria-label={label}
+                                aria-haspopup="dialog"
+                                onClick={(event) => openPreview(event.currentTarget, take.resourceId, `${row.config.name}版本 ${take.version}`)}
+                                {...historyDrag.sourceProps({ takeId: take.id, sourceViewId: row.id }, dropBlocked || !castViewTakeReady(take))}
+                            >
+                                <span className="drama-take-thumb">
+                                    <MediaThumb resourceId={take.resourceId} alt="" />
+                                </span>
+                                {metadata}
+                            </button>
+                        ) : (
+                            metadata
+                        )}
+                        {take.error ? <p role="alert">{take.error}</p> : null}
+                    </li>
+                );
+            })}
+        </ol>
+    );
     const imagePreview = preview && <CanvasImagePreview storageKey={`resource:${preview.resourceId}`} alt={preview.label} onClose={() => setPreview(undefined)} />;
     if (workspace) {
         const select = (id?: string, discard = false) => {
@@ -395,18 +445,20 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 ) : null}
             </section>
         );
-        if (!selected) return workspace.renderMain(selector, Boolean(busy));
+        if (!selected) return workspace.renderWorkspace(selector, Boolean(busy));
         const row = selectedRow;
         const active = Boolean(row && castViewGenerating(row));
-        const previewResource = row?.resourceId;
-        const viewDropDisabled = !row || viewDropBlocked(row);
-        return (
-            <div className="drama-editor is-workspace is-view" aria-label={`${row?.config.name || "新建独立视图"}工作区`}>
-                <section className="drama-editor-settings thin-scrollbar" aria-label="独立视图配置">
-                    <div className="drama-editor-workspace-heading">
-                        <h3>{row?.config.name || "新增独立视图"}</h3>
-                        <span>仅修改当前视图</span>
-                    </div>
+        return workspace.renderWorkspace(selector, Boolean(busy) || editorState.busy, {
+            title: row?.config.name || "新建独立视图",
+            status: row ? STATUS[row.status] || row.status : "填写名称后自动保存",
+            resourceId: row?.resourceId,
+            error: row?.error,
+            dropDisabled: !row || viewDropBlocked(row),
+            onDrop: (source) => {
+                if (row) adoptHistory(row, source);
+            },
+            renderSettings: (slots) => (
+                <>
                     {workspaceEditor && revision !== undefined ? (
                         <CastViewEditor
                             key={`${selected}:${workspaceEditor.row?.revision || 0}:${workspaceEditor.expectedRevision ?? revision}:${workspaceEditor.castRevision ?? cast.revision}`}
@@ -415,8 +467,8 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                             cast={cast}
                             row={workspaceEditor.row}
                             expectedRevision={workspaceEditor.expectedRevision ?? revision}
-                            inline
-                            disabled={Boolean(busy) || active || Boolean(pending) || workspace.mainDropPending || summary.isError || query.isError}
+                            slots={slots}
+                            disabled={disabled || Boolean(busy) || active || Boolean(pending) || workspace.mainDropPending || summary.isError || query.isError}
                             onGenerate={execute}
                             onDirtyChange={(dirty, busy) => setEditorState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
                             onClose={(discard) => select(undefined, discard)}
@@ -435,73 +487,37 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                     {editorState.dirty && row && (workspaceEditor?.row?.revision !== row.revision || workspaceEditor.expectedRevision !== revision || workspaceEditor.castRevision !== cast.revision) ? (
                         <p role="alert">已保存版本发生变化，当前草稿已保留。切换后重新载入再编辑，避免覆盖其他修改。</p>
                     ) : null}
-                </section>
-                <section
-                    className="drama-editor-preview"
-                    aria-label="当前独立视图"
-                    tabIndex={historyDrag.keyboardActive && !viewDropDisabled ? 0 : undefined}
-                    {...historyDrag.targetProps((source) => {
-                        if (row) adoptHistory(row, source);
-                    }, viewDropDisabled)}
+                </>
+            ),
+            secondaryActions: row && (
+                <Button
+                    danger
+                    disabled={blocked || editorState.dirty || editorState.busy || active}
+                    onClick={() => {
+                        const ticket = operation.capture();
+                        modal.confirm({
+                            title: `删除视图“${row.config.name}”？`,
+                            content: "删除配置，资源与任务历史保留。",
+                            okText: "删除视图",
+                            cancelText: "取消",
+                            onOk: () => {
+                                if (!operation.isCurrent(ticket) || revision === undefined) return;
+                                return run(`delete:${row.id}`, async (current) => {
+                                    await deleteDramaCastView(projectId, cast.id, row.id, { expectedRevision: revision, viewRevision: row.revision });
+                                    setSelected(undefined);
+                                    setWorkspaceEditor(undefined);
+                                    await refresh(current, "视图已删除");
+                                });
+                            },
+                        });
+                    }}
                 >
-                    <div className="drama-editor-workspace-heading">
-                        <h3>{row?.config.name || "新建独立视图"}</h3>
-                        <span>{row ? STATUS[row.status] || row.status : "填写名称后自动保存"}</span>
-                    </div>
-                    {row && previewResource ? (
-                        <button type="button" className="drama-cast-hero drama-cast-view-preview" aria-label={`放大查看${row.config.name}`} onClick={(event) => openPreview(event.currentTarget, previewResource, row.config.name)}>
-                            <MediaThumb resourceId={previewResource} alt={row.config.name} />
-                        </button>
-                    ) : (
-                        <div className="drama-cast-hero grid place-items-center text-muted-foreground">{row ? STATUS[row.status] || row.status : "尚无图片"}</div>
-                    )}
-                    {row?.error ? <p role="alert">{row.error}</p> : null}
-                </section>
-                <div className="drama-editor-actions">
-                    {row ? (
-                        <>
-                            <Button
-                                danger
-                                disabled={blocked || editorState.dirty || editorState.busy || Boolean(active)}
-                                onClick={() => {
-                                    const ticket = operation.capture();
-                                    modal.confirm({
-                                        title: `删除视图“${row.config.name}”？`,
-                                        content: "删除配置，资源与任务历史保留。",
-                                        okText: "删除视图",
-                                        cancelText: "取消",
-                                        onOk: () => {
-                                            if (!operation.isCurrent(ticket) || revision === undefined) return;
-                                            return run(`delete:${row.id}`, async (current) => {
-                                                await deleteDramaCastView(projectId, cast.id, row.id, { expectedRevision: revision, viewRevision: row.revision });
-                                                setSelected(undefined);
-                                                setWorkspaceEditor(undefined);
-                                                await refresh(current, "视图已删除");
-                                            });
-                                        },
-                                    });
-                                }}
-                            >
-                                删除视图
-                            </Button>
-                        </>
-                    ) : null}
-                </div>
-                <section className="drama-editor-extras">{selector}</section>
-                <aside className="drama-editor-history" aria-label="独立视图版本记录">
-                    <div className="drama-editor-workspace-heading">
-                        <h3>{row?.config.name || "独立视图"} · 版本记录</h3>
-                    </div>
-                    {row?.takes.some(castViewTakeReady) ? (
-                        <p className="drama-editor-note" aria-live="polite">
-                            {historyDrag.keyboardActive ? "按 Tab 选择目标，再按 Enter 确认" : "拖到主视图或已创建的视图"}
-                        </p>
-                    ) : null}
-                    {row?.takes.length ? renderHistory(row) : <p role="status">暂无版本记录</p>}
-                </aside>
-                {row && imagePreview}
-            </div>
-        );
+                    删除视图
+                </Button>
+            ),
+            history: row?.takes.length ? renderWorkspaceHistory(row) : <p role="status">暂无版本记录</p>,
+            preview: imagePreview,
+        });
     }
     return (
         <AppModal
@@ -734,7 +750,7 @@ function CastViewEditor({
     onClose,
     onSaved,
     onGenerate,
-    inline,
+    slots,
     disabled,
     onDirtyChange,
 }: {
@@ -746,7 +762,7 @@ function CastViewEditor({
     onClose: (discard?: boolean) => void;
     onSaved: (saved: CastView, text?: string, keepOpen?: boolean) => Promise<void>;
     onGenerate: (value: PendingCastView) => Promise<CastViewSubmission>;
-    inline?: boolean;
+    slots?: CastViewActionSlots;
     disabled?: boolean;
     onDirtyChange?: (dirty: boolean, busy: boolean) => void;
 }) {
@@ -806,9 +822,20 @@ function CastViewEditor({
         !dirty && quoteEnabled && !quote.isFetching && !quote.isError && quote.data?.ready && quote.data.priced && quote.data.revision === baseVersions.current.expectedRevision && quote.data.viewRevision === baseVersions.current.viewRevision;
     const quoteReason = !validDraft ? "请先填写视图名称及必需的说明" : quote.isError ? "报价读取失败，请重新进入后再试" : quote.data && (!quote.data.ready || !quote.data.priced) ? quote.data.reason || "当前参数暂无有效报价" : "";
     const settings = episodeId ? episodeSettings.data?.settings : summary.data?.production.settings;
-    const categoryModel = cast.kind === "character" ? settings?.models.characterImage : cast.kind === "scene" ? settings?.models.sceneImage : settings?.models.propImage;
-    const model = dramaChoiceKey(draft.imageOptions.model) ? draft.imageOptions.model : dramaChoiceKey(inherited?.model) ? inherited?.model : dramaChoiceKey(categoryModel) ? categoryModel : settings?.models.image;
-    const option = catalog.data?.options.image.find((item) => dramaChoiceKey(item.choice) === dramaChoiceKey(model));
+    const { effectiveModel, inheritedRatio, inheritedResolution, defaultResolution, ratios, resolutions } = resolveCastImageSpecifications(
+        cast.kind,
+        { ...draft.imageOptions, model: dramaChoiceKey(draft.imageOptions.model) ? draft.imageOptions.model : (inherited?.model ?? {}) },
+        settings,
+        catalog.data?.options.image,
+    );
+    const fallbackRatio = inherited?.ratio || inheritedRatio;
+    const fallbackResolution = inherited?.resolution || defaultResolution;
+    const fallbackScope = episodeId ? "本集" : "作品";
+    const ratioScope = inherited?.ratio ? "沿用本资产" : cast.kind === "character" ? `沿用${fallbackScope}` : "默认画幅";
+    const ratioLabel = fallbackRatio ? `${fallbackRatio} · ${ratioScope}` : "沿用本资产画幅";
+    const resolutionScope = inherited?.resolution ? "本资产" : inheritedResolution ? fallbackScope : "模型默认";
+    const resolutionSource = resolutionScope === "模型默认" ? resolutionScope : `沿用${resolutionScope}`;
+    const resolutionLabel = fallbackResolution ? `${fallbackResolution.toUpperCase()} · ${resolutionSource}` : "沿用本资产分辨率";
     const patch = (value: Partial<CastViewConfig>) => {
         if (!locked.current) setDraft((current) => ({ ...current, ...value }));
     };
@@ -895,47 +922,75 @@ function CastViewEditor({
             if (operation.isCurrent(ticket)) setSaving(false);
         }
     };
-    return (
-        <CastViewEditorShell inline={inline} title={row ? "编辑视图配置" : "新增独立视图"} onClose={close} saving={saving}>
+    const preventActions = saving || disabled || contextBlocked;
+    const status = (
+        <>
             {contextBlocked ? <p role={summary.isError || episodeSettings.isError ? "alert" : "status"}>{summary.isError || episodeSettings.isError ? "制作配置读取失败，请重新进入后再操作。" : "正在读取制作配置…"}</p> : null}
-            <fieldset className="drama-cast-view-form" disabled={saving || disabled || contextBlocked} inert={saving || disabled || contextBlocked}>
-                <label>
-                    <span>视图名称</span>
-                    <Input aria-label="视图名称" value={draft.name} maxLength={60} onChange={(event) => patch({ name: event.target.value })} />
-                </label>
-                <label>
-                    <span>方向</span>
-                    <Select aria-label="视图方向" value={draft.direction} options={DIRECTIONS} onChange={(direction) => patch({ direction })} />
-                </label>
-                <label>
-                    <span>补充提示词</span>
-                    <Input.TextArea aria-label="视图补充提示词" value={draft.prompt} rows={3} maxLength={12000} onChange={(event) => patch({ prompt: event.target.value })} />
-                </label>
+            {error ? <p role="alert">{error}</p> : null}
+            {!contextBlocked && quoteReason ? <p role="status">{quoteReason}</p> : null}
+        </>
+    );
+    const secondary = (
+        <>
+            {(!slots || (dirty && (!validDraft || error))) && (
+                <Button disabled={saving} onClick={close}>
+                    {dirty && (!validDraft || error) ? "放弃修改并关闭" : "关闭"}
+                </Button>
+            )}
+            {error && dirty && validDraft ? (
+                <Button disabled={preventActions} loading={saving} onClick={() => void save()}>
+                    重试保存
+                </Button>
+            ) : null}
+        </>
+    );
+    const generateButton = (
+        <Button className="drama-editor-generate" type="primary" icon={slots ? <RefreshCw className="size-4" /> : undefined} loading={saving || quotePending} disabled={!quoteReady} onClick={() => void generate()}>
+            {generationLabel("生成图片", quote.data, quotePending)}
+        </Button>
+    );
+    return (
+        <CastViewEditorShell inline={Boolean(slots)} title={row ? "编辑视图配置" : "新增独立视图"} onClose={close} saving={saving}>
+            <fieldset className={slots ? "drama-cast-view-form drama-cast-image-options drama-cast-image-options-body" : "drama-cast-view-form"} disabled={preventActions} inert={preventActions}>
+                <div className="drama-cast-view-identity">
+                    <label>
+                        <span>视图名称</span>
+                        <Input aria-label="视图名称" value={draft.name} maxLength={60} onChange={(event) => patch({ name: event.target.value })} />
+                    </label>
+                    <label>
+                        <span>方向</span>
+                        <Select aria-label="视图方向" value={draft.direction} options={DIRECTIONS} onChange={(direction) => patch({ direction })} />
+                    </label>
+                </div>
                 <label>
                     <span>图片模型</span>
-                    <DramaModelPicker capability="image" value={model} showPrice={false} onChange={(value) => patchOptions({ model: value, ratio: "", resolution: "" })} />
+                    <DramaModelPicker capability="image" value={effectiveModel} showPrice={false} onChange={(value) => patchOptions({ model: value, ratio: "", resolution: "" })} />
                 </label>
                 <Button size="small" disabled={!dramaChoiceKey(draft.imageOptions.model)} onClick={() => patchOptions({ model: {}, ratio: "", resolution: "" })}>
                     沿用本资产模型
                 </Button>
-                <div className="drama-cast-view-parameters">
+                <div className={slots ? "drama-cast-image-options-grid" : "drama-cast-view-parameters"}>
                     <label>
                         <span>画幅</span>
                         <Select
                             aria-label="视图画幅"
                             value={draft.imageOptions.ratio}
-                            options={[{ value: "", label: "沿用本资产画幅" }, ...Array.from(new Set([...(option?.imageRatios || []), draft.imageOptions.ratio].filter(Boolean))).map((value) => ({ value, label: value }))]}
+                            labelRender={() => draft.imageOptions.ratio || fallbackRatio || "未配置"}
+                            options={[{ value: "", label: ratioLabel }, ...ratios.map((value) => ({ value, label: value }))]}
                             onChange={(ratio) => patchOptions({ ratio })}
                         />
+                        {!draft.imageOptions.ratio && fallbackRatio ? <small>{ratioScope}</small> : null}
                     </label>
                     <label>
                         <span>分辨率</span>
                         <Select
                             aria-label="视图分辨率"
                             value={draft.imageOptions.resolution}
-                            options={[{ value: "", label: "沿用本资产分辨率" }, ...Array.from(new Set([...(option?.imageResolutions || []), draft.imageOptions.resolution].filter(Boolean))).map((value) => ({ value, label: value }))]}
+                            labelRender={() => (draft.imageOptions.resolution || fallbackResolution)?.toUpperCase() || "未提供"}
+                            options={[{ value: "", label: resolutionLabel }, ...resolutions.map((value) => ({ value, label: value.toUpperCase() }))]}
                             onChange={(resolution) => patchOptions({ resolution })}
                         />
+                        {!draft.imageOptions.resolution && fallbackResolution ? <small>{resolutionSource}</small> : null}
                     </label>
                 </div>
                 {(["subjectReferenceIds", "styleReferenceIds"] as const).map((key) => {
@@ -975,21 +1030,26 @@ function CastViewEditor({
                         </section>
                     );
                 })}
-                <p>空模型和规格沿用本资产配置；修改后自动生效，点击生成才会生成图片。</p>
-                {error ? <p role="alert">{error}</p> : null}
-                <div className="drama-cast-views-actions">
-                    <Button onClick={close}>{dirty && (!validDraft || error) ? "放弃修改并关闭" : "关闭"}</Button>
-                    {error && dirty && validDraft ? (
-                        <Button disabled={disabled || contextBlocked} loading={saving} onClick={() => void save()}>
-                            重试保存
-                        </Button>
-                    ) : null}
-                    <Button type="primary" loading={saving || quotePending} disabled={!quoteReady} onClick={() => void generate()}>
-                        {generationLabel("生成图片", quote.data, quotePending)}
-                    </Button>
-                </div>
-                {quoteReason ? <p role="status">{quoteReason}</p> : null}
+                <label>
+                    <span>补充提示词</span>
+                    <Input.TextArea aria-label="视图补充提示词" value={draft.prompt} rows={3} maxLength={12000} onChange={(event) => patch({ prompt: event.target.value })} />
+                </label>
             </fieldset>
+            {slots ? (
+                <>
+                    {slots.status && createPortal(status, slots.status)}
+                    {slots.secondary && createPortal(secondary, slots.secondary)}
+                    {slots.buttons && createPortal(generateButton, slots.buttons)}
+                </>
+            ) : (
+                <>
+                    {status}
+                    <div className="drama-cast-views-actions">
+                        {secondary}
+                        {generateButton}
+                    </div>
+                </>
+            )}
             {picker ? (
                 <CastLibraryPicker
                     open
