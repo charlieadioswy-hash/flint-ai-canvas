@@ -386,7 +386,7 @@ func TestDramaCastLookLifecycle(t *testing.T) {
 	if err != nil || baseAfter.ImageResourceID != baseBefore.ImageResourceID || baseAfter.ImageVersion != baseBefore.ImageVersion || baseAfter.Locked != baseBefore.Locked {
 		t.Fatalf("adopting a look must preserve the base character image: %+v %v", baseAfter, err)
 	}
-	takes, err := svc.DramaTakes("usr-drama", project, look.ID, "cast")
+	takes, err := svc.DramaTakes("usr-drama", project, look.ID, "cast", "")
 	if err != nil {
 		t.Fatal(err)
 	}

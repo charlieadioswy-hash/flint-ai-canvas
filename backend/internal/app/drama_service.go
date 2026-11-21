@@ -1070,14 +1070,52 @@ type dramaSegmentDraft struct {
 	shots []model.DramaShot
 }
 
+// 段的视频请求、参考图变更共用同一份主体图片绑定。每个角色使用该段首个指定造型。
+func dramaSegmentImageCastIDs(shots []model.DramaShot, casts map[string]model.DramaCast, manual string) []string {
+	var characters, props, scenes []string
+	add := func(ids *[]string, id string) {
+		if _, exists := casts[id]; exists && !containsString(*ids, id) {
+			*ids = append(*ids, id)
+		}
+	}
+	if strings.TrimSpace(manual) != "" {
+		var ids []string
+		for _, id := range decodeStringList(manual) {
+			add(&ids, id)
+		}
+		return ids
+	}
+	looks := make(map[string]string)
+	for _, shot := range shots {
+		for _, id := range decodeStringList(shot.LookCastIDsJSON) {
+			if parent := casts[id].ParentID; parent != "" && looks[parent] == "" {
+				looks[parent] = id
+			}
+		}
+	}
+	for _, shot := range shots {
+		for _, id := range decodeStringList(shot.CastIDsJSON) {
+			if look := looks[id]; look != "" {
+				id = look
+			}
+			add(&characters, id)
+		}
+		for _, id := range decodeStringList(shot.PropIDsJSON) {
+			add(&props, id)
+		}
+		add(&scenes, shot.SceneCastID)
+	}
+	return append(append(characters, props...), scenes...)
+}
+
 // buildDramaSegmentDrafts 按镜头的 SegmentIndex 分段。参考图编号依次为角色、道具、场景，各自按首次出场顺序排列；
 // 用户为某段手动指定过参考图时（rows 里 reference_cast_ids_json 非空），按用户给的顺序与集合编号。
 func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots []model.DramaShot, castByID map[string]model.DramaCast, rows []model.DramaSegment) []dramaSegmentDraft {
-	overrides := map[int][]string{}
+	overrides := map[int]string{}
 	images := map[int][]model.DramaReferenceImage{}
 	for _, row := range rows {
 		if strings.TrimSpace(row.ReferenceCastIDsJSON) != "" {
-			overrides[row.SegmentIndex] = decodeStringList(row.ReferenceCastIDsJSON)
+			overrides[row.SegmentIndex] = row.ReferenceCastIDsJSON
 		}
 		var extra []model.DramaReferenceImage
 		_ = json.Unmarshal([]byte(row.ReferenceImagesJSON), &extra)
@@ -1095,54 +1133,18 @@ func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots 
 	direction := dramaVisualDirection(settings, "", "")
 	for position, group := range groups {
 		view := DramaSegmentView{Index: group[0].SegmentIndex, Title: firstNonEmpty(group[0].SegmentTitle, group[0].Scene, "剧情段"), ShotIDs: []string{}, Request: DramaSegmentRequest{References: []DramaSegmentReference{}}}
-		characterIDs, propIDs, sceneIDs := []string{}, []string{}, []string{}
-		// lookForCharacter 把本段某角色映射到本段镜头选用的造型行；一段里同一角色取第一个出现的造型。
-		lookForCharacter := map[string]string{}
-		for _, shot := range group {
-			for _, lookID := range decodeStringList(shot.LookCastIDsJSON) {
-				look, ok := castByID[lookID]
-				if ok && look.ParentID != "" {
-					if _, set := lookForCharacter[look.ParentID]; !set {
-						lookForCharacter[look.ParentID] = lookID
-					}
-				}
-			}
-		}
 		input := production.SegmentPromptInput{Index: position, Count: len(groups), Title: view.Title, AspectRatio: settings.AspectRatio, Style: settings.StylePrompt, VisualDirection: direction, VisualRules: meta.VisualRules, Language: settings.Language, PauseMs: settings.Storyboard.DialoguePauseMs(), CharsPerSecond: settings.Storyboard.CharsPerSecond(), Independent: settings.parallelVideo(), Performance: settings.Storyboard.Performance, CameraMotion: settings.Storyboard.CameraMotion}
 		for _, shot := range group {
 			view.ShotIDs = append(view.ShotIDs, shot.ID)
 			view.DurationMs += shot.DurationMs
-			for _, id := range decodeStringList(shot.CastIDsJSON) {
-				// 角色选了造型时，参考图与外观用造型行；否则用角色本体。
-				if lookID, ok := lookForCharacter[id]; ok {
-					id = lookID
-				}
-				if _, ok := castByID[id]; ok && !containsString(characterIDs, id) {
-					characterIDs = append(characterIDs, id)
-				}
-			}
-			for _, id := range decodeStringList(shot.PropIDsJSON) {
-				if _, ok := castByID[id]; ok && !containsString(propIDs, id) {
-					propIDs = append(propIDs, id)
-				}
-			}
-			if _, ok := castByID[shot.SceneCastID]; ok && !containsString(sceneIDs, shot.SceneCastID) {
-				sceneIDs = append(sceneIDs, shot.SceneCastID)
-			}
 			input.Shots = append(input.Shots, production.SegmentShot{Scene: shot.Scene, ShotSize: shot.ShotSize, Camera: shot.Camera, ImagePrompt: shot.ImagePrompt, Action: shot.Action, VideoPrompt: shot.VideoPrompt, Speaker: shot.Speaker, Dialogue: shot.Dialogue, DurationMs: shot.DurationMs, Transition: settings.Storyboard.EffectiveTransition(shot.Transition, shot.Position == 0)})
 		}
-		referenceIDs := append(append(characterIDs, propIDs...), sceneIDs...)
 		view.ReferenceMode = "auto"
-		if custom, ok := overrides[view.Index]; ok {
+		custom, manual := overrides[view.Index]
+		if manual {
 			view.ReferenceMode = "custom"
-			referenceIDs = []string{}
-			for _, id := range custom {
-				if _, exists := castByID[id]; exists && !containsString(referenceIDs, id) {
-					referenceIDs = append(referenceIDs, id)
-				}
-			}
 		}
-		for _, id := range referenceIDs {
+		for _, id := range dramaSegmentImageCastIDs(group, castByID, custom) {
 			cast := castByID[id]
 			label := fmt.Sprintf("参考图%d", len(view.Request.References)+1)
 			// 造型行：名称写“角色·造型”，声线沿用所属角色本体。

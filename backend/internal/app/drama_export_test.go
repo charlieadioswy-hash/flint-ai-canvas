@@ -8,6 +8,25 @@ import (
 	"yingce/backend/internal/model"
 )
 
+func TestDramaAssetPackageUsesAdoptedCastTakePrompt(t *testing.T) {
+	svc, db := jianyingExportFixture(t)
+	if err := db.AutoMigrate(&model.DramaTake{}); err != nil {
+		t.Fatal(err)
+	}
+	cast := model.DramaCast{ID: "hero", ProjectID: "project", ImageResourceID: "shared-image", ImageTakeID: "take-v1"}
+	for _, take := range []model.DramaTake{
+		{ID: "take-v1", ProjectID: cast.ProjectID, OwnerID: cast.ID, Kind: "cast", Version: 1, ResourceID: cast.ImageResourceID, Prompt: "早晨的自然光"},
+		{ID: "take-v3", ProjectID: cast.ProjectID, OwnerID: cast.ID, Kind: "cast", Version: 3, ResourceID: cast.ImageResourceID, Prompt: dramaTakeUploadPrompt},
+	} {
+		if err := db.Create(&take).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := svc.dramaCastImagePrompt(cast.ProjectID, cast); got != "早晨的自然光" {
+		t.Fatalf("adopted take prompt = %q", got)
+	}
+}
+
 func TestDramaAssetPackageExportsPortableSegmentPrompts(t *testing.T) {
 	svc, db := jianyingExportFixture(t)
 	if err := db.AutoMigrate(&model.DramaCast{}, &model.DramaTake{}, &model.DramaShotMedia{}); err != nil {

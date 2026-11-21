@@ -131,6 +131,7 @@ type DramaCast struct {
 	LookToChapter   int       `json:"lookToChapter,omitempty"`
 	Importance      int       `json:"importance"`
 	ImageResourceID string    `json:"imageResourceId,omitempty" gorm:"size:36"`
+	ImageTakeID     string    `json:"imageTakeId,omitempty" gorm:"size:36;not null;default:''"`
 	ImageEpisodeID  string    `json:"imageEpisodeId,omitempty" gorm:"size:36;not null;default:''"`
 	ImageStatus     string    `json:"imageStatus" gorm:"size:16"`
 	ImageVersion    int       `json:"imageVersion"`

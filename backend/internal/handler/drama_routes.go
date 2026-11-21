@@ -382,7 +382,7 @@ func registerDramaRoutes(r *gin.RouterGroup, svc *service.Service) {
 	}))
 	// 产物版本：kind=cast|video|final，ownerId 为设定、剧情段或集 ID。
 	r.GET("/dramas/:id/takes", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
-		return svc.DramaTakes(userID, c.Param("id"), c.Query("ownerId"), c.Query("kind"))
+		return svc.DramaTakes(userID, c.Param("id"), c.Query("ownerId"), c.Query("kind"), c.Query("beforeTakeId"))
 	}))
 	r.PATCH("/dramas/:id/shots/:shotId", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.UpdateDramaShotRequest

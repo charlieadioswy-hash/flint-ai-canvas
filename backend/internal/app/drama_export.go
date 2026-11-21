@@ -541,20 +541,30 @@ func (s *Service) dramaCastImagePrompt(projectID string, cast model.DramaCast) s
 	if cast.ImageResourceID == "" {
 		return ""
 	}
-	takes, err := s.repo.DramaTakes(projectID, cast.ID, "cast", 50)
-	if err != nil {
-		return ""
-	}
-	for _, take := range takes {
-		if take.ResourceID == cast.ImageResourceID {
-			prompt := strings.TrimSpace(take.Prompt)
-			if prompt == dramaTakeUploadPrompt || prompt == dramaTakeCanvasPrompt {
-				return ""
+	var prompt string
+	if cast.ImageTakeID != "" {
+		take, err := s.repo.DramaCastTake(projectID, cast.ID, cast.ImageTakeID)
+		if err != nil || take.ResourceID != cast.ImageResourceID {
+			return ""
+		}
+		prompt = take.Prompt
+	} else {
+		takes, err := s.repo.DramaTakes(projectID, cast.ID, "cast", 50)
+		if err != nil {
+			return ""
+		}
+		for _, take := range takes {
+			if take.ResourceID == cast.ImageResourceID {
+				prompt = take.Prompt
+				break
 			}
-			return prompt
 		}
 	}
-	return ""
+	prompt = strings.TrimSpace(prompt)
+	if prompt == dramaTakeUploadPrompt || prompt == dramaTakeCanvasPrompt {
+		return ""
+	}
+	return prompt
 }
 
 func (s *Service) packDramaEpisode(userID, root string, episode model.DramaEpisode, settings DramaSettings, casts map[string]model.DramaCast, req DramaAssetPackageRequest, archive *DramaArchive, manifest *dramaAssetManifest) error {

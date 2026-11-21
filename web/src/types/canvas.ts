@@ -282,6 +282,9 @@ export type CanvasDramaRef = {
     segmentIndex?: number;
     /** 投送或最近一次同步时短剧侧的当前资源；短剧现状与它不同且与节点媒体也不同，说明短剧侧已更新。 */
     baseResourceId?: string;
+    /** 短剧主体上次同步的图片修订号和手动采用的历史记录。 */
+    baseImageVersion?: number;
+    baseTakeId?: string;
 };
 
 export type CanvasNodeMetadata = {

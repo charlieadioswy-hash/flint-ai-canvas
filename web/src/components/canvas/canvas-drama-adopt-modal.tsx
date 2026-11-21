@@ -11,13 +11,13 @@ import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import { Select } from "@/components/ui/base/select";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { Callout } from "@/components/ui/product/callout";
-import { defaultDramaAdoptTarget, type DramaAdoptTarget } from "@/lib/canvas/drama-canvas-projection";
+import { defaultDramaAdoptTarget, dramaCastRef } from "@/lib/canvas/drama-canvas-projection";
 import { DRAMA_CAST_KIND_LABEL, dramaCastDisplayName } from "@/lib/drama/drama-format";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
 import { adoptDramaSegmentVideo, DRAMA_ERROR_REASON, getDramaCastImpact, getDramaEpisode, setDramaCastImage, type DramaCast, type DramaSegment, type DramaSummary } from "@/services/api/drama";
 import { ApiError } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasDramaRef, type CanvasNodeData } from "@/types/canvas";
 
 // 画布 → 短剧的唯一写入口：把画布上的图片采用为设定参考图，或把视频采用为剧情段视频，写成短剧的一个新版本。
 
@@ -27,7 +27,7 @@ type CanvasDramaAdoptModalProps = {
     summary: DramaSummary;
     cast: DramaCast[] | undefined;
     onClose: () => void;
-    onAdopted: (nodeId: string, target: DramaAdoptTarget, resourceId: string) => void;
+    onAdopted: (nodeId: string, ref: CanvasDramaRef) => void;
 };
 
 const CAST_KIND_ORDER: DramaCast["kind"][] = ["character", "scene", "prop"];
@@ -112,7 +112,7 @@ export function CanvasDramaAdoptModal({ node, nodes, summary, cast, onClose, onA
                 const name = dramaCastDisplayName(result.cast);
                 if (result.unchanged) message.info(t("canvasA.dramaAdopt.castUnchanged", { name }));
                 else message.success(result.affectedSegments ? t("canvasA.dramaAdopt.castReplacedRestyle", { name, count: result.affectedSegments }) : t("canvasA.dramaAdopt.castReplaced", { name }));
-                onAdopted(node.id, { kind: "cast", castId: targetCast.id }, resourceId);
+                onAdopted(node.id, dramaCastRef(dramaId, result.cast));
             } else if (isVideo && segment && episode) {
                 const result = await adoptDramaSegmentVideo(dramaId, episode.id, segment.index, { resourceId, taskId: node.metadata?.taskId, cascade: cascade && !parallelVideo, expectedRevision: segment.revision });
                 const label = t("canvasA.dramaAdopt.segmentLabel", { episode: episode.number, segment: segment.index + 1 });
@@ -124,7 +124,7 @@ export function CanvasDramaAdoptModal({ node, nodes, summary, cast, onClose, onA
                     if (result.resumeError) message.warning(t("canvasA.dramaAdopt.resumeFailed", { reason: result.resumeError }));
                     else if (result.paused) message.info(t("canvasA.dramaAdopt.paused"));
                 }
-                onAdopted(node.id, { kind: "segment", episodeId: episode.id, segmentIndex: segment.index, segmentId: segment.id }, resourceId);
+                onAdopted(node.id, { projectId: dramaId, kind: "segment", id: segment.id, episodeId: episode.id, segmentIndex: segment.index, baseResourceId: resourceId });
             }
             onClose();
         } catch (error) {

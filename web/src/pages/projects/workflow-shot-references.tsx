@@ -35,7 +35,9 @@ type Props = {
 const KINDS = { character: "角色", scene: "场景", prop: "道具" };
 
 const assetName = (cast: DramaCast) => `${cast.name}${cast.lookName ? ` · ${cast.lookName}` : ""}`;
-const imageName = (cast: DramaCast) => `${assetName(cast)} · ${cast.imageVersion > 1 ? `版本 ${cast.imageVersion}` : "初始版"}`;
+function imageName(cast: DramaCast) {
+    return `${assetName(cast)} · 当前参考图`;
+}
 
 function withReferenceSubjects(current: DramaShotMediaConfig, patch: Partial<DramaShotMediaConfig>, image?: PickedImage): Partial<DramaShotMediaConfig> {
     const next = { ...current, ...patch };
@@ -504,7 +506,9 @@ function SubjectImages({ projectId, userId, cast, casts, disabled, onPick }: { p
         if (view.resourceId) images.push({ id: view.resourceId, name: `${cast.name} · ${view.config.name}`, castId: cast.id });
         for (const take of view.takes) if (take.resourceId && ["ready", "succeeded"].includes(take.status)) images.push({ id: take.resourceId, name: `${cast.name} · ${view.config.name} · 版本 ${take.version}`, castId: cast.id });
     }
-    const unique = [...new Map(images.map((image) => [image.id, image])).values()];
+    // 同一张图可对应多个历史版本。优先保留当前主体图，再按返回顺序选用最新的历史记录。
+    const unique = new Map<string, PickedImage>();
+    for (const image of images) if (!unique.has(image.id)) unique.set(image.id, image);
     return (
         <div className="shot-reference-variants">
             {versions.isPending || views.isPending ? <p role="status">正在读取其他设定图…</p> : null}
@@ -522,14 +526,14 @@ function SubjectImages({ projectId, userId, cast, casts, disabled, onPick }: { p
                 </p>
             ) : null}
             <div className="shot-reference-picker-grid">
-                {unique.map((image) => (
+                {[...unique.values()].map((image) => (
                     <button key={image.id} type="button" disabled={disabled} onClick={() => onPick(image)}>
                         <MediaThumb resourceId={image.id} alt={image.name} />
                         <strong>{image.name}</strong>
                     </button>
                 ))}
             </div>
-            {!unique.length && !versions.isPending && !views.isPending ? <p>暂无可选设定图，可使用本地上传或素材库图片。</p> : null}
+            {!unique.size && !versions.isPending && !views.isPending ? <p>暂无可选设定图，可使用本地上传或素材库图片。</p> : null}
         </div>
     );
 }

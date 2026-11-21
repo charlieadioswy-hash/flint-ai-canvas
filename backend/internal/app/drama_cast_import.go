@@ -192,6 +192,7 @@ func (s *Service) ImportDramaCast(userID, projectID string, req ImportDramaCastR
 			copy.CreatedAt, copy.UpdatedAt, copy.Revision = now, now, 1
 			copy.Position = position
 			position++
+			copy.ImageTakeID = ""
 			copy.ImageVersion, copy.Locked, copy.ImageStatus = 0, false, model.DramaMediaDraft
 			if copy.ImageResourceID != "" {
 				copy.ImageVersion, copy.Locked, copy.ImageStatus = 1, true, model.DramaMediaReady
@@ -340,8 +341,9 @@ func dramaImportedCastFields(copy, current model.DramaCast) map[string]any {
 		"look_name": copy.LookName, "look_from_chapter": 0, "look_to_chapter": 0, "importance": copy.Importance,
 	}
 	if copy.ImageResourceID != "" {
-		fields["image_resource_id"], fields["image_status"], fields["locked"] = copy.ImageResourceID, model.DramaMediaReady, true
+		fields["image_status"], fields["locked"] = model.DramaMediaReady, true
 		if copy.ImageResourceID != current.ImageResourceID {
+			fields["image_resource_id"] = copy.ImageResourceID
 			fields["image_version"] = current.ImageVersion + 1
 		}
 	} else if current.ImageResourceID == "" {

@@ -139,7 +139,12 @@ export function recordCommittedMediaVersion(node: CanvasNodeData): CanvasNodeDat
 }
 
 /** 上传替换：旧媒体先入历史，新媒体作为当前版本；媒体类型变化时历史不再有意义。 */
-export function recordReplacedMediaVersion(previous: CanvasNodeData | undefined, next: CanvasNodeData, source: MediaVersionSource): CanvasNodeData {
+export function recordReplacedMediaVersion(previous: CanvasNodeData | undefined, next: CanvasNodeData, source: MediaVersionSource, knownVersion?: CanvasMediaVersion): CanvasNodeData {
+    if (knownVersion) {
+        const history = previous?.type === next.type ? mediaVersionFieldsBeforeReplace(previous).mediaVersions || [] : [];
+        const remaining = history.filter((version) => version.id !== knownVersion.id && mediaIdentity(version.media) !== mediaIdentity(knownVersion.media));
+        return { ...next, metadata: { ...next.metadata, mediaVersions: trimVersions([...remaining, knownVersion], knownVersion.id), currentMediaVersionId: knownVersion.id } };
+    }
     if (!previous || previous.type !== next.type) {
         const cleared = { ...next, metadata: { ...next.metadata, mediaVersions: undefined, currentMediaVersionId: undefined } };
         return ensureCurrentMediaVersion(cleared, { source });

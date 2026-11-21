@@ -26,6 +26,7 @@ const assets = await import("../../src/services/drama-canvas");
 const { setActiveUserScope } = await import("../../src/lib/user-scope");
 const { useCanvasDrama } = await import("../../src/pages/canvas/use-canvas-drama");
 import type { DramaCast, DramaEpisodeDetail, DramaSummary } from "../../src/services/api/drama";
+import { dramaKeys } from "../../src/lib/drama/drama-query-keys";
 import type { CanvasNodeData } from "../../src/types/canvas";
 
 function deferred<T>() {
@@ -110,7 +111,7 @@ async function mount() {
         queryClient.clear();
     });
     await render("canvas-a", "drama-a");
-    return { render, nodesRef, writes, controller: () => controller };
+    return { render, nodesRef, writes, queryClient, controller: () => controller };
 }
 
 test("读取 A 的成片期间切到 B，不登记旧媒体或添加节点，不改变 B 的定位", async () => {
@@ -197,4 +198,36 @@ test("账号切换即使尚未重渲染，也不能写入旧投送结果", async
         await pending;
     });
     expect(view.nodesRef.current).toEqual([]);
+});
+
+test("已投送的参考图同步到同图的指定版本，并保留其他画布版本", async () => {
+    const takes = [
+        { id: "v3", version: 3, resourceId: "image-a", prompt: "第三版" },
+        { id: "v2", version: 2, resourceId: "image-b", prompt: "第二版" },
+        { id: "v1", version: 1, resourceId: "image-a", prompt: "第一版" },
+    ].map((item) => ({ ...item, ownerId: cast.id, kind: "cast" as const, source: "pipeline" as const, current: item.version === 3, createdAt: "" }));
+    takesSpy.mockImplementation(async () => ({ takes, currentResourceId: "image-a" }));
+    mediaSpy.mockImplementation(async (_id, items) => new Map(items.map(({ resourceId }) => [resourceId, `asset-${resourceId}`])));
+    const view = await mount();
+    await act(async () => {
+        await view.controller().projectCast(cast.id);
+    });
+    const projected = view.nodesRef.current[0];
+    expect(projected.metadata?.currentMediaVersionId).toBe("drama-take-v3");
+    const adopted = { ...cast, imageTakeId: "v1", imageVersion: 4 };
+    await act(async () => {
+        view.queryClient.setQueryData(dramaKeys.cast("drama-a"), { cast: [adopted] });
+    });
+    await view.render("canvas-a", "drama-a");
+    expect(view.controller().staleNodeIds.has(projected.id)).toBe(true);
+    await act(async () => {
+        await view.controller().refreshNode(projected);
+    });
+    await view.render("canvas-a", "drama-a");
+    const metadata = view.nodesRef.current[0].metadata;
+    expect(metadata?.dramaRef?.baseTakeId).toBe("v1");
+    expect(metadata?.currentMediaVersionId).toBe("drama-take-v1");
+    expect(metadata?.mediaVersions?.find((version) => version.id === metadata.currentMediaVersionId)).toMatchObject({ number: 1, generation: { prompt: "第一版" } });
+    expect(metadata?.mediaVersions?.map((version) => version.number).sort()).toEqual([1, 2]);
+    expect(view.controller().staleNodeIds.size).toBe(0);
 });

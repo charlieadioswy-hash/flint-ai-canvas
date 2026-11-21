@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { Image as ImageIcon, LoaderCircle, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ type CanvasImagePreviewProps = {
     src?: string;
     storageKey?: string;
     alt?: string;
+    actions?: ReactNode;
     onClose: () => void;
 };
 
@@ -22,7 +23,7 @@ export function CanvasImagePreview(props: CanvasImagePreviewProps) {
     return <CanvasImagePreviewContent key={JSON.stringify([props.src, props.storageKey])} {...props} />;
 }
 
-function CanvasImagePreviewContent({ src = "", storageKey, alt: altProp, onClose }: CanvasImagePreviewProps) {
+function CanvasImagePreviewContent({ src = "", storageKey, alt: altProp, actions, onClose }: CanvasImagePreviewProps) {
     const { t } = useTranslation();
     const alt = altProp ?? t("canvasB.common.image");
     const cachedUrl = useCachedResourceUrl(storageKey);
@@ -284,6 +285,7 @@ function CanvasImagePreviewContent({ src = "", storageKey, alt: altProp, onClose
                         </button>
                     </div>
                 </div>
+                {actions ? <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-[var(--workspace-border)] pt-2">{actions}</div> : null}
             </div>
         </AppModal>
     );

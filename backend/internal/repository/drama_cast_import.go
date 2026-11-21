@@ -43,5 +43,5 @@ func (r *Repository) PreserveDramaCastImage(cast model.DramaCast) error {
 	if count > 0 {
 		return nil
 	}
-	return r.CreateDramaTake(&model.DramaTake{ID: kernel.NewID(), ProjectID: cast.ProjectID, OwnerID: cast.ID, Kind: "cast", ResourceID: cast.ImageResourceID, Prompt: "导入前保留的参考图", CreatedAt: time.Now()})
+	return r.CreateDramaTake(&model.DramaTake{ID: kernel.NewID(), ProjectID: cast.ProjectID, OwnerID: cast.ID, Kind: "cast", ResourceID: cast.ImageResourceID, Prompt: "保留的原参考图", CreatedAt: time.Now()})
 }

@@ -15,12 +15,41 @@ import (
 
 // DramaTakes 返回某个产物最近的版本，新版本在前。
 func (r *Repository) DramaTakes(projectID string, ownerID string, kind string, limit int) ([]model.DramaTake, error) {
+	return r.DramaTakesBefore(projectID, ownerID, kind, "", limit)
+}
+
+func (r *Repository) DramaTakesBefore(projectID, ownerID, kind, beforeTakeID string, limit int) ([]model.DramaTake, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
+	query := r.db.Where("project_id = ? AND owner_id = ? AND kind = ?", projectID, ownerID, kind)
+	if beforeTakeID != "" {
+		var cursor model.DramaTake
+		if err := query.Session(&gorm.Session{}).Select("id", "version").Where("id = ?", beforeTakeID).Take(&cursor).Error; err != nil {
+			return nil, err
+		}
+		query = query.Where("version < ? OR (version = ? AND id < ?)", cursor.Version, cursor.Version, cursor.ID)
+	}
 	var takes []model.DramaTake
-	err := r.db.Where("project_id = ? AND owner_id = ? AND kind = ?", projectID, ownerID, kind).Order("version desc").Limit(limit).Find(&takes).Error
+	err := query.Order("version desc, id desc").Limit(limit).Find(&takes).Error
 	return takes, err
+}
+
+func (r *Repository) LatestDramaResourceTake(projectID, ownerID, kind, resourceID string) (*model.DramaTake, error) {
+	var take model.DramaTake
+	if err := r.db.Where("project_id = ? AND owner_id = ? AND kind = ? AND resource_id = ?", projectID, ownerID, kind, resourceID).
+		Order("version desc, id desc").Take(&take).Error; err != nil {
+		return nil, err
+	}
+	return &take, nil
+}
+
+func (r *Repository) DramaCastTake(projectID, castID, takeID string) (*model.DramaTake, error) {
+	var take model.DramaTake
+	if err := r.db.Where("project_id = ? AND owner_id = ? AND kind = ? AND id = ?", projectID, castID, "cast", takeID).First(&take).Error; err != nil {
+		return nil, err
+	}
+	return &take, nil
 }
 
 // TaskProjectIDs 返回用户任务所属的 project_id（画布任务是画布 ID，流水线任务是短剧作品 ID），用于判断版本来源。

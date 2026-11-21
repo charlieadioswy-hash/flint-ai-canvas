@@ -237,7 +237,7 @@ func dramaCanvasAsset(userID string, project *model.Project, resource model.Reso
 }
 
 // DramaTakes 返回一个设定、剧情段或成片的版本记录，并标出当前采用的版本与来源。
-func (s *Service) DramaTakes(userID, projectID, ownerID, kind string) (map[string]any, error) {
+func (s *Service) DramaTakes(userID, projectID, ownerID, kind, beforeTakeID string) (map[string]any, error) {
 	project, _, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return nil, err
@@ -246,14 +246,14 @@ func (s *Service) DramaTakes(userID, projectID, ownerID, kind string) (map[strin
 	if ownerID == "" {
 		return nil, BadAuthRequest("请指定要查看版本的对象")
 	}
-	current := ""
+	current, currentTakeID := "", ""
 	switch kind {
 	case "cast":
 		cast, err := s.repo.DramaCast(project.ID, ownerID)
 		if err != nil {
 			return nil, err
 		}
-		current = cast.ImageResourceID
+		current, currentTakeID = cast.ImageResourceID, cast.ImageTakeID
 	case "video":
 		segment, err := s.repo.DramaSegment(project.ID, ownerID)
 		if err != nil {
@@ -269,9 +269,42 @@ func (s *Service) DramaTakes(userID, projectID, ownerID, kind string) (map[strin
 	default:
 		return nil, BadAuthRequest("版本类型无效")
 	}
-	takes, err := s.repo.DramaTakes(project.ID, ownerID, kind, dramaTakeListLimit)
+	takes, err := s.repo.DramaTakesBefore(project.ID, ownerID, kind, beforeTakeID, dramaTakeListLimit+1)
 	if err != nil {
-		return nil, err
+		return nil, dramaLookupError(err)
+	}
+	result := map[string]any{"currentResourceId": current}
+	hasMore := len(takes) > dramaTakeListLimit
+	if hasMore {
+		takes = takes[:dramaTakeListLimit]
+		result["nextBeforeTakeId"] = takes[len(takes)-1].ID
+	}
+	// 首页的第一条同资源记录就是隐式当前版本。后续页需要按全量历史判断，避免把更旧的重复资源也标为当前。
+	if current != "" && currentTakeID == "" && beforeTakeID == "" {
+		for _, take := range takes {
+			if take.ResourceID == current {
+				currentTakeID = take.ID
+				break
+			}
+		}
+	}
+	if current != "" && currentTakeID == "" && (beforeTakeID != "" || hasMore) {
+		take, err := s.repo.LatestDramaResourceTake(project.ID, ownerID, kind, current)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			currentTakeID = take.ID
+		}
+	}
+	if kind == "cast" && beforeTakeID == "" && hasMore && currentTakeID != "" && !slices.ContainsFunc(takes, func(take model.DramaTake) bool { return take.ID == currentTakeID }) {
+		take, err := s.repo.DramaCastTake(project.ID, ownerID, currentTakeID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		if err == nil && take.ResourceID == current {
+			takes = append(takes, *take)
+		}
 	}
 	taskIDs := make([]string, 0, len(takes))
 	for _, take := range takes {
@@ -284,20 +317,17 @@ func (s *Service) DramaTakes(userID, projectID, ownerID, kind string) (map[strin
 		return nil, err
 	}
 	views := make([]DramaTakeView, 0, len(takes))
-	currentMarked := false
 	for _, take := range takes {
 		view := DramaTakeView{
 			ID: take.ID, OwnerID: take.OwnerID, Kind: take.Kind, Version: take.Version, ResourceID: take.ResourceID, TaskID: take.TaskID,
 			Prompt: truncateRunes(take.Prompt, 300), DurationMs: take.DurationMs, Source: dramaTakeSource(take, taskProjects, project.ID),
 			CreatedAt: take.CreatedAt.Format(time.RFC3339),
 		}
-		// 同一资源可能有多条版本记录（例如重复采用），只把最新一条标为当前。
-		if !currentMarked && current != "" && take.ResourceID == current {
-			view.Current, currentMarked = true, true
-		}
+		view.Current = current != "" && take.ResourceID == current && take.ID == currentTakeID
 		views = append(views, view)
 	}
-	return map[string]any{"takes": views, "currentResourceId": current}, nil
+	result["takes"] = views
+	return result, nil
 }
 
 // dramaTakeSource 按产出任务所在位置区分来源：流水线任务挂在作品上，画布任务挂在画布上；无任务的是上传或画布采用。

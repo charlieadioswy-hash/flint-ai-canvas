@@ -393,10 +393,14 @@ type InsertDramaShotRequest struct {
 	Position string `json:"position"`
 }
 
-// SetDramaCastImageRequest 用用户上传或画布采用的图片替换参考图并锁定，之后不会被重新生成覆盖。
+// SetDramaCastImageRequest 上传或从画布采用新图，也可重新采用主体的历史版本。
 type SetDramaCastImageRequest struct {
 	ResourceID      string `json:"resourceId"`
 	RestyleSegments bool   `json:"restyleSegments"`
+	// TakeID 与 ResourceID、Source、TaskID 互斥。采用历史版本时需提交当前资产修订号和图片版本。
+	TakeID               string `json:"takeId"`
+	ExpectedCastRevision *int64 `json:"expectedCastRevision"`
+	ExpectedImageVersion *int   `json:"expectedImageVersion"`
 	// Source 为 canvas 表示从精修画布采用，版本记录标为“来自画布”；空串或 upload 为直接上传。
 	Source string `json:"source"`
 	// TaskID 是产出这张图的画布生成任务，只用于版本来源与提示词回看；与资源对不上时忽略。

@@ -10,16 +10,17 @@ import {
     buildDramaFinalNode,
     buildDramaSegmentGroup,
     dramaCastAssetCategory,
+    dramaCastRef,
     dramaCastResourceIds,
     dramaFinalResourceIds,
     dramaPlacement,
     dramaSegmentRequiredResourceIds,
     dramaSegmentResourceIds,
+    dramaTakeVersions,
     findDramaFinalNode,
     findDramaSegmentFrame,
     isDramaNodeStale,
     placeDramaGroup,
-    type DramaAdoptTarget,
     type DramaCanvasPresence,
     type DramaCurrentMedia,
     type DramaProjectionMedia,
@@ -31,7 +32,7 @@ import { getDrama, getDramaEpisode, listDramaCast, listDramaTakes, type DramaCas
 import { ApiError } from "@/services/api/request";
 import { resourceFileUrl } from "@/services/api/resources";
 import { DRAMA_CANVAS_FOCUS_PARAM, DRAMA_CANVAS_PARAM, ensureDramaCanvasAssets, parseDramaCanvasFocus, type DramaCanvasAssetItem, type DramaCanvasFocus } from "@/services/drama-canvas";
-import { CanvasNodeType, type CanvasConnection, type CanvasDramaRef, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasDramaRef, type CanvasMediaVersion, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 // 精修画布的短剧模式：画布关联短剧作品时，按需把设定、剧情段、成片投送到画布，
 // 标出短剧侧已更新的节点，并维护“采用到短剧”弹窗。短剧是事实源，这里不做双向自动同步。
@@ -101,11 +102,11 @@ function standaloneCastNode(nodes: CanvasNodeData[], castId: string) {
 }
 
 /** 把节点媒体换成短剧的资源：原媒体先进入版本历史，任务绑定解除，避免任务同步把节点改回去。 */
-function withDramaMedia(node: CanvasNodeData, resourceId: string, assetId: string, ref: CanvasDramaRef): CanvasNodeData {
+function withDramaMedia(node: CanvasNodeData, resourceId: string, assetId: string, ref: CanvasDramaRef, version?: CanvasMediaVersion): CanvasNodeData {
     const metadata: CanvasNodeMetadata = resetGenerationTaskMetadata(node.metadata, "success");
     for (const key of DERIVED_MEDIA_KEYS) delete metadata[key];
     const next: CanvasNodeData = { ...node, metadata: { ...metadata, content: resourceFileUrl(resourceId), storageKey: `resource:${resourceId}`, assetId, dramaRef: ref } };
-    return recordReplacedMediaVersion(node, next, "generate");
+    return recordReplacedMediaVersion(node, next, "generate", version);
 }
 
 export function useCanvasDrama(input: UseCanvasDramaInput) {
@@ -166,12 +167,12 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     });
 
     const current = useMemo<DramaCurrentMedia>(() => {
-        const castImages = castList ? new Map(castList.map((cast) => [cast.id, cast.imageResourceId || ""])) : null;
+        const casts = new Map(castList?.map((cast) => [cast.id, cast]));
         const segmentVideos = new Map<string, string>();
         for (const detail of episodeDetails) for (const segment of detail?.segments || []) segmentVideos.set(segment.id, segment.videoResourceId || "");
         const finals = summary ? new Map(summary.episodes.map((episode) => [episode.id, episode.finalResourceId || ""])) : null;
         return {
-            castImage: (id) => (castImages ? castImages.get(id) || "" : null),
+            cast: (id) => casts.get(id),
             segmentVideo: (id) => segmentVideos.get(id) ?? null,
             finalVideo: (id) => (finals ? finals.get(id) || "" : null),
         };
@@ -251,7 +252,8 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     const fetchEpisode = useCallback((episodeId: string) => queryClient.fetchQuery({ queryKey: dramaKeys.episode(dramaId, episodeId), queryFn: ({ signal }) => getDramaEpisode(dramaId, episodeId, signal), staleTime: 0 }), [dramaId, queryClient]);
     const fetchCast = useCallback(() => queryClient.fetchQuery({ queryKey: dramaKeys.cast(dramaId), queryFn: ({ signal }) => listDramaCast(dramaId, signal), staleTime: 5_000 }).then((data) => data.cast), [dramaId, queryClient]);
     const fetchTakes = useCallback(
-        (ownerId: string, kind: DramaTakeKind) => queryClient.fetchQuery({ queryKey: dramaKeys.takes(dramaId, kind, ownerId), queryFn: ({ signal }) => listDramaTakes(dramaId, ownerId, kind, signal), staleTime: 5_000 }).then((data) => data.takes),
+        (ownerId: string, kind: DramaTakeKind) =>
+            queryClient.fetchQuery({ queryKey: dramaKeys.takes(dramaId, kind, ownerId), queryFn: ({ signal }) => listDramaTakes(dramaId, ownerId, kind, signal), staleTime: kind === "cast" ? 0 : 5_000 }).then((data) => data.takes),
         [dramaId, queryClient],
     );
     /** 登记素材；required 里的资源缺失时中止投送，历史版本缺失只少带一个版本。 */
@@ -417,21 +419,23 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
                 const ref = node.metadata?.dramaRef;
                 if (!ref) return;
                 const now = latest.current.current;
-                const resourceId = ref.kind === "cast" ? now.castImage(ref.id) : ref.kind === "segment" ? now.segmentVideo(ref.id) : now.finalVideo(ref.id);
+                const cast = ref.kind === "cast" ? now.cast(ref.id) : undefined;
+                const resourceId = ref.kind === "cast" ? cast?.imageResourceId : ref.kind === "segment" ? now.segmentVideo(ref.id) : now.finalVideo(ref.id);
                 if (!resourceId) throw new Error("短剧侧还没有可同步的媒体");
                 const block = mediaVersionAdoptBlock(nodesRef.current.find((item) => item.id === node.id));
                 if (block === "missing") return;
                 if (block === "locked") throw new Error("节点已锁定，解锁后再同步");
                 if (block === "loading") throw new Error("节点正在生成或上传，完成后再同步");
-                const media = await registerMedia([{ resourceId, title: node.title, category: node.metadata?.assetCategory }], [resourceId], assertCurrent);
+                const [media, takes] = await Promise.all([registerMedia([{ resourceId, title: node.title, category: node.metadata?.assetCategory }], [resourceId], assertCurrent), cast ? fetchTakes(cast.id, "cast") : Promise.resolve([])]);
                 assertCurrent();
                 const target = nodesRef.current.find((item) => item.id === node.id);
-                if (!target) return;
-                const next = withDramaMedia(target, resourceId, media.assetIdOf(resourceId)!, { ...ref, baseResourceId: resourceId });
+                if (!target || mediaVersionAdoptBlock(target)) return;
+                const version = cast ? dramaTakeVersions(takes, resourceId, media, "image", cast.imageTakeId).mediaVersions?.find((item) => item.media.storageKey === `resource:${resourceId}`) : undefined;
+                const next = withDramaMedia(target, resourceId, media.assetIdOf(resourceId)!, cast ? dramaCastRef(ref.projectId, cast) : { ...ref, baseResourceId: resourceId }, version);
                 setNodes((items) => items.map((item) => (item.id === target.id ? next : item)));
                 message.success("已同步短剧最新版本，原来的画面保留在版本历史里");
             }),
-        [message, nodesRef, registerMedia, run, setNodes],
+        [fetchTakes, message, nodesRef, registerMedia, run, setNodes],
     );
 
     const [adoptNodeId, setAdoptNodeId] = useState<string | null>(null);
@@ -439,15 +443,11 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     const closeAdopt = useCallback(() => setAdoptNodeId(null), []);
     /** 采用成功：节点绑定到采用目标，短剧侧当前版本就是它，不再提示“短剧侧已更新”。 */
     const markAdopted = useCallback(
-        (nodeId: string, target: DramaAdoptTarget, resourceId: string) => {
-            const ref: CanvasDramaRef =
-                target.kind === "cast"
-                    ? { projectId: dramaId, kind: "cast", id: target.castId, baseResourceId: resourceId }
-                    : { projectId: dramaId, kind: "segment", id: target.segmentId, episodeId: target.episodeId, segmentIndex: target.segmentIndex, baseResourceId: resourceId };
+        (nodeId: string, ref: CanvasDramaRef) => {
             setNodes((items) => items.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, dramaRef: ref } } : item)));
-            invalidate(target.kind === "segment" ? target.episodeId : undefined);
+            invalidate(ref.episodeId);
         },
-        [dramaId, invalidate, setNodes],
+        [invalidate, setNodes],
     );
 
     const dispatchFocus = (target: DramaCanvasFocus) => {

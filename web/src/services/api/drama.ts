@@ -669,6 +669,7 @@ export type DramaCast = {
     voiceInstructions: string;
     importance: number;
     imageResourceId?: string;
+    imageTakeId?: string;
     imageStatus: DramaMediaStatus;
     imageVersion: number;
     updatedAt?: string;
@@ -1040,6 +1041,11 @@ export function setDramaCastImage(projectId: string, castId: string, resourceId:
     });
 }
 
+/** 采用该主体的历史参考图，保留原版本和锁定状态。 */
+export function adoptDramaCastTake(projectId: string, castId: string, input: { takeId: string; expectedCastRevision: number; expectedImageVersion: number; restyleSegments: boolean }) {
+    return http.put<{ cast: DramaCast; affectedSegments: number; unchanged?: boolean }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image`, input);
+}
+
 /** 为角色指定声音：voiceProfileId 从声音库选，sampleResourceId 是刚上传或录制的样本（自动登记到声音库）。 */
 export function setDramaCastVoice(projectId: string, castId: string, input: { voiceProfileId?: string; sampleResourceId?: string; voiceName?: string; restyleSegments: boolean }) {
     return http.put<{ cast: DramaCast; affectedSegments: number }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/voice`, input);
@@ -1153,8 +1159,8 @@ export function registerDramaCanvasAssets(projectId: string, resources: Array<{ 
     return http.post<{ assets: Array<{ resourceId: string; assetId: string }> }>(`${base(projectId)}/canvas-assets`, { resources });
 }
 
-export function listDramaTakes(projectId: string, ownerId: string, kind: DramaTakeKind, signal?: AbortSignal) {
-    return http.get<{ takes: DramaTake[]; currentResourceId: string }>(`${base(projectId)}/takes`, { params: { ownerId, kind }, signal });
+export function listDramaTakes(projectId: string, ownerId: string, kind: DramaTakeKind, signal?: AbortSignal, beforeTakeId?: string) {
+    return http.get<{ takes: DramaTake[]; currentResourceId: string; nextBeforeTakeId?: string }>(`${base(projectId)}/takes`, { params: { ownerId, kind, beforeTakeId }, signal });
 }
 
 /** 把画布视频采用为剧情段当前视频；默认只换本段，cascade 时后续已生成的段重新排队生成。 */

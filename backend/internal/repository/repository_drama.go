@@ -982,6 +982,7 @@ func (r *Repository) UpdateDramaCastFields(id string, fields map[string]any) err
 		}
 		fields["updated_at"] = time.Now()
 		fields["revision"] = gorm.Expr("revision + 1")
+		clearDramaCastTakeOnImageReplace(fields)
 		// 任何版本变更都会拒绝旧图片结果，待生成槽位也必须退出等待，避免永久显示运行中。
 		imageStatus, explicitImageStatus := fields["image_status"]
 		if !explicitImageStatus {
@@ -1023,6 +1024,7 @@ func dramaCastVideoImageChanged(cast model.DramaCast, fields map[string]any) boo
 
 func (r *Repository) updateDramaCastMediaConditional(id string, fields map[string]any, condition func(*gorm.DB) *gorm.DB) (bool, error) {
 	fields["updated_at"] = time.Now()
+	clearDramaCastTakeOnImageReplace(fields)
 	if _, imageResource := fields["image_resource_id"]; !imageResource && fields["image_status"] != model.DramaMediaReady {
 		result := condition(r.db.Model(&model.DramaCast{}).Where("id = ?", id)).Updates(fields)
 		return result.RowsAffected == 1, result.Error
@@ -1048,6 +1050,14 @@ func (r *Repository) updateDramaCastMediaConditional(id string, fields map[strin
 		return nil
 	})
 	return applied, err
+}
+
+func clearDramaCastTakeOnImageReplace(fields map[string]any) {
+	_, hasImage := fields["image_resource_id"]
+	_, hasTake := fields["image_take_id"]
+	if hasImage && !hasTake {
+		fields["image_take_id"] = ""
+	}
 }
 
 func invalidateDramaCastAssetVideos(tx *gorm.DB, cast model.DramaCast, staleReady bool) error {
@@ -1097,6 +1107,10 @@ func invalidateDramaSegmentAssetVideo(tx *gorm.DB, segment model.DramaSegment, s
 			marked = true
 		}
 	}
+	return marked, invalidateDramaAssetVideoRows(tx, segment.EpisodeID, ids, staleReady, marked)
+}
+
+func invalidateDramaAssetVideoRows(tx *gorm.DB, episodeID string, ids []string, staleReady, marked bool) error {
 	staleStatuses := []string{model.DramaMediaRunning}
 	if staleReady {
 		staleStatuses = append(staleStatuses, model.DramaMediaReady)
@@ -1106,29 +1120,26 @@ func invalidateDramaSegmentAssetVideo(tx *gorm.DB, segment model.DramaSegment, s
 		"video_revision": gorm.Expr("video_revision + 1"),
 		"updated_at":     time.Now(),
 	}).Error; err != nil {
-		return false, err
+		return err
 	}
-	jobs := tx.Model(&model.DramaJob{}).Where("episode_id = ? AND status = ?", segment.EpisodeID, model.DramaJobQueued)
+	jobs := tx.Model(&model.DramaJob{}).Where("episode_id = ? AND status = ?", episodeID, model.DramaJobQueued)
 	if marked {
 		jobs = jobs.Where("(kind = ? AND shot_id IN ?) OR kind = ?", model.DramaJobSegmentVideo, ids, model.DramaJobRender)
 	} else {
 		jobs = jobs.Where("kind = ? AND shot_id IN ?", model.DramaJobSegmentVideo, ids)
 	}
 	if err := jobs.Updates(map[string]any{"status": model.DramaJobCanceled, "updated_at": time.Now()}).Error; err != nil {
-		return false, err
+		return err
 	}
 	if !marked {
-		return false, nil
+		return nil
 	}
-	if err := tx.Model(&model.DramaEpisode{}).Where("id = ?", segment.EpisodeID).Updates(map[string]any{
+	return tx.Model(&model.DramaEpisode{}).Where("id = ?", episodeID).Updates(map[string]any{
 		"stage":       gorm.Expr("CASE WHEN stage IN ? THEN ? ELSE stage END", []string{model.DramaEpisodeRender, model.DramaEpisodeDone}, model.DramaEpisodeVideo),
 		"final_stale": true,
 		"revision":    gorm.Expr("revision + 1"),
 		"updated_at":  time.Now(),
-	}).Error; err != nil {
-		return false, err
-	}
-	return marked, nil
+	}).Error
 }
 
 // promptStatusAfterInputChange 决定撰写素材变化后的提示词状态：写好的才标记过期、等用户确认重写；

@@ -40,6 +40,7 @@ import { dramaChoiceKey, dramaResolutionAfterModelChange, dramaVideoRatioIssue, 
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import { useUserStore } from "@/stores/use-user-store";
 import {
+    adoptDramaCastTake,
     getDrama,
     listDramaCast,
     setDramaCastImage,
@@ -58,6 +59,7 @@ import {
     type DramaModelChoice,
     type DramaReviewMode,
     type DramaSummary,
+    type DramaTake,
     type DramaTextThinking,
     type DramaVideoContinuity,
 } from "@/services/api/drama";
@@ -405,7 +407,7 @@ function CastEditorSession(props: CastEditorProps) {
         if (!imageChanged && !generationFinished && !failureUpdated) return;
 
         const ticket = capture();
-        const filter = { queryKey: dramaKeys.takes(projectId, "cast", id), exact: true };
+        const filter = { queryKey: dramaKeys.takes(projectId, "cast", id) };
         // 首次读取也可能在生成完成前发出，取消后再刷新以免复用旧请求。
         void queryClient.cancelQueries(filter).then(() => {
             if (isCurrent(ticket)) return queryClient.invalidateQueries(filter);
@@ -456,6 +458,7 @@ function CastEditorForm({
     viewSelector?: ReactNode;
 }) {
     const { message, modal } = App.useApp();
+    const queryClient = useQueryClient();
     const { cancelBeforeExecution } = regenerationGuard;
     const operation = useDramaOperationScope(projectId);
     useEffect(() => () => cancelBeforeExecution(), [cancelBeforeExecution]);
@@ -466,7 +469,8 @@ function CastEditorForm({
             mounted.current = false;
         };
     }, []);
-    const [previewImage, setPreviewImage] = useState<{ resourceId: string; alt: string }>();
+    const [previewImage, setPreviewImage] = useState<{ resourceId: string; alt: string; take?: DramaTake }>();
+    const adoptingTake = useRef(false);
     const [name, setName] = useState(cast.lookName || cast.name);
     const [aliases, setAliases] = useState(parseList(cast.aliasesJson));
     const [appearance, setAppearance] = useState(cast.appearance);
@@ -677,18 +681,58 @@ function CastEditorForm({
         onSuccess: imageAdopted,
         onError: (error) => message.error(error instanceof Error ? error.message : "上传失败"),
     });
+    const adoptTake = useMutation({
+        mutationFn: ({ takeId, expectedCastRevision, expectedImageVersion, restyleSegments }: Parameters<typeof adoptDramaCastTake>[2] & { ticket: ReturnType<typeof operation.capture> }) =>
+            adoptDramaCastTake(projectId, cast.id, { takeId, restyleSegments, expectedCastRevision, expectedImageVersion }),
+        onSuccess: async (result, { ticket, takeId }) => {
+            if (!operation.isCurrent(ticket)) return;
+            const castQuery = { queryKey: dramaKeys.cast(projectId), exact: true };
+            const takesQuery = { queryKey: dramaKeys.takes(projectId, "cast", cast.id) };
+            await Promise.all([queryClient.cancelQueries(castQuery), queryClient.cancelQueries(takesQuery)]);
+            if (!operation.isCurrent(ticket)) return;
+
+            acceptIndependentUpdate(result.cast);
+            queryClient.setQueryData<Awaited<ReturnType<typeof listDramaCast>>>(
+                castQuery.queryKey,
+                (data) => data && { ...data, cast: data.cast.map((item) => (item.id === result.cast.id && (item.revision ?? 0) <= (result.cast.revision ?? 0) ? result.cast : item)) },
+            );
+            onChanged();
+            void queryClient.invalidateQueries(takesQuery);
+            void queryClient.invalidateQueries({ queryKey: ["drama-shot-reference-cast", useUserStore.getState().user?.id || "", projectId] });
+            setPreviewImage((preview) => (preview?.take?.id === takeId ? undefined : preview));
+            if (result.unchanged) message.info("已在使用此版本");
+            else message.success(result.affectedSegments ? `已采用此版本，${result.affectedSegments} 个剧情段的视频已标记为待更新` : "已采用此版本");
+        },
+        onError: (_, { ticket }) => {
+            if (operation.isCurrent(ticket)) onChanged();
+        },
+        onSettled: () => {
+            adoptingTake.current = false;
+        },
+    });
     // 素材库选图的失败由选择弹窗内联显示，这里只处理成功。
     const adoptLibraryImage = async (resourceId: string) => imageAdopted(await setDramaCastImage(projectId, cast.id, resourceId, restyle));
     const isCharacter = cast.kind === "character" && !isLook;
     const kindLabel = isLook ? "造型" : CAST_KIND_LABEL[cast.kind];
-    const previewReferenceImage = (resourceId: string | undefined, version?: number) => {
+    const previewReferenceImage = (resourceId: string | undefined, take?: DramaTake) => {
         if (!resourceId) return;
         const label = `${cast.lookName || cast.name} · ${kindLabel}参考图`;
-        setPreviewImage({ resourceId, alt: version === undefined ? label : `${label} · V${version}` });
+        setPreviewImage({ resourceId, alt: take ? `${label} · V${take.version}` : label, take });
     };
-    const saving = autoSave.isPending || regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
-    const editBlocked = regenerate.isPending || upload.isPending || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
+    const editBlocked = regenerate.isPending || upload.isPending || adoptTake.isPending || lock.isPending || lookState.busy || regenerationGuard.busy || mediaBusy(cast.imageStatus);
+    const saving = autoSave.isPending || regenerate.isPending || upload.isPending || adoptTake.isPending || lock.isPending || lookState.busy || regenerationGuard.busy;
     const busy = saving || mediaBusy(cast.imageStatus) || dirty;
+    const previewTake = previewImage?.take;
+    const restoreCurrent = cast.imageStatus === "failed" || cast.imageStatus === "stale";
+    const isActiveTake = (take: DramaTake) => !restoreCurrent && (cast.imageTakeId ? take.id === cast.imageTakeId : take.current && take.resourceId === cast.imageResourceId);
+    const adoptionDisabled = busy || typeof baselineCast.revision !== "number";
+    const adoptionError = adoptTake.isError ? (adoptTake.error instanceof Error ? adoptTake.error.message : "采用失败，请重试") : undefined;
+    const requestTakeAdoption = (take: DramaTake) => {
+        const expectedCastRevision = baselineRef.current.revision;
+        if (adoptingTake.current || busy || isActiveTake(take) || typeof expectedCastRevision !== "number") return;
+        adoptingTake.current = true;
+        adoptTake.mutate({ takeId: take.id, expectedCastRevision, expectedImageVersion: cast.imageVersion, restyleSegments: restyle, ticket: operation.capture() });
+    };
     const startAutoSave = () => {
         if (saveInFlight.current || !validDraft || !versionReady) return;
         saveInFlight.current = true;
@@ -1027,10 +1071,47 @@ function CastEditorForm({
                         <h3>版本记录</h3>
                     </div>
                 ) : null}
-                <DramaTakeList projectId={projectId} ownerId={cast.id} kind="cast" showHeading={layout !== "workspace"} onPreviewImage={previewReferenceImage} />
+                <DramaTakeList
+                    projectId={projectId}
+                    ownerId={cast.id}
+                    kind="cast"
+                    showHeading={layout !== "workspace"}
+                    onPreviewImage={(take) => previewReferenceImage(take.resourceId, take)}
+                    imageAdoption={{
+                        onAdopt: requestTakeAdoption,
+                        restoreCurrent,
+                        disabled: adoptionDisabled,
+                        pendingId: adoptTake.isPending ? adoptTake.variables?.takeId : undefined,
+                        error: previewTake?.id === adoptTake.variables?.takeId ? undefined : adoptionError,
+                    }}
+                />
                 {layout === "workspace" ? <p className="drama-editor-note">生成、上传与画布精修产生的图片会保留在这里。</p> : null}
             </aside>
-            {previewImage ? <CanvasImagePreview storageKey={`resource:${previewImage.resourceId}`} alt={previewImage.alt} onClose={() => setPreviewImage(undefined)} /> : null}
+            {previewImage ? (
+                <CanvasImagePreview
+                    storageKey={`resource:${previewImage.resourceId}`}
+                    alt={previewImage.alt}
+                    onClose={() => setPreviewImage(undefined)}
+                    actions={
+                        previewTake ? (
+                            <>
+                                {adoptionError && adoptTake.variables?.takeId === previewTake.id ? (
+                                    <span role="alert" className="mr-auto text-sm text-destructive">
+                                        {adoptionError}
+                                    </span>
+                                ) : null}
+                                {isActiveTake(previewTake) ? (
+                                    <span className="text-sm text-muted-foreground">当前使用</span>
+                                ) : (
+                                    <Button type="primary" disabled={adoptionDisabled} loading={adoptTake.isPending && adoptTake.variables?.takeId === previewTake.id} onClick={() => requestTakeAdoption(previewTake)}>
+                                        采用此版本
+                                    </Button>
+                                )}
+                            </>
+                        ) : undefined
+                    }
+                />
+            ) : null}
         </div>
     );
 }

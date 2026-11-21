@@ -5168,6 +5168,102 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/takes:
+    get:
+      tags: [dramas]
+      summary: 分页读取设定、剧情段或成片的历史版本
+      description: 每页按版本倒序返回最多 50 条。资产当前版本在首页范围外时，首页会额外附上该记录。使用响应中的游标读取下一页，按记录 ID 合并结果。
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: ownerId, required: true, schema: { type: string } }
+        - { in: query, name: kind, required: true, schema: { type: string, enum: [cast, video, final] } }
+        - { in: query, name: beforeTakeId, schema: { type: string } }
+      responses:
+        "200":
+          description: 历史版本与下一页游标
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [takes, currentResourceId]
+                        properties:
+                          takes:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id: { type: string }
+                                ownerId: { type: string }
+                                kind: { type: string, enum: [cast, video, final] }
+                                version: { type: integer }
+                                resourceId: { type: string }
+                                taskId: { type: string }
+                                prompt: { type: string }
+                                durationMs: { type: integer }
+                                source: { type: string, enum: [pipeline, upload, canvas] }
+                                createdAt: { type: string, format: date-time }
+                                current: { type: boolean }
+                          currentResourceId: { type: string }
+                          nextBeforeTakeId: { type: string, description: 还有更早版本时返回，下次请求传入 beforeTakeId }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/image:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+    put:
+      tags: [dramas]
+      summary: 上传、从画布采用或重新采用历史参考图
+      description: 上传或从画布采用会生成版本并锁定资产。在角色场景、剧本确认及后续制作阶段可重新采用历史版本，并沿用资产的锁定状态。采用时提交资产修订号和图片版本，主体图片正在排队或生成时返回冲突。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [resourceId]
+                  properties:
+                    resourceId: { type: string, minLength: 1 }
+                    source: { type: string, enum: ["", upload, canvas] }
+                    taskId: { type: string }
+                    restyleSegments: { type: boolean }
+                - type: object
+                  additionalProperties: false
+                  required: [takeId, expectedCastRevision, expectedImageVersion]
+                  properties:
+                    takeId: { type: string, minLength: 1 }
+                    expectedCastRevision: { type: integer, format: int64 }
+                    expectedImageVersion: { type: integer }
+                    restyleSegments: { type: boolean, description: 将引用变更后参考图的已有段视频标为待更新 }
+      responses:
+        "200":
+          description: 当前参考图与受影响的段
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Envelope" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [cast, affectedSegments]
+                        properties:
+                          cast: { $ref: "#/components/schemas/DramaCast" }
+                          affectedSegments: { type: integer, minimum: 0 }
+                          unchanged: { type: boolean }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/cast/{castId}/image-options:
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
@@ -6242,6 +6338,7 @@ components:
             sourceCastId: { type: string, description: 来源设定或造型 ID，在目标作品内唯一，避免重复导入 }
             importance: { type: integer }
             imageResourceId: { type: string }
+            imageTakeId: { type: string, description: 主动采用的历史参考图版本 }
             imageStatus: { type: string, enum: ["", draft, queued, running, ready, failed, stale, skipped] }
             imageVersion: { type: integer }
             locked: { type: boolean }

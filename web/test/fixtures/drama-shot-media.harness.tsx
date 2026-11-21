@@ -1278,8 +1278,11 @@ test("旧版提示词中的运镜仍可显示，改选后只移除旧的运镜�
 
 test("主体当前图与历史设定图可绑定镜头，切换不改变主体采用版本", async () => {
     const view = await mount(false, () => {
-        casts = [cast()];
-        castTakes = [{ id: "take-old", ownerId: "cast-one", kind: "cast", version: 1, resourceId: "cast-history", prompt: "", source: "pipeline", current: false, createdAt: "" }];
+        casts = [cast({ imageVersion: 4 })];
+        castTakes = [
+            { id: "take-current", ownerId: "cast-one", kind: "cast", version: 3, resourceId: "cast-current", prompt: "", source: "pipeline", current: true, createdAt: "" },
+            { id: "take-old", ownerId: "cast-one", kind: "cast", version: 1, resourceId: "cast-history", prompt: "", source: "pipeline", current: false, createdAt: "" },
+        ];
         castViews = [
             {
                 id: "left-view",
@@ -1298,10 +1301,11 @@ test("主体当前图与历史设定图可绑定镜头，切换不改变主体�
         await clickImage(view.host, "cast-current");
         await waitPrice(view.host);
         expect(server.image.config.referenceResourceIds).toEqual(["cast-current"]);
-        expect(server.image.config.referenceNames?.["cast-current"]).toBe("苏晚 · 版本 2");
+        expect(server.image.config.referenceNames?.["cast-current"]).toBe("苏晚 · 当前参考图");
         expect(server.image.config.referenceSubjects).toEqual({ "cast-current": "cast-one" });
-        await clickLabel(view.host, "切换苏晚 · 版本 2");
+        await clickLabel(view.host, "切换苏晚 · 当前参考图");
         for (let i = 0; i < 50 && !view.host.querySelector('.shot-reference-picker-grid img[data-resource="cast-history"]'); i++) await act(settle);
+        expect(view.host.querySelector('.shot-reference-picker-grid img[data-resource="cast-current"]')?.closest("button")?.textContent).toContain("苏晚 · 当前参考图");
         expect(view.host.querySelector('.shot-reference-picker-grid img[data-resource="cast-left"]')).toBeTruthy();
         expect(view.host.querySelector('.shot-reference-picker-grid img[data-resource="failed-view"]')).toBeNull();
         await clickImage(view.host, "cast-history");
@@ -1322,7 +1326,7 @@ test("主体当前图与历史设定图可绑定镜头，切换不改变主体�
         await click(view.host, "选择库中图片");
         await waitPrice(view.host);
         expect(server.image.config.referenceSubjects).toEqual({});
-        expect(casts[0]).toMatchObject({ imageResourceId: "cast-current", imageVersion: 2 });
+        expect(casts[0]).toMatchObject({ imageResourceId: "cast-current", imageVersion: 4 });
         expect(saves).toHaveLength(5);
         expect(adoptions).toHaveLength(0);
         expect(executions).toHaveLength(0);

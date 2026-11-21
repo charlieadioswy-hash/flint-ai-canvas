@@ -27,6 +27,35 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaV123PreservesExistingDramaCastImage(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-drama-cast-image-take?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropColumn(&model.DramaCast{}, "ImageTakeID"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("version = ?", 123).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO drama_casts (id, project_id, image_resource_id, image_status, image_version, locked) VALUES ('cast', 'project', 'image', 'ready', 4, true)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("upgrade from v122: %v", err)
+	}
+	var cast model.DramaCast
+	if err := db.First(&cast, "id = ?", "cast").Error; err != nil {
+		t.Fatal(err)
+	}
+	if cast.ImageTakeID != "" || cast.ImageResourceID != "image" || cast.ImageStatus != model.DramaMediaReady || cast.ImageVersion != 4 || !cast.Locked {
+		t.Fatalf("migration changed the existing cast image: %+v", cast)
+	}
+}
+
 type channelModelProtocolV58 struct {
 	ID       string `gorm:"primaryKey;size:36"`
 	Protocol string `gorm:"size:32;index"`

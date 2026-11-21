@@ -823,7 +823,7 @@ async function renderAdopt(boundCastId?: string) {
     const adopted = mock(() => {});
     const closed = mock(() => {});
     const impact = spyOn(api, "getDramaCastImpact").mockResolvedValue({ episodes: 1, segments: 2 });
-    const save = spyOn(api, "setDramaCastImage").mockImplementation(async (_projectId, castId) => ({ cast: adoptCast.find((item) => item.id === castId)!, affectedSegments: 0 }));
+    const save = spyOn(api, "setDramaCastImage").mockImplementation(async (_projectId, castId, imageResourceId) => ({ cast: { ...adoptCast.find((item) => item.id === castId)!, imageResourceId, imageVersion: 4 }, affectedSegments: 0 }));
     spyOn(resources, "getResourceAccess").mockRejectedValue(new Error("Preview unavailable in this fixture"));
     await act(async () =>
         root.render(
@@ -855,7 +855,7 @@ test("canvas adoption selects a character outfit and submits its own slot", asyn
     expect(impact.mock.calls.at(-1)?.slice(0, 2)).toEqual(["project", "look"]);
     await click("采用", dialog);
     expect(save).toHaveBeenCalledWith("project", "look", "canvas-outfit", false, { source: "canvas", taskId: undefined });
-    expect(adopted).toHaveBeenCalledWith("canvas-image", { kind: "cast", castId: "look" }, "canvas-outfit");
+    expect(adopted).toHaveBeenCalledWith("canvas-image", { projectId: "project", kind: "cast", id: "look", baseResourceId: "canvas-outfit", baseImageVersion: 4, baseTakeId: undefined });
     expect(closed).toHaveBeenCalledTimes(1);
 });
 

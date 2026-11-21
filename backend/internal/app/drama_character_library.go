@@ -271,8 +271,11 @@ func (s *Service) ImportDramaCharacterLibrary(userID, projectID string, req Impo
 				"name": copy.Name, "aliases_json": copy.AliasesJSON, "role": copy.Role,
 				"description": copy.Description, "appearance": copy.Appearance, "image_prompt": copy.ImagePrompt,
 				"definition_json": copy.DefinitionJSON, "library_asset_id": copy.LibraryAssetID, "library_version_id": copy.LibraryVersionID,
-				"image_resource_id": copy.ImageResourceID, "image_status": copy.ImageStatus, "image_version": copy.ImageVersion, "locked": copy.Locked,
+				"image_status": copy.ImageStatus, "image_version": copy.ImageVersion, "locked": copy.Locked,
 				"voice_profile_id": copy.VoiceProfileID, "voice_sample_resource_id": copy.VoiceSampleResourceID, "voice_instructions": copy.VoiceInstructions,
+			}
+			if copy.ImageResourceID != current.ImageResourceID {
+				fields["image_resource_id"] = copy.ImageResourceID
 			}
 			if err := repo.UpdateDramaCastFields(copy.ID, fields); err != nil {
 				return err

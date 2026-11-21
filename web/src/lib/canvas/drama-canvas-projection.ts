@@ -83,17 +83,27 @@ function mediaNode(type: CanvasNodeType.Image | CanvasNodeType.Video, title: str
     return node;
 }
 
-/** 历史版本映射为节点媒体版本：同一资源只保留最新一条，版本号沿用短剧的版本号。 */
-export function dramaTakeVersions(takes: DramaTake[] | undefined, currentResourceId: string | undefined, media: DramaProjectionMedia, kind: "image" | "video"): Pick<NonNullable<CanvasNodeData["metadata"]>, "mediaVersions" | "currentMediaVersionId"> {
+/** 同一资源在画布只展示一个版本，手动采用的记录优先保留。 */
+export function dramaTakeVersions(
+    takes: DramaTake[] | undefined,
+    currentResourceId: string | undefined,
+    media: DramaProjectionMedia,
+    kind: "image" | "video",
+    currentTakeId?: string,
+): Pick<NonNullable<CanvasNodeData["metadata"]>, "mediaVersions" | "currentMediaVersionId"> {
+    const history = takes || [];
+    const selected = currentTakeId && history.find((take) => take.id === currentTakeId && take.resourceId === currentResourceId);
+    if (currentTakeId && !selected) throw new Error("短剧参考图版本已变化，请重新同步");
+    const candidates = selected ? [selected, ...history] : history;
     const seen = new Set<string>();
-    const usable = (takes || [])
+    const usable = candidates
         .filter((take) => {
             if (!take.resourceId || seen.has(take.resourceId) || !media.assetIdOf(take.resourceId)) return false;
             seen.add(take.resourceId);
             return true;
         })
         .slice(0, DRAMA_TAKE_PROJECTION_LIMIT);
-    if (usable.length < 2) return {};
+    if (!usable.length || (usable.length === 1 && kind !== "image")) return {};
     const versions: CanvasMediaVersion[] = usable
         .map((take) => ({
             id: `drama-take-${take.id}`,
@@ -141,7 +151,7 @@ export function findDramaFinalNode(nodes: CanvasNodeData[], episodeId: string) {
 
 /** 投送一个设定需要登记素材的资源：当前参考图与最近的历史版本。 */
 export function dramaCastResourceIds(cast: DramaCast, takes?: DramaTake[]) {
-    return unique([cast.imageResourceId, ...(takes || []).slice(0, DRAMA_TAKE_PROJECTION_LIMIT).map((take) => take.resourceId)]);
+    return unique([cast.imageResourceId, ...(takes || []).map((take) => take.resourceId)]).slice(0, DRAMA_TAKE_PROJECTION_LIMIT);
 }
 
 /** 投送成片需要登记素材的资源：当前成片与最近的历史成片。 */
@@ -189,10 +199,14 @@ export function buildDramaCastNode(input: { projectId: string; cast: DramaCast; 
         prompt,
         composerContent: prompt,
         assetCategory: DRAMA_CAST_ASSET_CATEGORY[cast.kind],
-        dramaRef: { projectId: input.projectId, kind: "cast", id: cast.id, baseResourceId: cast.imageResourceId || undefined },
-        ...dramaTakeVersions(input.takes, cast.imageResourceId, media, "image"),
+        dramaRef: dramaCastRef(input.projectId, cast),
+        ...dramaTakeVersions(input.takes, cast.imageResourceId, media, "image", cast.imageTakeId),
     });
     return { ...node, position: input.topLeft, width: size.width, height: size.height };
+}
+
+export function dramaCastRef(projectId: string, cast: DramaCast): CanvasDramaRef {
+    return { projectId, kind: "cast", id: cast.id, baseResourceId: cast.imageResourceId || undefined, baseImageVersion: cast.imageVersion, baseTakeId: cast.imageTakeId };
 }
 
 const SEGMENT_SCRIPT_COLUMNS: StoryboardColumn[] = ["shotNumber", "durationSeconds", "plotDescription", "dialogue", "shotSize", "camera", "videoMotionPrompt"];
@@ -267,7 +281,7 @@ export function buildDramaSegmentGroup(input: {
         const cast = input.castById.get(reference.castId);
         const node = mediaNode(CanvasNodeType.Image, `参考图${index + 1} · ${reference.name}`, reference.resourceId, media, {
             assetCategory: reference.kind === "image" ? "material" : DRAMA_CAST_ASSET_CATEGORY[reference.kind],
-            ...(reference.castId ? { dramaRef: { projectId: input.projectId, kind: "cast" as const, id: reference.castId, baseResourceId: cast?.imageResourceId || reference.resourceId } } : {}),
+            ...(reference.castId ? { dramaRef: cast ? dramaCastRef(input.projectId, cast) : { projectId: input.projectId, kind: "cast" as const, id: reference.castId, baseResourceId: reference.resourceId } } : {}),
         });
         return { ...node, position: { x: x + (index % columns) * (REF_SIZE + REF_GAP), y: contentTop + Math.floor(index / columns) * (REF_SIZE + REF_GAP) }, width: REF_SIZE, height: REF_SIZE };
     });
@@ -378,7 +392,7 @@ export type DramaCanvasPresence = {
 };
 
 export type DramaCurrentMedia = {
-    castImage: (castId: string) => string | undefined | null;
+    cast: (castId: string) => DramaCast | undefined;
     segmentVideo: (segmentId: string) => string | undefined | null;
     finalVideo: (episodeId: string) => string | undefined | null;
 };
@@ -390,9 +404,20 @@ export type DramaCurrentMedia = {
 export function isDramaNodeStale(node: CanvasNodeData, current: DramaCurrentMedia) {
     const ref = node.metadata?.dramaRef;
     if (!ref || node.type === CanvasNodeType.Frame) return false;
-    const latest = ref.kind === "cast" ? current.castImage(ref.id) : ref.kind === "segment" ? current.segmentVideo(ref.id) : current.finalVideo(ref.id);
-    if (latest === null || !latest) return false;
     const shown = node.metadata?.storageKey?.startsWith("resource:") ? node.metadata.storageKey.slice("resource:".length) : "";
+    if (ref.kind === "cast") {
+        const cast = current.cast(ref.id);
+        if (!cast?.imageResourceId) return false;
+        const sameResource = cast.imageResourceId === ref.baseResourceId;
+        if (cast.imageTakeId) {
+            const showsTake = shown === cast.imageResourceId && node.metadata?.currentMediaVersionId === `drama-take-${cast.imageTakeId}`;
+            return !showsTake && !(sameResource && ref.baseTakeId === cast.imageTakeId);
+        }
+        if (sameResource && (ref.baseTakeId || (ref.baseImageVersion !== undefined && ref.baseImageVersion !== cast.imageVersion))) return true;
+        return !sameResource && shown !== cast.imageResourceId;
+    }
+    const latest = ref.kind === "segment" ? current.segmentVideo(ref.id) : current.finalVideo(ref.id);
+    if (!latest) return false;
     return latest !== (ref.baseResourceId || "") && latest !== shown;
 }
 

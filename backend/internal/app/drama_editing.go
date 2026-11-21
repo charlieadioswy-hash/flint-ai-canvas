@@ -514,12 +514,14 @@ func (s *Service) DeleteDramaShot(userID, projectID, shotID string) error {
 	return s.reopenDrama(productionRow)
 }
 
-// SetDramaCastImage 用用户上传的图片作为参考图并锁定：之后不会被自动或批量重做覆盖，
-// 生成剧情段视频时这张图随请求发送，并在提示词里标明形象以它为准。
+// SetDramaCastImage 设置视频使用的主体参考图。上传和画布采用会锁定参考图，重新采用历史版本沿用当前锁定状态。
 func (s *Service) SetDramaCastImage(userID, projectID, castID string, req SetDramaCastImageRequest) (map[string]any, error) {
 	project, productionRow, err := s.dramaForUser(userID, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if takeID := strings.TrimSpace(req.TakeID); takeID != "" {
+		return s.adoptDramaCastImageTake(userID, project.ID, castID, takeID, req)
 	}
 	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return nil, err
@@ -583,6 +585,156 @@ func (s *Service) SetDramaCastImage(userID, projectID, castID string, req SetDra
 		return nil, err
 	}
 	return map[string]any{"cast": updated, "affectedSegments": affected}, nil
+}
+
+func (s *Service) adoptDramaCastImageTake(userID, projectID, castID, takeID string, req SetDramaCastImageRequest) (map[string]any, error) {
+	if strings.TrimSpace(req.ResourceID) != "" || strings.TrimSpace(req.Source) != "" || strings.TrimSpace(req.TaskID) != "" {
+		return nil, BadAuthRequest("请单独提交要采用的历史版本")
+	}
+	if req.ExpectedCastRevision == nil || req.ExpectedImageVersion == nil {
+		return nil, BadAuthRequest("请提供当前资产修订号和图片版本")
+	}
+	var cast *model.DramaCast
+	affected, unchanged := 0, false
+	err := func() error {
+		release, err := s.lockDramaSchedule(projectID)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return s.repo.Transaction(func(tx *repository.Repository) error {
+			productionRow, err := tx.DramaProductionForUpdate(projectID)
+			if err != nil {
+				return dramaLookupError(err)
+			}
+			if dramaGuideActive(productionRow) {
+				if err := requireDramaGuideAssetEdit(productionRow); err != nil {
+					return err
+				}
+			}
+			cast, err = tx.DramaCastForUpdate(projectID, castID)
+			if err != nil {
+				return dramaLookupError(err)
+			}
+			if mediaBusyStatus(cast.ImageStatus) {
+				return dramaGuideConflict("资产图片正在生成或排队，请完成后再采用历史版本")
+			}
+			jobs, err := tx.DramaJobsByStatus(projectID, model.DramaJobQueued, model.DramaJobRunning)
+			if err != nil {
+				return err
+			}
+			for _, job := range jobs {
+				if job.Kind == model.DramaJobCastImage && job.CastID == castID {
+					return dramaGuideConflict("资产图片正在生成或排队，请完成后再采用历史版本")
+				}
+			}
+			take, err := tx.DramaCastTake(projectID, cast.ID, takeID)
+			if err != nil {
+				return dramaLookupError(err)
+			}
+			if err := tx.LockDramaCastImageReferences(userID, []string{take.ResourceID}); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return BadAuthRequest("历史版本的图片不存在或无权使用")
+				}
+				return err
+			}
+			resource, err := tx.ResourceForUser(userID, take.ResourceID)
+			if err != nil {
+				return err
+			}
+			if resource.Status != model.ResourceStatusReady || !strings.HasPrefix(resource.MimeType, "image/") {
+				return BadAuthRequest("只能采用已就绪的历史图片")
+			}
+			if cast.ImageResourceID == resource.ID && cast.ImageStatus == model.DramaMediaReady {
+				currentID := cast.ImageTakeID
+				if currentID == "" {
+					current, err := tx.LatestDramaResourceTake(projectID, cast.ID, "cast", resource.ID)
+					if err != nil {
+						return err
+					}
+					currentID = current.ID
+				}
+				if currentID == take.ID {
+					unchanged = true
+					return nil
+				}
+			}
+			if cast.Revision != *req.ExpectedCastRevision || cast.ImageVersion != *req.ExpectedImageVersion {
+				return dramaGuideConflict("资产或参考图已改变，请刷新后重新采用")
+			}
+			imageChanged := cast.ImageResourceID != resource.ID || cast.ImageStatus != model.DramaMediaReady
+			if cast.ImageResourceID != resource.ID {
+				if err := tx.PreserveDramaCastImage(*cast); err != nil {
+					return err
+				}
+			}
+			if err := tx.SetDramaCastImageTake(*cast, *take); err != nil {
+				return err
+			}
+			if imageChanged {
+				affected, err = invalidateDramaCastImageTakeVideos(tx, projectID, cast.ID, req.RestyleSegments)
+				if err != nil {
+					return err
+				}
+			}
+			if imageChanged && productionRow.Status == model.DramaStatusCompleted {
+				if err := tx.UpdateDramaProduction(projectID, map[string]any{"status": model.DramaStatusRunning, "stage": model.DramaStageProduce}); err != nil {
+					return err
+				}
+			}
+			cast, err = tx.DramaCast(projectID, cast.ID)
+			return err
+		})
+	}()
+	if err != nil {
+		return nil, err
+	}
+	if unchanged {
+		return map[string]any{"cast": cast, "affectedSegments": 0, "unchanged": true}, nil
+	}
+	s.wakeDramaScheduler()
+	return map[string]any{"cast": cast, "affectedSegments": affected}, nil
+}
+
+func invalidateDramaCastImageTakeVideos(tx *repository.Repository, projectID, castID string, restyle bool) (int, error) {
+	shots, segments, err := tx.DramaProjectImageBindings(projectID)
+	if err != nil || len(segments) == 0 {
+		return 0, err
+	}
+	casts, err := tx.DramaCasts(projectID)
+	if err != nil {
+		return 0, err
+	}
+	castByID := make(map[string]model.DramaCast, len(casts))
+	for _, cast := range casts {
+		castByID[cast.ID] = cast
+	}
+	type segmentKey struct {
+		episodeID string
+		index     int
+	}
+	groups := make(map[segmentKey][]model.DramaShot)
+	for _, shot := range shots {
+		key := segmentKey{shot.EpisodeID, shot.SegmentIndex}
+		groups[key] = append(groups[key], shot)
+	}
+	byEpisode := make(map[string][]int)
+	for _, segment := range segments {
+		key := segmentKey{segment.EpisodeID, segment.SegmentIndex}
+		ids := dramaSegmentImageCastIDs(groups[key], castByID, segment.ReferenceCastIDsJSON)
+		if containsString(ids, castID) {
+			byEpisode[segment.EpisodeID] = append(byEpisode[segment.EpisodeID], segment.SegmentIndex)
+		}
+	}
+	affected := 0
+	for episodeID, indexes := range byEpisode {
+		marked, err := tx.InvalidateDramaEpisodeImageVideos(episodeID, indexes, restyle)
+		if err != nil {
+			return 0, err
+		}
+		affected += marked
+	}
+	return affected, nil
 }
 
 // dramaDialogueCheck 逐句核对原文台词是否出现在镜头台词里。章节被多集共用时无法确定哪些台词属于本集，不做核对。

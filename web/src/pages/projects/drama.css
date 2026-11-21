@@ -2532,6 +2532,7 @@
     flex-wrap: inherit;
     gap: inherit;
     width: 100%;
+    min-width: 0;
     padding: 0;
     border: 0;
     border-radius: inherit;
@@ -2539,6 +2540,10 @@
     color: inherit;
     text-align: start;
     cursor: zoom-in;
+}
+.drama-take-adopt {
+    flex: none;
+    margin-inline-start: auto;
 }
 .drama-takes-list b {
     font-variant-numeric: tabular-nums;
