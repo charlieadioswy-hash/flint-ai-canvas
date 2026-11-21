@@ -175,3 +175,93 @@ func TestDramaQueueAppliesStatusAndKindBeforeLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestDramaQueueIncludesStoryboardTask(t *testing.T) {
+	s, db, board := storyboardFixture(t, 2, 2, 2)
+	const user, project = "user", "drama-project"
+	if err := db.Model(&model.DramaEpisode{}).Where("id = ?", board.EpisodeID).Update("number", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if jobs, err := s.DramaJobs(user, project, 10); err != nil || len(jobs) != 0 {
+		t.Fatalf("draft board must not appear in the queue: %+v, %v", jobs, err)
+	}
+	if err := db.Create(&model.Task{ID: "unbound-board-task", UserID: user, ProjectID: project, Type: "canvas_image", Status: model.TaskStatusQueued,
+		InputJSON: `{"metadata":{"source":"drama_storyboard_board"}}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.ExecuteDramaStoryboard(user, project, board.ID, storyboardConfirmed(t, s, board))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID := dramaShotQueueJobPrefix + task.ID
+	assertJob := func(job DramaJobView, status string) {
+		t.Helper()
+		if job.ID != jobID || job.Kind != "storyboard_image" || job.EpisodeID != board.EpisodeID || job.ShotID != "" || job.Status != status || job.Label != "第 1 集 · 2×2 宫格故事板" {
+			t.Fatalf("unexpected storyboard queue entry: %+v", job)
+		}
+	}
+	for _, state := range []struct {
+		status model.TaskStatus
+		filter string
+	}{
+		{model.TaskStatusQueued, "active"},
+		{model.TaskStatusRunning, "active"},
+		{model.TaskStatusFailed, "failed"},
+		{model.TaskStatusSucceeded, ""},
+	} {
+		updates := map[string]any{"status": state.status}
+		if state.status == model.TaskStatusRunning {
+			updates["stage"], updates["provider_request_id"] = "正在生成故事板", "storyboard-provider-task"
+		}
+		if state.status == model.TaskStatusFailed {
+			updates["error"] = "故事板生成失败"
+		}
+		if state.status == model.TaskStatusSucceeded {
+			updates["error"] = ""
+			// Adopting separate tiles creates multiple shot takes tied to this one image task.
+			for _, shotID := range board.ShotIDs {
+				if err := db.Create(&model.DramaTake{ID: "storyboard-take-" + shotID, ProjectID: project, OwnerID: shotID, Kind: "shot_image", TaskID: task.ID}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+			t.Fatal(err)
+		}
+		jobs, err := s.DramaJobsFiltered(user, project, 10, state.filter, "storyboard_image")
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("expected one board task in %s: %+v, %v", state.status, jobs, err)
+		}
+		status := string(state.status)
+		assertJob(jobs[0], status)
+		switch state.status {
+		case model.TaskStatusQueued:
+			if jobs[0].Wait != task.Stage {
+				t.Fatalf("expected wait reason in queue: %+v", jobs[0])
+			}
+		case model.TaskStatusRunning:
+			if jobs[0].ProviderStage != "正在生成故事板" {
+				t.Fatalf("expected provider stage in queue: %+v", jobs[0])
+			}
+		case model.TaskStatusFailed:
+			if jobs[0].Error != "故事板生成失败" {
+				t.Fatalf("expected error in queue: %+v", jobs[0])
+			}
+		}
+		detail, err := s.DramaJobDetail(user, project, jobID)
+		if err != nil || len(detail.Attempts) != 1 || detail.Attempts[0].Task == nil || detail.Attempts[0].Task.ID != task.ID {
+			t.Fatalf("expected detail for the bound image task: %+v, %v", detail, err)
+		}
+		assertJob(detail.Job, status)
+		summary, err := s.DramaSummary(user, project)
+		if err != nil || len(summary.JobCounts) != 1 || summary.JobCounts[status] != 1 {
+			t.Fatalf("expected one storyboard task in counts: %+v, %v", summary.JobCounts, err)
+		}
+	}
+	if jobs, err := s.DramaJobsFiltered(user, project, 10, "", "shot_image"); err != nil || len(jobs) != 0 {
+		t.Fatalf("adopted tiles must keep a single storyboard task: %+v, %v", jobs, err)
+	}
+	if _, err := s.DramaJobDetail("other", project, jobID); err == nil {
+		t.Fatal("exposed storyboard job details to another user")
+	}
+}

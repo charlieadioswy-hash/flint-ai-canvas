@@ -9,7 +9,7 @@ import { TRANSITION_LABEL } from "@/lib/drama/storyboard";
 import { CAMERA_PRESETS } from "@/lib/drama/director";
 import type { DramaCast, DramaEpisodeDetail, DramaModelChoice, DramaSegment, DramaSegmentReferencePatch, DramaShot, DramaShotPatch, DramaTransition } from "@/services/api/drama";
 import { ReferenceBoard } from "./segment-references";
-import { dramaChoiceKey, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
+import { dramaChoiceKey, dramaVideoDurationLimits, dramaVideoResolutionValue, snapDramaVideoSeconds } from "@/lib/drama/model-choice";
 import { segmentSendPromptBody } from "@/lib/drama/segment-prompt";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 
@@ -279,11 +279,15 @@ function SegmentToolbar({
     const catalogQuery = useDramaModelCatalog();
     const chosenOption = dramaVideoOptionFor(catalogQuery.data?.options.video, choice);
     const chosenAudioLimit = changed ? chosenOption?.maxAudios : segment.request.modelMaxAudios;
+    const chosenDuration = changed && chosenOption?.videoDuration ? dramaVideoDurationLimits(chosenOption) : undefined;
+    const videoSeconds = chosenDuration ? snapDramaVideoSeconds(segment.durationMs / 1000, chosenDuration) : segment.request.seconds;
+    const maxVideoSeconds = chosenDuration?.max ?? segment.request.maxVideoSeconds;
+    const exceedsDuration = Boolean(chosenDuration && segment.durationMs > chosenDuration.max * 1000);
     // 本段实际出片分辨率：没换模型用服务端预演结果；换了模型且新模型给不出作品分辨率时，按模型默认。
     const supportedResolution = dramaVideoResolutionValue(chosenOption, videoResolution);
     const effectiveResolution = changed ? supportedResolution || chosenOption?.defaultVideoResolution || "" : segment.request.resolution || supportedResolution || chosenOption?.defaultVideoResolution || "";
     const resolutionFallback = Boolean(changed && videoResolution && chosenOption && !supportedResolution);
-    const requirements = dramaSegmentVideoRequirements(segment.request, chosenOption, changed, videoResolution);
+    const requirements = dramaSegmentVideoRequirements({ ...segment.request, seconds: videoSeconds }, chosenOption, changed, videoResolution);
     const running = mediaBusy(segment.videoStatus);
     const writingNow = segment.promptStatus === "queued" || segment.promptStatus === "running";
     const sent = [segment.request.header, segmentSendPromptBody(segment)].filter(Boolean).join("\n\n");
@@ -302,8 +306,8 @@ function SegmentToolbar({
                 <div className="drama-sdx-model">
                     <DramaModelPicker capability="video" size="sm" value={choice} onChange={setChoice} placeholder="视频模型" aspectRatio={aspectRatio} requirements={requirements} />
                 </div>
-                <Tooltip title={segment.request.maxVideoSeconds ? `按本段镜头时长生成；模型单次最长 ${segment.request.maxVideoSeconds} 秒` : "按本段镜头时长生成"}>
-                    <span className="drama-sdx-chip">{segment.request.seconds ? `${segment.request.seconds}s` : secondsLabel(segment.durationMs)}</span>
+                <Tooltip title={maxVideoSeconds ? `按本段镜头时长生成，模型单次最长 ${maxVideoSeconds} 秒` : "按本段镜头时长生成"}>
+                    <span className="drama-sdx-chip">{videoSeconds ? `${videoSeconds}s` : secondsLabel(segment.durationMs)}</span>
                 </Tooltip>
                 <Tooltip title="画幅随作品设置，开工后不能修改">
                     <span className="drama-sdx-chip">{aspectRatio}</span>
@@ -335,13 +339,14 @@ function SegmentToolbar({
                     type="primary"
                     size="small"
                     icon={running ? <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Play className="size-3.5" />}
-                    disabled={busy || !promptReady(segment) || running || Boolean(segment.request.unknownReferences?.length)}
+                    disabled={busy || !promptReady(segment) || running || exceedsDuration || Boolean(segment.request.unknownReferences?.length)}
                     request={{ action: "segment_video", targetId: segment.id, episodeId, targetRevision: segment.revision, ...(changed ? { videoModel: choice } : {}) }}
                     label={generateLabel}
                     onClick={() => onGenerate(changed ? choice : undefined)}
                 />
             </div>
             {!promptReady(segment) && !running ? <p className="drama-sdx-hint">提示词就绪后才能生成视频</p> : null}
+            {exceedsDuration ? <p className="drama-sdx-hint is-error">本段镜头时长超过所选模型的 {maxVideoSeconds} 秒上限，请调整分镜时长或更换模型。</p> : null}
             {changed && chosenAudioLimit !== undefined ? <p className="drama-sdx-hint">所选模型{chosenAudioLimit ? `最多支持 ${chosenAudioLimit} 个参考音色` : "不支持参考音色"}；参考面板的发送状态在模型应用后更新。</p> : null}
             {resolutionFallback ? (
                 <p className="drama-sdx-hint">

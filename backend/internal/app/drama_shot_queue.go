@@ -22,7 +22,7 @@ func dramaQueueFilter(status, kinds string) (repository.DramaQueueFilter, error)
 	}
 	for kind := range strings.SplitSeq(kinds, ",") {
 		switch kind {
-		case model.DramaJobBible, model.DramaJobPlan, model.DramaJobCastImage, model.DramaJobScript, model.DramaJobSegmentPrompt, model.DramaJobSegmentVideo, model.DramaJobRender, "shot_image", "shot_video", "shot_audio":
+		case model.DramaJobBible, model.DramaJobPlan, model.DramaJobCastImage, model.DramaJobScript, model.DramaJobSegmentPrompt, model.DramaJobSegmentVideo, model.DramaJobRender, "shot_image", "shot_video", "shot_audio", "storyboard_image":
 			if !slices.Contains(filter.Kinds, kind) {
 				filter.Kinds = append(filter.Kinds, kind)
 			}
@@ -43,11 +43,14 @@ func dramaQueueStatus(status string) string {
 func dramaShotQueueJobView(row repository.DramaShotQueueJob) model.DramaJob {
 	job := row.DramaJob
 	job.ID, job.Status = dramaShotQueueJobPrefix+job.TaskID, dramaQueueStatus(job.Status)
-	if job.ShotID == "" {
+	if job.Kind == "storyboard_image" {
+		job.Label = fmt.Sprintf("%d×%d 宫格故事板", row.StoryboardRows, row.StoryboardColumns)
+	} else if job.ShotID == "" {
 		job.Label = "原分镜已移除"
 		return job
+	} else {
+		job.Label = fmt.Sprintf("分镜 %d", row.ShotPosition+1)
 	}
-	job.Label = fmt.Sprintf("分镜 %d", row.ShotPosition+1)
 	if row.EpisodeNumber > 0 {
 		job.Label = fmt.Sprintf("第 %d 集 · %s", row.EpisodeNumber, job.Label)
 	}

@@ -146,7 +146,8 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 		config := defaultDramaShotMediaConfig(shot, settings, kind)
 		var configErr error
 		if kind == "video" {
-			profile, _ := s.dramaVideoProfile(config.Model)
+			profile, _ := s.dramaVideoProfileFor(repo, config.Model)
+			config.Seconds, _ = dramaShotVideoSeconds(config.Seconds, profile)
 			config.Resolution = dramaShotEpisodeResolution(settings, profile.video)
 			config, configErr = s.defaultDramaShotVideoReferences(repo, shot, p, settings, profile.video, config)
 		}
@@ -174,9 +175,13 @@ func (s *Service) loadDramaShotMedia(repo *repository.Repository, shot model.Dra
 			config.AspectRatio = settings.AspectRatio
 		}
 		if isAutomaticVideoResolution(config.Resolution) {
-			profile, _ := s.dramaVideoProfile(settings.Models.Video)
+			profile, _ := s.dramaVideoProfileFor(repo, settings.Models.Video)
 			config.Resolution = dramaShotEpisodeResolution(settings, profile.video)
 		}
+	}
+	if kind == "video" {
+		profile, _ := s.dramaVideoProfileFor(repo, config.Model)
+		config.Seconds, _ = dramaShotVideoSeconds(config.Seconds, profile)
 	}
 	config, err = s.readDramaShotMediaConfig(repo, shot, p, kind, config)
 	return *row, config, err
@@ -193,6 +198,13 @@ func (s *Service) readDramaShotMediaConfig(repo *repository.Repository, shot mod
 func missingDramaShotAspectRatio(ratio string) bool {
 	ratio = strings.TrimSpace(ratio)
 	return ratio == "" || strings.EqualFold(ratio, "auto") || strings.EqualFold(ratio, "default")
+}
+
+func dramaShotVideoSeconds(seconds int, profile dramaVideoProfile) (int, bool) {
+	if !profile.durationSupported {
+		return seconds, false
+	}
+	return profile.Durations.SnapSeconds(seconds)
 }
 
 func dramaShotEpisodeResolution(settings DramaSettings, video *VideoCapabilityConfig) string {
@@ -478,7 +490,12 @@ func (s *Service) normalizeDramaShotMediaConfig(repo *repository.Repository, use
 	if !validOperation {
 		return config, BadAuthRequest("镜头生成模式无效")
 	}
-	if config.Seconds < 0 || config.Seconds > 600 {
+	var declaredDuration bool
+	if kind == "video" {
+		profile, _ := s.dramaVideoProfileFor(repo, config.Model)
+		config.Seconds, declaredDuration = dramaShotVideoSeconds(config.Seconds, profile)
+	}
+	if !declaredDuration && (config.Seconds < 0 || config.Seconds > 600) {
 		return config, BadAuthRequest("镜头视频时长无效")
 	}
 	refs := make([]string, 0, len(config.ReferenceResourceIDs))
@@ -735,7 +752,7 @@ func (s *Service) dramaShotMediaInputForCameraVersion(repo *repository.Repositor
 		providerConfig["imageResolution"] = config.Resolution
 	} else {
 		resolution := config.Resolution
-		if profile, _ := s.dramaVideoProfile(config.Model); profile.video != nil {
+		if profile, _ := s.dramaVideoProfileFor(repo, config.Model); profile.video != nil {
 			if profile.video.FixedScreenSpec != nil {
 				if screen := profile.screen(config.AspectRatio, resolution); screen.Issue == "" {
 					providerConfig["size"], resolution = screen.Size, screen.Resolution

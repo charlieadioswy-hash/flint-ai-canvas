@@ -538,7 +538,7 @@ func TestDramaRefusesVideoModelWithoutWorkRatio(t *testing.T) {
 
 func TestDramaVideoOptionsReportRatiosAndAudio(t *testing.T) {
 	svc, _ := newDramaTestService(t)
-	option := svc.dramaModelOption(fakeDramaModels.Video, "video", "视频", "")
+	option := svc.dramaModelOption(nil, fakeDramaModels.Video, "video", "视频", "")
 	if !slices.Equal(option.VideoRatios, []string{"9:16", "16:9"}) || option.GenerateAudio == nil || !*option.GenerateAudio || !option.TailFrameChain {
 		t.Fatalf("video options must expose ratios and audio: %+v", option)
 	}

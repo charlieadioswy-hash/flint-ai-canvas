@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,20 +240,23 @@ func (s *Service) DramaStoryboard(userID, projectID, boardID string) (DramaStory
 	return view, nil
 }
 
-func (s *Service) DramaStoryboards(userID, projectID, episodeID string) ([]DramaStoryboardView, error) {
+func (s *Service) DramaStoryboards(ctx context.Context, userID, projectID, episodeID string, shotIDs []string) ([]DramaStoryboardView, error) {
 	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
 		return nil, err
 	}
 	if _, err := s.repo.DramaEpisode(projectID, episodeID); err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.DramaStoryboards(projectID, episodeID)
+	ids, err := s.repo.DramaStoryboardIDs(ctx, projectID, episodeID, shotIDs)
 	if err != nil {
 		return nil, err
 	}
-	views := make([]DramaStoryboardView, 0, len(rows))
-	for _, row := range rows {
-		view, err := s.DramaStoryboard(userID, projectID, row.ID)
+	views := make([]DramaStoryboardView, 0, len(ids))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		view, err := s.DramaStoryboard(userID, projectID, id)
 		if err != nil {
 			return nil, err
 		}
@@ -338,6 +342,18 @@ func (s *Service) prepareDramaStoryboardBoard(repo *repository.Repository, userI
 	settings := dramaEpisodeSettings(parseDramaSettings(p.SettingsJSON), *episode)
 	config.Prompt = withDramaVisualDirection(config.Prompt, dramaVisualDirection(settings, "", ""))
 	providerConfig := map[string]any{"size": config.AspectRatio, "imageResolution": config.Resolution, "count": "1"}
+	if spec, defaults, ok := s.dramaImageSpecFor(repo, config.Model); ok {
+		if _, supportsCount := spec.Options["count"]; !supportsCount {
+			delete(providerConfig, "count")
+		}
+		for _, choice := range dramaStoryboardImageChoices(spec, defaults) {
+			if choice.aspectRatio != config.AspectRatio || !strings.EqualFold(choice.resolution, config.Resolution) {
+				continue
+			}
+			providerConfig = choice.providerOptions(spec)
+			break
+		}
+	}
 	if config.Model.ChannelID != "" {
 		providerConfig["channelId"], providerConfig["model"], providerConfig["channelModelKey"] = config.Model.ChannelID, config.Model.ModelKey, config.Model.ModelKey
 	}

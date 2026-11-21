@@ -190,6 +190,19 @@ func TestSnapVideoSeconds(t *testing.T) {
 	if got := SnapVideoSeconds(20000, DurationOptions{Values: []int{5, 10}}); got != 10 {
 		t.Fatalf("longest available, got %d", got)
 	}
+	wide := DurationOptions{Min: 4, Max: 199, Step: 2}
+	if got := SnapVideoSeconds(149500, wide); got != 150 {
+		t.Fatalf("range must use every supported step, got %d", got)
+	}
+	if got := SnapVideoSeconds(201000, wide); got != 198 {
+		t.Fatalf("range should cap at its last valid step, got %d", got)
+	}
+	if min, max := wide.Bounds(); min != 4 || max != 198 {
+		t.Fatalf("range bounds = %d–%d", min, max)
+	}
+	if got := SnapVideoSeconds(6200, DurationOptions{}); got != 10 {
+		t.Fatalf("duration without a declaration should retain the fallback, got %d", got)
+	}
 }
 
 func TestCastIndexMatchesAliases(t *testing.T) {

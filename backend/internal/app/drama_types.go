@@ -898,7 +898,9 @@ type DramaModelOption struct {
 	PriceLabel string           `json:"priceLabel"`
 	// MaxVideoSeconds 仅视频模型：单次最长生成秒数，0 表示未声明。
 	MaxVideoSeconds int `json:"maxVideoSeconds,omitempty"`
-	MaxAudios       int `json:"maxAudios"`
+	// VideoDuration 仅视频模型：生效的固定档位或范围与步长。
+	VideoDuration *production.DurationOptions `json:"videoDuration,omitempty"`
+	MaxAudios     int                         `json:"maxAudios"`
 	// MinReferenceImages 仅视频模型：模型要求的最少参考图数（含首帧），0 表示不强制参考图。
 	MinReferenceImages int `json:"minReferenceImages,omitempty"`
 	// TailFrameChain 仅视频模型：是否支持图生视频，可用于“尾帧续接”；不支持的模型只能并行出片。
@@ -914,6 +916,13 @@ type DramaModelOption struct {
 	ImageResolutions       []string `json:"imageResolutions,omitempty"`
 	DefaultImageResolution string   `json:"defaultImageResolution,omitempty"`
 	ImageRatios            []string `json:"imageRatios,omitempty"`
+	// ImageSpecifications 是故事板整图可用的精确画幅与分辨率组合，空串表示使用模型默认值。
+	ImageSpecifications []DramaImageSpecification `json:"imageSpecifications,omitempty"`
+}
+
+type DramaImageSpecification struct {
+	AspectRatio string   `json:"aspectRatio"`
+	Resolutions []string `json:"resolutions"`
 }
 
 // DramaModelUnavailable 是平台目录里有、但短剧流水线无法使用的模型及原因，前端置灰展示而不是隐藏。

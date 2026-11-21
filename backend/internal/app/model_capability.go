@@ -568,7 +568,7 @@ func capabilityImageSizeFromConfig(size ImageSizeConfig) *CapabilityImageSize {
 	if size.Parameter == "" || size.Parameter == "none" {
 		return nil
 	}
-	result := &CapabilityImageSize{Parameter: size.Parameter, AllowCustom: size.AllowCustom}
+	result := &CapabilityImageSize{Parameter: size.Parameter, AllowCustom: size.AllowCustom, declaredValues: append([]string(nil), size.Values...)}
 	for _, preset := range size.Presets {
 		tier := strings.ToLower(strings.TrimSpace(preset.Tier))
 		ratio := strings.TrimSpace(preset.Ratio)

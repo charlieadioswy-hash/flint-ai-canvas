@@ -24,11 +24,13 @@
     overflow-y: auto;
     overscroll-behavior: contain;
 }
-.drama-storyboard-config label {
+.drama-storyboard-config label,
+.drama-storyboard-spec-field {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    font-size: 12px;
+    gap: var(--space-2);
+    min-width: 0;
+    font-size: var(--fs-caption);
 }
 .drama-storyboard-config label.ant-checkbox-wrapper {
     flex-direction: row;
@@ -39,10 +41,15 @@
     padding: 0;
     border: 0;
 }
+.drama-storyboard-model legend {
+    margin-bottom: var(--space-2);
+    padding: 0;
+    font-size: var(--fs-caption);
+}
 .drama-storyboard-specs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
 }
 .drama-storyboard-prompt {
     max-height: 260px;

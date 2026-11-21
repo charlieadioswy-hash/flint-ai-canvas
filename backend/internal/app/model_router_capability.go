@@ -25,6 +25,8 @@ type CapabilityImageSize struct {
 	Parameter   string                      `json:"parameter,omitempty"`
 	AllowCustom bool                        `json:"allowCustom,omitempty"`
 	Presets     []CapabilityImageSizePreset `json:"presets,omitempty"`
+	// Free-form size parameters keep their configured standard sizes for local selectors.
+	declaredValues []string
 }
 
 type CapabilitySpec struct {

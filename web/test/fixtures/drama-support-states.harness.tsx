@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { DramaJob, DramaSummary, DramaTake } from "../../src/services/api/drama";
+import type { DramaJob, DramaJobDetail, DramaSummary, DramaTake } from "../../src/services/api/drama";
 
 const dom = new Window({ url: "http://localhost/projects/drama", settings: { disableJavaScriptEvaluation: true, disableCSSFileLoading: true } });
 const globals = new Map<string, PropertyDescriptor | undefined>();
@@ -19,14 +19,15 @@ for (const [key, value] of Object.entries({
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
 mock.module("antd", () => ({
+    App: { useApp: () => ({ message: {} }) },
     Button: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => <button onClick={onClick}>{children}</button>,
     InputNumber: () => null,
 }));
-mock.module("../../src/pages/projects/studio/job-detail", () => ({
-    formatJobTime: (value: string) => value,
-    JOB_KIND_LABEL: { cast_image: "参考图" },
-    JobDetailModal: () => null,
-    JobStatusIcon: () => <span>任务状态</span>,
+mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({
+    AntTooltip: ({ children }: { children: React.ReactNode }) => children,
+}));
+mock.module("@/components/ui/product/app-modal", () => ({
+    AppModal: ({ open, children }: { open: boolean; children: React.ReactNode }) => (open ? <div role="dialog">{children}</div> : null),
 }));
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -134,6 +135,36 @@ test("队列按状态请求独立结果，切换筛选不会复用其他记录",
     expect(text()).not.toContain("较早的进行中任务");
     await select("全部");
     expect(text()).toContain("最近完成的任务");
+});
+
+test("故事板图片显示在制作队列且可查看生成失败原因", async () => {
+    const job: DramaJob = {
+        id: "shot-media:task",
+        taskId: "task",
+        kind: "storyboard_image",
+        status: "failed",
+        label: "第 1 集 · 2×2",
+        error: "图片生成超时",
+        episodeId: "episode",
+        attempt: 0,
+        costMicrocredits: 0,
+        createdAt: "2026-11-15T00:00:00Z",
+        updatedAt: "2026-11-15T00:00:01Z",
+    };
+    const detail: DramaJobDetail = { job, target: job.label, attempts: [{ taskId: job.taskId, status: job.status, error: job.error, costMicrocredits: 0, at: job.createdAt }] };
+    spyOn(api, "listDramaJobs").mockResolvedValue({ jobs: [job] });
+    const request = spyOn(api, "getDramaJob").mockResolvedValue(detail);
+    await render(<QueueBar projectId="project" summary={summary} onJump={() => {}} />);
+    await openQueue();
+    const row = host.querySelector<HTMLButtonElement>('[role="listitem"]')!;
+    expect(row.textContent).toContain("故事板图片");
+    expect(row.textContent).toContain(job.error!);
+    await act(async () => row.click());
+    await flush();
+    expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["project", job.id]);
+    const dialog = host.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain(job.error!);
+    expect(dialog.textContent).not.toContain("定位到镜头");
 });
 
 test("版本区加载与成功空记录分别显示，外层有标题时不重复", async () => {

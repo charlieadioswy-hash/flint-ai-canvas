@@ -16,6 +16,7 @@ export const JOB_KIND_LABEL: Record<DramaJob["kind"], string> = {
     script: "剧本与分镜",
     segment_prompt: "段视频提示词",
     segment_video: "段视频",
+    storyboard_image: "故事板图片",
     shot_image: "单镜图片",
     shot_video: "单镜视频",
     shot_audio: "单镜音频",
@@ -92,7 +93,7 @@ export function JobDetailModal({ projectId, job, onClose, onLocate }: { projectI
                                 {detail?.target ? ` · ${detail.target}` : ""}
                             </p>
                         </div>
-                        {current.episodeId ? (
+                        {current.episodeId && current.kind !== "storyboard_image" ? (
                             <Button
                                 size="small"
                                 icon={<Crosshair className="size-3.5" />}

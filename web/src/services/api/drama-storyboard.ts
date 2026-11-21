@@ -45,8 +45,8 @@ export type DramaStoryboardPreflight = { boardId: string; revision: number; base
 const boardsPath = (projectId: string) => `/dramas/${encodeURIComponent(projectId)}/storyboards`;
 const boardPath = (projectId: string, boardId: string) => `${boardsPath(projectId)}/${encodeURIComponent(boardId)}`;
 
-export function listDramaStoryboards(projectId: string, episodeId: string, signal?: AbortSignal) {
-    return http.get<DramaStoryboard[]>(`/dramas/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboards`, { signal });
+export function listDramaStoryboards(projectId: string, episodeId: string, shotIds: string[], signal?: AbortSignal) {
+    return http.get<DramaStoryboard[]>(`/dramas/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/storyboards`, { params: { shotIds: shotIds.join(",") }, signal });
 }
 export function createDramaStoryboard(projectId: string, input: DramaStoryboardCreate) {
     return http.post<DramaStoryboard>(boardsPath(projectId), input);

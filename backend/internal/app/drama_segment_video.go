@@ -119,7 +119,8 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 		// 并行出片：每段只按参考图独立生成，不带上一段尾帧，也就不依赖上一段完成。
 		previous = nil
 	}
-	profile, err := s.dramaVideoProfile(segmentVideoChoice(segment, settings.Models.Video))
+	choice := segmentVideoChoice(segment, settings.Models.Video)
+	profile, err := s.dramaVideoProfile(choice)
 	if err != nil {
 		// 视频模型不可用时详情页仍展示本段并给出 Warning；数组字段必须是 []，null 会让制作台渲染参考图时崩溃。
 		return DramaSegmentRequest{AspectRatio: settings.AspectRatio, References: []DramaSegmentReference{}, AudioReferences: []DramaSegmentAudioReference{}}, nil, nil, err
@@ -129,7 +130,9 @@ func (s *Service) prepareDramaSegment(settings DramaSettings, draft dramaSegment
 	if draft.view.DurationMs > int64(request.MaxVideoSeconds)*1000 {
 		return request, nil, nil, errors.New("剧情段超过所选视频模型的时长上限，请调整分镜时长或重新改编")
 	}
-	if profile.video != nil {
+	// The logical model's selected duration is checked against the serving route
+	// at admission. The default route may serve a different duration.
+	if choice.LogicalModelID == "" && profile.video != nil {
 		if err := dramaSegmentDurationError(segment.SegmentIndex, request.Seconds, profile.video.Duration); err != nil {
 			return request, nil, nil, err
 		}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -145,6 +146,9 @@ func (s *Service) DramaShotVideoSummaries(userID, projectID, episodeID string, s
 // task metadata alone can never assign or activate a DramaShot output.
 func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error) {
 	var input struct {
+		Config struct {
+			VideoSeconds string `json:"videoSeconds"`
+		} `json:"config"`
 		Metadata struct {
 			Source          string `json:"source"`
 			MediaID         string `json:"dramaShotMediaId"`
@@ -208,6 +212,14 @@ func (s *Service) RegisterDramaShotMediaTaskOutput(task model.Task) (bool, error
 				_, config, err := s.loadDramaShotMedia(repo, *shot, *p, kind)
 				if err != nil {
 					return err
+				}
+				// 回写时用提交任务的秒数核对提示词，模型档位变更不影响已生成结果。
+				if seconds, err := strconv.Atoi(input.Config.VideoSeconds); err == nil && seconds > 0 && config.Seconds != seconds {
+					config.Seconds = seconds
+					config, err = s.enrichDramaShotMediaPrompt(repo, *shot, *p, kind, config)
+					if err != nil {
+						return err
+					}
 				}
 				if !input.Metadata.VisualDirection {
 					config.visualDirection = ""

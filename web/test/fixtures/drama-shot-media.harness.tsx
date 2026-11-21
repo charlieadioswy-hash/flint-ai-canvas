@@ -1,8 +1,8 @@
 import { afterAll, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
-import { createElement, type ReactNode } from "react";
+import { createElement, type KeyboardEvent, type ReactNode } from "react";
 import { create } from "zustand";
-import type { DramaCast, DramaShot, DramaTake } from "@/services/api/drama";
+import type { DramaCast, DramaModelChoice, DramaModelOption, DramaShot, DramaTake } from "@/services/api/drama";
 import type { CastView } from "@/services/api/drama-cast-views";
 import type { ImageCropRect } from "@/components/image-crop-dialog";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -73,27 +73,66 @@ const blobReads: string[] = [];
 const crops: { source: string; selection: ImageCropRect }[] = [];
 const deletions: string[] = [];
 let promptReferences: CanvasResourceReference[] = [];
-const Input = Object.assign(({ onChange, ...props }: Record<string, unknown>) => createElement("input", { ...props, onInput: onChange }), {
-    TextArea: ({ onChange, autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("textarea", { ...props, onInput: onChange }),
-});
+const Input = Object.assign(
+    ({ onChange, onPressEnter, size: _size, ...props }: Record<string, unknown> & { onPressEnter?: (event: KeyboardEvent<HTMLInputElement>) => void }) =>
+        createElement("input", {
+            ...props,
+            onInput: onChange,
+            onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+                if (event.key === "Enter") onPressEnter?.(event);
+            },
+        }),
+    {
+        TextArea: ({ onChange, autoSize: _autoSize, ...props }: Record<string, unknown>) => createElement("textarea", { ...props, onInput: onChange }),
+    },
+);
+const rangeVideoChoice = { channelId: "channel", modelKey: "model" };
+const enumVideoChoice = { channelId: "channel", modelKey: "enum-model" };
+const videoModels: DramaModelOption[] = [
+    { choice: rangeVideoChoice, label: "范围模型", capability: "video", priceLabel: "", videoResolutions: ["720p", "1080p"], defaultVideoResolution: "720p", maxVideoSeconds: 11, videoDuration: { min: 5, max: 12, step: 2 } },
+    { choice: enumVideoChoice, label: "档位模型", capability: "video", priceLabel: "", videoResolutions: ["720p"], defaultVideoResolution: "720p", maxVideoSeconds: 12, videoDuration: { values: [6, 10, 12] } },
+];
 mock.module("antd", () => ({
     App: { useApp: () => ({ modal: { confirm: (props: { onOk: () => void }) => confirmations.push(props) } }) },
     Button: ({ children, loading: _loading, type: _type, size: _size, icon: _icon, ...props }: Record<string, unknown>) => createElement("button", props, children as ReactNode),
     Input,
     Tooltip: ({ children }: { children: ReactNode }) => children,
     InputNumber: ({ onChange, ...props }: { onChange: (value: number) => void }) => createElement("input", { ...props, type: "number", onInput: (event: { target: { value: string } }) => onChange(Number(event.target.value)) }),
-    Select: ({ options, onChange, ...props }: { options: { value: string; label: string }[]; onChange: (value: string) => void }) =>
+    Select: ({
+        options,
+        onChange,
+        popupMatchSelectWidth: _popupMatchSelectWidth,
+        size: _size,
+        ...props
+    }: {
+        options: { value: string | number; label: string; disabled?: boolean }[];
+        onChange: (value: string | number) => void;
+        popupMatchSelectWidth?: number;
+        size?: string;
+    }) =>
         createElement(
             "select",
-            { ...props, onChange: (event: { target: { value: string } }) => onChange(event.target.value) },
-            options.map((option) => createElement("option", { key: option.value, value: option.value }, option.label)),
+            {
+                ...props,
+                onChange: (event: { target: { value: string } }) => {
+                    const selected = options.find((option) => String(option.value) === event.target.value);
+                    if (selected && !selected.disabled) onChange(selected.value);
+                },
+            },
+            options.map((option) => createElement("option", { key: option.value, value: option.value, disabled: option.disabled }, option.label)),
         ),
     Switch: ({ checked, onChange, ...props }: { checked: boolean; onChange: (value: boolean) => void }) =>
         createElement("input", { ...props, type: "checkbox", checked, onChange: (event: { target: { checked: boolean } }) => onChange(event.target.checked) }),
 }));
 mock.module("@/components/ui/product/app-modal", () => ({
     AppModal: ({ title, children, onCancel, closable }: { title: string; children: ReactNode; onCancel: () => void; closable: boolean }) => (
-        <section role="dialog" aria-label={title}>
+        <section
+            role="dialog"
+            aria-label={title}
+            onKeyDown={(event) => {
+                if (event.key === "Escape") onCancel();
+            }}
+        >
             <button disabled={!closable} onClick={onCancel}>
                 关闭媒体
             </button>
@@ -180,8 +219,19 @@ mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
 const userScope = await import("@/lib/user-scope");
 mock.module("@/lib/user-scope", () => ({ ...userScope, getActiveUserScope: () => userStore.getState().user.id }));
 mock.module("@/pages/projects/drama-model-picker", () => ({
-    useDramaModelCatalog: () => ({ data: { options: { image: [], video: [{ choice: { channelId: "channel", modelKey: "model" }, videoResolutions: ["720p", "1080p"], defaultVideoResolution: "720p" }] } } }),
-    DramaModelPicker: () => <button>模型选择器</button>,
+    useDramaModelCatalog: () => ({ data: { options: { image: [], video: videoModels } } }),
+    DramaModelPicker: ({ capability, value, onChange }: { capability: string; value: DramaModelChoice; onChange: (choice: DramaModelChoice) => void }) =>
+        capability === "video" ? (
+            <select aria-label="镜头视频模型" value={value.modelKey} onChange={(event) => onChange(videoModels.find((item) => item.choice.modelKey === event.currentTarget.value)!.choice)}>
+                {videoModels.map((item) => (
+                    <option key={item.choice.modelKey} value={item.choice.modelKey}>
+                        {item.label}
+                    </option>
+                ))}
+            </select>
+        ) : (
+            <button>模型选择器</button>
+        ),
 }));
 mock.module("@/pages/projects/drama-shared", () => ({
     parseList: (value?: string) => {
@@ -511,6 +561,185 @@ test("镜头配置自动同步并重新计价，单击以真实镜头和单次�
         expect(executions[0].input.clientOperationId).toStartWith("shot-media:");
         await resolveExecution();
         expect(changed).toBe(1);
+    } finally {
+        await view.close();
+    }
+});
+
+test("镜头模型标题命名控件组，点击标题不会转发到选择器", async () => {
+    const view = await mount();
+    try {
+        const trigger = button(view.host, "模型选择器");
+        const group = trigger.closest("fieldset");
+        const title = group?.querySelector("legend");
+        const activated = mock(() => {});
+        trigger.addEventListener("click", activated);
+
+        expect(title?.textContent).toBe("模型");
+        expect(trigger.closest("label")).toBeNull();
+        await act(async () => title?.click());
+        expect(activated).not.toHaveBeenCalled();
+        await act(async () => trigger.click());
+        expect(activated).toHaveBeenCalledTimes(1);
+    } finally {
+        await view.close();
+    }
+});
+
+test("同步生成声音只在操作开关时切换并保存", async () => {
+    const view = await mount(false, undefined, "video");
+    try {
+        const row = view.host.querySelector<HTMLElement>(".drama-shot-media-audio")!;
+        const control = row.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+        const title = document.getElementById(control.getAttribute("aria-labelledby") || "");
+
+        expect(title?.textContent).toBe("同步生成声音");
+        expect(control.closest("label")).toBeNull();
+        await act(async () => {
+            title?.click();
+            row.click();
+        });
+        expect(control.checked).toBe(false);
+        expect(saves).toHaveLength(0);
+
+        await act(async () => control.click());
+        expect(control.checked).toBe(true);
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(1);
+        expect(saves[0].input.config.generateAudio).toBe(true);
+    } finally {
+        await view.close();
+    }
+});
+
+test("镜头视频秒数在失焦或回车时按模型上下限和步长校正", async () => {
+    const view = await mount(false, () => (server.video.config.seconds = 7), "video");
+    try {
+        const durationInput = () => view.host.querySelector<HTMLInputElement>('input[aria-label="镜头视频秒数"]')!;
+        expect(durationInput().min).toBe("5");
+        expect(durationInput().max).toBe("11");
+        expect(durationInput().step).toBe("2");
+        for (const [index, rawSeconds, expectedSeconds, enter] of [
+            [0, "2", 5, false],
+            [1, "60", 11, false],
+            [2, "8", 9, true],
+        ] as const) {
+            const duration = durationInput();
+            await act(async () => {
+                duration.focus();
+                duration.value = rawSeconds;
+                duration.dispatchEvent(new Event("input", { bubbles: true }));
+                await settle();
+            });
+            expect(saves).toHaveLength(index);
+            await act(async () => {
+                if (enter) duration.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+                else duration.blur();
+                await settle();
+            });
+            expect(durationInput().value).toBe(String(expectedSeconds));
+            await waitPrice(view.host);
+            expect(saves).toHaveLength(index + 1);
+            expect(saves[index].input.config.seconds).toBe(expectedSeconds);
+            expect(draftChecks.at(-1)?.config.seconds).toBe(expectedSeconds);
+        }
+        expect(executions).toHaveLength(0);
+    } finally {
+        await view.close();
+    }
+});
+
+test("切换镜头视频模型时在同一次保存中校正秒数，档位模型仅显示可用秒数", async () => {
+    const view = await mount(false, () => (server.video.config.seconds = 7), "video");
+    try {
+        const model = view.host.querySelector<HTMLSelectElement>('[aria-label="镜头视频模型"]')!;
+        await act(async () => {
+            model.value = enumVideoChoice.modelKey;
+            model.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        const duration = view.host.querySelector<HTMLSelectElement>('select[aria-label="镜头视频秒数"]')!;
+        expect(Array.from(duration.options, (option) => Number(option.value))).toEqual([6, 10, 12]);
+        expect(duration.value).toBe("10");
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(1);
+        expect(saves[0].input.config).toMatchObject({ model: enumVideoChoice, seconds: 10 });
+        expect(draftChecks.at(-1)?.config).toMatchObject({ model: enumVideoChoice, seconds: 10 });
+
+        await act(async () => {
+            duration.value = "12";
+            duration.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(2);
+        expect(saves[1].input.config).toMatchObject({ model: enumVideoChoice, seconds: 12 });
+
+        await act(async () => {
+            model.value = rangeVideoChoice.modelKey;
+            model.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+        });
+        expect(view.host.querySelector<HTMLInputElement>('input[aria-label="镜头视频秒数"]')?.value).toBe("11");
+        await waitPrice(view.host);
+        expect(saves).toHaveLength(3);
+        expect(saves[2].input.config).toMatchObject({ model: rangeVideoChoice, seconds: 11 });
+        expect(draftChecks.at(-1)?.config).toMatchObject({ model: rangeVideoChoice, seconds: 11 });
+        expect(executions).toHaveLength(0);
+    } finally {
+        await view.close();
+    }
+});
+
+test("镜头秒数还在编辑时按 Esc，先保存再关闭", async () => {
+    const view = await mount(false, () => (server.video.config.seconds = 7), "video");
+    const pendingSave = deferred<void>();
+    try {
+        const input = view.host.querySelector<HTMLInputElement>('input[aria-label="镜头视频秒数"]')!;
+        await act(async () => {
+            input.focus();
+            input.value = "9";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+        });
+        expect(saves).toHaveLength(0);
+        nextSave = pendingSave;
+        await act(async () => {
+            input.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await settle();
+        });
+        expect(closes).toBe(0);
+        expect(saves.map(({ input }) => input.config.seconds)).toEqual([9]);
+        await act(async () => {
+            pendingSave.resolve();
+            await settle();
+        });
+        expect(closes).toBe(1);
+        expect(confirmations).toHaveLength(0);
+        expect(server.video.config.seconds).toBe(9);
+    } finally {
+        pendingSave.resolve();
+        await view.close();
+    }
+});
+
+test("旧模型目录中的时长档位不盖过服务端值，预检时长变化后重新确认生成", async () => {
+    const view = await mount(false, () => (server.video.config.seconds = 12), "video");
+    const duration = () => view.host.querySelector<HTMLInputElement>('input[aria-label="镜头视频秒数"]')?.value;
+    try {
+        expect(duration()).toBe("12");
+        expect(draftChecks.at(-1)?.config.seconds).toBe(12);
+        preflightConfig = (config) => ({ ...config, seconds: 13 });
+        await click(view.host, "生成视频 - 1积分");
+        expect(checks).toHaveLength(1);
+        expect(executions).toHaveLength(0);
+        expect(duration()).toBe("13");
+        await waitPrice(view.host);
+        await click(view.host, "生成视频 - 1积分");
+        expect(checks).toHaveLength(2);
+        expect(executions).toHaveLength(1);
+        expect(saves).toHaveLength(0);
+        await resolveExecution();
     } finally {
         await view.close();
     }

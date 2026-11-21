@@ -66,6 +66,133 @@ func completeShotMedia(t *testing.T, s *Service, db *gorm.DB, taskID, resourceID
 	}
 }
 
+func TestDramaShotMediaNormalizesSelectedModelDuration(t *testing.T) {
+	s, db, saved := shotMediaFixture(t)
+	duration := VideoDurationConfig{Selection: "range", Min: 6, Max: 15, Step: 4, Default: 6}
+	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
+	capability.Video.Duration = duration
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "video-cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
+		t.Fatal(err)
+	}
+	option := s.dramaModelOption(nil, saved.Config.Model, "video", "", "")
+	if want := `{"min":6,"max":15,"step":4}`; option.VideoDuration == nil || option.MaxVideoSeconds != 14 {
+		t.Fatalf("duration option = %+v", option)
+	} else if data, _ := json.Marshal(option.VideoDuration); string(data) != want {
+		t.Fatalf("duration contract = %s, want %s", data, want)
+	}
+	view := mustShotMedia(t, s)
+	if view.Config.Seconds != 6 || view.Revision != saved.Revision {
+		t.Fatalf("configured duration should normalize on read without updating the revision: %+v", view)
+	}
+	draft := view.Config
+	draft.Seconds = 7
+	quoted, err := s.QuoteDramaShotMedia("user", view.ProjectID, view.ShotID, "video", DramaShotMediaSaveRequest{Config: draft, ExpectedRevision: &view.Revision})
+	if err != nil || !quoted.Ready || quoted.Config.Seconds != 10 || quoted.AmountMicrocredits != 10 {
+		t.Fatalf("draft quote should use the next available duration: %+v, %v", quoted, err)
+	}
+	draft.Seconds = 16
+	saved, err = s.SaveDramaShotMedia("user", view.ProjectID, view.ShotID, "video", DramaShotMediaSaveRequest{Config: draft, ExpectedRevision: &view.Revision})
+	if err != nil || saved.Config.Seconds != 14 {
+		t.Fatalf("save should clamp to the last available duration: %+v, %v", saved, err)
+	}
+	plan, err := s.prepareDramaShotMedia(s.repo, "user", view.ProjectID, view.ShotID, "video", DramaShotMediaActionRequest{ExpectedRevision: &saved.Revision})
+	if err != nil || !plan.view.Ready || plan.view.AmountMicrocredits != 14 {
+		t.Fatalf("preflight should price the saved duration: %+v, %v", plan.view, err)
+	}
+	if got := plan.request.Input["config"].(map[string]any)["videoSeconds"]; got != "14" {
+		t.Fatalf("provider seconds = %v, want 14", got)
+	}
+}
+
+func TestDramaShotMediaUsesLogicalModelDuration(t *testing.T) {
+	s, db, saved := shotMediaFixture(t)
+	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
+	capability.Video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{5, 15}, Default: 5}
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "video-cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
+		t.Fatal(err)
+	}
+	capability.Video.Duration.Values = []int{5, 10, 15}
+	spec, err := CapabilitySpecFromModelCapabilityConfig(capability, "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The logical model offers only 5 and 10 seconds. Its preferred route for
+	// the default duration cannot generate 10 seconds, but the second route can.
+	spec.Options["videoSeconds"] = OptionConstraint{Values: []any{5, 10}}
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&model.ChannelModel{ID: "ten-second-cm", ChannelID: "channel", ModelKey: "seedance-ten-seconds", Capability: "video", Protocol: model.ChannelInterfaceVolcengineArkVideo, CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, capability), Enabled: true},
+		&model.LogicalModel{ID: "logical-video", Code: "logical-video", Capability: "video", Enabled: true, ActiveRevisionID: "logical-video-revision", PricePolicy: "unified", BillingMode: "per_second", UnitPriceMicrocredits: 1},
+		&model.LogicalModelRevision{ID: "logical-video-revision", LogicalModelID: "logical-video", Version: 1, CapabilitySpecJSON: string(specJSON), DefaultOptionsJSON: `{"videoSeconds":5}`},
+		&model.LogicalModelRoute{ID: "preferred-route", LogicalModelRevisionID: "logical-video-revision", ChannelModelID: "video-cm", Enabled: true, Priority: 2, Weight: 1},
+		&model.LogicalModelRoute{ID: "ten-second-route", LogicalModelRevisionID: "logical-video-revision", ChannelModelID: "ten-second-cm", Enabled: true, Priority: 1, Weight: 1},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.invalidateRouteCatalog()
+	features := FeatureAvailability{ShortDramaEnabled: true, TaskCenterEnabled: true, CreditsEnabled: true, FrontendModelsEnabled: true}
+	if _, err := s.UpdateFeatureAvailability(&model.User{ID: "admin", Role: model.UserRoleAdmin}, features); err != nil {
+		t.Fatal(err)
+	}
+
+	choice := DramaModelChoice{LogicalModelID: "logical-video"}
+	option := s.dramaModelOption(nil, choice, "video", "", "")
+	if encoded, _ := json.Marshal(option.VideoDuration); option.MaxVideoSeconds != 10 || string(encoded) != `{"values":[5,10]}` {
+		t.Fatalf("duration option = %s, max %d", encoded, option.MaxVideoSeconds)
+	}
+	draft := saved.Config
+	draft.Model, draft.Seconds = choice, 100
+	quoted, err := s.QuoteDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
+	if err != nil || !quoted.Ready || quoted.Config.Seconds != 10 || quoted.AmountMicrocredits != 10 {
+		t.Fatalf("logical draft quote = %+v, %v", quoted, err)
+	}
+	saved, err = s.SaveDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: draft})
+	if err != nil || saved.Config.Seconds != 10 {
+		t.Fatalf("saved logical duration = %+v, %v", saved, err)
+	}
+	preflight, err := s.PreflightDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", DramaShotMediaActionRequest{ExpectedRevision: &saved.Revision})
+	if err != nil || !preflight.Ready || preflight.Config.Seconds != 10 || preflight.AmountMicrocredits != quoted.AmountMicrocredits {
+		t.Fatalf("logical preflight = %+v, %v", preflight, err)
+	}
+	submitted, err := s.ExecuteDramaShotMedia("user", saved.ProjectID, saved.ShotID, "video", DramaShotMediaActionRequest{ExpectedRevision: &saved.Revision, BaseRevision: &preflight.BaseRevision, ConfirmationToken: preflight.ConfirmationToken, ClientOperationID: "logical-duration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.repo.Task(submitted.ID)
+	if err != nil || task.RouteID != "ten-second-route" {
+		t.Fatalf("logical task route = %+v, %v", task, err)
+	}
+
+	settings := DramaSettings{Settings: production.Settings{AspectRatio: "9:16"}, Models: DramaModels{Video: choice}}
+	segment, _, _, err := s.prepareDramaSegment(settings, dramaSegmentDraft{view: DramaSegmentView{DurationMs: 7000}}, model.DramaSegment{}, nil, nil)
+	if err != nil || segment.Seconds != 10 || segment.MaxVideoSeconds != 10 {
+		t.Fatalf("logical segment request = %+v, %v", segment, err)
+	}
+}
+
+func TestDramaShotMediaDurationChangeKeepsSubmittedResult(t *testing.T) {
+	s, db, original := shotPromptFixture(t)
+	task, err := s.ExecuteDramaShotMedia("user", original.ProjectID, original.ShotID, "video", shotMediaConfirmed(t, s, "duration-model-update"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
+	capability.Video.Duration = VideoDurationConfig{Selection: "enum", Values: []int{6, 10}, Default: 6}
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "video-cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
+		t.Fatal(err)
+	}
+	completeShotMedia(t, s, db, task.ID, "submitted-duration-video")
+	current := mustShotMedia(t, s)
+	if current.Config.Seconds != 6 || !strings.Contains(current.Config.Prompt, "00.00—06.00秒") || current.ResourceID != "submitted-duration-video" || current.Status != "ready" {
+		t.Fatalf("new duration should apply to the editor while activating the submitted result: %+v", current)
+	}
+}
+
 func TestDramaShotMediaVideoUsesManualCameraIntentInProviderPrompt(t *testing.T) {
 	s, db, saved := shotMediaFixture(t)
 	const action = "人物跟随同事推门走出房间"

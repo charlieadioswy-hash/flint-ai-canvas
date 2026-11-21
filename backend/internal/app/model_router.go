@@ -201,18 +201,9 @@ func (s *Service) ResolveLogicalModel(access *userGroupAccess, logicalModelID st
 	if !ok {
 		return nil, BadAuthRequest("所选模型不可用")
 	}
-	intent = resolveModelRequestIntent(cached.ProductSpec, intent, cached.Defaults)
-	if parameters := cached.ProductSpec.ImageParameters; parameters != nil {
-		if _, err := resolveImageParameterValues(parameters, intent.Options); err != nil {
-			return nil, err
-		}
-	}
-	if match := MatchCapability(cached.ProductSpec, intent); !match.Matched {
-		return nil, modelCapabilityMismatchError(match)
-	}
-	eligible := s.eligibleLogicalRoutes(access, cached.Routes, intent, nil, cached.Model.PricePolicy == "channel")
-	if len(eligible) == 0 {
-		return nil, BadAuthRequest("当前模型暂时无法满足这组输入和参数")
+	intent, eligible, err := s.logicalModelRoutesForIntent(access, cached, intent)
+	if err != nil {
+		return nil, err
 	}
 	selected := weightedRoute(eligible)
 	var priceTier *model.ChannelModelPriceTier
@@ -223,6 +214,23 @@ func (s *Service) ResolveLogicalModel(access *userGroupAccess, logicalModelID st
 		}
 	}
 	return &RoutedModel{LogicalModel: cached.Model, Revision: cached.Revision, Route: selected.Route, ChannelModel: selected.ChannelModel, CapabilitySpec: selected.CapabilitySpec, PriceTier: priceTier, Defaults: cached.Defaults, Intent: intent}, nil
+}
+
+func (s *Service) logicalModelRoutesForIntent(access *userGroupAccess, cached cachedLogicalModel, intent ModelRequestIntent) (ModelRequestIntent, []cachedLogicalRoute, error) {
+	intent = resolveModelRequestIntent(cached.ProductSpec, intent, cached.Defaults)
+	if parameters := cached.ProductSpec.ImageParameters; parameters != nil {
+		if _, err := resolveImageParameterValues(parameters, intent.Options); err != nil {
+			return intent, nil, err
+		}
+	}
+	if match := MatchCapability(cached.ProductSpec, intent); !match.Matched {
+		return intent, nil, modelCapabilityMismatchError(match)
+	}
+	eligible := s.eligibleLogicalRoutes(access, cached.Routes, intent, nil, cached.Model.PricePolicy == "channel")
+	if len(eligible) == 0 {
+		return intent, nil, BadAuthRequest("当前模型暂时无法满足这组输入和参数")
+	}
+	return intent, eligible, nil
 }
 
 func (s *Service) eligibleLogicalRoutes(access *userGroupAccess, routes []cachedLogicalRoute, intent ModelRequestIntent, tried map[string]bool, requirePriceTier bool) []cachedLogicalRoute {

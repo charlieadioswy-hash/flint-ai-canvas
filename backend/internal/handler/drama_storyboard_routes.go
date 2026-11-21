@@ -1,13 +1,19 @@
 package handler
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"yingce/backend/internal/service"
 )
 
 func registerDramaStoryboardRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/dramas/:id/episodes/:episodeId/storyboards", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
-		return svc.DramaStoryboards(userID, c.Param("id"), c.Param("episodeId"))
+		var shotIDs []string
+		if scope := c.Query("shotIds"); scope != "" {
+			shotIDs = strings.Split(scope, ",")
+		}
+		return svc.DramaStoryboards(c.Request.Context(), userID, c.Param("id"), c.Param("episodeId"), shotIDs)
 	}))
 	r.POST("/dramas/:id/storyboards", dramaRoute(svc, 256<<10, func(c *gin.Context, userID string) (any, error) {
 		var req service.DramaStoryboardCreateRequest

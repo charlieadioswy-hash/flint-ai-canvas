@@ -2,7 +2,7 @@ package production
 
 import (
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -20,15 +20,18 @@ func ShotDurationMs(hintSeconds float64, dialogue string) int64 {
 
 // DurationOptions 描述视频模型可接受的秒数。
 type DurationOptions struct {
-	Values []int
-	Min    int
-	Max    int
-	Step   int
+	Values []int `json:"values,omitempty"`
+	Min    int   `json:"min,omitempty"`
+	Max    int   `json:"max,omitempty"`
+	Step   int   `json:"step,omitempty"`
 }
 
-// Bounds 返回模型单次可生成的最短与最长秒数；声明了档位时按档位取，0 表示未声明。
+// Bounds 返回模型单次可生成的最短与最长秒数，0 表示未声明。
 func (o DurationOptions) Bounds() (int, int) {
 	if len(o.Values) == 0 {
+		if limit, ok := o.SnapSeconds(o.Max); ok {
+			return max(o.Min, 0), limit
+		}
 		return max(o.Min, 0), max(o.Max, 0)
 	}
 	low, high := o.Values[0], o.Values[0]
@@ -38,39 +41,43 @@ func (o DurationOptions) Bounds() (int, int) {
 	return max(low, 0), max(high, 0)
 }
 
+// SnapSeconds 选择不短于指定时长的最小档位，超过上限时使用最长可用档位。
+func (o DurationOptions) SnapSeconds(seconds int) (int, bool) {
+	if len(o.Values) > 0 {
+		selected := slices.Max(o.Values)
+		for _, value := range o.Values {
+			if value >= seconds && value < selected {
+				selected = value
+			}
+		}
+		return selected, true
+	}
+	step := max(o.Step, 1)
+	start := o.Min
+	if start <= 0 {
+		start = step
+	}
+	if o.Max < start {
+		return seconds, false
+	}
+	limit := start + (o.Max-start)/step*step
+	seconds = min(max(seconds, start), limit)
+	if remainder := (seconds - start) % step; remainder != 0 {
+		seconds += step - remainder
+	}
+	return seconds, true
+}
+
 // SnapVideoSeconds 选择不短于镜头时长的最小可用秒数；渲染时再裁到镜头时长。
 func SnapVideoSeconds(shotMs int64, options DurationOptions) int {
-	need := int(math.Ceil(float64(shotMs) / 1000))
-	if need < 1 {
-		need = 1
+	need := max(int(math.Ceil(float64(shotMs)/1000)), 1)
+	if seconds, ok := options.SnapSeconds(need); ok {
+		return seconds
 	}
-	candidates := append([]int(nil), options.Values...)
-	if len(candidates) == 0 && options.Max > 0 {
-		step := options.Step
-		if step <= 0 {
-			step = 1
-		}
-		start := options.Min
-		if start <= 0 {
-			start = step
-		}
-		for value := start; value <= options.Max && len(candidates) < 64; value += step {
-			candidates = append(candidates, value)
-		}
+	if need <= 5 {
+		return 5
 	}
-	if len(candidates) == 0 {
-		if need <= 5 {
-			return 5
-		}
-		return 10
-	}
-	sort.Ints(candidates)
-	for _, value := range candidates {
-		if value >= need {
-			return value
-		}
-	}
-	return candidates[len(candidates)-1]
+	return 10
 }
 
 // NormalizeName 用于角色、场景名与别名的归并比较。

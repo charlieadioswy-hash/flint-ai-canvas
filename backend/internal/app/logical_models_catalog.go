@@ -263,6 +263,7 @@ func capabilitySpecWithRoutePresets(spec CapabilitySpec, routes []CapabilitySpec
 				restored.AllowCustom = merged.AllowCustom
 			}
 			restored.Presets = merged.Presets
+			restored.declaredValues = merged.declaredValues
 			result.ImageSize = &restored
 		}
 	}
@@ -272,6 +273,7 @@ func capabilitySpecWithRoutePresets(spec CapabilitySpec, routes []CapabilitySpec
 func mergeCapabilityImageSize(specs []CapabilitySpec) *CapabilityImageSize {
 	var result *CapabilityImageSize
 	seen := map[string]bool{}
+	seenValues := map[string]bool{}
 	for _, spec := range specs {
 		part := spec.ImageSize
 		if part == nil {
@@ -286,6 +288,12 @@ func mergeCapabilityImageSize(specs []CapabilitySpec) *CapabilityImageSize {
 				result.Parameter = part.Parameter
 			}
 			result.AllowCustom = result.AllowCustom || part.AllowCustom
+		}
+		for _, value := range part.declaredValues {
+			if !seenValues[value] {
+				seenValues[value] = true
+				result.declaredValues = append(result.declaredValues, value)
+			}
 		}
 		for _, preset := range part.Presets {
 			key := preset.Tier + ":" + preset.Ratio + ":" + preset.Size

@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 
 	"yingce/backend/internal/model"
@@ -18,10 +20,43 @@ func (r *Repository) DramaStoryboard(projectID, boardID string) (*model.DramaSto
 	return &row, nil
 }
 
-func (r *Repository) DramaStoryboards(projectID, episodeID string) ([]model.DramaStoryboardBoard, error) {
-	var rows []model.DramaStoryboardBoard
-	err := r.db.Where("project_id = ? AND episode_id = ?", projectID, episodeID).Order("created_at DESC, id DESC").Limit(30).Find(&rows).Error
-	return rows, err
+func (r *Repository) DramaStoryboardIDs(ctx context.Context, projectID, episodeID string, shotIDs []string) ([]string, error) {
+	const limit = 30
+	query := r.db.WithContext(ctx).Model(&model.DramaStoryboardBoard{}).
+		Where("project_id = ? AND episode_id = ?", projectID, episodeID).Order("created_at DESC, id DESC")
+	ids := make([]string, 0, limit)
+	if len(shotIDs) == 0 {
+		err := query.Limit(limit).Pluck("id", &ids).Error
+		return ids, err
+	}
+
+	scope := make(map[string]bool, len(shotIDs))
+	for _, id := range shotIDs {
+		if id != "" {
+			scope[id] = true
+		}
+	}
+	// Filter before taking the newest 30. Read only the stored shot bindings until enough boards match.
+	rows, err := query.Select("id", "shot_ids_json").Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for len(ids) < limit && rows.Next() {
+		var id string
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		var boardShots []string
+		if json.Unmarshal(raw, &boardShots) != nil || len(boardShots) == 0 {
+			continue
+		}
+		if !slices.ContainsFunc(boardShots, func(shotID string) bool { return !scope[shotID] }) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
 }
 
 func (r *Repository) CreateDramaStoryboard(row *model.DramaStoryboardBoard) error {

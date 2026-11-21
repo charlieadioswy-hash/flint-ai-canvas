@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"yingce/backend/internal/production"
+	"yingce/backend/internal/repository"
 )
 
 var dramaCapabilities = []string{"text", "image", "video"}
@@ -103,7 +104,7 @@ func (s *Service) dramaModelOptions(userID string, capability string) ([]DramaMo
 			unavailable = append(unavailable, DramaModelUnavailable{Choice: choice, Reason: reason})
 			return
 		}
-		options = append(options, s.dramaModelOption(choice, capability, label, priceLabel))
+		options = append(options, s.dramaModelOption(access, choice, capability, label, priceLabel))
 	}
 	frontendEnabled, err := s.FeatureEnabled(FeatureFrontendModels)
 	if err != nil {
@@ -338,9 +339,10 @@ func missingDramaCapabilities(models DramaModels) []string {
 // dramaVideoProfile 是视频模型能力合同中短剧需要的部分：时长档位、支持的生成方式、参考图上限、
 // 是否同步生成声音，以及换算作品画幅所需的比例与分辨率声明。
 type dramaVideoProfile struct {
-	Durations  production.DurationOptions
-	Operations []string
-	MaxImages  int
+	Durations         production.DurationOptions
+	durationSupported bool
+	Operations        []string
+	MaxImages         int
 	// MinImages 是模型要求的最少参考图数（含首帧）；剧情段发不出这么多张时预演就报出，不提交。
 	MinImages int
 	// MaxAudios / MaxAudioSeconds 是参考音频的张数与单段时长上限（秒，0 表示未声明），用于随段发送角色声音样本。
@@ -421,7 +423,12 @@ func dramaModelUnavailable(capability string, choice DramaModelChoice, reason st
 }
 
 func (s *Service) dramaVideoProfile(choice DramaModelChoice) (dramaVideoProfile, error) {
+	return s.dramaVideoProfileFor(s.repo, choice)
+}
+
+func (s *Service) dramaVideoProfileFor(repo *repository.Repository, choice DramaModelChoice) (dramaVideoProfile, error) {
 	var capability *ModelCapabilityConfig
+	var logicalDuration production.DurationOptions
 	if choice.LogicalModelID != "" {
 		// 只读取能力画像；用户授权在任务准入时按分组校验。
 		routed, err := s.resolveDramaLogicalModel(nil, choice.LogicalModelID, "video")
@@ -436,8 +443,13 @@ func (s *Service) dramaVideoProfile(choice DramaModelChoice) (dramaVideoProfile,
 		if parseErr != nil {
 			return dramaVideoProfile{}, parseErr
 		}
+		product, parseErr := DecodeCapabilitySpec(routed.Revision.CapabilitySpecJSON)
+		if parseErr != nil {
+			return dramaVideoProfile{}, parseErr
+		}
+		logicalDuration = dramaLogicalVideoDurationOptions(product.Options["videoSeconds"])
 	} else if choice.ChannelID != "" && choice.ModelKey != "" {
-		row, err := s.repo.ChannelModelByKey(choice.ChannelID, choice.ModelKey)
+		row, err := repo.ChannelModelByKey(choice.ChannelID, choice.ModelKey)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return dramaVideoProfile{}, dramaModelUnavailable("video", choice, "已下线或停用")
 		}
@@ -456,8 +468,14 @@ func (s *Service) dramaVideoProfile(choice DramaModelChoice) (dramaVideoProfile,
 	}
 	video := capability.Video
 	options := dramaDurationOptions(video.Duration)
+	durationSupported := videoDurationSupported(video)
+	if choice.LogicalModelID != "" {
+		// The logical model promises its own duration options. Its default route
+		// can support a different set from routes selected for an explicit duration.
+		options, durationSupported = logicalDuration, true
+	}
 	// 不声明同步生成声音的模型也可以用：段视频没有对白与音效，由用户在选模型时自行取舍。
-	profile := dramaVideoProfile{Durations: options, Operations: video.Operations, MaxImages: video.References.MaxImages, MinImages: max(video.References.MinImages, 0), MaxAudios: max(video.References.MaxAudios, 0), MaxAudioSeconds: max(video.References.MaxAudioDuration, 0), GenerateAudio: video.GenerateAudio.Supported, PromptMaxChars: max(video.References.PromptMaxChars, 0), video: video}
+	profile := dramaVideoProfile{Durations: options, durationSupported: durationSupported, Operations: video.Operations, MaxImages: video.References.MaxImages, MinImages: max(video.References.MinImages, 0), MaxAudios: max(video.References.MaxAudios, 0), MaxAudioSeconds: max(video.References.MaxAudioDuration, 0), GenerateAudio: video.GenerateAudio.Supported, PromptMaxChars: max(video.References.PromptMaxChars, 0), video: video}
 	if profile.maxSeconds() <= 0 {
 		return profile, errors.New("未声明可生成时长，无法按剧情段切分")
 	}
@@ -574,6 +592,10 @@ func (s *Service) EstimateDrama(userID string, req DramaEstimateRequest) (DramaE
 
 // dramaImageSpec 读取图片模型的能力合同；与云端 Agent 生图选项同一加载方式。
 func (s *Service) dramaImageSpec(choice DramaModelChoice) (CapabilitySpec, map[string]any, bool) {
+	return s.dramaImageSpecFor(s.repo, choice)
+}
+
+func (s *Service) dramaImageSpecFor(repo *repository.Repository, choice DramaModelChoice) (CapabilitySpec, map[string]any, bool) {
 	defaults := map[string]any{}
 	if choice.LogicalModelID != "" {
 		snapshot, err := s.routeCatalogSnapshot()
@@ -589,7 +611,7 @@ func (s *Service) dramaImageSpec(choice DramaModelChoice) (CapabilitySpec, map[s
 	if choice.ChannelID == "" {
 		return CapabilitySpec{}, nil, false
 	}
-	item, err := s.repo.ChannelModelByKey(choice.ChannelID, choice.ModelKey)
+	item, err := repo.ChannelModelByKey(choice.ChannelID, choice.ModelKey)
 	if err != nil {
 		return CapabilitySpec{}, nil, false
 	}
@@ -975,11 +997,14 @@ func dramaResolutionTier(label string) string {
 
 // dramaSizeRejected 判断准入错误是否只因尺寸参数；只看结构化字段，不解析文案。
 
-func (s *Service) dramaModelOption(choice DramaModelChoice, capability, label, priceLabel string) DramaModelOption {
+func (s *Service) dramaModelOption(access *userGroupAccess, choice DramaModelChoice, capability, label, priceLabel string) DramaModelOption {
 	option := DramaModelOption{Choice: choice, Capability: capability, Label: label, PriceLabel: priceLabel}
 	if capability == "video" {
 		if profile, err := s.dramaVideoProfile(choice); err == nil {
 			option.MaxVideoSeconds = profile.maxSeconds()
+			if profile.durationSupported {
+				option.VideoDuration = &profile.Durations
+			}
 			option.MaxAudios = profile.MaxAudios
 			option.MinReferenceImages = profile.MinImages
 			option.TailFrameChain = profile.supports("image_to_video")
@@ -993,6 +1018,7 @@ func (s *Service) dramaModelOption(choice DramaModelChoice, capability, label, p
 		if spec, defaults, ok := s.dramaImageSpec(choice); ok {
 			option.ImageResolutions = dramaImageTiersFor(spec)
 			option.DefaultImageResolution = dramaDefaultImageTier(spec, defaults)
+			option.ImageSpecifications = dramaStoryboardImageSpecifications(s.storyboardImageCatalogChoices(access, choice, spec, defaults))
 			for _, ratio := range dramaAssetRatios {
 				if dramaImageRequestForSpec(spec, defaults, ratio, "").Issue == "" {
 					option.ImageRatios = append(option.ImageRatios, ratio)
@@ -1043,12 +1069,48 @@ func dramaDurationOptions(duration VideoDurationConfig) production.DurationOptio
 	return production.DurationOptions{Values: duration.Values, Min: duration.Min, Max: duration.Max, Step: duration.Step}
 }
 
+// Logical options use the generic numeric capability format, while video tasks
+// always send whole seconds (up to the capability validator's one-hour limit).
+func dramaLogicalVideoDurationOptions(constraint OptionConstraint) production.DurationOptions {
+	if len(constraint.Values) > 0 {
+		var values []int
+		for _, value := range constraint.Values {
+			encoded := normalizedScalar(value)
+			seconds, err := strconv.Atoi(encoded)
+			if err == nil && seconds > 0 && seconds <= maxVideoDurationSeconds && encoded == strconv.Itoa(seconds) {
+				values = append(values, seconds)
+			}
+		}
+		slices.Sort(values)
+		return production.DurationOptions{Values: slices.Compact(values)}
+	}
+	if constraint.Min == nil || constraint.Max == nil || *constraint.Min > maxVideoDurationSeconds || *constraint.Max < 1 {
+		return production.DurationOptions{}
+	}
+	minSeconds := int(math.Ceil(max(*constraint.Min, 1)))
+	maxSeconds := int(math.Floor(min(*constraint.Max, maxVideoDurationSeconds)))
+	if minSeconds > maxSeconds {
+		return production.DurationOptions{}
+	}
+	if constraint.Step == nil {
+		return production.DurationOptions{Min: minSeconds, Max: maxSeconds, Step: 1}
+	}
+	step := *constraint.Step
+	if step == math.Trunc(step) && step <= maxVideoDurationSeconds && float64(minSeconds) == *constraint.Min {
+		return production.DurationOptions{Min: minSeconds, Max: maxSeconds, Step: int(step)}
+	}
+	var values []int
+	for seconds := minSeconds; seconds <= maxSeconds; seconds++ {
+		if matchOptionConstraint("videoSeconds", constraint, seconds) {
+			values = append(values, seconds)
+		}
+	}
+	return production.DurationOptions{Values: values}
+}
+
 // dramaMaxVideoSeconds 是视频模型单次可生成的最长秒数，也是一个剧情段的时长上限。
 func dramaMaxVideoSeconds(options production.DurationOptions) int {
-	longest := options.Max
-	for _, value := range options.Values {
-		longest = max(longest, value)
-	}
+	_, longest := options.Bounds()
 	return longest
 }
 

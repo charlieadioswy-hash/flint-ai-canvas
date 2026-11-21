@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
@@ -60,6 +61,55 @@ func storyboardConfirmed(t *testing.T, s *Service, board DramaStoryboardView) Dr
 		t.Fatalf("board preflight = %+v %v", preview, err)
 	}
 	return DramaStoryboardActionRequest{ExpectedRevision: &preview.Revision, BaseRevision: &preview.BaseRevision, ConfirmationToken: preview.ConfirmationToken, ClientOperationID: "board-execute"}
+}
+
+func TestDramaStoryboardHistoryFiltersShotScopeBeforeLimit(t *testing.T) {
+	s, db, board := storyboardFixture(t, 2, 2, 2)
+	const user, project, episode = "user", "drama-project", "episode"
+	next := board.CreatedAt
+	insert := func(id, projectID, episodeID, raw string) {
+		t.Helper()
+		next = next.Add(time.Second)
+		row := board.DramaStoryboardBoard
+		row.ID, row.ProjectID, row.EpisodeID, row.ShotIDsJSON = id, projectID, episodeID, raw
+		row.CreatedAt = next
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("partial-board", project, episode, `["real-shot-1"]`)
+	for i := 0; i < 31; i++ {
+		insert(fmt.Sprintf("other-segment-%d", i), project, episode, `["other-shot"]`)
+	}
+	insert("mixed-segment", project, episode, `["real-shot","other-shot"]`)
+	insert("foreign-episode", project, "other-episode", board.ShotIDsJSON)
+	insert("foreign-project", "other-project", episode, board.ShotIDsJSON)
+
+	history := func(shotIDs []string) []DramaStoryboardView {
+		t.Helper()
+		views, err := s.DramaStoryboards(t.Context(), user, project, episode, shotIDs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return views
+	}
+	if views := history(nil); len(views) != 30 || views[0].ID != "mixed-segment" {
+		t.Fatalf("expected the latest 30 in the episode, got %d entries", len(views))
+	}
+	insert("empty-board", project, episode, "[]")
+	insert("malformed-board", project, episode, "invalid")
+	if views := history([]string{"real-shot-1", "real-shot", "real-shot"}); len(views) != 2 || views[0].ID != "partial-board" || views[1].ID != board.ID {
+		t.Fatalf("expected the two newest full-scope matches, got %+v", views)
+	}
+	if views := history([]string{"missing-shot"}); len(views) != 0 {
+		t.Fatalf("unexpected matches for a missing shot: %+v", views)
+	}
+	for i := 0; i < 32; i++ {
+		insert(fmt.Sprintf("match-%02d", i), project, episode, board.ShotIDsJSON)
+	}
+	if views := history(board.ShotIDs); len(views) != 30 || views[0].ID != "match-31" || views[len(views)-1].ID != "match-02" {
+		t.Fatalf("expected the newest 30 matching boards, got %d entries", len(views))
+	}
 }
 
 func completeStoryboard(t *testing.T, s *Service, db *gorm.DB, board DramaStoryboardView) DramaStoryboardView {

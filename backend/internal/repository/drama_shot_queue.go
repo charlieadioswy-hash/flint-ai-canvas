@@ -9,11 +9,16 @@ import (
 // DramaShotQueueJob reads a direct generation task as a queue entry. It is not
 // persisted to drama_jobs and never participates in the production scheduler.
 type DramaShotQueueJob struct {
-	model.DramaJob `gorm:"embedded"`
-	EpisodeNumber  int
-	ShotPosition   int
-	TaskStage      string
+	model.DramaJob    `gorm:"embedded"`
+	EpisodeNumber     int
+	ShotPosition      int
+	TaskStage         string
+	StoryboardRows    int
+	StoryboardColumns int
 }
+
+// Adopted storyboard cells share their board's task ID and may also match a shot take.
+const dramaShotQueueKindSQL = "CASE WHEN board.id IS NOT NULL THEN 'storyboard_image' ELSE take.kind END"
 
 type DramaQueueFilter struct {
 	Status string
@@ -39,26 +44,29 @@ func (r *Repository) dramaShotQueueTasks(projectID, userID string) *gorm.DB {
 		Where("owned_take.project_id = ? AND owned_take.kind IN ? AND owned_take.task_id <> ''", projectID, []string{"shot_image", "shot_video", "shot_audio"}).
 		Group("owned_take.task_id")
 	return r.db.Table("tasks").
-		Joins("JOIN drama_takes AS take ON take.task_id = tasks.id AND take.project_id = tasks.project_id AND take.id IN (?)", takes).
+		Joins("LEFT JOIN drama_takes AS take ON take.task_id = tasks.id AND take.project_id = tasks.project_id AND take.id IN (?)", takes).
+		Joins("LEFT JOIN drama_storyboard_boards AS board ON board.task_id = tasks.id AND board.project_id = tasks.project_id AND board.user_id = tasks.user_id AND tasks.type = ?", "canvas_image").
 		Where("tasks.project_id = ? AND tasks.user_id = ?", projectID, userID).
+		Where("board.id IS NOT NULL OR take.id IS NOT NULL").
 		Where("NOT EXISTS (SELECT 1 FROM drama_jobs WHERE drama_jobs.project_id = tasks.project_id AND drama_jobs.task_id = tasks.id)")
 }
 
 func (r *Repository) dramaShotQueueJobs(projectID, userID string) *gorm.DB {
 	return r.dramaShotQueueTasks(projectID, userID).
-		Joins("LEFT JOIN drama_shots AS shot ON shot.id = take.owner_id AND shot.project_id = take.project_id").
-		Joins("LEFT JOIN drama_episodes AS episode ON episode.id = shot.episode_id AND episode.project_id = shot.project_id").
+		Joins("LEFT JOIN drama_shots AS shot ON board.id IS NULL AND shot.id = take.owner_id AND shot.project_id = take.project_id").
+		Joins("LEFT JOIN drama_episodes AS episode ON episode.id = COALESCE(board.episode_id, shot.episode_id) AND episode.project_id = tasks.project_id").
 		Joins("LEFT JOIN billing_orders AS bill ON bill.id = tasks.billing_order_id AND bill.user_id = tasks.user_id AND bill.status = ?", model.BillingStatusSettled).
-		Select(`tasks.id AS task_id, tasks.project_id, take.kind, tasks.status, tasks.error,
+		Select(`tasks.id AS task_id, tasks.project_id, ` + dramaShotQueueKindSQL + ` AS kind, tasks.status, tasks.error,
 			COALESCE(episode.id, '') AS episode_id, COALESCE(shot.id, '') AS shot_id,
 			COALESCE(episode.number, 0) AS episode_number, COALESCE(shot.position, 0) AS shot_position,
+			COALESCE(board."rows", 0) AS storyboard_rows, COALESCE(board."columns", 0) AS storyboard_columns,
 			tasks.created_at, tasks.updated_at, tasks.started_at, tasks.completed_at AS finished_at,
 			tasks.stage AS task_stage, COALESCE(bill.actual_amount_microcredits, 0) AS cost_microcredits`)
 }
 
 func (r *Repository) RecentDramaShotQueueJobs(projectID, userID string, limit int, filter DramaQueueFilter) ([]DramaShotQueueJob, error) {
 	var jobs []DramaShotQueueJob
-	err := filter.apply(r.dramaShotQueueJobs(projectID, userID), "tasks", "take.kind").Order("tasks.updated_at desc, tasks.id desc").Limit(limit).Scan(&jobs).Error
+	err := filter.apply(r.dramaShotQueueJobs(projectID, userID), "tasks", dramaShotQueueKindSQL).Order("tasks.updated_at desc, tasks.id desc").Limit(limit).Scan(&jobs).Error
 	return jobs, err
 }
 

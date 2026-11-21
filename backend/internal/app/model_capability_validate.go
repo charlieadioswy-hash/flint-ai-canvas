@@ -267,10 +267,12 @@ func videoFPSBand(fps float64) string {
 	}
 }
 
+const maxVideoDurationSeconds = 3600
+
 func validateVideoDuration(value VideoDurationConfig) error {
 	switch value.Selection {
 	case "range":
-		if value.Min < 1 || value.Max < value.Min || value.Max > 3600 || value.Step < 1 || value.Default < value.Min || value.Default > value.Max || (value.Default-value.Min)%value.Step != 0 {
+		if value.Min < 1 || value.Max < value.Min || value.Max > maxVideoDurationSeconds || value.Step < 1 || value.Default < value.Min || value.Default > value.Max || (value.Default-value.Min)%value.Step != 0 {
 			return BadAuthRequest("视频时长范围或默认值无效")
 		}
 	case "enum":
@@ -280,7 +282,7 @@ func validateVideoDuration(value VideoDurationConfig) error {
 		values := append([]int(nil), value.Values...)
 		sort.Ints(values)
 		for index, item := range values {
-			if item < 1 || item > 3600 || (index > 0 && values[index-1] == item) {
+			if item < 1 || item > maxVideoDurationSeconds || (index > 0 && values[index-1] == item) {
 				return BadAuthRequest("视频固定时长选项无效或重复")
 			}
 		}

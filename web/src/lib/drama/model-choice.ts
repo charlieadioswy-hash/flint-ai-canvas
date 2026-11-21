@@ -67,6 +67,22 @@ export function dramaVideoResolutionValue(option: DramaModelOption | undefined, 
     return (option.videoResolutions || []).find((value) => videoResolutionComparisonKey(value) === key) || "";
 }
 
+export function dramaVideoDurationLimits(option: DramaModelOption | undefined) {
+    const duration = option?.videoDuration;
+    const values = [...new Set(duration?.values)].sort((left, right) => left - right);
+    const min = values[0] ?? (duration?.min || 1);
+    const max = values.at(-1) ?? Math.max(min, duration?.max || option?.maxVideoSeconds || 60);
+    const step = duration?.step || 1;
+    return { values, min, max: min + Math.floor((max - min) / step) * step, step };
+}
+
+/** 取能覆盖输入时长的最短档，超过最后一档时取最长支持值。 */
+export function snapDramaVideoSeconds(seconds: number, { values, min, max, step }: ReturnType<typeof dramaVideoDurationLimits>) {
+    const requested = Number.isFinite(seconds) ? seconds : min;
+    if (values.length) return values.find((value) => value >= requested) ?? values[values.length - 1];
+    return Math.min(max, min + Math.max(0, Math.ceil((requested - min) / step)) * step);
+}
+
 function videoResolutionTierNumber(value: string) {
     const match = videoResolutionComparisonKey(value).match(/^(\d+)p$/);
     return match ? Number(match[1]) : 0;

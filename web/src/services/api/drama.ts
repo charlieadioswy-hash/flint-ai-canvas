@@ -495,7 +495,7 @@ export type DramaEpisode = {
 
 export type DramaJob = {
     id: string;
-    kind: "bible" | "plan" | "cast_image" | "script" | "segment_prompt" | "segment_video" | "render" | "shot_image" | "shot_video" | "shot_audio";
+    kind: "bible" | "plan" | "cast_image" | "script" | "segment_prompt" | "segment_video" | "storyboard_image" | "render" | "shot_image" | "shot_video" | "shot_audio";
     status: "queued" | "running" | "succeeded" | "failed" | "canceled";
     label: string;
     error?: string;
@@ -729,6 +729,7 @@ export type DramaModelOption = {
     label: string;
     priceLabel: string;
     maxVideoSeconds?: number;
+    videoDuration?: { values?: number[]; min?: number; max?: number; step?: number };
     maxAudios?: number;
     /** 仅视频模型：支持图生视频，可用于尾帧续接；为 false 时只能并行出片。 */
     tailFrameChain?: boolean;
@@ -742,6 +743,8 @@ export type DramaModelOption = {
     imageResolutions?: string[];
     defaultImageResolution?: string;
     imageRatios?: string[];
+    /** 故事板可用的画幅与分辨率组合。空字符串表示对应项使用模型默认值。 */
+    imageSpecifications?: { aspectRatio: string; resolutions: string[] }[];
 };
 
 /** 平台目录里有、但短剧流水线无法使用的模型及原因；前端置灰展示。 */

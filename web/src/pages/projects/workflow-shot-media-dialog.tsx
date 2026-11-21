@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Input, InputNumber, Select, Switch } from "antd";
+import { App, Button, Input, Select, Switch } from "antd";
 
 import { AntTooltip } from "@/components/ui/base/tooltip/ant-tooltip";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { dramaChoiceKey, dramaVideoResolutionTiers, dramaVideoResolutionValue } from "@/lib/drama/model-choice";
+import { dramaChoiceKey, dramaVideoDurationLimits, dramaVideoResolutionTiers, dramaVideoResolutionValue, snapDramaVideoSeconds } from "@/lib/drama/model-choice";
 import { CAMERA_PRESETS, shotVideoCameraValue, withoutLegacyShotVideoCameraIntent } from "@/lib/drama/director";
 import { formatVideoResolutionLabel } from "@/lib/video-generation-options";
 import type { DramaShot } from "@/services/api/drama";
@@ -332,6 +332,7 @@ function ShotMediaEditor({
     const client = useQueryClient();
     const operation = useDramaOperationScope(projectId);
     const catalog = useDramaModelCatalog();
+    const generateAudioLabelId = useId();
     const [pendingReceipt, setPendingReceipt] = useState<{ taskId: string; revision: number }>();
     const queryKey = ["drama-shot-media", userId, projectId, shot.id, kind];
     const query = useQuery({
@@ -342,6 +343,7 @@ function ShotMediaEditor({
         refetchInterval: (current) => (pendingReceipt || ["queued", "running"].includes(current.state.data?.status || "") ? 3000 : false),
     });
     const [draft, setDraft] = useState<DramaShotMediaConfig>();
+    const [durationText, setDurationText] = useState<string>();
     const [baseline, setBaseline] = useState<{ config: string; revision: number }>();
     const [busy, setBusy] = useState("");
     const [saving, setSaving] = useState(false);
@@ -426,8 +428,8 @@ function ShotMediaEditor({
     }, [draftKey, needsInitialSave, stale, active, busy, saving, pendingReceipt, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
-        onDirtyChange(dirty);
-    }, [dirty, onDirtyChange]);
+        onDirtyChange(dirty || durationText !== undefined);
+    }, [dirty, durationText, onDirtyChange]);
     useEffect(() => {
         onBusyChange(Boolean(busy || saving || quote?.uncertain || referenceBusy), Boolean(saving && !busy && !quote?.uncertain && !referenceBusy));
     }, [busy, saving, quote?.uncertain, referenceBusy, onBusyChange]);
@@ -454,10 +456,28 @@ function ShotMediaEditor({
         }
     }, [current, draft, kind, query.isFetching, query.isError, dirty, stale, busy, saving, pendingReceipt, quote?.uncertain]);
 
+    const options = catalog.data?.options[kind] || [];
+    const isVideo = kind === "video";
+    const model = draft ? options.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.model)) : undefined;
+    const catalogDuration = model ? dramaVideoDurationLimits(model) : undefined;
+    const seconds = draft?.seconds ?? catalogDuration?.min ?? 1;
+    const durationMismatch = Boolean(isVideo && catalogDuration && snapDramaVideoSeconds(seconds, catalogDuration) !== seconds);
+    const duration = durationMismatch ? undefined : catalogDuration;
+    useEffect(() => {
+        if (durationMismatch) void client.invalidateQueries({ queryKey: ["drama-models"], exact: true });
+    }, [client, durationMismatch]);
+
     const patch = (value: Partial<DramaShotMediaConfig>) => {
         if (configLocked) return;
         const current = editor.current.draft;
         const next = current ? { ...current, ...preserveShotImageMentions(current, value, kind) } : undefined;
+        if (next && isVideo && value.model) {
+            const option = options.find((entry) => dramaChoiceKey(entry.choice) === dramaChoiceKey(next.model));
+            if (option) {
+                const limits = dramaVideoDurationLimits(option);
+                next.seconds = snapDramaVideoSeconds(next.seconds ?? limits.min, limits);
+            }
+        }
         editor.current.draft = next;
         setDraft(next);
         failedDraft.current = "";
@@ -465,6 +485,17 @@ function ShotMediaEditor({
         setError("");
         setQuote(undefined);
         setNotice("");
+    };
+    const commitDurationInput = () => {
+        if (durationText === undefined) return true;
+        if (configLocked) return false;
+        setDurationText(undefined);
+        const requested = durationText.trim() ? Number(durationText) : NaN;
+        if (Number.isFinite(requested)) {
+            const next = duration ? snapDramaVideoSeconds(requested, duration) : Math.max(1, Math.ceil(requested));
+            if (next !== editor.current.draft?.seconds) patch({ seconds: next });
+        }
+        return true;
     };
     const accept = (value: DramaShotMedia) => {
         const config = visibleReferenceConfig(value.config, kind);
@@ -531,9 +562,12 @@ function ShotMediaEditor({
     };
     const saveLatest = useRef(save);
     saveLatest.current = save;
+    const commitDurationLatest = useRef(commitDurationInput);
+    commitDurationLatest.current = commitDurationInput;
     useEffect(() => {
         registerFlush(async () => {
             try {
+                if (!commitDurationLatest.current()) return false;
                 await saveLatest.current(operation.capture());
                 return true;
             } catch {
@@ -551,7 +585,7 @@ function ShotMediaEditor({
         run("execute", async (ticket) => {
             let submission = quote?.uncertain ? quote : undefined;
             if (!submission) {
-                if (!current || !draft || !baseline || stale || active || pendingReceipt || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
+                if (!current || !draft || !baseline || durationText !== undefined || stale || active || pendingReceipt || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash) return;
                 const value = await save(ticket, true);
                 if (!operation.isCurrent(ticket)) return;
                 const preview = await preflightDramaShotMedia(projectId, shot.id, kind, { expectedRevision: value.revision });
@@ -559,7 +593,14 @@ function ShotMediaEditor({
                 const config = acceptPreviewConfig(preview, value.config, value.revision);
                 if (!config) return;
                 setPrice({ key: priceKey(config, value.revision), version: priceVersion, preview });
-                if (!preview.ready || !preview.priced || !preview.confirmationToken || preview.scopeHash !== displayedPrice.scopeHash || preview.amountMicrocredits !== displayedPrice.amountMicrocredits) {
+                if (
+                    !preview.ready ||
+                    !preview.priced ||
+                    !preview.confirmationToken ||
+                    preview.scopeHash !== displayedPrice.scopeHash ||
+                    preview.amountMicrocredits !== displayedPrice.amountMicrocredits ||
+                    preview.config.seconds !== displayedPrice.config.seconds
+                ) {
                     setNotice("费用或生成范围已更新，请查看生成按钮后再操作。当前配置已保存。");
                     return;
                 }
@@ -591,10 +632,7 @@ function ShotMediaEditor({
             // The receipt ends submission; the media query owns later reads and polling.
             void query.refetch({ cancelRefetch: false });
         });
-    const options = catalog.data?.options[kind] || [];
-    const model = draft ? options.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.model)) : undefined;
     const ratios = kind === "image" ? model?.imageRatios : model?.videoRatios;
-    const isVideo = kind === "video";
     const cameraValue = isVideo ? shotVideoCameraValue(draft?.prompt || "", shot.camera || "", draft?.cameraIntent) : "";
     const cameraOptions = CAMERA_PRESETS.map((value) => ({ value, label: value }));
     const savedResolution = draft?.resolution === "auto" ? undefined : draft?.resolution || undefined;
@@ -657,12 +695,18 @@ function ShotMediaEditor({
                             </button>
                         ))}
                     </div>
-                    <label>
-                        <span>模型</span>
-                        <fieldset disabled={controlsDisabled} className="drama-shot-media-model" inert={controlsDisabled}>
-                            <DramaModelPicker capability={kind} showPrice={false} value={draft.model} aspectRatio={draft.aspectRatio} onChange={(value) => patch({ model: value })} />
-                        </fieldset>
-                    </label>
+                    <fieldset disabled={controlsDisabled} className="drama-shot-media-model" inert={controlsDisabled}>
+                        <legend>模型</legend>
+                        <DramaModelPicker
+                            capability={kind}
+                            showPrice={false}
+                            value={draft.model}
+                            aspectRatio={draft.aspectRatio}
+                            onChange={(value) => {
+                                if (commitDurationInput()) patch({ model: value });
+                            }}
+                        />
+                    </fieldset>
                     <div className={`drama-shot-media-parameters${isVideo ? " is-video" : ""}`}>
                         <label>
                             <span>画幅</span>
@@ -708,7 +752,31 @@ function ShotMediaEditor({
                             <>
                                 <label>
                                     <span>秒数</span>
-                                    <InputNumber aria-label="镜头视频秒数" size="small" disabled={controlsDisabled} min={1} max={model?.maxVideoSeconds || 60} value={draft.seconds} onChange={(value) => patch({ seconds: value || 1 })} />
+                                    {durationText === undefined && duration?.values.length ? (
+                                        <Select
+                                            aria-label="镜头视频秒数"
+                                            size="small"
+                                            disabled={controlsDisabled || duration.values.length === 1}
+                                            value={seconds}
+                                            options={duration.values.map((value) => ({ value, label: `${value} 秒` }))}
+                                            onChange={(value) => patch({ seconds: value })}
+                                        />
+                                    ) : (
+                                        <Input
+                                            aria-label="镜头视频秒数"
+                                            title={duration ? `可用时长 ${duration.min}–${duration.max} 秒${duration.step > 1 ? `，步长 ${duration.step} 秒` : ""}` : undefined}
+                                            type="number"
+                                            size="small"
+                                            disabled={controlsDisabled}
+                                            min={duration?.min ?? 1}
+                                            max={duration?.max}
+                                            step={duration?.step ?? 1}
+                                            value={durationText ?? seconds}
+                                            onChange={(event) => setDurationText(event.currentTarget.value)}
+                                            onBlur={commitDurationInput}
+                                            onPressEnter={(event) => event.currentTarget.blur()}
+                                        />
+                                    )}
                                 </label>
                                 <label>
                                     <span>运镜意图</span>
@@ -729,10 +797,10 @@ function ShotMediaEditor({
                         ) : null}
                     </div>
                     {isVideo ? (
-                        <label className="drama-shot-media-audio">
-                            <span>同步生成声音</span>
-                            <Switch disabled={controlsDisabled} checked={draft.generateAudio} onChange={(value) => patch({ generateAudio: value })} />
-                        </label>
+                        <div className="drama-shot-media-audio">
+                            <span id={generateAudioLabelId}>同步生成声音</span>
+                            <Switch aria-labelledby={generateAudioLabelId} disabled={controlsDisabled} checked={draft.generateAudio} onChange={(value) => patch({ generateAudio: value })} />
+                        </div>
                     ) : null}
                     <WorkflowShotReferences projectId={projectId} userId={userId} kind={kind} config={draft} disabled={configLocked} onChange={patch} onBusyChange={setReferenceBusy} onRefreshReferences={refreshReferences} />
                     <WorkflowShotPromptEditor projectId={projectId} userId={userId} shot={shot} kind={kind} config={draft} disabled={controlsDisabled} onChange={patch} />
@@ -770,7 +838,12 @@ function ShotMediaEditor({
                         <Button
                             className="drama-shot-media-generate"
                             type="primary"
-                            disabled={Boolean(busy || pendingReceipt) || saving || referenceBusy || (!quote?.uncertain && (stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))}
+                            disabled={
+                                Boolean(busy || pendingReceipt) ||
+                                saving ||
+                                referenceBusy ||
+                                (!quote?.uncertain && (durationText !== undefined || stale || active || !displayedPrice?.ready || !displayedPrice.priced || !displayedPrice.scopeHash || pricing === draftKey))
+                            }
                             loading={busy === "execute" || (!quote?.uncertain && current?.status === "running")}
                             onClick={() => void execute()}
                         >

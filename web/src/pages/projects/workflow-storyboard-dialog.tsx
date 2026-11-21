@@ -4,6 +4,8 @@ import { Button, Checkbox, Input, Select } from "antd";
 
 import { AssetLibraryPickerModal } from "@/components/assets/asset-library-picker-modal";
 import { AppModal } from "@/components/ui/product/app-modal";
+import { dramaKeys } from "@/lib/drama/drama-query-keys";
+import { dramaChoiceKey } from "@/lib/drama/model-choice";
 import { getDrama, type DramaShot } from "@/services/api/drama";
 import type { DramaShotMediaAction, DramaShotMediaConfig } from "@/services/api/drama-shot-media";
 import {
@@ -23,7 +25,7 @@ import {
 import { ApiError } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { useUserStore } from "@/stores/use-user-store";
-import { DramaModelPicker } from "./drama-model-picker";
+import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { MediaThumb } from "./drama-shared";
 import { useDramaOperationScope } from "./studio/use-drama-operation-scope";
 import { generationLabel } from "./workflow-generation";
@@ -32,6 +34,11 @@ import "./workflow-storyboard.css";
 type Props = { open: boolean; projectId: string; shots: DramaShot[]; referenceResourceIds?: string[]; title?: string; onClose: () => void };
 type Quote = { boardId: string; preview: DramaStoryboardPreflight; request: DramaShotMediaAction; uncertain?: boolean };
 const STATUS: Record<string, string> = { draft: "待生成", queued: "排队中", running: "生成中", image_ready: "原图已就绪", split: "已裁切分图", failed: "生成失败", cancelled: "已取消", stale: "原稿已变化" };
+
+function latestStoryboard(detail: DramaStoryboard | undefined, history: DramaStoryboard | undefined) {
+    if (!detail || (history && history.revision > detail.revision)) return history;
+    return detail;
+}
 
 export function WorkflowStoryboardDialog(props: Props) {
     const userId = useUserStore((state) => state.user?.id || "");
@@ -43,17 +50,24 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
     const scope = useDramaOperationScope(projectId);
     const episodeId = shots[0].episodeId;
     const summary = useQuery({ queryKey: ["drama-storyboard-defaults", userId, projectId], queryFn: ({ signal }) => getDrama(projectId, signal) });
-    const listKey = ["drama-storyboards", userId, projectId, episodeId];
-    const history = useQuery({ queryKey: listKey, queryFn: ({ signal }) => listDramaStoryboards(projectId, episodeId, signal) });
-    const [boardId, setBoardId] = useState("");
+    const catalog = useDramaModelCatalog();
+    const episodeHistoryKey = ["drama-storyboards", userId, projectId, episodeId];
+    const shotIds = shots.map((shot) => shot.id).sort();
+    const listKey = [...episodeHistoryKey, shotIds];
+    const history = useQuery({ queryKey: listKey, queryFn: ({ signal }) => listDramaStoryboards(projectId, episodeId, shotIds, signal), refetchOnMount: "always" });
+    const visibleHistory = (history.data || []).filter((item) => item.shotIds.every((id) => shotIds.includes(id)));
+    const [selectedBoardId, setBoardId] = useState<string>();
+    const boardId = selectedBoardId ?? visibleHistory.find((item) => item.taskId)?.id ?? "";
+    const historicalBoard = visibleHistory.find((item) => item.id === boardId);
     const boardKey = ["drama-storyboard", userId, projectId, boardId];
     const board = useQuery({
         queryKey: boardKey,
         queryFn: ({ signal }) => getDramaStoryboard(projectId, boardId, signal),
         enabled: Boolean(boardId),
-        refetchInterval: (query) => (["queued", "running"].includes(query.state.data?.status || "") ? 3000 : false),
+        staleTime: 0,
+        refetchInterval: (query) => (["queued", "running"].includes(latestStoryboard(query.state.data, historicalBoard)?.status || "") ? 3000 : false),
     });
-    const [config, setConfig] = useState<DramaShotMediaConfig>();
+    const [draft, setConfig] = useState<DramaShotMediaConfig>();
     const [grid, setGrid] = useState("2x2");
     const [selected, setSelected] = useState(shots.slice(0, 4).map((shot) => shot.id));
     const [busy, setBusy] = useState("");
@@ -67,15 +81,25 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
     const [picker, setPicker] = useState(false);
     const locked = useRef(false);
     const creation = useRef<{ key: string; request: DramaStoryboardCreate } | undefined>(undefined);
-    const current = board.data;
+    const current = latestStoryboard(board.data, historicalBoard);
     const disabled = Boolean(busy || quote?.uncertain);
     const [rows, columns] = grid.split("x").map(Number);
     const slots = rows * columns;
-    const visibleHistory = (history.data || []).filter((item) => item.shotIds.every((id) => shots.some((shot) => shot.id === id)));
+    const model = catalog.data?.options.image.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft?.model));
+    const specifications = model?.imageSpecifications ?? [];
+    const specification = specifications.find((item) => item.aspectRatio === draft?.aspectRatio) ?? specifications[0];
+    const resolutions = specification?.resolutions ?? [];
+    const resolution = resolutions.find((value) => value === draft?.resolution) ?? resolutions.find((value) => value === model?.defaultImageResolution) ?? resolutions[0];
+    const config = draft && specification && resolution !== undefined ? { ...draft, aspectRatio: specification.aspectRatio, resolution } : draft;
     const savedPriceKey = (value: DramaStoryboard) => JSON.stringify([value.id, value.revision, shots]);
     const draftKey = boardId && current ? savedPriceKey(current) : JSON.stringify([selected, rows, columns, config, shots]);
     const displayedPrice = price?.key === draftKey ? price.preview : undefined;
-    const canGenerate = !boardId ? Boolean(config && selected.length && selected.length <= slots) : current?.status === "draft";
+    const loadingHistory = selectedBoardId === undefined && history.isFetching && !history.isFetchedAfterMount;
+    const canGenerate = !boardId ? Boolean(!loadingHistory && config && resolution !== undefined && selected.length && selected.length <= slots) : current?.status === "draft";
+
+    useEffect(() => {
+        if (selectedBoardId === undefined && !loadingHistory && (boardId || history.isSuccess)) setBoardId(boardId);
+    }, [boardId, history.isSuccess, loadingHistory, selectedBoardId]);
 
     useEffect(() => {
         if (!canGenerate || busy || quote?.uncertain) return;
@@ -110,24 +134,24 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
     }, [draftKey, canGenerate, busy, quote?.uncertain, priceVersion]);
 
     useEffect(() => {
-        if (summary.data && !config) {
+        if (summary.data && !draft) {
             const refs = [...new Set(referenceResourceIds)].filter(Boolean).slice(0, 20);
             setConfig({
                 model: summary.data.production.settings.models.image,
                 prompt: "",
                 operation: refs.length ? "image_to_image" : "text_to_image",
                 aspectRatio: summary.data.production.settings.aspectRatio || "16:9",
-                resolution: "1K",
+                resolution: "",
                 generateAudio: false,
                 referenceResourceIds: refs,
             });
         }
-    }, [summary.data, config, referenceResourceIds]);
+    }, [summary.data, draft, referenceResourceIds]);
 
     const accept = (value: DramaStoryboard) => {
         client.setQueryData(["drama-storyboard", userId, projectId, value.id], value);
         setBoardId(value.id);
-        void client.invalidateQueries({ queryKey: listKey });
+        void client.invalidateQueries({ queryKey: episodeHistoryKey });
     };
     const run = async (name: string, action: (ticket: ReturnType<typeof scope.capture>) => Promise<void>) => {
         if (locked.current) return;
@@ -171,10 +195,28 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
             try {
                 const task = await executeDramaStoryboard(projectId, submission.boardId, submission.request);
                 if (!scope.isCurrent(ticket)) return;
-                setNotice(`故事板已提交，${STATUS[task.status] || "请查看任务状态"}`);
+                const key = ["drama-storyboard", userId, projectId, submission.boardId];
+                // An in-flight read started before admission may still contain the draft.
+                await Promise.all([client.cancelQueries({ queryKey: key, exact: true }), client.cancelQueries({ queryKey: listKey, exact: true })]);
+                if (!scope.isCurrent(ticket)) return;
+                const status = task.status === "succeeded" ? "running" : task.status;
+                const accepted = client.setQueryData<DramaStoryboard>(key, (previous) => {
+                    const value = latestStoryboard(previous, current);
+                    return value && !value.taskId ? { ...value, status, taskId: task.id, error: task.error } : value;
+                });
+                if (accepted) {
+                    client.setQueryData<DramaStoryboard[]>(listKey, (items) => {
+                        if (!items) return undefined;
+                        return items.some((item) => item.id === accepted.id) ? items.map((item) => (item.id === accepted.id ? accepted : item)) : [accepted, ...items];
+                    });
+                }
+                setNotice("");
                 setQuote(undefined);
                 setPrice(undefined);
-                client.setQueryData<DramaStoryboard>(["drama-storyboard", userId, projectId, submission.boardId], (previous) => (previous ? { ...previous, status: task.status, taskId: task.id } : previous));
+                void client.invalidateQueries({ queryKey: key, exact: true });
+                void client.invalidateQueries({ queryKey: episodeHistoryKey });
+                void client.invalidateQueries({ queryKey: dramaKeys.summary(projectId), exact: true });
+                void client.invalidateQueries({ queryKey: dramaKeys.jobs(projectId) });
             } catch (reason) {
                 const rejected = reason instanceof ApiError && [reason.status, reason.code].some((value) => value !== undefined && value >= 400 && value < 500 && value !== 408);
                 if (scope.isCurrent(ticket)) {
@@ -185,12 +227,6 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                     }
                 }
                 throw reason;
-            }
-            try {
-                const latest = await getDramaStoryboard(projectId, submission.boardId);
-                if (scope.isCurrent(ticket)) accept(latest);
-            } catch {
-                if (scope.isCurrent(ticket)) setError("任务已提交，状态暂未刷新，请稍后刷新查看");
             }
         });
     const adopt = (cell: DramaStoryboardCell) =>
@@ -219,14 +255,17 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
         >
             <div className="drama-storyboard">
                 {history.isError ? <p role="alert">读取历史故事板失败，请刷新状态后再查看历史。</p> : null}
-                {board.isError && current ? <p role="alert">故事板最新状态暂未读取，当前展示上次记录，请刷新状态。</p> : null}
+                {board.isError && current ? <p role="alert">故事板最新状态读取失败，当前展示上次记录。可点击刷新状态。</p> : null}
                 <div className="drama-storyboard-toolbar">
                     <Select
                         aria-label="故事板历史"
                         disabled={disabled}
                         placeholder="查看本段历史故事板"
                         value={boardId || undefined}
-                        options={visibleHistory.map((item, index) => ({ value: item.id, label: `${index + 1} · ${item.rows}×${item.columns} · ${STATUS[item.status] || item.status}` }))}
+                        options={(current && !visibleHistory.some((item) => item.id === current.id) ? [current, ...visibleHistory] : visibleHistory).map((item, index) => {
+                            const status = item.id === current?.id ? current.status : item.status;
+                            return { value: item.id, label: `${index + 1} · ${item.rows}×${item.columns} · ${STATUS[status] || status}` };
+                        })}
                         onChange={(value) => {
                             setBoardId(value);
                             setQuote(undefined);
@@ -236,6 +275,7 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                     <Button
                         disabled={disabled || !boardId}
                         onClick={() => {
+                            creation.current = undefined;
                             setBoardId("");
                             setQuote(undefined);
                             setError("");
@@ -249,9 +289,10 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                         onClick={() =>
                             void run("refresh", async (ticket) => {
                                 if (boardId) {
-                                    const value = await getDramaStoryboard(projectId, boardId);
-                                    if (scope.isCurrent(ticket)) accept(value);
-                                } else await history.refetch();
+                                    await board.refetch({ throwOnError: true });
+                                    if (!scope.isCurrent(ticket)) return;
+                                }
+                                await history.refetch({ throwOnError: true });
                             })
                         }
                     >
@@ -265,7 +306,9 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                         {!boardId ? (
                             <>
                                 <p>选择本段镜头，先生成一张故事板原图，再裁切并逐格采用。</p>
-                                {summary.isError ? (
+                                {loadingHistory ? (
+                                    <p role="status">正在读取故事板历史…</p>
+                                ) : summary.isError ? (
                                     <p role="alert">
                                         读取作品默认配置失败 <Button onClick={() => void summary.refetch()}>重试配置</Button>
                                     </p>
@@ -308,30 +351,50 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                                         <p className="text-xs text-muted-foreground">
                                             已选 {selected.length} / {slots} 格，剩余格留空，不新增镜头。
                                         </p>
-                                        <label>
-                                            <span>图片模型</span>
-                                            <fieldset disabled={disabled} inert={disabled}>
-                                                <DramaModelPicker
-                                                    showPrice={false}
-                                                    capability="image"
-                                                    value={config.model}
-                                                    aspectRatio={config.aspectRatio}
-                                                    onChange={(model) => {
-                                                        if (!disabled) setConfig({ ...config, model });
-                                                    }}
-                                                />
-                                            </fieldset>
-                                        </label>
+                                        <fieldset className="drama-storyboard-model" disabled={disabled} inert={disabled}>
+                                            <legend>图片模型</legend>
+                                            <DramaModelPicker
+                                                showPrice={false}
+                                                capability="image"
+                                                value={config.model}
+                                                onChange={(model) => {
+                                                    if (!disabled) setConfig({ ...config, model });
+                                                }}
+                                            />
+                                        </fieldset>
                                         <div className="drama-storyboard-specs">
-                                            <label>
+                                            <div className="drama-storyboard-spec-field">
                                                 <span>整图画幅</span>
-                                                <Input aria-label="故事板整图画幅" disabled={disabled} value={config.aspectRatio} onChange={(event) => setConfig({ ...config, aspectRatio: event.target.value })} />
-                                            </label>
-                                            <label>
+                                                <Select
+                                                    aria-label="故事板整图画幅"
+                                                    variant="filled"
+                                                    disabled={disabled || !specification}
+                                                    value={specification?.aspectRatio}
+                                                    placeholder={catalog.isPending ? "正在读取" : "暂无可用画幅"}
+                                                    options={specifications.map(({ aspectRatio }) => ({ value: aspectRatio, label: aspectRatio || "模型默认" }))}
+                                                    onChange={(aspectRatio) => setConfig({ ...config, aspectRatio })}
+                                                />
+                                            </div>
+                                            <div className="drama-storyboard-spec-field">
                                                 <span>整图分辨率</span>
-                                                <Input aria-label="故事板整图分辨率" disabled={disabled} value={config.resolution} onChange={(event) => setConfig({ ...config, resolution: event.target.value })} />
-                                            </label>
+                                                <Select
+                                                    aria-label="故事板整图分辨率"
+                                                    variant="filled"
+                                                    disabled={disabled || !resolutions.length}
+                                                    value={resolution}
+                                                    placeholder={catalog.isPending ? "正在读取" : "暂无可用分辨率"}
+                                                    options={resolutions.map((value) => ({ value, label: value ? value.toUpperCase().replace(/(\d)X(\d)/, "$1 × $2") : "模型默认" }))}
+                                                    onChange={(resolution) => setConfig({ ...config, resolution })}
+                                                />
+                                            </div>
                                         </div>
+                                        {catalog.isError && !catalog.data ? (
+                                            <p role="alert">
+                                                读取图片模型规格失败 <Button onClick={() => void catalog.refetch()}>重试</Button>
+                                            </p>
+                                        ) : !catalog.isPending && !specification ? (
+                                            <p role="status">当前模型暂无可用的整图规格，请选择其他图片模型。</p>
+                                        ) : null}
                                         <label>
                                             <span>补充要求</span>
                                             <Input.TextArea aria-label="故事板补充要求" disabled={disabled} autoSize={{ minRows: 3, maxRows: 6 }} value={config.prompt} onChange={(event) => setConfig({ ...config, prompt: event.target.value })} />
@@ -361,8 +424,8 @@ function StoryboardSession({ projectId, shots, referenceResourceIds = [], title 
                             </>
                         ) : current ? (
                             <>
-                                <strong>
-                                    {current.rows}×{current.columns} · {STATUS[current.status] || current.status}
+                                <strong role="status">
+                                    {current.rows}×{current.columns} · {busy === "execute" && current.status === "draft" ? "正在提交…" : STATUS[current.status] || current.status}
                                 </strong>
                                 <p>
                                     关联 {current.shotIds.length} 个真实镜头，整图 {current.sourceWidth || "—"} × {current.sourceHeight || "—"}。
