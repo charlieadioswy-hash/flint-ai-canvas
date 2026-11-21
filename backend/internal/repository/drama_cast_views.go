@@ -63,9 +63,18 @@ func (r *Repository) DramaCastViewTake(projectID, viewID, takeID string) (*model
 	return &take, nil
 }
 
-func (r *Repository) DramaCastViewTakeForTask(projectID, taskID string) (*model.DramaTake, error) {
+func (r *Repository) DramaCastViewTakeForTask(projectID, viewID, taskID string) (*model.DramaTake, error) {
 	var take model.DramaTake
-	if err := r.db.Where("project_id = ? AND task_id = ? AND kind = ?", projectID, taskID, "cast_view").First(&take).Error; err != nil {
+	if err := r.db.Where("project_id = ? AND owner_id = ? AND kind = ? AND task_id = ? AND (origin_take_id IS NULL OR origin_take_id = '')",
+		projectID, viewID, "cast_view", taskID).First(&take).Error; err != nil {
+		return nil, err
+	}
+	return &take, nil
+}
+
+func (r *Repository) DramaTakeForOrigin(projectID, ownerID, kind, originTakeID string) (*model.DramaTake, error) {
+	var take model.DramaTake
+	if err := r.db.Where("project_id = ? AND owner_id = ? AND kind = ? AND (id = ? OR origin_take_id = ?)", projectID, ownerID, kind, originTakeID, originTakeID).Take(&take).Error; err != nil {
 		return nil, err
 	}
 	return &take, nil

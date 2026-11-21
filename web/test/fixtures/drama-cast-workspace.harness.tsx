@@ -22,6 +22,7 @@ for (const [key, value] of Object.entries({
     MouseEvent: dom.MouseEvent,
     ResizeObserver: dom.ResizeObserver,
     getComputedStyle: dom.getComputedStyle.bind(dom),
+    requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
     IS_REACT_ACT_ENVIRONMENT: true,
 })) {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -32,7 +33,7 @@ const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { MemoryRouter, useLocation } = await import("react-router");
 const { App } = await import("antd");
-const { CastPanel } = await import("../../src/pages/projects/studio/panels");
+const { CastEditor, CastPanel } = await import("../../src/pages/projects/studio/panels");
 const { CastEditorDialog } = await import("../../src/pages/projects/studio/cast-editor-dialog");
 const { CastCreateDialog } = await import("../../src/pages/projects/studio/cast-create-dialog");
 const { CastProjectImport } = await import("../../src/pages/projects/studio/cast-project-import");
@@ -46,6 +47,7 @@ const { dramaKeys } = await import("../../src/lib/drama/drama-query-keys");
 const viewState = await import("../../src/pages/projects/studio/cast-views-state");
 const resources = await import("../../src/services/api/resources");
 const imageStorage = await import("../../src/services/image-storage");
+const canvasImageLoader = await import("../../src/services/canvas-image-loader");
 const { ApiError } = await import("../../src/services/api/request");
 const { useUserStore } = await import("../../src/stores/use-user-store");
 
@@ -97,6 +99,7 @@ beforeEach(() => {
     document.body.append(host);
     root = createRoot(host);
     client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    spyOn(dom.DataTransfer.prototype, "setDragImage").mockImplementation(() => {});
     spyOn(resources, "getResourceAccess").mockRejectedValue(new Error("No remote media in this fixture"));
     spyOn(api, "getDramaCastImpact").mockImplementation(async (_projectId, castId) => impactOf(castId));
     spyOn(api, "preflightDramaStudioBatch").mockImplementation(async (_project, input) => imageBatchQuote(input));
@@ -166,6 +169,29 @@ function button(label: string, scope: ParentNode = document) {
 }
 async function click(label: string, scope: ParentNode = document) {
     await act(async () => button(label, scope).click());
+}
+function dragEvent(target: Element, type: string, dataTransfer: InstanceType<typeof dom.DataTransfer>) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+}
+async function dragHistoryImage(source: HTMLButtonElement, target: Element, options?: { repeat?: boolean }) {
+    const dataTransfer = new dom.DataTransfer();
+    await act(async () => dragEvent(source, "dragstart", dataTransfer));
+    let accepted = false;
+    await act(async () => {
+        accepted = dragEvent(target, "dragover", dataTransfer);
+        dragEvent(target, "drop", dataTransfer);
+        if (options?.repeat) dragEvent(target, "drop", dataTransfer);
+        dragEvent(source, "dragend", dataTransfer);
+    });
+    return accepted;
+}
+function mainImageTarget() {
+    const target = document.querySelector('[aria-label="当前参考图"]');
+    expect(target).not.toBeNull();
+    return target!;
 }
 function imageGenerationButton(scope: ParentNode = document) {
     return [...scope.querySelectorAll<HTMLButtonElement>("button")].find((item) => /^(保存并)?生成图片\s*-/.test(item.textContent || ""))!;
@@ -250,7 +276,9 @@ test("参考图历史打开所选原图，并使用当前参考图的缩放预�
     const image = historyPreview.querySelector<HTMLImageElement>("img")!;
     expect(resolveImage).toHaveBeenCalledWith(`resource:${historyResourceId}`, "");
     expect(image.src).toBe(originalImageUrl(`resource:${historyResourceId}`));
-    expect(button("采用此版本", historyPreview).disabled).toBe(false);
+    expect(historyPreview.textContent).not.toContain("采用此版本");
+    expect(historyPanel.querySelector('[aria-label="采用 V2"]')).toBeNull();
+    expect(historyTrigger.getAttribute("draggable")).toBe("true");
     expect(adopt).not.toHaveBeenCalled();
     await act(async () => image.dispatchEvent(new Event("load")));
     await click("放大图片", historyPreview);
@@ -268,12 +296,29 @@ test("参考图历史打开所选原图，并使用当前参考图的缩放预�
     expect(adopt).not.toHaveBeenCalled();
 });
 
-test("采用展开后的早期版本只提交一次，刷新主视觉并在收起后保留当前版本", async () => {
+test("拖放展开后的早期版本只提交一次，刷新主视觉并在收起后保留当前版本", async () => {
     const original = { ...hero, imageVersion: 8, revision: 7, imageResourceId: "history-image-8", imageTakeId: "hero-take-8" };
     const earlier = { ...original, imageResourceId: "history-image-1", imageTakeId: "hero-take-1", revision: 8 };
     const takes = Array.from({ length: 8 }, (_, index) => castHistoryTake(8 - index, `history-image-${8 - index}`, index === 0));
     const history = spyOn(api, "listDramaTakes").mockResolvedValue({ takes });
     const resolveImage = spyOn(imageStorage, "resolveImageUrl").mockImplementation(async (storageKey) => `https://example.test/${storageKey?.replace(/^resource:/, "")}.png`);
+    spyOn(resources, "getResourceAccess").mockImplementation(async (storageKey, _purpose, variant = "original") => {
+        if (storageKey !== "resource:history-image-1") throw new Error("No remote media in this fixture");
+        return {
+            resourceId: "history-image-1",
+            requestedVariant: variant,
+            actualVariant: variant,
+            url: "https://example.test/history-thumb-1.png",
+            delivery: "cdn",
+            issuedAt: "2026-11-20T04:00:00Z",
+            refreshAt: "2026-11-21T04:00:00Z",
+            revision: "1",
+        };
+    });
+    spyOn(canvasImageLoader, "prepareCanvasImage").mockImplementation(async () => document.createElement("img"));
+    const drawImage = mock();
+    spyOn(dom.HTMLCanvasElement.prototype, "getContext").mockReturnValue({ fillRect: mock(), drawImage } as never);
+    const setDragImage = spyOn(dom.DataTransfer.prototype, "setDragImage");
     let completeAdoption!: (result: Awaited<ReturnType<typeof api.adoptDramaCastTake>>) => void;
     const adopt = spyOn(api, "adoptDramaCastTake").mockImplementation(() => new Promise((resolve) => (completeAdoption = resolve)));
     const changed = mock();
@@ -299,16 +344,31 @@ test("采用展开后的早期版本只提交一次，刷新主视觉并在收�
     expect(more.getAttribute("aria-expanded")).toBe("false");
     await act(async () => more.click());
     expect(button("收起更早版本", historyPanel).getAttribute("aria-expanded")).toBe("true");
-    await click("放大查看 V1", historyPanel);
-    await settleUntil(() => Boolean(document.querySelector(".canvas-image-preview-modal img")));
-    const preview = document.querySelector(".canvas-image-preview-modal")!;
-    expect(preview.querySelector("img")?.getAttribute("src")).toBe("https://example.test/history-image-1.png");
+    const source = button("放大查看 V1", historyPanel);
+    await settleUntil(() => Boolean(source.querySelector("img")));
+    const sourceImage = source.querySelector("img")!;
+    Object.defineProperties(sourceImage, { complete: { value: true }, naturalWidth: { value: 160 }, naturalHeight: { value: 100 } });
+    const target = mainImageTarget();
+    const dataTransfer = new dom.DataTransfer();
+    expect(target.hasAttribute("data-cast-history-available")).toBe(false);
+    await act(async () => dragEvent(source, "dragstart", dataTransfer));
+    expect(setDragImage).toHaveBeenCalledTimes(1);
+    const [dragImage, hotX, hotY] = setDragImage.mock.calls[0];
+    expect(dragImage).toBeInstanceOf(dom.HTMLCanvasElement);
+    expect([dragImage.width, dragImage.height, hotX, hotY]).toEqual([80, 64, 40, 32]);
+    expect(dragImage.style.width).toBe("80px");
+    expect(dragImage.style.height).toBe("64px");
+    expect(drawImage.mock.calls[0][0]).toBe(sourceImage);
+    expect(target.hasAttribute("data-cast-history-available")).toBe(true);
+    await act(async () => expect(dragEvent(target, "dragover", dataTransfer)).toBe(true));
+    expect(target.hasAttribute("data-cast-history-available")).toBe(true);
+    await act(async () => dragEvent(target, "dragleave", dataTransfer));
+    expect(target.hasAttribute("data-cast-history-available")).toBe(true);
+    await act(async () => dragEvent(source, "dragend", dataTransfer));
+    expect(target.hasAttribute("data-cast-history-available")).toBe(false);
     expect(adopt).not.toHaveBeenCalled();
-    const action = button("采用此版本", preview);
-    await act(async () => {
-        action.click();
-        action.click();
-    });
+    expect(await dragHistoryImage(source, target, { repeat: true })).toBe(true);
+    expect(document.querySelector(".canvas-image-preview-modal")).toBeNull();
     expect(adopt).toHaveBeenCalledTimes(1);
     expect(adopt).toHaveBeenCalledWith("current", hero.id, { takeId: earlier.imageTakeId, expectedCastRevision: original.revision, expectedImageVersion: original.imageVersion, restyleSegments: true });
     expect(changed).not.toHaveBeenCalled();
@@ -370,7 +430,7 @@ test("翻页读取并采用第 50 条之前的图片，迟到的分页结果不�
         void client.invalidateQueries({ queryKey: dramaKeys.takes("current", "cast", hero.id) });
     });
     await settleUntil(() => Boolean(finishOldPage));
-    await click("采用 V1", panel);
+    expect(await dragHistoryImage(button("放大查看 V1", panel), mainImageTarget())).toBe(true);
     await settleUntil(() => panel.querySelector(".is-current b")?.textContent === "V1");
     await act(async () => finishOldPage());
     expect(panel.querySelectorAll(".is-current")).toHaveLength(1);
@@ -381,7 +441,7 @@ test("翻页读取并采用第 50 条之前的图片，迟到的分页结果不�
 });
 
 for (const status of ["failed", "stale"] as const) {
-    test(`当前主图为 ${status} 时可重新采用唯一的历史图恢复就绪`, async () => {
+    test(`当前主图为 ${status} 时可拖回唯一的历史图恢复就绪`, async () => {
         const take = castHistoryTake(1, hero.imageResourceId!, true);
         const original = { ...hero, imageStatus: status, imageVersion: 1, imageTakeId: status === "stale" ? take.id : undefined };
         const ready = { ...original, imageTakeId: take.id, imageStatus: "ready" as const, imageVersion: 2, revision: 2 };
@@ -394,18 +454,14 @@ for (const status of ["failed", "stale"] as const) {
         }
         await render(<RecoverableCast />);
         const panel = document.querySelector('[aria-label="参考图历史"]')!;
-        await settleUntil(() => Boolean(panel.querySelector('[aria-label="采用 V1"]')));
-        expect(button("采用 V1", panel).disabled).toBe(false);
-        if (status === "failed") {
-            await click("放大查看 V1", panel);
-            await click("采用此版本", document.querySelector(".canvas-image-preview-modal")!);
-        } else await click("采用 V1", panel);
-        await settleUntil(() => !panel.querySelector('[aria-label="采用 V1"]') && document.querySelector('[aria-label="当前参考图"]')?.textContent?.includes("已就绪") === true);
+        await settleUntil(() => Boolean(panel.querySelector('[aria-label="放大查看 V1"]')));
+        expect(await dragHistoryImage(button("放大查看 V1", panel), mainImageTarget())).toBe(true);
+        await settleUntil(() => mainImageTarget().textContent?.includes("已就绪") === true);
         expect(adopt).toHaveBeenCalledWith("current", hero.id, { takeId: take.id, expectedCastRevision: original.revision, expectedImageVersion: 1, restyleSegments: true });
     });
 }
 
-test("预览内采用后关闭预览，迟到的失败提示回到历史列表", async () => {
+test("无来源的文件拖放不切换当前图，版本切换失败后仍可继续拖放", async () => {
     const earlier = castHistoryTake(1, "older-preview-image", false);
     spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [castHistoryTake(2, hero.imageResourceId!, true), earlier], currentResourceId: hero.imageResourceId! });
     spyOn(imageStorage, "resolveImageUrl").mockResolvedValue("https://example.test/preview.png");
@@ -414,14 +470,38 @@ test("预览内采用后关闭预览，迟到的失败提示回到历史列表",
     await render(<DialogHarness castId={hero.id} items={[hero]} />);
     const panel = document.querySelector('[aria-label="参考图历史"]')!;
     await settleUntil(() => Boolean(panel.querySelector('[aria-label="放大查看 V1"]')));
-    await click("放大查看 V1", panel);
-    const preview = document.querySelector(".canvas-image-preview-modal")!;
-    await click("采用此版本", preview);
-    await act(async () => preview.querySelector<HTMLButtonElement>(".ant-modal-close")!.click());
-    await settleUntil(() => !document.querySelector(".canvas-image-preview-modal"));
+    const fileTransfer = new dom.DataTransfer();
+    fileTransfer.items.add(new dom.File(["example"], "local-image.png", { type: "image/png" }));
+    await act(async () => {
+        dragEvent(mainImageTarget(), "dragover", fileTransfer);
+        dragEvent(mainImageTarget(), "drop", fileTransfer);
+    });
+    expect(rejectAdoption).toBeUndefined();
+    expect(await dragHistoryImage(button("放大查看 V1", panel), mainImageTarget())).toBe(true);
     await act(async () => rejectAdoption(new Error("参考图已改变")));
     await settleUntil(() => panel.querySelector('[role="alert"]')?.textContent === "参考图已改变");
-    expect(button("采用 V1", panel).disabled).toBe(false);
+    expect(button("放大查看 V1", panel).getAttribute("draggable")).toBe("true");
+});
+
+test("键盘选择历史图可取消，确认目标后切换主视觉", async () => {
+    const old = castHistoryTake(1, "keyboard-history-image", false);
+    spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [old] });
+    const adopt = spyOn(api, "adoptDramaCastTake").mockResolvedValue({ cast: { ...hero, imageResourceId: old.resourceId }, affectedSegments: 0 });
+    await render(<DialogHarness castId={hero.id} items={[hero]} />);
+    const source = button("放大查看 V1");
+    const target = mainImageTarget();
+    const keyDown = async (element: Element, key: string, shiftKey = false) => {
+        await act(async () => element.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, shiftKey }) as unknown as Event));
+    };
+    expect(source.getAttribute("aria-keyshortcuts")).toBe("Shift+Enter");
+    await keyDown(source, "Enter", true);
+    await keyDown(source, "Escape");
+    await keyDown(target, "Enter");
+    expect(adopt).not.toHaveBeenCalled();
+    await keyDown(source, "Enter", true);
+    await keyDown(target, "Enter");
+    expect(adopt).toHaveBeenCalledWith("current", hero.id, { takeId: old.id, expectedCastRevision: 1, expectedImageVersion: 0, restyleSegments: true });
+    expect(document.querySelector(".canvas-image-preview-modal")).toBeNull();
 });
 
 test("主视觉正在生成时历史图可预览，采用暂不可用", async () => {
@@ -433,17 +513,15 @@ test("主视觉正在生成时历史图可预览，采用暂不可用", async ()
     await render(<DialogHarness castId={hero.id} items={[original]} />);
     const historyPanel = document.querySelector('[aria-label="参考图历史"]')!;
     await settleUntil(() => Boolean(historyPanel.querySelector('[aria-label="放大查看 V1"]')));
-    expect(button("采用 V1", historyPanel).disabled).toBe(true);
+    expect(await dragHistoryImage(button("放大查看 V1", historyPanel), mainImageTarget())).toBe(false);
     await click("放大查看 V1", historyPanel);
     await settleUntil(() => Boolean(document.querySelector(".canvas-image-preview-modal img")));
     const preview = document.querySelector(".canvas-image-preview-modal")!;
-    const action = button("采用此版本", preview);
-    expect(action.disabled).toBe(true);
-    await act(async () => action.click());
+    expect(preview.textContent).not.toContain("采用此版本");
     expect(adopt).not.toHaveBeenCalled();
 });
 
-test("版本列表直接采用沿用待更新设置，失败保留当前图且可重试", async () => {
+test("拖放到主图沿用待更新设置，失败保留当前图且可重试", async () => {
     const original = { ...hero, imageVersion: 2, revision: 7, imageTakeId: "hero-take-2" };
     const old = castHistoryTake(1, "direct-older-image", false);
     const current = castHistoryTake(2, hero.imageResourceId!, true);
@@ -453,10 +531,11 @@ test("版本列表直接采用沿用待更新设置，失败保留当前图且�
         .mockResolvedValue({ cast: { ...original, imageTakeId: old.id, imageResourceId: old.resourceId, revision: 8 }, affectedSegments: 0 });
     await render(<DialogHarness castId={hero.id} items={[original]} />);
     const historyPanel = document.querySelector('[aria-label="参考图历史"]')!;
-    await settleUntil(() => Boolean(historyPanel.querySelector('[aria-label="采用 V1"]')));
+    await settleUntil(() => Boolean(historyPanel.querySelector('[aria-label="放大查看 V1"]')));
+    expect(historyPanel.querySelector('[aria-label="采用 V1"]')).toBeNull();
     expect(historyPanel.querySelector('[aria-label="采用 V2"]')).toBeNull();
     await check("将引用视频标记为待更新", document.querySelector(".drama-cast-dialog")!);
-    await click("采用 V1", historyPanel);
+    expect(await dragHistoryImage(button("放大查看 V1", historyPanel), mainImageTarget())).toBe(true);
     await settleUntil(() => Boolean(historyPanel.querySelector('[role="alert"]')?.textContent?.includes("图像暂不可采用")));
     expect(document.querySelector(".canvas-image-preview-modal")).toBeNull();
     expect(historyPanel.querySelector(".is-current b")?.textContent).toBe("V2");
@@ -469,7 +548,7 @@ test("版本列表直接采用沿用待更新设置，失败保留当前图且�
             { ...old, current: true },
         ],
     });
-    await click("采用 V1", historyPanel);
+    expect(await dragHistoryImage(button("放大查看 V1", historyPanel), mainImageTarget())).toBe(true);
     await settleUntil(() => historyPanel.querySelector(".is-current b")?.textContent === "V1");
     expect(historyPanel.querySelector('[role="alert"]')).toBeNull();
     expect(adopt).toHaveBeenCalledTimes(2);
@@ -2015,6 +2094,32 @@ function independentView(cast: DramaCast, id: string, name: string): CastView {
         takes: [{ id: `${id}-take`, version: 8, kind: "image", resourceId: `${id}-old`, status: "ready", current: false, source: "model", createdAt: "2026-11-15" } as never],
     };
 }
+
+test("多视图弹窗可将历史图拖到其他独立视图", async () => {
+    const front = independentView(hero, "front-view", "正面图");
+    const back = { ...independentView(hero, "back-view", "背面图"), resourceId: undefined, takes: [], status: "idle" };
+    const source = front.takes[0];
+    const updated = { ...back, revision: 5, resourceId: source.resourceId, currentTakeId: "copied", takes: [{ ...source, id: "copied", current: true }], status: "ready" };
+    let views = [front, back];
+    spyOn(viewApi, "listDramaCastViews").mockImplementation(async () => ({ views }));
+    const adopt = spyOn(viewApi, "adoptDramaCastView").mockImplementation(async () => {
+        views = [front, updated];
+        return updated;
+    });
+    await render(<CastEditor projectId="current" cast={hero} looks={[]} ratios={{}} canvasOpening={false} onOpenCanvas={mock()} onChanged={mock()} />);
+    await click("多视图");
+    await settleUntil(() => Boolean(document.querySelector(".drama-cast-views-body .drama-cast-view-card")));
+    const modal = document.querySelector(".drama-cast-views-body")!;
+    const history = modal.querySelector<HTMLDetailsElement>("details")!;
+    history.open = true;
+    const trigger = button("放大查看正面图版本 8", modal);
+    const target = modal.querySelector('[aria-label="背面图当前图片"]')!;
+    expect(modal.textContent).not.toContain("采用此版本");
+    expect(await dragHistoryImage(trigger, target)).toBe(true);
+    expect(adopt).toHaveBeenCalledWith("current", hero.id, back.id, { expectedRevision: 9, viewRevision: 4, takeId: source.id, sourceViewId: front.id });
+    await settleUntil(() => modal.textContent?.includes("已将图片设为「背面图」的当前版本") === true);
+});
+
 for (const target of [hero, room, castFixture("prop", "玉佩", { kind: "prop" }), evening]) {
     test(`${target.parentId ? "look" : target.kind}底部选择联动独立视图配置、预览与版本，再返回主视觉`, async () => {
         const front = independentView(target, "front-view", "正面图");
@@ -2071,12 +2176,83 @@ test("独立视图右侧版本可预览历史原图，关闭后停留在当前�
     expect(onClose).not.toHaveBeenCalled();
     expect(document.querySelector('[aria-label="正面图工作区"]') === workspace).toBe(true);
     expect(document.activeElement === trigger).toBe(true);
-    expect(button("采用此版本", historyPanel)).toBeDefined();
+    expect(historyPanel.textContent).not.toContain("采用此版本");
+    expect(trigger.getAttribute("draggable")).toBe("true");
 });
 
-test("独立视图在当前工作区单独保存、报价后一键生成和采用版本，主体dirty阻止切换", async () => {
+test("主图和独立视图的历史图片可以拖到同一资产的已保存视图", async () => {
+    const mainTake = castHistoryTake(1, hero.imageResourceId!, true);
+    const front = independentView(hero, "front-view", "正面图");
+    const back = { ...independentView(hero, "back-view", "背面图"), resourceId: undefined, takes: [], status: "idle" };
+    const busyView = { ...independentView(hero, "queued-view", "排队视图"), status: "queued" };
+    let views = [front, back, busyView];
+    spyOn(api, "listDramaTakes").mockResolvedValue({ takes: [mainTake], currentResourceId: mainTake.resourceId });
+    spyOn(viewApi, "listDramaCastViews").mockImplementation(async () => ({ views }));
+    const transfer = spyOn(viewApi, "adoptDramaCastView").mockImplementation(async (_projectId, _castId, targetId, input) => {
+        const source = input.sourceViewId ? front.takes[0] : mainTake;
+        const target = views.find((view) => view.id === targetId)!;
+        const copiedTake = { ...source, id: input.sourceViewId ? "copied-front" : "copied-main", status: "ready", current: true };
+        const adopted = { ...target, revision: target.revision + 1, resourceId: source.resourceId, currentTakeId: copiedTake.id, status: "ready", takes: [copiedTake, ...target.takes.map((take) => ({ ...take, current: false }))] };
+        views = views.map((view) => (view.id === adopted.id ? adopted : view));
+        return adopted;
+    });
+    const mainAdopt = spyOn(api, "adoptDramaCastTake").mockResolvedValue({
+        cast: { ...hero, imageResourceId: front.takes[0].resourceId, revision: 2 },
+        affectedSegments: 0,
+    });
+    const generation = spyGeneration();
+    await render(<DialogHarness castId={hero.id} items={[hero]} />);
+    const backTile = button("选择背面图独立视图");
+    const frontTile = button("选择正面图独立视图");
+    const queuedTile = button("选择排队视图独立视图");
+    const newTile = button("添加视图");
+    const mainTile = button("选择主视觉");
+    const mainSource = button("放大查看 V1");
+    const available = "[data-cast-history-available]";
+    const validTargets = [mainImageTarget(), mainTile, frontTile, backTile];
+    expect(document.querySelector(available)).toBeNull();
+    const dataTransfer = new dom.DataTransfer();
+    await act(async () => dragEvent(mainSource, "dragstart", dataTransfer));
+    for (const target of validTargets) expect(target.matches(available)).toBe(true);
+    expect(newTile.matches(available)).toBe(false);
+    expect(queuedTile.matches(available)).toBe(false);
+    await act(async () => expect(dragEvent(backTile, "dragover", dataTransfer)).toBe(true));
+    await act(async () => dragEvent(backTile, "dragleave", dataTransfer));
+    for (const target of validTargets) expect(target.matches(available)).toBe(true);
+    await act(async () => dragEvent(mainSource, "dragend", dataTransfer));
+    expect(document.querySelector(available)).toBeNull();
+    expect(await dragHistoryImage(mainSource, newTile)).toBe(false);
+    expect(await dragHistoryImage(mainSource, queuedTile)).toBe(false);
+    expect(transfer).not.toHaveBeenCalled();
+    const dropTransfer = new dom.DataTransfer();
+    await act(async () => dragEvent(mainSource, "dragstart", dropTransfer));
+    expect(backTile.matches(available)).toBe(true);
+    await act(async () => {
+        expect(dragEvent(backTile, "dragover", dropTransfer)).toBe(true);
+        dragEvent(backTile, "drop", dropTransfer);
+    });
+    expect(document.querySelector(available)).toBeNull();
+    await act(async () => dragEvent(mainSource, "dragend", dropTransfer));
+    expect(transfer).toHaveBeenNthCalledWith(1, "current", hero.id, back.id, { expectedRevision: 9, viewRevision: 4, takeId: mainTake.id, sourceViewId: "" });
+    expect(mainAdopt).not.toHaveBeenCalled();
+    expect(button("选择主视觉").getAttribute("aria-selected")).toBe("true");
+    await settleUntil(() => button("选择背面图独立视图").textContent?.includes("已就绪") === true);
+
+    await click("选择正面图独立视图");
+    const frontSource = button("放大查看正面图版本 8");
+    expect(await dragHistoryImage(frontSource, button("选择背面图独立视图"))).toBe(true);
+    expect(transfer).toHaveBeenNthCalledWith(2, "current", hero.id, back.id, { expectedRevision: 9, viewRevision: 5, takeId: front.takes[0].id, sourceViewId: front.id });
+    await settleUntil(() => views.find((view) => view.id === back.id)?.currentTakeId === "copied-front");
+    expect(button("选择正面图独立视图").getAttribute("aria-selected")).toBe("true");
+    expect(await dragHistoryImage(button("放大查看正面图版本 8"), button("选择主视觉"))).toBe(true);
+    expect(mainAdopt).toHaveBeenCalledWith("current", hero.id, { expectedCastRevision: 1, expectedImageVersion: 0, takeId: front.takes[0].id, sourceViewId: front.id, restyleSegments: true });
+    expectNoGeneration(generation);
+});
+
+test("独立视图在当前工作区单独保存、报价后一键生成和拖回版本，主体dirty阻止切换", async () => {
     let row = independentView(hero, "front-view", "正面图");
-    spyOn(viewApi, "listDramaCastViews").mockImplementation(async () => ({ views: [row] }));
+    const other = { ...independentView(hero, "back-view", "背面图"), status: "queued" };
+    spyOn(viewApi, "listDramaCastViews").mockImplementation(async () => ({ views: [row, other] }));
     const viewSave = spyOn(viewApi, "saveDramaCastView").mockImplementation(async (_project, _cast, _id, input) => {
         row = { ...row, revision: 5, config: input.config };
         return row;
@@ -2092,8 +2268,14 @@ test("独立视图在当前工作区单独保存、报价后一键生成和采�
         scopeHash: "view-scope",
         confirmationToken: "view-token",
     }));
-    const execute = spyOn(viewApi, "executeDramaCastView").mockResolvedValue({ id: "view-task" } as never);
-    const adopt = spyOn(viewApi, "adoptDramaCastView").mockResolvedValue(row);
+    const execute = spyOn(viewApi, "executeDramaCastView").mockImplementation(async () => {
+        row = { ...row, revision: 6, status: "running" };
+        return { id: "view-task" } as never;
+    });
+    const adopt = spyOn(viewApi, "adoptDramaCastView").mockImplementation(async () => {
+        row = { ...row, revision: 7, status: "ready", resourceId: row.takes[0].resourceId, currentTakeId: row.takes[0].id, takes: row.takes.map((take) => ({ ...take, current: true })) };
+        return row;
+    });
     await render(<DialogHarness castId={hero.id} items={[hero]} episodeId="episode-b" />);
     await fill("外貌描述", "主体的未保存修改");
     expect(button("选择正面图独立视图").disabled).toBe(true);
@@ -2110,8 +2292,26 @@ test("独立视图在当前工作区单独保存、报价后一键生成和采�
     expect(execute).not.toHaveBeenCalled();
     await click("生成图片 - 1积分");
     expect(execute).toHaveBeenCalledWith("current", hero.id, row.id, expect.objectContaining({ episodeId: "episode-b", expectedRevision: 9, viewRevision: 5, confirmationToken: "view-token", clientOperationId: expect.stringContaining("cast-view:") }));
-    await click("采用此版本");
-    expect(adopt).toHaveBeenCalledWith("current", hero.id, row.id, { expectedRevision: 9, viewRevision: 5, takeId: row.takes[0].id });
+    await settleUntil(() => button("选择正面特写独立视图").textContent?.includes("生成中") === true && !button("选择正面特写独立视图").disabled);
+    const source = button("放大查看正面特写版本 8");
+    const target = document.querySelector('[aria-label="当前独立视图"]')!;
+    const ownTile = button("选择正面特写独立视图");
+    const otherTile = button("选择背面图独立视图");
+    const available = "[data-cast-history-available]";
+    const dataTransfer = new dom.DataTransfer();
+    await act(async () => dragEvent(source, "dragstart", dataTransfer));
+    expect(target.matches(available)).toBe(true);
+    expect(ownTile.matches(available)).toBe(true);
+    expect(otherTile.matches(available)).toBe(false);
+    await act(async () => {
+        expect(dragEvent(otherTile, "dragover", dataTransfer)).toBe(false);
+        dragEvent(otherTile, "drop", dataTransfer);
+        dragEvent(source, "dragend", dataTransfer);
+    });
+    expect(adopt).not.toHaveBeenCalled();
+    expect(await dragHistoryImage(source, target)).toBe(true);
+    expect(adopt).toHaveBeenCalledWith("current", hero.id, row.id, { expectedRevision: 9, viewRevision: 6, takeId: row.takes[0].id });
+    await settleUntil(() => target.textContent?.includes("已就绪") === true);
 });
 
 test("独立视图连续保存与采用后再保存都使用刷新后的作品和视图版本", async () => {
@@ -2140,7 +2340,7 @@ test("独立视图连续保存与采用后再保存都使用刷新后的作品�
     await settle();
     expect(save.mock.calls[0][3]).toEqual(expect.objectContaining({ expectedRevision: 9, viewRevision: 4 }));
     expect(save.mock.calls[1][3]).toEqual(expect.objectContaining({ expectedRevision: 10, viewRevision: 5 }));
-    await click("采用此版本");
+    expect(await dragHistoryImage(button("放大查看正面图版本 8"), document.querySelector('[aria-label="当前独立视图"]')!)).toBe(true);
     await settle();
     await fill("视图补充提示词", "采用后继续编辑");
     await waitForAutoSave();

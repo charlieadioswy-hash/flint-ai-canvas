@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, Select } from "antd";
 import { Images, Plus, RefreshCw, X } from "lucide-react";
 
@@ -27,6 +27,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { DramaModelPicker, useDramaModelCatalog } from "../drama-model-picker";
 import { MediaThumb } from "../drama-shared";
 import { generationLabel } from "../workflow-generation";
+import { useCastHistoryDrag, type CastHistoryImage } from "./cast-history-drag";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { readCastImageOptions } from "./cast-image-options";
 import { clearCastViewPending, readCastViewPending, writeCastViewPending, type PendingCastView } from "./cast-views-state";
@@ -45,7 +46,21 @@ const DIRECTIONS: { value: CastViewDirection; label: string }[] = [
 const STATUS: Record<string, string> = { idle: "待生成", ready: "已就绪", stale: "设定已更新", queued: "排队中", running: "生成中", succeeded: "已完成", failed: "生成失败", cancelled: "已取消" };
 type Props = { projectId: string; episodeId?: string; cast: DramaCast; disabled: boolean; onChanged: () => void; preview?: boolean };
 type CastViewSubmission = { submitted: boolean; message?: string };
-type Workspace = { renderMain: (selector: ReactNode) => ReactNode; onDirtyChange?: (dirty: boolean, busy: boolean) => void };
+type Workspace = {
+    renderMain: (selector: ReactNode, viewBusy: boolean) => ReactNode;
+    onDropOnMain: (source: CastHistoryImage) => void;
+    mainDropDisabled: boolean;
+    mainDropPending: boolean;
+    onDirtyChange?: (dirty: boolean, busy: boolean) => void;
+};
+
+function castViewGenerating(row: CastView) {
+    return row.status === "queued" || row.status === "running" || row.takes.some((take) => take.status === "queued" || take.status === "running");
+}
+
+function castViewTakeReady(take: CastView["takes"][number]) {
+    return Boolean(take.resourceId) && ["ready", "succeeded"].includes(take.status);
+}
 
 export function CastViewWorkspace(props: Props & Workspace) {
     const userId = useUserStore((state) => state.user?.id || "");
@@ -99,12 +114,14 @@ export function CastViews(props: Props) {
 
 function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onClose, userId, workspace }: Props & { userId: string; onClose: () => void; workspace?: Workspace }) {
     const { modal } = App.useApp();
+    const queryClient = useQueryClient();
+    const historyDrag = useCastHistoryDrag();
     const operation = useDramaOperationScope(projectId);
     const queryKey = ["drama-cast-views", userId, projectId, cast.id];
     const query = useQuery({
         queryKey,
         queryFn: ({ signal }) => listDramaCastViews(projectId, cast.id, signal),
-        refetchInterval: (value) => (value.state.data?.views.some((row) => ["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status))) ? 3000 : false),
+        refetchInterval: (value) => (value.state.data?.views.some(castViewGenerating) ? 3000 : false),
     });
     const summary = useQuery({ queryKey: dramaKeys.summary(projectId), queryFn: ({ signal }) => getDrama(projectId, signal) });
     const [quoteEpoch, setQuoteEpoch] = useState(0);
@@ -136,7 +153,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         setPreview({ resourceId, label });
     };
     useEffect(() => {
-        if (workspace && selected) stateChange.current?.(editorState.dirty, Boolean(busy) || editorState.busy);
+        if (workspace && selected) stateChange.current?.(editorState.dirty, Boolean(busy) || editorState.busy || workspace.mainDropPending);
     }, [workspace, selected, editorState, busy]);
     useEffect(() => {
         if (workspace && selected && selected !== "new" && query.isSuccess && !selectedRow) {
@@ -148,7 +165,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         }
     }, [workspace, selected, selectedRow, query.isSuccess]);
     useEffect(() => {
-        if (!workspace || !selectedRow || selected === "new" || editorState.dirty || editorState.busy || busy || revision === undefined) return;
+        if (!workspace || !selectedRow || selected === "new" || editorState.dirty || editorState.busy || busy || workspace.mainDropPending || revision === undefined) return;
         if (workspaceEditor?.row?.revision !== selectedRow.revision || workspaceEditor.expectedRevision !== revision || workspaceEditor.castRevision !== cast.revision)
             setWorkspaceEditor({ row: selectedRow, expectedRevision: revision, castRevision: cast.revision });
     }, [workspace, selected, selectedRow, editorState.dirty, editorState.busy, busy, revision, cast.revision, workspaceEditor]);
@@ -221,6 +238,60 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         });
         return result;
     };
+    const dropBlocked = blocked || editorState.dirty || editorState.busy || Boolean(editor) || revision === undefined;
+    const viewDropBlocked = (row: CastView, source = historyDrag.source) => dropBlocked || (castViewGenerating(row) && source?.sourceViewId !== row.id);
+    const adoptHistory = (row: CastView, source: CastHistoryImage) => {
+        if (revision === undefined || viewDropBlocked(row, source)) return;
+        if (source.sourceViewId === row.id && source.takeId === row.currentTakeId && row.status === "ready") return;
+        void run(`adopt:${row.id}`, async (ticket) => {
+            setNotice("");
+            const sourceViewId = source.sourceViewId === row.id ? undefined : (source.sourceViewId ?? "");
+            let updated: CastView;
+            try {
+                updated = await adoptDramaCastView(projectId, cast.id, row.id, {
+                    expectedRevision: revision,
+                    viewRevision: row.revision,
+                    takeId: source.takeId,
+                    ...(sourceViewId === undefined ? {} : { sourceViewId }),
+                });
+            } catch (reason) {
+                if (operation.isCurrent(ticket) && reason instanceof ApiError && [reason.status, reason.code].includes(409)) {
+                    await Promise.all([query.refetch(), summary.refetch()]);
+                }
+                throw reason;
+            }
+            if (!operation.isCurrent(ticket)) return;
+            await queryClient.cancelQueries({ queryKey, exact: true });
+            if (!operation.isCurrent(ticket)) return;
+            queryClient.setQueryData<{ views: CastView[] }>(queryKey, (data) => data && { ...data, views: data.views.map((item) => (item.id === updated.id && item.revision <= updated.revision ? updated : item)) });
+            await refresh(ticket, `已将图片设为「${row.config.name}」的当前版本`);
+        });
+    };
+    const renderHistory = (row: CastView) => (
+        <div className="drama-cast-view-history">
+            {row.takes.map((take) => (
+                <div key={take.id}>
+                    {take.resourceId ? (
+                        <button
+                            type="button"
+                            className="drama-cast-view-history-preview"
+                            aria-label={`放大查看${row.config.name}版本 ${take.version}`}
+                            {...historyDrag.sourceProps({ takeId: take.id, sourceViewId: row.id }, dropBlocked || !castViewTakeReady(take))}
+                            onClick={(event) => openPreview(event.currentTarget, take.resourceId, `${row.config.name}版本 ${take.version}`)}
+                        >
+                            <MediaThumb resourceId={take.resourceId} alt="" />
+                        </button>
+                    ) : null}
+                    <span>
+                        版本 {take.version} · {STATUS[take.status] || take.status}
+                        {take.current ? " · 当前使用" : ""}
+                    </span>
+                    {take.error ? <p role="alert">{take.error}</p> : null}
+                </div>
+            ))}
+        </div>
+    );
+    const imagePreview = preview && <CanvasImagePreview storageKey={`resource:${preview.resourceId}`} alt={preview.label} onClose={() => setPreview(undefined)} />;
     if (workspace) {
         const select = (id?: string, discard = false) => {
             if (disabled || busy || editorState.busy || id === selected) return;
@@ -247,12 +318,29 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
         const selector = (
             <section className="drama-cast-views" aria-label="选择主视觉或独立视图">
                 <div className="drama-cast-view-strip" role="tablist" aria-label="主视觉与独立视图">
-                    <button type="button" role="tab" aria-label="选择主视觉" aria-selected={!selected} disabled={disabled || Boolean(busy) || editorState.busy} onClick={() => select()}>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-label="选择主视觉"
+                        aria-selected={!selected}
+                        disabled={disabled || Boolean(busy) || editorState.busy}
+                        onClick={() => select()}
+                        {...historyDrag.targetProps(workspace.onDropOnMain, dropBlocked || workspace.mainDropDisabled)}
+                    >
                         {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt="主视觉" /> : <Images className="size-5" />}
                         <strong>主视觉</strong>
                     </button>
                     {(query.data?.views || []).map((row) => (
-                        <button type="button" role="tab" aria-label={`选择${row.config.name}独立视图`} key={row.id} aria-selected={selected === row.id} disabled={disabled || Boolean(busy) || editorState.busy} onClick={() => select(row.id)}>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-label={`选择${row.config.name}独立视图`}
+                            key={row.id}
+                            aria-selected={selected === row.id}
+                            disabled={disabled || Boolean(busy) || editorState.busy}
+                            onClick={() => select(row.id)}
+                            {...historyDrag.targetProps((source) => adoptHistory(row, source), viewDropBlocked(row))}
+                        >
                             {row.resourceId ? <MediaThumb resourceId={row.resourceId} alt={row.config.name} /> : <Images className="size-5" />}
                             <strong>{row.config.name}</strong>
                             <small>{STATUS[row.status] || row.status}</small>
@@ -307,9 +395,11 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 ) : null}
             </section>
         );
-        if (!selected) return workspace.renderMain(selector);
+        if (!selected) return workspace.renderMain(selector, Boolean(busy));
         const row = selectedRow;
-        const active = row && (["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status)));
+        const active = Boolean(row && castViewGenerating(row));
+        const previewResource = row?.resourceId;
+        const viewDropDisabled = !row || viewDropBlocked(row);
         return (
             <div className="drama-editor is-workspace is-view" aria-label={`${row?.config.name || "新建独立视图"}工作区`}>
                 <section className="drama-editor-settings thin-scrollbar" aria-label="独立视图配置">
@@ -326,7 +416,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                             row={workspaceEditor.row}
                             expectedRevision={workspaceEditor.expectedRevision ?? revision}
                             inline
-                            disabled={Boolean(busy) || Boolean(active) || Boolean(pending) || summary.isError || query.isError}
+                            disabled={Boolean(busy) || active || Boolean(pending) || workspace.mainDropPending || summary.isError || query.isError}
                             onGenerate={execute}
                             onDirtyChange={(dirty, busy) => setEditorState((previous) => (previous.dirty === dirty && previous.busy === busy ? previous : { dirty, busy }))}
                             onClose={(discard) => select(undefined, discard)}
@@ -346,22 +436,25 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                         <p role="alert">已保存版本发生变化，当前草稿已保留。切换后重新载入再编辑，避免覆盖其他修改。</p>
                     ) : null}
                 </section>
-                <section className="drama-editor-preview" aria-label="当前独立视图">
+                <section
+                    className="drama-editor-preview"
+                    aria-label="当前独立视图"
+                    tabIndex={historyDrag.keyboardActive && !viewDropDisabled ? 0 : undefined}
+                    {...historyDrag.targetProps((source) => {
+                        if (row) adoptHistory(row, source);
+                    }, viewDropDisabled)}
+                >
                     <div className="drama-editor-workspace-heading">
                         <h3>{row?.config.name || "新建独立视图"}</h3>
                         <span>{row ? STATUS[row.status] || row.status : "填写名称后自动保存"}</span>
                     </div>
-                    <button
-                        type="button"
-                        className="drama-cast-hero drama-cast-view-preview"
-                        disabled={!row?.resourceId}
-                        aria-label={`放大查看${row?.config.name || "视图"}`}
-                        onClick={(event) => {
-                            if (row?.resourceId) openPreview(event.currentTarget, row.resourceId, row.config.name);
-                        }}
-                    >
-                        {row?.resourceId ? <MediaThumb resourceId={row.resourceId} alt={row.config.name} /> : <span>{row ? STATUS[row.status] || row.status : "尚无图片"}</span>}
-                    </button>
+                    {row && previewResource ? (
+                        <button type="button" className="drama-cast-hero drama-cast-view-preview" aria-label={`放大查看${row.config.name}`} onClick={(event) => openPreview(event.currentTarget, previewResource, row.config.name)}>
+                            <MediaThumb resourceId={previewResource} alt={row.config.name} />
+                        </button>
+                    ) : (
+                        <div className="drama-cast-hero grid place-items-center text-muted-foreground">{row ? STATUS[row.status] || row.status : "尚无图片"}</div>
+                    )}
                     {row?.error ? <p role="alert">{row.error}</p> : null}
                 </section>
                 <div className="drama-editor-actions">
@@ -399,45 +492,14 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                     <div className="drama-editor-workspace-heading">
                         <h3>{row?.config.name || "独立视图"} · 版本记录</h3>
                     </div>
-                    {row?.takes.length ? (
-                        <div className="drama-cast-view-history">
-                            {row.takes.map((take) => (
-                                <div key={take.id}>
-                                    {take.resourceId ? (
-                                        <button
-                                            type="button"
-                                            className="drama-cast-view-history-preview"
-                                            aria-label={`放大查看${row.config.name}版本 ${take.version}`}
-                                            onClick={(event) => openPreview(event.currentTarget, take.resourceId, `${row.config.name}版本 ${take.version}`)}
-                                        >
-                                            <MediaThumb resourceId={take.resourceId} alt="" />
-                                        </button>
-                                    ) : null}
-                                    <span>
-                                        版本 {take.version} · {STATUS[take.status] || take.status}
-                                        {take.current ? " · 当前使用" : ""}
-                                    </span>
-                                    {take.error ? <p role="alert">{take.error}</p> : null}
-                                    <Button
-                                        disabled={blocked || editorState.dirty || editorState.busy || !take.resourceId || take.current || !["ready", "succeeded"].includes(take.status) || revision === undefined}
-                                        onClick={() =>
-                                            void run(`adopt:${take.id}`, async (ticket) => {
-                                                if (revision === undefined) return;
-                                                await adoptDramaCastView(projectId, cast.id, row.id, { expectedRevision: revision, viewRevision: row.revision, takeId: take.id });
-                                                await refresh(ticket, "已采用该视图历史图片");
-                                            })
-                                        }
-                                    >
-                                        采用此版本
-                                    </Button>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <p role="status">暂无版本记录</p>
-                    )}
+                    {row?.takes.some(castViewTakeReady) ? (
+                        <p className="drama-editor-note" aria-live="polite">
+                            {historyDrag.keyboardActive ? "按 Tab 选择目标，再按 Enter 确认" : "拖到主视图或已创建的视图"}
+                        </p>
+                    ) : null}
+                    {row?.takes.length ? renderHistory(row) : <p role="status">暂无版本记录</p>}
                 </aside>
-                {preview && row ? <CanvasImagePreview storageKey={`resource:${preview.resourceId}`} alt={preview.label} onClose={() => setPreview(undefined)} /> : null}
+                {row && imagePreview}
             </div>
         );
     }
@@ -455,7 +517,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
             rootClassName="drama-root"
         >
             <div className="drama-cast-views-body">
-                <p>为角色、造型、场景或道具保存独立视图。每个视图单独生成、保留历史，采用结果只更新该视图。</p>
+                <p aria-live="polite">{historyDrag.keyboardActive ? "按 Tab 选择目标，再按 Enter 确认" : "把历史图片拖到已创建的视图，设为当前版本。"}</p>
                 <div className="drama-cast-views-actions">
                     <Button
                         icon={<Plus className="size-4" />}
@@ -499,10 +561,18 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                 {!query.isPending && !query.isError && !query.data?.views.length ? <p>还没有独立视图，点击“新增视图”填写名称并选择方向。</p> : null}
                 <div className="drama-cast-views-grid">
                     {(query.data?.views || []).map((row) => {
-                        const active = ["queued", "running"].includes(row.status) || row.takes.some((take) => ["queued", "running"].includes(take.status));
+                        const active = castViewGenerating(row);
+                        const viewDropDisabled = viewDropBlocked(row);
                         return (
                             <article key={row.id} className="drama-cast-view-card">
-                                <div className="drama-cast-view-image">{row.resourceId ? <MediaThumb resourceId={row.resourceId} alt={`${row.config.name}当前图片`} /> : <span>{STATUS[row.status] || "待生成"}</span>}</div>
+                                <div
+                                    className="drama-cast-view-image"
+                                    aria-label={`${row.config.name}当前图片`}
+                                    tabIndex={historyDrag.keyboardActive && !viewDropDisabled ? 0 : undefined}
+                                    {...historyDrag.targetProps((source) => adoptHistory(row, source), viewDropDisabled)}
+                                >
+                                    {row.resourceId ? <MediaThumb resourceId={row.resourceId} alt="" /> : <span>{STATUS[row.status] || "待生成"}</span>}
+                                </div>
                                 <div className="drama-cast-views-actions">
                                     <strong>{row.config.name}</strong>
                                     <span>
@@ -559,31 +629,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                                 </div>
                                 <details>
                                     <summary>历史结果（{row.takes.length}）</summary>
-                                    <div className="drama-cast-view-history">
-                                        {row.takes.map((take) => (
-                                            <div key={take.id}>
-                                                {take.resourceId ? <MediaThumb resourceId={take.resourceId} alt={`${row.config.name}版本${take.version}`} /> : null}
-                                                <span>
-                                                    版本 {take.version} · {STATUS[take.status] || take.status}
-                                                    {take.current ? " · 当前使用" : ""}
-                                                </span>
-                                                {take.error ? <p role="alert">{take.error}</p> : null}
-                                                <Button
-                                                    size="small"
-                                                    disabled={blocked || !take.resourceId || take.current || !["ready", "succeeded"].includes(take.status) || revision === undefined}
-                                                    onClick={() =>
-                                                        void run(`adopt:${take.id}`, async (ticket) => {
-                                                            if (revision === undefined) return;
-                                                            await adoptDramaCastView(projectId, cast.id, row.id, { expectedRevision: revision, viewRevision: row.revision, takeId: take.id });
-                                                            await refresh(ticket, "已采用该视图历史图片");
-                                                        })
-                                                    }
-                                                >
-                                                    采用此版本
-                                                </Button>
-                                            </div>
-                                        ))}
-                                    </div>
+                                    {renderHistory(row)}
                                 </details>
                             </article>
                         );
@@ -607,6 +653,7 @@ function CastViewsSession({ projectId, episodeId, cast, disabled, onChanged, onC
                         }}
                     />
                 ) : null}
+                {imagePreview}
             </div>
         </AppModal>
     );

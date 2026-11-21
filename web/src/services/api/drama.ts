@@ -1042,7 +1042,7 @@ export function setDramaCastImage(projectId: string, castId: string, resourceId:
 }
 
 /** 采用该主体的历史参考图，保留原版本和锁定状态。 */
-export function adoptDramaCastTake(projectId: string, castId: string, input: { takeId: string; expectedCastRevision: number; expectedImageVersion: number; restyleSegments: boolean }) {
+export function adoptDramaCastTake(projectId: string, castId: string, input: { takeId: string; sourceViewId?: string; expectedCastRevision: number; expectedImageVersion: number; restyleSegments: boolean }) {
     return http.put<{ cast: DramaCast; affectedSegments: number; unchanged?: boolean }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image`, input);
 }
 

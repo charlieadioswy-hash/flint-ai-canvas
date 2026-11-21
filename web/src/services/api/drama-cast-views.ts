@@ -30,5 +30,5 @@ export const quoteDramaCastViewDraft = (projectId: string, castId: string, viewI
 export const deleteDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.deleteWithBody<{ deleted: boolean }>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}`, input);
 export const preflightDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.post<CastViewPreflight>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}/preflight`, input);
 export const executeDramaCastView = (projectId: string, castId: string, viewId: string, input: CastViewAction) => http.post<GenerationTask>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}/execute`, input);
-export const adoptDramaCastView = (projectId: string, castId: string, viewId: string, input: { expectedRevision: number; viewRevision: number; takeId: string }) =>
+export const adoptDramaCastView = (projectId: string, castId: string, viewId: string, input: { expectedRevision: number; viewRevision: number; takeId: string; sourceViewId?: string }) =>
     http.post<CastView>(`${path(projectId, castId)}/${encodeURIComponent(viewId)}/adopt`, input);

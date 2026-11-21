@@ -399,6 +399,7 @@ type SetDramaCastImageRequest struct {
 	RestyleSegments bool   `json:"restyleSegments"`
 	// TakeID 与 ResourceID、Source、TaskID 互斥。采用历史版本时需提交当前资产修订号和图片版本。
 	TakeID               string `json:"takeId"`
+	SourceViewID         string `json:"sourceViewId,omitempty"`
 	ExpectedCastRevision *int64 `json:"expectedCastRevision"`
 	ExpectedImageVersion *int   `json:"expectedImageVersion"`
 	// Source 为 canvas 表示从精修画布采用，版本记录标为“来自画布”；空串或 upload 为直接上传。

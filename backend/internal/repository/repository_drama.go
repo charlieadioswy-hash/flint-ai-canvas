@@ -603,9 +603,10 @@ func (r *Repository) DramaShot(projectID string, id string) (*model.DramaShot, e
 }
 
 func (r *Repository) CreateDramaTake(take *model.DramaTake) error {
-	if take.TaskID != "" {
+	// 同一次生成只入库一次。拖入视图的历史记录按原始版本区分，任务 ID 只记录来源。
+	if take.TaskID != "" && take.OriginTakeID == "" {
 		var count int64
-		if err := r.db.Model(&model.DramaTake{}).Where("task_id = ? AND owner_id = ? AND kind = ?", take.TaskID, take.OwnerID, take.Kind).Count(&count).Error; err != nil {
+		if err := r.db.Model(&model.DramaTake{}).Where("task_id = ? AND owner_id = ? AND kind = ? AND (origin_take_id IS NULL OR origin_take_id = '')", take.TaskID, take.OwnerID, take.Kind).Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {

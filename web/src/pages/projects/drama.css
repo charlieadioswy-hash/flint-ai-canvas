@@ -11,6 +11,8 @@
     --drama-warn: var(--status-warning);
     --drama-err: var(--status-error);
     --drama-run: var(--workspace-accent);
+    --drama-view-thumb-width: 80px;
+    --drama-view-thumb-height: 64px;
     color: var(--foreground);
 }
 
@@ -2541,9 +2543,25 @@
     text-align: start;
     cursor: zoom-in;
 }
-.drama-take-adopt {
-    flex: none;
-    margin-inline-start: auto;
+.drama-editor [draggable="true"]:is(.drama-take-preview, .drama-cast-view-history-preview) {
+    cursor: grab;
+    user-select: none;
+}
+.drama-editor [draggable="true"] img {
+    -webkit-user-drag: none;
+}
+:is(.drama-editor, .drama-cast-views-body) [data-cast-history-target] {
+    outline: 2px solid var(--drama-run);
+    outline-offset: -2px;
+}
+:is(.drama-editor, .drama-cast-views-body) [data-cast-history-target]:focus-visible {
+    outline: 3px solid var(--drama-run);
+    outline-offset: 2px;
+}
+:is(.drama-editor, .drama-cast-views-body) [data-cast-history-available]:not(.drama-editor-preview),
+.drama-editor-preview[data-cast-history-available] > .drama-cast-hero {
+    outline: 2px solid var(--drama-ok);
+    outline-offset: -2px;
 }
 .drama-takes-list b {
     font-variant-numeric: tabular-nums;

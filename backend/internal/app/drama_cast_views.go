@@ -5,11 +5,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 type DramaCastViewSaveRequest struct {
@@ -32,6 +35,8 @@ type DramaCastViewAdoptRequest struct {
 	ExpectedRevision *int64 `json:"expectedRevision"`
 	ViewRevision     *int64 `json:"viewRevision"`
 	TakeID           string `json:"takeId"`
+	// 空字符串表示主视图，省略时使用目标独立视图的历史。
+	SourceViewID *string `json:"sourceViewId,omitempty"`
 }
 
 type DramaCastViewTake struct {
@@ -250,7 +255,7 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 	episodeID := ""
 	for _, take := range takes {
 		result := DramaCastViewTake{DramaTake: take, Status: "ready"}
-		if take.TaskID != "" {
+		if take.OriginTakeID == "" && take.TaskID != "" && (take.ResourceID == "" || take.TaskID == row.TaskID) {
 			task, err := s.repo.TaskForUser(userID, take.TaskID)
 			if err != nil {
 				return DramaCastViewResult{}, err
@@ -289,11 +294,22 @@ func (s *Service) DramaCastView(userID, projectID, castID, viewID string) (Drama
 	if err != nil {
 		return DramaCastViewResult{}, err
 	}
+	if row.CurrentTakeID != "" && !slices.ContainsFunc(results, func(take DramaCastViewTake) bool {
+		return take.ID == row.CurrentTakeID
+	}) {
+		take, err := s.repo.DramaCastViewTake(projectID, viewID, row.CurrentTakeID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return DramaCastViewResult{}, err
+		}
+		if take != nil && take.ResourceID != "" && take.ResourceID == row.ResourceID {
+			results = append(results, DramaCastViewTake{DramaTake: *take, Status: "ready"})
+		}
+	}
 	view := DramaCastViewResult{DramaCastView: *row, Config: config, Takes: results}
 	for i := range view.Takes {
 		take := &view.Takes[i]
 		take.Current = take.ID == row.CurrentTakeID && take.ResourceID == row.ResourceID && row.ResourceID != ""
-		if take.TaskID == row.TaskID && row.TaskID != "" {
+		if take.OriginTakeID == "" && row.TaskID != "" && take.TaskID == row.TaskID {
 			view.Status, view.Error = take.Status, take.Error
 			if take.Status == "ready" && !take.Current {
 				view.Status = "stale"

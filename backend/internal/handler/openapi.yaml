@@ -5168,6 +5168,33 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+  /dramas/{id}/cast/{castId}/views/{viewId}/adopt:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - { in: path, name: castId, required: true, schema: { type: string } }
+      - { in: path, name: viewId, required: true, schema: { type: string } }
+    post:
+      tags: [dramas]
+      summary: 将历史图片设为独立视图的当前版本
+      description: 来源和目标须属于同一主体。跨视图使用同一图片资源并将其登记到目标历史。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [takeId, expectedRevision, viewRevision]
+              properties:
+                takeId: { type: string, minLength: 1 }
+                expectedRevision: { type: integer, format: int64 }
+                viewRevision: { type: integer, format: int64 }
+                sourceViewId: { type: string, description: 省略时读取目标视图历史，空字符串读取主视图历史，其他值指定来源独立视图 }
+      responses:
+        "200": { description: 更新后的独立视图 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /dramas/{id}/takes:
     get:
       tags: [dramas]
@@ -5240,6 +5267,7 @@ paths:
                   required: [takeId, expectedCastRevision, expectedImageVersion]
                   properties:
                     takeId: { type: string, minLength: 1 }
+                    sourceViewId: { type: string, minLength: 1, description: 同一主体的来源独立视图 ID，省略时读取主视图历史 }
                     expectedCastRevision: { type: integer, format: int64 }
                     expectedImageVersion: { type: integer }
                     restyleSegments: { type: boolean, description: 将引用变更后参考图的已有段视频标为待更新 }

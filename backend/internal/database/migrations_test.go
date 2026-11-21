@@ -56,6 +56,35 @@ func TestMigrateSchemaV123PreservesExistingDramaCastImage(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaV124PreservesExistingDramaTake(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-drama-take-origin?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropColumn(&model.DramaTake{}, "OriginTakeID"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("version = ?", 124).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO drama_takes (id, project_id, owner_id, kind, version, resource_id, task_id, prompt) VALUES ('old-take', 'project', 'view', 'cast_view', 12, 'image', 'task', '原提示词')").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("upgrade from v123: %v", err)
+	}
+	var take model.DramaTake
+	if err := db.First(&take, "id = ?", "old-take").Error; err != nil {
+		t.Fatal(err)
+	}
+	if take.OriginTakeID != "" || take.OwnerID != "view" || take.ResourceID != "image" || take.TaskID != "task" || take.Version != 12 || take.Prompt != "原提示词" {
+		t.Fatalf("migration changed the existing take: %+v", take)
+	}
+}
+
 type channelModelProtocolV58 struct {
 	ID       string `gorm:"primaryKey;size:36"`
 	Protocol string `gorm:"size:32;index"`

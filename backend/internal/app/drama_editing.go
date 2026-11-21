@@ -523,6 +523,9 @@ func (s *Service) SetDramaCastImage(userID, projectID, castID string, req SetDra
 	if takeID := strings.TrimSpace(req.TakeID); takeID != "" {
 		return s.adoptDramaCastImageTake(userID, project.ID, castID, takeID, req)
 	}
+	if strings.TrimSpace(req.SourceViewID) != "" {
+		return nil, BadAuthRequest("请指定要采用的历史版本")
+	}
 	if err := requireDramaGuideComplete(productionRow); err != nil {
 		return nil, err
 	}
@@ -628,27 +631,25 @@ func (s *Service) adoptDramaCastImageTake(userID, projectID, castID, takeID stri
 					return dramaGuideConflict("资产图片正在生成或排队，请完成后再采用历史版本")
 				}
 			}
-			take, err := tx.DramaCastTake(projectID, cast.ID, takeID)
+			sourceViewID := strings.TrimSpace(req.SourceViewID)
+			take, err := dramaAssetImageTake(tx, projectID, cast.ID, sourceViewID, takeID)
 			if err != nil {
-				return dramaLookupError(err)
+				return err
 			}
-			if err := tx.LockDramaCastImageReferences(userID, []string{take.ResourceID}); err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return BadAuthRequest("历史版本的图片不存在或无权使用")
+			if err := requireDramaAssetImageTakeReady(tx, userID, *take); err != nil {
+				return err
+			}
+			createTake := false
+			if sourceViewID != "" {
+				take, createTake, err = dramaAssetImageTakeForTarget(tx, *take, cast.ID, "cast")
+				if err != nil {
+					return err
 				}
-				return err
 			}
-			resource, err := tx.ResourceForUser(userID, take.ResourceID)
-			if err != nil {
-				return err
-			}
-			if resource.Status != model.ResourceStatusReady || !strings.HasPrefix(resource.MimeType, "image/") {
-				return BadAuthRequest("只能采用已就绪的历史图片")
-			}
-			if cast.ImageResourceID == resource.ID && cast.ImageStatus == model.DramaMediaReady {
+			if !createTake && cast.ImageResourceID == take.ResourceID && cast.ImageStatus == model.DramaMediaReady {
 				currentID := cast.ImageTakeID
 				if currentID == "" {
-					current, err := tx.LatestDramaResourceTake(projectID, cast.ID, "cast", resource.ID)
+					current, err := tx.LatestDramaResourceTake(projectID, cast.ID, "cast", take.ResourceID)
 					if err != nil {
 						return err
 					}
@@ -662,9 +663,14 @@ func (s *Service) adoptDramaCastImageTake(userID, projectID, castID, takeID stri
 			if cast.Revision != *req.ExpectedCastRevision || cast.ImageVersion != *req.ExpectedImageVersion {
 				return dramaGuideConflict("资产或参考图已改变，请刷新后重新采用")
 			}
-			imageChanged := cast.ImageResourceID != resource.ID || cast.ImageStatus != model.DramaMediaReady
-			if cast.ImageResourceID != resource.ID {
+			imageChanged := cast.ImageResourceID != take.ResourceID || cast.ImageStatus != model.DramaMediaReady
+			if cast.ImageResourceID != take.ResourceID {
 				if err := tx.PreserveDramaCastImage(*cast); err != nil {
+					return err
+				}
+			}
+			if createTake {
+				if err := tx.CreateDramaTake(take); err != nil {
 					return err
 				}
 			}

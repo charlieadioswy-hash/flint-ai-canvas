@@ -8,6 +8,7 @@ import { formatRelativeTime } from "@/lib/relative-time";
 import { listDramaTakes, type DramaTake, type DramaTakeKind, type DramaTakeSource } from "@/services/api/drama";
 
 import { MediaThumb } from "../drama-shared";
+import type { useCastHistoryDrag } from "./cast-history-drag";
 
 const SOURCE_LABEL: Record<DramaTakeSource, string> = { pipeline: "生成", upload: "上传", canvas: "来自画布" };
 
@@ -19,7 +20,7 @@ export function DramaTakeList({
     limit = 6,
     showHeading = true,
     onPreviewImage,
-    imageAdoption,
+    imageDrag,
 }: {
     projectId: string;
     ownerId: string;
@@ -27,7 +28,7 @@ export function DramaTakeList({
     limit?: number;
     showHeading?: boolean;
     onPreviewImage?: (take: DramaTake) => void;
-    imageAdoption?: { onAdopt: (take: DramaTake) => void; restoreCurrent: boolean; disabled: boolean; pendingId?: string; error?: string };
+    imageDrag?: { sourceProps: (take: DramaTake) => ReturnType<ReturnType<typeof useCastHistoryDrag>["sourceProps"]>; error?: string };
 }) {
     const [expanded, setExpanded] = useState(false);
     const query = useQuery({
@@ -101,17 +102,12 @@ export function DramaTakeList({
                         return (
                             <li key={take.id} className={take.current ? "is-current" : undefined}>
                                 {castImage && onPreviewImage ? (
-                                    <button type="button" className="drama-take-preview" aria-label={label} aria-haspopup="dialog" title={label} onClick={() => onPreviewImage(take)}>
+                                    <button type="button" className="drama-take-preview" aria-label={label} aria-haspopup="dialog" title={label} onClick={() => onPreviewImage(take)} {...imageDrag?.sourceProps(take)}>
                                         {content}
                                     </button>
                                 ) : (
                                     content
                                 )}
-                                {castImage && imageAdoption && (!take.current || imageAdoption.restoreCurrent) ? (
-                                    <Button type="link" size="small" className="drama-take-adopt" aria-label={`采用 V${version}`} disabled={imageAdoption.disabled} loading={imageAdoption.pendingId === take.id} onClick={() => imageAdoption.onAdopt(take)}>
-                                        采用
-                                    </Button>
-                                ) : null}
                             </li>
                         );
                     })}
@@ -142,9 +138,9 @@ export function DramaTakeList({
                 </Button>
             ) : null}
             {!status && hasOlderTakes && !canExpand ? <p className="drama-takes-more">另有 {takes.length - limit} 个更早的版本</p> : null}
-            {imageAdoption?.error ? (
+            {imageDrag?.error ? (
                 <p className="drama-sg-note is-warn" role="alert">
-                    {imageAdoption.error}
+                    {imageDrag.error}
                 </p>
             ) : null}
         </section>

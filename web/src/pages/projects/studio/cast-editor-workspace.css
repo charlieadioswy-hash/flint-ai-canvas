@@ -277,8 +277,8 @@
 }
 
 .drama-editor.is-workspace .drama-cast-view-strip > button[role="tab"] img {
-    width: 80px;
-    height: 64px;
+    width: var(--drama-view-thumb-width);
+    height: var(--drama-view-thumb-height);
     object-fit: contain;
 }
 

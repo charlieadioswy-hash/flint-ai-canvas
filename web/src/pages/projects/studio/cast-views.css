@@ -72,6 +72,11 @@
     outline-offset: 2px;
 }
 
+.drama-cast-views-body .drama-cast-view-history-preview[draggable="true"] {
+    cursor: grab;
+    user-select: none;
+}
+
 .drama-cast-view-form {
     border: 0;
     padding: 0;

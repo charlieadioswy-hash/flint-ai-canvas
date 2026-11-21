@@ -260,18 +260,19 @@ type DramaReferenceImage struct {
 	Name       string `json:"name"`
 }
 
-// DramaTake 保存每个产物的全部版本：角色/场景参考图（cast）、剧情段视频（video）与成片（final）。
+// DramaTake 保存每个产物的全部版本，包括主图、独立视图、段视频与成片。
 type DramaTake struct {
-	ID         string    `json:"id" gorm:"primaryKey;size:36"`
-	ProjectID  string    `json:"projectId" gorm:"index;size:36"`
-	OwnerID    string    `json:"ownerId" gorm:"size:36;index:idx_drama_takes_owner_kind,priority:1"`
-	Kind       string    `json:"kind" gorm:"size:16;index:idx_drama_takes_owner_kind,priority:2"`
-	Version    int       `json:"version"`
-	ResourceID string    `json:"resourceId" gorm:"size:36"`
-	TaskID     string    `json:"taskId" gorm:"size:36"`
-	Prompt     string    `json:"prompt" gorm:"type:text"`
-	DurationMs int64     `json:"durationMs"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID           string    `json:"id" gorm:"primaryKey;size:36"`
+	OriginTakeID string    `json:"-" gorm:"size:36"` // 跨视图时记录最初的版本，原始记录留空。
+	ProjectID    string    `json:"projectId" gorm:"index;size:36"`
+	OwnerID      string    `json:"ownerId" gorm:"size:36;index:idx_drama_takes_owner_kind,priority:1"`
+	Kind         string    `json:"kind" gorm:"size:16;index:idx_drama_takes_owner_kind,priority:2"`
+	Version      int       `json:"version"`
+	ResourceID   string    `json:"resourceId" gorm:"size:36"`
+	TaskID       string    `json:"taskId" gorm:"size:36"`
+	Prompt       string    `json:"prompt" gorm:"type:text"`
+	DurationMs   int64     `json:"durationMs"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // DramaJob 是调度队列中的一项工作；任务创建延迟到派发时，保证使用最新数据。
