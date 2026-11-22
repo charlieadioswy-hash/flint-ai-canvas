@@ -1,9 +1,11 @@
 import { generationErrorMessage } from "@/lib/generation-error";
+import { workspaceApiPath, workspaceTeamId } from "@/lib/workspace-routes";
+import { createClientUUID } from "@/lib/client-id";
 import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { observeGenerationTaskStatus, observeGenerationTaskStatuses } from "@/services/generation-completion-tracker";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { assertCurrentUserSession, captureUserSession, getActiveUserScope } from "@/lib/user-scope";
 
 export type { BackendEnvelope } from "@/services/api/request";
 
@@ -71,6 +73,7 @@ export type GenerationTask = {
         status: TaskBillingStatus;
     };
     clientContext?: {
+        assetTitle?: string;
         conversationId?: string;
         messageId?: string;
         nodeId?: string;
@@ -133,6 +136,8 @@ export type TaskLog = {
 export type CreateTaskInput = {
     /** 同一任务的原请求重放身份，不能随重试生成新值。 */
     clientOperationId?: string;
+    idempotencyKey?: string;
+    maxChargeMicrocredits?: number;
     projectId?: string;
     type?: string;
     operation?: string;
@@ -142,7 +147,17 @@ export type CreateTaskInput = {
     logicalModelId?: string;
     input?: Record<string, unknown>;
 };
-export function createGenerationTask(input: CreateTaskInput) {
+export async function createGenerationTask(input: CreateTaskInput) {
+    if (workspaceTeamId) {
+        if (input.type !== "canvas_text" || input.operation !== "text") throw new Error("当前空间仅开放系统模型的文本生成");
+        const session = captureUserSession();
+        const quote = await http.post<{ maxChargeMicrocredits: number }>("/tasks/quote", input);
+        assertCurrentUserSession(session);
+        if (!Number.isSafeInteger(quote.maxChargeMicrocredits) || quote.maxChargeMicrocredits < 0) throw new Error("未取得有效的积分报价");
+        if (!window.confirm(`本次生成将从你的团队额度中扣除最多 ${quote.maxChargeMicrocredits / 1_000_000} 积分，继续生成？`)) throw new DOMException("已取消生成", "AbortError");
+        const metadata = input.input?.metadata as { clientOperationId?: string; messageId?: string } | undefined;
+        input = { ...input, maxChargeMicrocredits: quote.maxChargeMicrocredits, idempotencyKey: input.idempotencyKey || input.clientOperationId || metadata?.clientOperationId || metadata?.messageId || createClientUUID() };
+    }
     return http.post<GenerationTask>("/tasks", input).then((task) => {
         recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
         observeGenerationTaskStatus(task);
@@ -527,6 +542,8 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
 }
 
 async function waitForGenerationTaskTextEvents(id: string, options: WaitForGenerationTaskOptions) {
+    const session = captureUserSession();
+    options = { ...options, signal: options.signal ? AbortSignal.any([session.signal, options.signal]) : session.signal };
     const startedAt = Date.now();
     const intervalMs = options.intervalMs || 1000;
     let lastTask = options.initialTask;
@@ -541,17 +558,19 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
     while (Date.now() - startedAt < timeoutMs) {
+        assertCurrentUserSession(session);
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let terminalReceived = false;
         try {
             const base = String(apiBaseURL).replace(/\/+$/, "");
             const cursor = lastEventId > 0 ? `?after=${encodeURIComponent(String(lastEventId))}` : "";
             const path = options.textEventsSource === "agent" ? `/agent/runs/${encodeURIComponent(id)}/events` : `/tasks/${encodeURIComponent(id)}/text-events`;
-            const response = await fetch(`${base}${path}${cursor}`, {
-                headers: { Accept: "text/event-stream" },
+            const response = await fetch(`${base}${workspaceApiPath(path)}${cursor}`, {
+                headers: { Accept: "text/event-stream", "X-Canvas-Expected-User": session.userId },
                 credentials: "include",
                 signal: options.signal,
             });
+            assertCurrentUserSession(session);
             if (!response.ok) throw new TaskTextStreamFatalError(await taskTextStreamHTTPError(response));
             if (!(response.headers.get("content-type") || "").toLowerCase().includes("text/event-stream")) {
                 throw new TaskTextStreamFatalError("任务文本流接口未返回事件流，请检查后端地址和反向代理配置");
@@ -561,6 +580,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             const decoder = new TextDecoder();
             const parser = createTaskTextStreamParser();
             const onEvent = (event: TaskTextStreamEvent) => {
+                assertCurrentUserSession(session);
                 const payload = asTaskTextStreamRecord(event.data);
                 if (event.event === "delta") {
                     const sequence = numberValue(payload.sequence) || event.id || 0;
@@ -597,12 +617,21 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 }
                 if (event.event === "error") throw new Error(typeof payload.message === "string" ? payload.message : "任务文本流不可用");
             };
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+            const cancelReader = () => void reader.cancel().catch(() => undefined);
+            options.signal?.addEventListener("abort", cancelReader, { once: true });
+            try {
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    assertCurrentUserSession(session);
+                    if (done) break;
+                    consumeTaskTextStream(parser, decoder.decode(value, { stream: true }), onEvent);
+                }
+                consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
+            } finally {
+                options.signal?.removeEventListener("abort", cancelReader);
+                await reader.cancel().catch(() => undefined);
+                reader.releaseLock();
             }
-            consumeTaskTextStream(parser, decoder.decode(), onEvent, true);
             if (terminalReceived) {
                 const completed = await queryGenerationTask(id, { signal: options.signal });
                 options.onTaskUpdate?.(completed);
@@ -612,6 +641,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             }
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
+            assertCurrentUserSession(session);
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             if (error instanceof TaskTextStreamFatalError || error instanceof GenerationTaskTerminalError) throw error;
             lastStreamError = error;

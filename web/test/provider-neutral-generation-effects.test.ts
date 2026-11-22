@@ -123,24 +123,13 @@ describe("生成副作用跨标签租约", () => {
         }
     });
 
-    test("生产要求跨标签锁而浏览器未提供时，在读取和改写租约前终止", async () => {
+    test.each([true, false])("无法取得 Web Lock 或 IndexedDB 时不读写租约（要求跨标签互斥：%s）", async (required) => {
         const harness = sharedBrowserHarness();
         try {
             const realm = harness.createRealm();
-            await realm.invoke("initialize", { browserLocks: false, required: true });
-            await expect(realm.invoke("claim", "materialize:no-lock:0", "no-lock")).rejects.toThrow("跨页面存储互斥");
-            expect(harness.storageReads).toBe(0);
-        } finally {
-            harness.dispose();
-        }
-    });
-
-    test("浏览器未提供 Web Lock 或 IndexedDB 时不降级为进程内锁", async () => {
-        const harness = sharedBrowserHarness();
-        try {
-            const realm = harness.createRealm();
-            await realm.invoke("initialize", { browserLocks: false, required: false });
-            await expect(realm.invoke("claim", "materialize:fallback:0", "fallback")).rejects.toThrow("跨页面存储互斥");
+            await realm.invoke("initialize", { browserLocks: false, required });
+            const error = await realm.invoke("claim", "materialize:no-lock:0", "no-lock").catch((cause: Error) => cause.message);
+            expect(error).toContain("跨页面存储互斥");
             expect(harness.storageReads).toBe(0);
             expect(harness.lockRequests).toBe(0);
         } finally {

@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 124
+const CurrentSchemaVersion int64 = 134
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -41,9 +41,11 @@ const legacyWorkbenchToolsMigrationChecksum = "sha256:workbench-tools-presets-v5
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
 type SchemaStatus struct {
-	Current  int64 `json:"current"`
-	Expected int64 `json:"expected"`
-	Ready    bool  `json:"ready"`
+	Current        int64 `json:"current"`
+	Expected       int64 `json:"expected"`
+	YingceCurrent  int64 `json:"yingceCurrent"`
+	YingceExpected int64 `json:"yingceExpected"`
+	Ready          bool  `json:"ready"`
 }
 
 type schemaMigration struct {
@@ -54,6 +56,10 @@ type schemaMigration struct {
 }
 
 func (schemaMigration) TableName() string { return "schema_migrations" }
+
+type yingceSchemaMigration schemaMigration
+
+func (yingceSchemaMigration) TableName() string { return "yingce_schema_migrations" }
 
 type migration struct {
 	version  int64
@@ -433,6 +439,48 @@ var schemaMigrations = []migration{
 		}
 		return tx.Migrator().AddColumn(&model.DramaTake{}, "OriginTakeID")
 	}},
+	{version: 125, name: "agent_mcp_connections", checksum: "sha256:agent-mcp-connections-v100", apply: migrateAgentMCP},
+	{version: 126, name: "creation_conversation_history", checksum: "sha256:creation-conversation-history-v101", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CreationConversation{}, &model.CreationConversationMessage{}, &model.CreationConversationResource{})
+	}},
+	{version: 127, name: "wechat_oauth", checksum: "sha256:wechat-oauth-v102", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasTable(&model.OAuthState{}) {
+			return nil
+		}
+		for _, field := range []string{"Purpose", "ClientID", "ProfileJSON"} {
+			if !tx.Migrator().HasColumn(&model.OAuthState{}, field) {
+				if err := tx.Migrator().AddColumn(&model.OAuthState{}, field); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}},
+	{version: 128, name: "mcp_tenant_boundaries", checksum: "sha256:mcp-tenant-boundaries-v103", apply: migrateMCPTenantBoundaries},
+	{version: 129, name: "agent_storage_limits", checksum: "sha256:agent-storage-limits-v104", apply: migrateAgentStorageLimits},
+	{version: 130, name: "image_usage_billing", checksum: "sha256:image-usage-billing-v105", apply: migrateImageUsageBilling},
+	{version: 131, name: "team_workspaces", checksum: "sha256:team-workspaces-v106", apply: migrateTeamWorkspaces},
+	{version: 132, name: "company_workgroups", checksum: "sha256:company-workgroups-v107", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.Team{})
+	}},
+	{version: 133, name: "shared_workspace_content", checksum: "sha256:shared-workspace-content-v108", apply: migrateSharedWorkspaceContent},
+	{version: 134, name: "model_protocol_releases", checksum: "sha256:model-protocol-releases-v109", apply: func(tx *gorm.DB) error {
+		for _, column := range []struct {
+			entity any
+			name   string
+		}{{&model.ChannelModel{}, "ProtocolRelease"}, {&model.Task{}, "ProtocolBindingJSON"}, {&model.RouteAttempt{}, "ProtocolBindingJSON"}} {
+			if !tx.Migrator().HasTable(column.entity) || tx.Migrator().HasColumn(column.entity, column.name) {
+				continue
+			}
+			if err := tx.Migrator().AddColumn(column.entity, column.name); err != nil {
+				return err
+			}
+		}
+		if !tx.Migrator().HasTable(&model.ChannelModel{}) || tx.Migrator().HasIndex(&model.ChannelModel{}, "ProtocolRelease") {
+			return nil
+		}
+		return tx.Migrator().CreateIndex(&model.ChannelModel{}, "ProtocolRelease")
+	}},
 }
 
 func migrateModel3DRequests(tx *gorm.DB) error {
@@ -772,6 +820,15 @@ func migratePaymentOrderChargeMethod(tx *gorm.DB) error {
 
 }
 
+var yingceSchemaMigrations = []migration{
+	{version: 1, name: "official_assets", checksum: "sha256:official-assets-v61-20261026", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.OfficialAsset{}, &model.OfficialAssetImport{}) }},
+	{version: 2, name: "official_asset_recommendations", checksum: "sha256:official-asset-recommendations-v62-20261027", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.OfficialAssetRecommendation{}) }},
+	{version: 3, name: "official_character_snapshots", checksum: "sha256:official-character-snapshots-v63-20261029", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.OfficialAssetRecommendation{}, &model.OfficialAsset{})
+	}},
+	{version: 4, name: "official_recommendation_consent", checksum: "sha256:official-recommendation-consent-v64-20261031", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.OfficialAssetRecommendation{}) }},
+}
+
 // migrateDramaCastVoiceLooks 为短剧设定补角色声音（声音库条目与样本音频）和造型（所属角色、造型名、默认适用章节）。
 // 旧设定都是没有指定声音的角色本体，新增列写成零值。
 func migrateDramaCastVoiceLooks(tx *gorm.DB) error {
@@ -1089,6 +1146,22 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			}
 		}
 	}
+	// A native v78 uses the upstream numbering unless an older Flint build
+	// already appended the 3D migrations beginning at v80.
+	var version78 schemaMigration
+	err = db.First(&version78, "version = ?", 78).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("读取数据库迁移 78：%w", err)
+	}
+	if err == nil && version78.Name == "drama_cast_voice_looks" {
+		var version80 schemaMigration
+		if err := db.First(&version80, "version = ?", 80).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("读取数据库迁移 80：%w", err)
+		}
+		if version80.Name != "canvas_model3d" {
+			return nativeUpstreamMigrationPlan(plan), nil
+		}
+	}
 	// Branches shipped different identities at v45 and v48-v51. Select the
 	// matching plan without changing the versions or checksums already recorded.
 	var version45 schemaMigration
@@ -1274,6 +1347,43 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	return plan, nil
 }
 
+func nativeUpstreamMigrationPlan(plan []migration) []migration {
+	for i, item := range plan {
+		switch version := item.version; {
+		case version == 45:
+			plan[i].version = 110
+		case version == 48:
+			plan[i].version = 45
+		case version >= 49 && version <= 51:
+			plan[i].version = version + 62
+		case version >= 52 && version <= 61:
+			plan[i].version = version - 4
+		case version == 62:
+			plan[i].version = 114
+		case version >= 63 && version <= 77:
+			plan[i].version = version - 5
+		case version == 78:
+			plan[i].version = 115
+		case version >= 79 && version <= 85:
+			plan[i].version = version - 6
+		case version == 86 || version == 87:
+			plan[i].version = version + 30
+		case version >= 88 && version <= 101:
+			plan[i].version = version - 8
+		case version == 102:
+			plan[i].version = 118
+		case version >= 103 && version <= 108:
+			plan[i].version = version - 9
+		case version >= 109 && version <= 124:
+			plan[i].version = version + 10
+		case version >= 125 && version <= 134:
+			plan[i].version = version - 25
+		}
+	}
+	sort.Slice(plan, func(i, j int) bool { return plan[i].version < plan[j].version })
+	return plan
+}
+
 func migrateSchemaV2(tx *gorm.DB) error {
 	return tx.Exec("CREATE INDEX IF NOT EXISTS idx_schema_migrations_applied_at ON schema_migrations (applied_at)").Error
 }
@@ -1457,6 +1567,9 @@ func MigrateSchema(db *gorm.DB) error {
 		if err := tx.AutoMigrate(&schemaMigration{}); err != nil {
 			return fmt.Errorf("初始化数据库迁移记录：%w", err)
 		}
+		if err := relocateLegacyOfficialMigrations(tx); err != nil {
+			return err
+		}
 		plan, err := migrationsForDatabase(tx)
 		if err != nil {
 			return err
@@ -1481,23 +1594,143 @@ func MigrateSchema(db *gorm.DB) error {
 				return fmt.Errorf("记录数据库迁移 %d：%w", item.version, err)
 			}
 		}
+		for _, item := range yingceSchemaMigrations {
+			var record yingceSchemaMigration
+			err := tx.First(&record, "version = ?", item.version).Error
+			if err == nil {
+				if err := validateMigrationRecord(schemaMigration(record), item); err != nil {
+					return err
+				}
+				continue
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err := item.apply(tx); err != nil {
+				return fmt.Errorf("执行出彩迁移 %d（%s）：%w", item.version, item.name, err)
+			}
+			if err := tx.Create(&yingceSchemaMigration{Version: item.version, Name: item.name, Checksum: item.checksum, AppliedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+		}
 		return RequireSchemaVersion(tx)
 	})
 }
 
+// relocateLegacyOfficialMigrations recognizes only the complete released local
+// ledger. The transaction also runs all missing upstream migrations or rolls back.
+func relocateLegacyOfficialMigrations(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&yingceSchemaMigration{}); err != nil {
+		return err
+	}
+	legacy := []struct{ name, checksum string }{
+		{"official_assets", "sha256:official-assets-v61-20261026"},
+		{"official_asset_recommendations", "sha256:official-asset-recommendations-v62-20261027"},
+		{"official_character_snapshots", "sha256:official-character-snapshots-v63-20261029"},
+		{"official_recommendation_consent", "sha256:official-recommendation-consent-v64-20261031"},
+	}
+	for _, start := range []int64{61, 78} {
+		var first schemaMigration
+		err := tx.First(&first, "version = ?", start).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if first.Name != legacy[0].name {
+			continue
+		}
+		var maxVersion int64
+		if err := tx.Model(&schemaMigration{}).Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		if maxVersion != start+3 {
+			return fmt.Errorf("旧官方素材迁移账本版本异常: %d", maxVersion)
+		}
+		rows := make([]schemaMigration, 0, len(legacy))
+		for i, item := range legacy {
+			var row schemaMigration
+			if err := tx.First(&row, "version = ?", start+int64(i)).Error; err != nil {
+				return fmt.Errorf("旧官方素材迁移账本不完整: %w", err)
+			}
+			if row.Name != item.name || row.Checksum != item.checksum {
+				return fmt.Errorf("旧官方素材迁移 %d 不匹配", start+int64(i))
+			}
+			rows = append(rows, row)
+		}
+		for _, table := range []string{"official_assets", "official_asset_imports", "official_asset_recommendations"} {
+			if !tx.Migrator().HasTable(table) {
+				return fmt.Errorf("旧官方素材表缺失: %s", table)
+			}
+		}
+		for _, col := range [][2]string{{"official_assets", "character_snapshot_json"}, {"official_asset_recommendations", "snapshot_json"}, {"official_asset_recommendations", "consent_version"}, {"official_asset_recommendations", "consent_at"}} {
+			if !tx.Migrator().HasColumn(col[0], col[1]) {
+				return fmt.Errorf("旧官方素材字段缺失: %s.%s", col[0], col[1])
+			}
+		}
+		var count int64
+		if err := tx.Model(&yingceSchemaMigration{}).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return fmt.Errorf("出彩迁移记录已存在，拒绝转换")
+		}
+		for i, row := range rows {
+			if err := tx.Create(&yingceSchemaMigration{Version: int64(i + 1), Name: row.Name, Checksum: row.Checksum, AppliedAt: row.AppliedAt}).Error; err != nil {
+				return err
+			}
+			result := tx.Where("version = ? AND name = ? AND checksum = ?", row.Version, row.Name, row.Checksum).Delete(&schemaMigration{})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return fmt.Errorf("旧迁移转换失败: %d", row.Version)
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
 func ReadSchemaStatus(db *gorm.DB) (SchemaStatus, error) {
-	status := SchemaStatus{Expected: CurrentSchemaVersion}
+	status := SchemaStatus{Expected: CurrentSchemaVersion, YingceExpected: int64(len(yingceSchemaMigrations))}
 	if !db.Migrator().HasTable(&schemaMigration{}) {
 		return status, nil
 	}
 	if err := db.Model(&schemaMigration{}).Select("COALESCE(MAX(version), 0)").Scan(&status.Current).Error; err != nil {
 		return status, fmt.Errorf("读取数据库结构版本：%w", err)
 	}
+	hasYingceMigrations := db.Migrator().HasTable(&yingceSchemaMigration{})
+	if hasYingceMigrations {
+		if err := db.Model(&yingceSchemaMigration{}).Select("COALESCE(MAX(version), 0)").Scan(&status.YingceCurrent).Error; err != nil {
+			return status, fmt.Errorf("读取出彩数据库结构版本：%w", err)
+		}
+	}
 	if status.Current != status.Expected {
 		return status, nil
 	}
 	if err := validateMigrationRecords(db); err != nil {
 		return status, err
+	}
+	if !hasYingceMigrations {
+		return status, nil
+	}
+	var count int64
+	if err := db.Model(&yingceSchemaMigration{}).Count(&count).Error; err != nil {
+		return status, err
+	}
+	if count != int64(len(yingceSchemaMigrations)) {
+		return status, nil
+	}
+	for _, item := range yingceSchemaMigrations {
+		var row yingceSchemaMigration
+		if err := db.First(&row, "version = ?", item.version).Error; err != nil {
+			return status, err
+		}
+		if err := validateMigrationRecord(schemaMigration(row), item); err != nil {
+			return status, err
+		}
 	}
 	status.Ready = true
 	return status, nil
@@ -1543,6 +1776,9 @@ func RequireSchemaVersion(db *gorm.DB) error {
 	}
 	if status.Current > status.Expected {
 		return fmt.Errorf("数据库结构版本 %d 高于程序支持的 %d，拒绝使用旧程序连接新数据库", status.Current, status.Expected)
+	}
+	if !status.Ready {
+		return fmt.Errorf("出彩数据库迁移尚未完成，请先执行 migrate-schema up")
 	}
 	return nil
 }

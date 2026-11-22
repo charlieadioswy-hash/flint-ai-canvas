@@ -230,7 +230,7 @@ export function ImageSizePicker({
                         ))}
                     </div>
                 </>
-            ) : !ungrouped && visibleTiers.length && (profile.size.parameter === "size" || !profile.quality.supported || imageResolutionUsesQuality(profile)) ? (
+            ) : (!ungrouped || imageResolutionUsesQuality(profile)) && visibleTiers.length && (profile.size.parameter === "size" || !profile.quality.supported || imageResolutionUsesQuality(profile)) ? (
                 <>
                     <div className="image-size-label">分辨率</div>
                     <div className="image-size-tiers">
@@ -276,7 +276,7 @@ export function ImageSizePicker({
             </div>
             {!choices.length ? <p className="image-size-hint">未配置预设尺寸{profile.size.allowCustom ? "，可输入自定义比例或尺寸" : ""}</p> : null}
             <output aria-live="polite" className="image-size-output">
-                {size === "auto" ? "尺寸由模型决定" : active ? `${active.ratio} · ${active.width} × ${active.height} px` : size.replace("x", " × ")}
+                {size === "auto" || !size ? "尺寸由模型决定" : active ? `${active.ratio} · ${active.width} × ${active.height} px` : size.replace("x", " × ")}
             </output>
             {profile.size.parameter === "aspect_ratio" ? <p className="image-size-hint">尺寸为换算参考，实际像素由模型决定{!imageResolutionUsesQuality(profile) && visibleTiers.length <= 1 ? "；当前协议未配置独立分辨率" : ""}。</p> : null}
             {profile.size.allowCustom ? (

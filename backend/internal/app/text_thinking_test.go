@@ -463,7 +463,7 @@ func TestCloudAgentThinkingLevelIntent(t *testing.T) {
 		if cloudAgentReasoningEnabled(mode) != (want != ThinkingLevelOff) {
 			t.Fatalf("Pi reasoning support lost for mode %q", mode)
 		}
-		_, snapshot, err := compileCloudAgentPolicies(req, "test", nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+		_, snapshot, err := compileCloudAgentPolicies(req, "test", "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -511,7 +511,7 @@ func TestSystemTextThinkingSurvivesAdmissionAndProviderResolution(t *testing.T) 
 	if taskInput.Config.CapabilityConfig != nil {
 		t.Fatal("admission must discard caller capability config")
 	}
-	resolved, err := svc.resolveProviderConfig(taskInput.Config)
+	resolved, err := svc.resolveProviderConfig(taskInput.Config, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,14 +530,14 @@ func TestSystemTextThinkingSurvivesAdmissionAndProviderResolution(t *testing.T) 
 	}
 	spoofed := taskInput.Config
 	spoofed.CapabilityConfig = &ModelCapabilityConfig{Text: &TextCapabilityConfig{Thinking: legacyTextThinkingConfig(protocolcontract.TextWireChatCompletion)}}
-	resolved, err = svc.resolveProviderConfig(spoofed)
+	resolved, err = svc.resolveProviderConfig(spoofed, nil)
 	if err != nil || resolved.CapabilityConfig.Text.Thinking.Preset != "deepseek" {
 		t.Fatalf("runtime failed to replace caller capability with server contract: %v", err)
 	}
 	if err := db.Model(&channelModel).Update("capability_config_json", `{}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.resolveProviderConfig(taskInput.Config); err == nil {
+	if _, err := svc.resolveProviderConfig(taskInput.Config, nil); err == nil {
 		t.Fatal("invalid server text capability must fail closed, not fall back to medium")
 	}
 }

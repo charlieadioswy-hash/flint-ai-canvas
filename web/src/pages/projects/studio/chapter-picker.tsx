@@ -13,6 +13,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 import { ChapterPickList, type ChapterPickItem } from "../chapter-pick-list";
 import { formatCount } from "../drama-shared";
+import { ChapterRenameButton } from "./chapter-rename-button";
 import { useDramaOperationScope } from "./use-drama-operation-scope";
 
 type Props = {
@@ -214,8 +215,9 @@ function ChapterPickerSession({ summary, blockedReason, busy = false, onClose, o
                         <div className="drama-chapter-picker-preview thin-scrollbar" aria-label="原文预览">
                             {preview ? (
                                 <>
-                                    <h3>
-                                        {preview.title}
+                                    <h3 className="flex-wrap">
+                                        <span className="min-w-0 break-words">{preview.title}</span>
+                                        <ChapterRenameButton key={preview.id} projectId={projectId} chapter={preview} expectedRevision={revision} disabled={formLocked} />
                                         <small>
                                             {formatCount(preview.wordCount)} 字 · {preview.reserved ? "待加入制作" : `已加入${preview.episodeNumber ? `第 ${preview.episodeNumber} 集` : "制作"}`}
                                         </small>

@@ -183,7 +183,7 @@ func TestDramaBudgetGuardsRouteReplacementAndTaskCenterRetry(t *testing.T) {
 	}
 	replace := func(amount int64) error {
 		newOrder := &model.BillingOrder{UserID: user, TaskID: task.ID, AmountMicrocredits: amount}
-		return s.repo.SwitchTaskLogicalRoute(task.ID, "first", "fallback", "{}", order.ID, "channel", "fallback-model", newOrder, model.BillingCostSnapshot{})
+		return s.repo.SwitchTaskLogicalRoute(task.ID, "first", "fallback", "{}", order.ID, "channel", "fallback-model", newOrder, model.BillingCostSnapshot{}, "")
 	}
 	if err := replace(120); !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
 		t.Fatalf("over-budget replacement = %v", err)
@@ -232,7 +232,7 @@ func TestDramaBudgetGuardsLinkedCanvasRouteReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := model.BillingOrder{UserID: user, TaskID: task.ID, AmountMicrocredits: 120}
-	err := s.repo.SwitchTaskLogicalRoute(task.ID, "initial", "fallback", "{}", order.ID, "channel", "model", &replacement, model.BillingCostSnapshot{})
+	err := s.repo.SwitchTaskLogicalRoute(task.ID, "initial", "fallback", "{}", order.ID, "channel", "model", &replacement, model.BillingCostSnapshot{}, "")
 	if !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
 		t.Fatalf("linked canvas switch did not check production budget: %v", err)
 	}
@@ -389,5 +389,21 @@ func TestDramaBudgetPausesAndResumesPromptCondensation(t *testing.T) {
 	}
 	if err != nil || completed.TaskID == task.ID || completed.Status != model.DramaJobRunning || tasks != 2 {
 		t.Fatalf("expected exactly one continuation of the original task: %+v, tasks=%d, %v", completed, tasks, err)
+	}
+}
+
+func TestDramaDirectTextTaskRespectsProjectBudget(t *testing.T) {
+	svc, fake := newDramaTestService(t)
+	project := createTestDrama(t, svc, DramaReviewAuto).Project.ID
+	if err := svc.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ensureTaskProjectActive("usr-drama", project); err != nil {
+		t.Fatal(err)
+	}
+	seedDramaBillingOrder(t, fake.db, project, "prompt-rewrite-held", model.BillingOrder{AmountMicrocredits: 100, Status: model.BillingStatusRunning})
+	var appErr *AppError
+	if err := svc.ensureTaskProjectActive("usr-drama", project); !errors.As(err, &appErr) || appErr.Reason != ReasonDramaBudget {
+		t.Fatalf("direct task must honor budget: %v", err)
 	}
 }

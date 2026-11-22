@@ -68,6 +68,9 @@ func (s *Service) RenderDramaEpisode(userID, projectID, episodeID string, req Re
 			if job.EpisodeID != episodeID {
 				continue
 			}
+			if job.Kind == model.DramaJobCompose {
+				return dramaGuideConflict("本集还有手动合成任务进行中，请完成后再合成")
+			}
 			if job.Kind == model.DramaJobRender {
 				var payload dramaRevisionPayload
 				// 自动规划的作业可能尚未记录版本；本集已回退时，它同样不能阻塞新的合成。

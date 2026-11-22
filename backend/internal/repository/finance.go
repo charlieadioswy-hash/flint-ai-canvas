@@ -88,7 +88,7 @@ func (r *Repository) CreditAccounts(userIDs []string) ([]model.CreditAccount, er
 func (r *Repository) CreditLedger(userID string, entryType string, limit int, offset int) ([]model.CreditLedgerEntry, int64, error) {
 	var items []model.CreditLedgerEntry
 	var total int64
-	query := r.db.Model(&model.CreditLedgerEntry{}).Where("user_id = ? AND type <> ?", userID, model.CreditLedgerReserve)
+	query := r.db.Model(&model.CreditLedgerEntry{}).Where("account_id = ? AND type <> ?", model.PersonalCreditAccountID(userID), model.CreditLedgerReserve)
 	switch entryType {
 	case "income":
 		query = query.Where("type IN ?", []model.CreditLedgerType{model.CreditLedgerRedeem, model.CreditLedgerAdminGrant, model.CreditLedgerAdminAdjust, model.CreditLedgerSignupBonus, model.CreditLedgerCheckinBonus})
@@ -116,9 +116,12 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	return count > 0, err
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, agentRunLimit ...int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
+		if err := enforceAgentRunLimit(tx, task, agentRunLimit); err != nil {
+			return err
+		}
 		if task.ProjectID != "" && order.AmountMicrocredits > 0 {
 			if repo.Dialect() == "sqlite" {
 				// Acquire the SQLite write lock before reading the task's project association.
@@ -159,9 +162,12 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 	})
 }
 
-func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int, agentRunLimit ...int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
+		if err := enforceAgentRunLimit(tx, task, agentRunLimit); err != nil {
+			return err
+		}
 		if err := repo.requireCurrentCloudAgentParent(task); err != nil {
 			return err
 		}
@@ -252,7 +258,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 			"provider_cancel_requested_at": nil, "provider_cancelled_at": nil, "provider_cancel_next_check_at": nil,
 			"route_run":                 gorm.Expr("route_run + ?", 1),
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID,
-			"channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
+			"channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON, "protocol_binding_json": prepared.ProtocolBindingJSON,
 			"model": prepared.Model, "provider": prepared.Provider,
 			"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
 		}

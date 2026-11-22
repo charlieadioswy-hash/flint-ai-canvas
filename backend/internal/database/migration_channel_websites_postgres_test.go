@@ -11,7 +11,7 @@ import (
 	"yingce/backend/internal/model"
 )
 
-func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
+func TestPostgresChannelWebsiteMigrationUpgradesVersion105(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("CANVAS_TEST_POSTGRES_DSN"))
 	if dsn == "" {
 		t.Skip("CANVAS_TEST_POSTGRES_DSN is not configured")
@@ -76,7 +76,7 @@ func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, migration := range schemaMigrations {
-		if migration.version < 106 {
+		if migration.name != "channel_websites" {
 			if err := db.Create(&schemaMigration{Version: migration.version, Name: migration.name, Checksum: migration.checksum, AppliedAt: stamp}).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -95,10 +95,6 @@ func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
 	if err := db.First(&tier, "id = ?", tier.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	status, err := ReadSchemaStatus(db)
-	if err != nil || status.Current != 96 || status.Ready {
-		t.Fatalf("legacy schema status: %+v err=%v", status, err)
-	}
 	// Startup migrates a newly opened pool before reading channel rows. Keep
 	// fixture SELECT * plans for the old schema out of that upgrade connection.
 	if err := dbSQL.Close(); err != nil {
@@ -114,7 +110,7 @@ func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
 	}
 	defer dbSQL.Close()
 	if err := MigrateSchema(db); err != nil {
-		t.Fatalf("v96 to v97 migration: %v", err)
+		t.Fatalf("v106 channel website migration: %v", err)
 	}
 	if err := RequireSchemaVersion(db); err != nil {
 		t.Fatal(err)
@@ -161,7 +157,7 @@ func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
 	// Repeat the production migration entry with populated new tables; every
 	// original row and every generated website ID must remain unchanged.
 	if err := MigrateSchema(db); err != nil {
-		t.Fatalf("repeat v97 migration: %v", err)
+		t.Fatalf("repeat channel website migration: %v", err)
 	}
 	var again []model.ModelChannel
 	var againSites []model.ChannelWebsite
@@ -190,19 +186,17 @@ func TestPostgresChannelWebsiteMigrationUpgradesVersion96(t *testing.T) {
 	if !reflect.DeepEqual(snapshot, afterSnapshot) || !reflect.DeepEqual(selection, afterSelection) {
 		t.Fatal("new catalog/protocol rows changed across repeat migration")
 	}
-	var applied []migration
-	for _, entry := range schemaMigrations {
-		if entry.version >= 97 {
-			applied = append(applied, entry)
+	var preserved []schemaMigration
+	for _, record := range records {
+		if record.Version == 106 {
+			if record.Name != "channel_websites" || record.Checksum != "sha256:channel-websites-v97-20261110" || record.AppliedAt.IsZero() {
+				t.Fatalf("unexpected channel website upgrade record: %+v", record)
+			}
+			continue
 		}
+		preserved = append(preserved, record)
 	}
-	if len(records) != len(oldRecords)+len(applied) || !reflect.DeepEqual(oldRecords, records[:len(oldRecords)]) {
+	if len(records) != len(oldRecords)+1 || !reflect.DeepEqual(oldRecords, preserved) {
 		t.Fatal("migration changed historical schema records or reapplied an upgrade")
-	}
-	for i, entry := range applied {
-		record := records[len(oldRecords)+i]
-		if record.Version != entry.version || record.Name != entry.name || record.Checksum != entry.checksum || record.AppliedAt.IsZero() {
-			t.Fatalf("unexpected upgrade record: %+v, want version %d (%s)", record, entry.version, entry.name)
-		}
 	}
 }

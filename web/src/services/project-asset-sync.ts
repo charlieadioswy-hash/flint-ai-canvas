@@ -22,6 +22,7 @@ import { appQueryClient } from "@/lib/query-client";
 import { hasRemoteUserDataSyncSession, loadAssetsForUse, saveRemoteUserDataNow, subscribeRemoteUserDataReady } from "@/services/user-data-sync";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { normalizeAssetCategory } from "@/lib/asset-category";
+import { generationAssetTitle } from "@/lib/generation-asset-title";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
 import { ASSET_STORE_KEY, flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetStatus, type NewAsset } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -486,6 +487,7 @@ async function cachedRemoteGenerationVideo(video: NonNullable<BackendGenerationR
 async function generationOutputAsset(input: Parameters<MaterializeGenerationTaskOutput>[0], scope: string): Promise<NewAsset> {
     throwIfAborted(input.signal);
     const result = generationTaskResult(input.task);
+    const title = generationAssetTitle(input.task, input.output.mediaType, input.output.outputIndex, input.task.outputs?.length || result.images?.length || 1);
     const metadata = {
         source: "generation-task",
         generationEffectKey: input.effectKey,
@@ -502,7 +504,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
         const stored = await storedGenerationImage(image, input.effectKey, scope, input.signal);
         return {
             kind: "image",
-            title: "生成图片",
+            title,
             category: "material",
             coverUrl: stored.url,
             tags: ["生成"],
@@ -542,7 +544,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
         if (!stored.url) throw new Error("视频结果资源不可用");
         return {
             kind: "video",
-            title: "生成视频",
+            title,
             category: "material",
             coverUrl: canvasVideoAssetPreviewUrl(stored.url),
             tags: ["生成"],
@@ -586,7 +588,7 @@ async function generationOutputAsset(input: Parameters<MaterializeGenerationTask
     if (!stored.url) throw new Error("音频结果资源不可用");
     return {
         kind: "audio",
-        title: "生成音频",
+        title,
         category: "material",
         coverUrl: "",
         tags: ["生成"],

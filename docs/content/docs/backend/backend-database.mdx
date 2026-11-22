@@ -5,7 +5,107 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
-当前代码结构版本为 **124**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订；116 增加单集独立风格与默认继承，117 保存首次配置及各集完整独立配置，118 保存单集资产归属，119 增加剧情段独立视频来源版本，120 保存显式单集制作请求，121 增加单镜显示名称，122 保存删除资产前段提示词的参考图编号，123 记录手动采用的主参考图版本，124 记录跨视图历史图片的原始版本。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
+当前代码结构版本为 **134**。本分支保留已发布的 1–78 迁移编号、校验和与应用时间；79–85 依次加入单集素材类型、剧情段参考图、用户分组计价、记忆文件、记忆列补齐、角色声音造型及电商 Agent，86 增加电商 Agent 运行租约，87 增加短剧引导字段。已使用原生上游 73–79 的数据库保留原账本，将本地 3D 与渠道扩展追加到 80–85。新增上游 80–92 迁移按名称去重后追加为本分支 88–100；电商轮次历史追加为 101，精确媒体请求追加为 102，保留已有 1–102 的名称、校验和及应用记录。上游新增的独立素材风格、方舟绑定索引、统一文本节点、渠道网站、视频日志快照及访问统计依次追加为 103–108；这些新增迁移沿用上游校验和，编号顺延适用于本分支 102 升级，不代表原生上游 80 及以后迁移账本可直接接入。109 扩展上游任务编号字段；110–115 依次增加短剧单资产图片配置、独立镜头媒体、角色库来源与人物信息、多视图、宫格故事板和场景分镜修订；116 增加单集独立风格与默认继承，117 保存首次配置及各集完整独立配置，118 保存单集资产归属，119 增加剧情段独立视频来源版本，120 保存显式单集制作请求，121 增加单镜显示名称，122 保存删除资产前段提示词的参考图编号，123 记录手动采用的主参考图版本，124 记录跨视图历史图片的原始版本。125–134 依次追加 Agent MCP、创作对话同步、微信登录、MCP 用户授权、Agent 历史账本、图片用量计费、团队空间、公司小组、共享空间内容和模型请求插件发行版，保留已发布的 1–124 迁移记录。独立镜头音频复用 111 的媒体槽位与 Take，不另加迁移。此版本为代码目标，不代表已执行生产数据库升级。
+
+## 模型请求插件发行版（Schema 134）
+
+`model_protocol_releases` 增加 `channel_models.protocol_release` 及索引，保存模型绑定的请求包 SHA-256。`tasks.protocol_binding_json` 和 `route_attempts.protocol_binding_json` 在新任务入队、路由尝试时记录版本、上游型号、能力与报价修订，以及渠道连接的 HMAC。快照仅在服务端使用。历史记录的新增列保持空值。
+
+升级历史库时，迁移只为库中已有的这三张表补列，并在渠道模型表存在时补索引。
+
+升级前备份数据库和后端数据目录中的 `plugin_registry.json`、`plugin-packages/` 与 `.settings-key`，运行新版 `migrate-schema up` 和 `migrate-schema verify`。回滚需一并恢复同一时间点的数据库、归档与密钥。
+
+## 团队空间与积分账户
+
+版本 131 `team_workspaces` 在 SQLite 和 PostgreSQL 使用同一组业务表。个人项目、画布、素材和历史任务不搬入团队，各团队从空库和零余额开始。
+
+版本 132 `company_workgroups` 为 `teams` 增加带索引的 `parent_id`。空串表示公司或独立团队，已有团队自动保留为独立空间，已有资金和作品继续属于原空间。小组指向一个根空间，成员须同时拥有有效的公司成员关系。公司与小组之间的划转在同一事务内更新双方公共账户，每侧流水记录各自的 `team_id`。`system_settings.feature_availability` 中的 `teamsEnabled` 缺失时按关闭处理。产生小组数据后，回退旧程序会失去父级权限与划转语义，回滚应恢复匹配版本的备份。
+
+| 表 | 归属与约束 |
+| --- | --- |
+| `teams`、`team_memberships`、`team_invitations` | 有效成员和待处理邀请分别按团队、用户唯一。离队保留历史成员关系；再加入生成新关系，不能继承旧账户。 |
+| `credit_accounts`、`credit_transfers` | 账户主键为 `id`。`personal` 按用户、`team_pool` 按团队、`team_member` 按成员关系建账。划拨关联转出、转入账户和两条相反的流水，同一操作者在同一团队的幂等键唯一。 |
+| `credit_ledger_entries`、`billing_orders` | 流水增加 `account_id`，订单增加 `billing_account_id`。历史个人记录补上 `personal:` 加用户 ID。团队订单记录成员关系、收费上限、真实用量、封顶前应收 `uncapped_amount_microcredits` 和实收。历史订单该新增金额默认为 0，不反推旧账。 |
+| `canvas_projects`、`creation_conversations`、`tasks` | 个人内容归属键是账号 ID；团队使用 `t:` 加空间 ID。它不是登录身份或付款人。任务 `submission_hash` 识别同一次提交。 |
+| `assets`、`asset_versions`、`resources` | 两种空间共用素材和媒体模型，`assets.created_by` 记录贡献者。跨空间复制由 `team_asset_publications` 记录幂等结果并在复制期间保护源资源。 |
+
+升级前停止旧程序写入，备份数据库与后端数据目录。按部署既有方式执行新版 `migrate-schema up`、`migrate-schema verify`，再启动前后端。迁移在事务中重建个人账户主键，逐账户核对可用余额、冻结和版本后才删除旧表，不重算历史费用。个人账本与已有订单仍使用原金额。
+
+版本 133 `shared_workspace_content` 将旧编辑器的画布、节点位置、固定素材版本和已结束的生成记录迁入通用表。已结算的订单沿用原 ID 和金额，任务不重新排队。未完成发布、尚未对账的订单、缺失的媒体或不一致的版本引用会中止升级，数据库事务回滚。先在旧版核对或完成相关记录，再重试；不要删除记录或重发生成。
+
+存在旧媒体时须显式指定 `CANVAS_BACKEND_DATA_DIR`，旧文件和 `resources/` 须支持同卷硬链接。迁移核对文件长度，保留源文件；回滚后重试可复用同一硬链接。完成升级后再验证自由画布和素材预览。回退应停写并恢复匹配版本的数据库和文件备份，不直接降级程序。
+
+## 对白同步与提示词核对
+
+沿用现有字段，无新增表或 Schema 迁移。`drama_segments.prompt_status` 新增 `conflict`（镜头已保存但无法安全同步，保留两份正文）及 `review`（AI 新稿生成后保留原手写稿，等待采用）。原因保存在 `prompt_error`。两种状态均不计为提示词就绪，不允许提交视频；显式确认正文后恢复。只修改对白时按唯一引语局部更新 `video_prompt_override`，没有手写稿时更新 `video_prompt`，同时递增修订号使迟到作业失效。
+
+## 图片用量计费（Schema 130）
+
+版本 130 `image_usage_billing` 增加可空 JSON 文本列：`channel_model_price_tiers.image_pricing`、`cost_image_pricing`，`logical_models.image_pricing`，以及 `billing_orders.image_pricing`、`cost_image_pricing`、`image_usage`。订单另有 `image_input_images` 和 `image_max_output_images`，均为非空整数、默认 0。售价与内部成本分别保存，成本字段不向用户端序列化。
+
+迁移只添加缺少的列，支持重复执行；历史订单的图片 JSON 保持空值，不反推或重算费用。实际用量在下载前持久化，结算和退款沿用订单状态条件、余额校验和账本事务。规则和 API 合同见[图片用量计费](/docs/backend/image-usage-billing)。
+
+## 微信登录（Schema 127）
+
+版本 127 `wechat_oauth` 为 `o_auth_states` 增加 `purpose`（登录、绑定、重新核验用途）、`client_id`（发起时的网站应用 AppID）和 `profile_json`（首次微信注册的临时昵称、头像及身份标识）。旧状态的这些字段为空，不改变 Linux.do 与 OIDC 的处理。
+
+`provider=wechat` 用于授权状态，`provider=wechat_registration` 用于十分钟有效的一次性注册补全票据；票据明文仅存在于 HttpOnly Cookie，数据库保存哈希。注册事务同时消费票据与验证码、创建用户和 `provider=wechat / subject=AppID:OpenID` 的身份，失败回滚；成功消费时清空 `profile_json`。该临时资料不保存微信 Token 或 AppSecret。绑定操作锁定当前账号和会话后检查身份唯一性，禁止替换或跨账号抢占。
+
+`system_settings.wechat_oauth` 保存独立的微信配置 JSON，AppSecret 使用系统设置密钥加密；对外管理响应仅含密钥存在标志。接入步骤见[微信网站应用登录](/docs/backend/wechat-login)。
+
+## Agent / MCP 多用户边界（Schema 128–129）
+
+版本 128 `mcp_tenant_boundaries` 增加平台连接的用户授权及工具参数策略，版本 129 `agent_storage_limits` 增加 Agent 持久数据账本。
+
+| 表或字段 | 合同 |
+| --- | --- |
+| `mcp_connection_grants` | `connection_id + user_id` 唯一授权；平台发现、审批和执行均查验；创建者和管理员执行工具也没有隐式豁免 |
+| `mcp_connections.allowed_user_ids_json` / `tool_policies_json` | 平台管理配置快照；每工具独立对象 JSON Schema 与远端输入 schema 同时校验；策略变更递增连接 revision |
+| `mcp_connections.tools_summary_json` | 有界工具摘要，列表查询不载入完整 `tools_json`；完整发现结果 schema 合计不超过 256 KiB |
+| `mcp_storage_usages` | 每用户 64 MiB 的 MCP 配置、凭据密文、工具快照和回执预算；包含有界元数据预留，调用领取回执前预留最多 48 KiB 结果空间 |
+| `agent_storage_usages` | 每用户的状态、原生 JSONL、事件、消息及画布撤销正文账本；首次写入测量旧数据。上限取自运行时策略 `resource.agentHistoryMB`（默认 256 MiB），写入和管理员清理均在同一事务内更新账本，无需迁移 |
+| `mcp_tool_executions.status = expired` | 维护裁剪回执正文后保留身份和指纹，不再次执行外部操作；正在执行的回执不裁剪 |
+
+升级 128 会**停用全部旧 MCP 连接，包括个人连接**，清空检测结果、工具授权、平台用户名单和工具策略并递增 revision；保留加密凭据和执行回执，并为既有 MCP 数据初始化预算。用户须重新检测和授权；平台连接还须明确授权用户及参数范围。104 不删除既有 Agent 历史，超过额度的账号只能缩减或停止，不能继续增长历史。
+
+Agent 根任务准入按用户在同一数据库事务计数；PostgreSQL 使用用户 advisory lock，SQLite 先取写锁。统计包含未创建执行检查点的预留、`waiting_approval` / `waiting_user` 和 `cleanup_pending`，不依赖任务载体是否为 `text_replay`。存储账本先于执行行加锁；原生会话仍采用 revision CAS，超额写入整笔回滚。取消、失败标记和无正文增长的清理不需要新增历史空间。
+
+账本用于业务容量控制，不等于数据库物理文件大小。索引、WAL、备份、系统模板与数据库页空闲空间仍需部署监控。当前不自动删除用户历史；人工归档必须通过保持账本与幂等标记一致的维护事务，不能直接清空 MCP 执行表。升级前备份数据库和 `.settings-key`，回滚时恢复同一份备份，旧二进制不能直接使用 129 结构。
+
+## 官方素材扩展
+
+官方素材使用独立的 `yingce_schema_migrations` 四步扩展链，保留主线迁移版本与校验值。表包括 `official_assets`、`official_asset_imports` 和 `official_asset_recommendations`。角色快照及推荐授权版本、时间保存在扩展字段中。项目现有 `migrate-schema` 命令执行迁移，启动检查同时要求主线与扩展链完整。
+
+官方媒体由画布引用共享资源，不自动复制到个人库。推荐和官方快照参与资源保留检查。下架后的已有引用按用户、画布及服务端保存记录判断权限。升级前备份数据库与媒体；回滚使用匹配版本及备份，不直接删除迁移记录或共享资源。
+
+## 创作对话同步（Schema 126）
+
+版本 126 `creation_conversation_history` 新增三张表，既有迁移账本保持不变。浏览器旧历史仅在原账号 scope 下补传，保留旧缓存；游客历史不自动合并到登录账号。
+
+| 表 | 合同 |
+| --- | --- |
+| `creation_conversations` | `user_id + id` 主键；独立的 metadata_revision 与整体 revision。永久 deleted 标记阻止旧设备复活对话 |
+| `creation_conversation_messages` | `user_id + conversation_id + id` 主键；逐条 revision 和稳定 sequence。删除清空正文并保留消息 tombstone |
+| `creation_conversation_resources` | 媒体归属校验后与消息同事务更新，保护仅被对话引用的资源不被孤儿清理 |
+
+SQLite 写事务与 PostgreSQL 行锁串行化同一对话的修订检查；读取使用一致性快照。重复提交相同正文不递增修订，不同消息可独立追加，同一消息冲突采用云端版本，浏览器保留可下载的冲突副本。删除历史不会取消任务、删除素材或触发计费。
+
+媒体仅保存 `resource:<id>`，不存临时访问地址或渠道配置；关联画布、任务及资源必须属于当前账号。单次请求最多 100 条、2 MiB，单条正文 256 KiB，对话最多 5000 条（含删除标记）、16 MiB 正文。清理资源与新增对话媒体引用使用同一资源锁。
+
+## Agent MCP（Schema 125）
+
+版本 125 `agent_mcp_connections` 只新增三张表及 GitHub、飞书两个市场配置模板，不改写既有业务数据。模板不代表连接已配置、检测通过或工具已授权。
+
+| 表 | 作用与边界 |
+| --- | --- |
+| `mcp_server_templates` | 平台管理的市场名称、说明、传输方式、地址、请求头参数模板和发布状态；不得存放实际凭据 |
+| `mcp_connections` | `user_id` / `scope` 隔离个人与平台连接；全部参数加密保存在 `parameters_ciphertext`，已发现工具与授权清单分开保存；`revision` CAS 防止检测结果覆盖并发配置，参数变化清除检测与授权 |
+| `mcp_tool_executions` | 按用户、Agent 运行和工具调用身份记录参数指纹及 `running/completed/uncertain/expired` 回执；不存调用参数原文；确定成功可重放回执，结果不确定或已过期不自动重发外部操作 |
+
+市场模板修改会停用关联连接并撤销工具授权，重新检测后才能启用。参数加密复用数据目录的 `.settings-key`，备份数据库时须一起备份该密钥；响应只包含非密钥参数和已配置密钥的名称。平台管理变更与不含凭据的管理员审计同事务保存。
+
+升级由现有迁移入口执行，迁移幂等。旧版本会拒绝结构版本更高的数据库；回滚须恢复升级前的数据库与密钥备份，不能直接删迁移记录绕过版本保护。现有跨会话工作回忆读取 `cloud_agent_executions` 与事件记录，不新增记忆表或向量存储。
+
 
 ## 跨视图历史图片来源（Schema 124）
 
@@ -422,9 +522,9 @@ Schema 102 `drama_exact_media_requests` 为 `drama_productions` 增加 `media_re
 | `drama_casts` | 全剧设定：角色（`kind=character`，含别名、外貌与声线 `voice_instructions`）、关键道具（`kind=prop`）和场景（`kind=scene`），当前参考图 `image_resource_id` 与状态 | 作品圣经建档；剧本里首次出现的人物、道具或地点即时建档，按标准名与别名归并；锁定后不再重新生成 |
 | `drama_episodes` | 集标题、大纲、钩子、悬念、素材类型 `source_format`（Schema 79）、独立制作配置 `settings_json`（Schema 117）、本集资产归属 `asset_ids_json`（Schema 118）、阶段（待制作 `draft`，显式开工后 queued → script → prompts → review → video → render → done）、`approved`（逐集确认模式下已确认本集提示词）、`media_released`、错误、成片资源、`final_stale`、`revision` | `(project_id, number)` 唯一；内容修改递增 `revision`，调度写入以它为条件；配置保存只递增作品制作控制版本；提取资产归属合并不改变版本 |
 | `drama_shots` | 镜头脚本：显示名称 `name`、剧情段 `segment_index` / `segment_title`、场景与场景设定 `scene_cast_id`、出场角色 `cast_ids_json`、关键道具 `prop_ids_json`、说话人、台词、动作、景别、运镜、转场 `transition`、时长、起幅画面 `image_prompt`、运动描述 `video_prompt`、原文出处 | 供段提示词及独立镜头媒体读取；独立产物保存于 `drama_shot_media`，不写回脚本列。改动镜头内容使所在段提示词/视频及对应逐镜媒体来源过期；仅改名不影响生成 |
-| `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、文字版本 `revision` 与独立视频来源版本 `video_revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；文字结果按 `revision` 校验，视频结果同时校验文字与视频来源版本，旧付费产物保留历史但不覆盖当前结果。资产变化不使段稿过期；尾帧续接时某段视频变化仍会让承接旧尾帧的后续视频过期 |
+| `drama_segments` | 剧情段：模型撰写的完整视频提示词 `video_prompt`、撰写状态 `prompt_status`（空串待撰写、`running`、`ready`、`stale`、`conflict`、`review`、`failed`）与 `prompt_error`、撰写时的秒数 `prompt_seconds`、用户改写 `video_prompt_override`、按段视频模型 `video_model_json`、用户指定的参考图 `reference_cast_ids_json`（Schema 80）、视频状态 `video_status`、`video_resource_id`、`video_seconds`、`video_error`、本段视频最后一帧 `tail_frame_resource_id`、文字版本 `revision` 与独立视频来源版本 `video_revision` | `(episode_id, segment_index)` 唯一；剧本写入时建行，重新改编时重建；文字结果按 `revision` 校验，视频结果同时校验文字与视频来源版本，旧付费产物保留历史但不覆盖当前结果。资产变化不使段稿过期；尾帧续接时某段视频变化仍会让承接旧尾帧的后续视频过期 |
 | `drama_takes` | 历史版本：设定参考图（`cast`）、独立视图（`cast_view`）、镜头图片/视频/音频（`shot_image/shot_video/shot_audio`）、剧情段视频（`video`，`owner_id` 为段 ID）与单集成片（`final`）；资产 AI 辅助使用其对应 kind | `(owner_id, kind)` 内递增 `version`；版本始终入库，当前采用与历史版本分开 |
-| `drama_jobs` | 调度队列：类型（bible/plan/cast_image/script/segment_prompt/segment_video/render）、目标、优先级、关联任务、重试次数、历次提交 `attempts_json`、错误、实际花费 | 任务在派发时才创建；`segment_prompt` / `segment_video` 的 `shot_id` 存放 `drama_segments.id` |
+| `drama_jobs` | 调度队列：类型（bible/plan/cast_image/script/segment_prompt/segment_video/render/compose）、目标、优先级、关联任务、重试次数、历次提交 `attempts_json`、错误、实际花费 | 任务在派发时才创建；`segment_prompt` / `segment_video` 的 `shot_id` 存放 `drama_segments.id`；手动合成作业的 `payload_json` 固定提交时的时间线与剧集版本 |
 
 参考图方案 `settings_json.assets` 新增可选的 `resolution`（`1k` / `1.5k` / `2k` / `4k`，空串按图片模型默认档位），不改表结构；旧作品没有该字段，按模型默认档位处理。
 
@@ -529,7 +629,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 ## 结构迁移与版本
 
-当前代码结构版本为 108。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力，62 增加供应商进度字段，63–65 依次补充 Agent 记忆提案、渠道模型协议长度及用户反馈；66–77 追加短剧制作、存储套餐、作品补传及推广中心。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
+当前代码结构版本为 134。新数据库沿用本分支 44–51 的记录，在 52–61 追加上游能力，62 增加供应商进度字段，63–65 依次补充 Agent 记忆提案、渠道模型协议长度及用户反馈；66–77 追加短剧制作、存储套餐、作品补传及推广中心。升级会按已发布迁移的名称和校验和选择对应顺序，保留原编号、校验和及应用时间；各条路径最终都具备全部结构。
 
 | 迁移 | 新库及本分支顺序 | 既有上游合并账本 | 旧原生上游合并账本 | 已合并本地能力的新版上游账本 |
 | --- | --- | --- | --- | --- |
@@ -632,7 +732,7 @@ ControlNet 接入扩展现有 JSON 合同，不新增表、列或迁移版本。
 
 画布操作支持 `create_canvas`、`create_node`、`patch_node`、`remove_node`、`create_connection`、`update_connection`、`remove_connection`、`set_field`。创建操作显式创建对象；更新和删除要求对象存在，并以 `before`、`expected` 或 `beforeValue` 做字段/对象级并发校验。删除节点同时删除其连接，迟到的媒体回写返回对象缺失冲突。`viewport` 是本地视图状态，不进入远端 operations。
 
-旧的画布版本历史、恢复和整批 PUT 不属于当前用户写入合同；数据库迁移保留既有历史表以兼容已部署数据，但新写入不依赖它们。Agent、媒体回写、预演台、创作提交及导入路径都复用同一 operations 服务。
+旧的画布版本历史、恢复和整批 PUT 不属于当前用户写入合同；数据库迁移保留既有历史表以兼容已部署数据，但新写入不依赖它们。Agent、媒体回写、世界引擎、创作提交及导入路径都复用同一 operations 服务。
 
 画布/素材结构化配额使用 `UserStructuredStorageUsage`，仅聚合当前用户的 `assets` 和 `canvas_projects` 数量及 `payload_json` 字节数。SQLite 使用 `length(CAST(... AS BLOB))`，PostgreSQL 使用 `octet_length(...)`，避免中文按字符计数；空值按零字节处理。operations 通过事务 repository 读取用量后再写入，不增加缓存或配额表，不变更 schema。完整 `UserStorageUsage` 仍用于需要任务及日志统计的路径，画布保存不再为未使用的任务/日志指标扫描大字段。
 

@@ -7,8 +7,10 @@ import {
     Camera,
     Clapperboard,
     Clock,
+    ContactRound,
     Contrast,
     FastForward,
+    Film,
     Globe2,
     Grid2x2,
     Grid3x3,
@@ -41,8 +43,10 @@ export const TOOL_ICON_MAP: Record<string, React.ComponentType<{ className?: str
     Camera,
     Clapperboard,
     Clock,
+    ContactRound,
     Contrast,
     FastForward,
+    Film,
     Globe2,
     Grid2x2,
     Grid3x3,
@@ -68,8 +72,23 @@ function inlineIconSvg(Icon: React.ComponentType<{ className?: string }>): strin
     return renderToStaticMarkup(<Icon className="size-3" />);
 }
 
-function inlineMentionLabel(reference: CanvasResourceReference, token: string) {
-    return reference.inlineLabel ?? (reference.textAliases?.includes(token) ? token : reference.label);
+function syncInlineMentionPresentation(chip: HTMLElement, reference: CanvasResourceReference) {
+    if (reference.assetKind) chip.dataset.assetKind = reference.assetKind;
+    else delete chip.dataset.assetKind;
+    chip.setAttribute("aria-label", reference.title || reference.displayLabel || reference.label);
+    const label = chip.querySelector(".canvas-resource-inline-label");
+    const token = chip.dataset.mentionToken || "";
+    const displayLabel = reference.inlineLabel ?? (reference.textAliases?.includes(token) ? token : reference.displayLabel || reference.label);
+    if (label && label.textContent !== displayLabel) label.textContent = displayLabel;
+    let kind = chip.querySelector<HTMLElement>(".canvas-resource-inline-kind");
+    if (reference.assetKindLabel) {
+        if (!kind) {
+            kind = document.createElement("span");
+            kind.className = "canvas-resource-inline-kind";
+            chip.appendChild(kind);
+        }
+        kind.textContent = reference.assetKindLabel;
+    } else kind?.remove();
 }
 
 export function createInlineMentionChip(reference: CanvasResourceReference, token: string) {
@@ -101,8 +120,8 @@ export function createInlineMentionChip(reference: CanvasResourceReference, toke
 
     const label = document.createElement("span");
     label.className = "canvas-resource-inline-label";
-    label.textContent = inlineMentionLabel(reference, token);
     chip.appendChild(label);
+    syncInlineMentionPresentation(chip, reference);
 
     return chip;
 }
@@ -214,9 +233,7 @@ export function syncInlineMentionPreviews(editor: HTMLElement, references: Canva
         if (preview && (preview.tagName !== tag || preview.className !== className || preview.getAttribute("src") !== src)) {
             preview.replaceWith(createInlinePreview(reference));
         }
-        const label = chip.querySelector(".canvas-resource-inline-label");
-        const text = inlineMentionLabel(reference, chip.dataset.mentionToken || "");
-        if (label && label.textContent !== text) label.textContent = text;
+        syncInlineMentionPresentation(chip, reference);
     });
 }
 

@@ -55,6 +55,7 @@ import {
     type DramaCastKind,
     type DramaEpisodeMode,
     type DramaSettings,
+    formatDramaInboxCount,
     type DramaInboxItem,
     type DramaMediaMode,
     type DramaModelChoice,
@@ -250,12 +251,12 @@ export function CastPanel({
                     ) : null}
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
-                    {assetsPending && cast.some((item) => item.imageStatus === "") ? (
+                    {assetsPending && cast.some((item) => item.imageStatus === "" || item.imageStatus === "draft") ? (
                         <div className="drama-banner is-ready is-flush">
                             <Clapperboard className="size-5 shrink-0 text-[var(--workspace-accent)]" />
                             <div className="drama-banner-text">
                                 <strong>参考图还没有生成</strong>
-                                <span>先核对角色、道具与场景的名称和外观描述，满意后再生成参考图；也可以在右侧单独生成某一个。参考图会随剧情段视频请求一起发送，保持人物和道具一致。</span>
+                                <span>先核对角色、道具、场景与造型的名称和外观描述，满意后再生成参考图；也可以在右侧单独点「生成造型图」。参考图会随剧情段视频请求一起发送，保持人物和道具一致。</span>
                             </div>
                             <WorkflowBatch
                                 projectId={projectId}
@@ -1301,6 +1302,7 @@ export function InboxPanel({
     revision,
     onChanged,
     items,
+    failureCount,
     castById,
     retrying,
     retryingGroup,
@@ -1315,6 +1317,7 @@ export function InboxPanel({
     revision: number;
     onChanged: () => void | Promise<unknown>;
     items: DramaInboxItem[];
+    failureCount?: number;
     castById: Map<string, DramaCast>;
     retrying: boolean;
     retryingGroup: string;
@@ -1326,7 +1329,8 @@ export function InboxPanel({
     onReleaseAll: () => void;
 }) {
     const groups = useMemo(() => groupInbox(items), [items]);
-    const failures = items.filter((item) => item.severity === "error").length;
+    const listedFailures = items.filter((item) => item.severity === "error").length;
+    const failures = failureCount ?? listedFailures;
     const reviews = items.filter((item) => item.kind === "review").length;
     const textFailures = items.filter((item) => item.kind === "episode_error" || (item.kind === "segment_failed" && item.media === "prompt")).length;
     return (
@@ -1339,7 +1343,7 @@ export function InboxPanel({
                             {failures ? (
                                 <span className="is-err">
                                     <AlertCircle className="size-3.5" />
-                                    {failures} 项失败
+                                    {formatDramaInboxCount(failures)} 项失败
                                 </span>
                             ) : null}
                             {reviews ? (
@@ -1349,6 +1353,7 @@ export function InboxPanel({
                                 </span>
                             ) : null}
                             <span>共 {groups.length} 类</span>
+                            {failures > listedFailures ? <span>将重试全部失败项，不只是下列已列出的</span> : null}
                         </div>
                     ) : null}
                     {textFailures ? (
@@ -1644,6 +1649,7 @@ function SettingsPanelSession({ projectId, summary, cast, onChanged }: Parameter
     const continuity: DramaVideoContinuity = settings.videoContinuity || "tail_frame";
     const sampleCharacter = cast.find((item) => item.kind === "character" && item.appearance);
     const sampleScene = cast.find((item) => item.kind === "scene" && item.appearance);
+    const sampleProp = cast.find((item) => item.kind === "prop" && item.appearance);
     const countOf = (kind: DramaCastKind) => cast.filter((item) => item.kind === kind).length;
     const spent = summary.production.spentMicrocredits;
     const held = summary.production.heldMicrocredits || 0;
@@ -1712,7 +1718,15 @@ function SettingsPanelSession({ projectId, summary, cast, onChanged }: Parameter
                                 <AssetSchemePicker
                                     value={settings.assets}
                                     onChange={(assets) => setSettings({ ...settings, assets })}
-                                    sample={{ style: settings.stylePrompt, characterName: sampleCharacter?.name, characterAppearance: sampleCharacter?.appearance, sceneName: sampleScene?.name, sceneAppearance: sampleScene?.appearance }}
+                                    sample={{
+                                        style: settings.stylePrompt,
+                                        characterName: sampleCharacter?.name,
+                                        characterAppearance: sampleCharacter?.appearance,
+                                        sceneName: sampleScene?.name,
+                                        sceneAppearance: sampleScene?.appearance,
+                                        propName: sampleProp?.name,
+                                        propAppearance: sampleProp?.appearance,
+                                    }}
                                     imageModel={imageOption}
                                 />
                                 <div className="drama-settings-regen">

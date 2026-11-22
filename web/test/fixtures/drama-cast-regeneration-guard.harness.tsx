@@ -12,37 +12,19 @@ for (const [key, value] of Object.entries({ window: browser, document: browser.d
 }
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { renderToStaticMarkup } = await import("react-dom/server");
+const { setActiveUserScope } = await import("@/lib/user-scope");
 const userStore = create(() => ({ user: { id: "user-a" } }));
-type ConfirmOptions = { title: ReactNode; content: ReactNode; onOk: () => unknown; onCancel: () => unknown };
-type Confirmation = { options: ConfirmOptions; markup: string; destroyed: number };
 type ReadCall = { projectId: string; castId: string; userId: string };
-const confirmations: Confirmation[] = [];
+const notices: string[] = [];
 const errors: string[] = [];
 const reads: ReadCall[] = [];
 let readImpact: (projectId: string, castId: string) => Promise<DramaWorkflowImpact> = async (_projectId, castId) => impact({ castId });
 const services = {
     message: {
         error: (error: unknown) => errors.push(String(error)),
-        info: () => undefined,
+        info: (notice: unknown) => notices.push(String(notice)),
         warning: () => undefined,
         success: () => undefined,
-    },
-    modal: {
-        confirm: (options: ConfirmOptions) => {
-            const confirmation = {
-                options,
-                markup: renderToStaticMarkup(
-                    <>
-                        {options.title}
-                        {options.content}
-                    </>,
-                ),
-                destroyed: 0,
-            };
-            confirmations.push(confirmation);
-            return { destroy: () => confirmation.destroyed++ };
-        },
     },
 };
 mock.module("@/stores/use-user-store", () => ({ useUserStore: userStore }));
@@ -88,8 +70,8 @@ function impact(overrides: Partial<DramaWorkflowImpact> = {}): DramaWorkflowImpa
     return { kind: "cast", castId: "cast-1", revision: 4, segments: 0, episodes: 0, affectedSegments: 0, assetIds: ["cast-1"], directSegments: [], continuitySegments: [], message: "按已保存引用统计影响。", ...overrides };
 }
 function reset() {
-    reads.length = confirmations.length = errors.length = 0;
-    browser.localStorage.setItem("yingce:active-user-scope", "user-a");
+    reads.length = notices.length = errors.length = 0;
+    setActiveUserScope("user-a");
     userStore.setState({ user: { id: "user-a" } });
     readImpact = async (_projectId, castId) => impact({ castId });
 }
@@ -102,11 +84,6 @@ async function flush(operation: () => unknown = () => undefined) {
         operation();
         await settle();
     });
-}
-function confirmText(index = confirmations.length - 1) {
-    const host = browser.document.createElement("div");
-    host.innerHTML = confirmations[index].markup;
-    return host.textContent || "";
 }
 async function mount(execute: Execute = async () => undefined) {
     const host = document.createElement("div");
@@ -174,7 +151,7 @@ async function mount(execute: Execute = async () => undefined) {
 }
 async function switchAccount() {
     await flush(() => {
-        browser.localStorage.setItem("yingce:active-user-scope", "user-b");
+        setActiveUserScope("user-b");
         userStore.setState({ user: { id: "user-b" } });
     });
 }
@@ -193,7 +170,7 @@ test("挂载不查询；点击时读取，零生成视频立即执行且无确�
         expect(view.busy).toBe(false);
         await flush(() => view.host.querySelector<HTMLButtonElement>("button")!.click());
         expect(reads).toEqual([{ projectId: "project-a", castId: "cast-1", userId: "user-a" }]);
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(1);
         expect(view.busy).toBe(false);
         expect(errors).toHaveLength(0);
@@ -208,7 +185,7 @@ test("queued和running空槽不属于已生成视频，不弹确认", async () =
     const view = await mount();
     try {
         await view.start();
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(1);
         expect(view.busy).toBe(false);
     } finally {
@@ -216,21 +193,15 @@ test("queued和running空槽不属于已生成视频，不弹确认", async () =
     }
 });
 
-test("直接引用视频列具体集段，确认后才执行且执行期间保持busy", async () => {
+test("直接引用视频在单击生成后提示影响，执行期间保持忙碌", async () => {
     reset();
     readImpact = async () => impact({ directSegments: [segment()] });
     const pending = deferred<unknown>();
     const view = await mount(() => pending.promise);
     try {
         await view.start({ restyleSegments: true });
-        expect(confirmations).toHaveLength(1);
-        expect(confirmText()).toContain("第 2 集 · 第 2 段 · 相遇");
-        expect(confirmText()).toContain("直接引用");
-        expect(view.executions).toBe(0);
-        expect(view.busy).toBe(true);
-        await flush(() => confirmations[0].options.onOk());
+        expect(notices).toEqual(["已有 1 段视频引用此资产，将标记为待更新。"]);
         expect(view.executions).toBe(1);
-        expect(view.tickets[0]()).toBe(true);
         expect(view.busy).toBe(true);
         await flush(() => pending.resolve(undefined));
         expect(view.busy).toBe(false);
@@ -240,59 +211,44 @@ test("直接引用视频列具体集段，确认后才执行且执行期间保�
     }
 });
 
-test("仅尾帧续接已有视频也确认，取消不执行任何写入", async () => {
+test("仅尾帧续接已有视频也在生成时提示影响", async () => {
     reset();
-    readImpact = async () => impact({ continuitySegments: [segment({ episodeNumber: 3, segmentIndex: 4 })] });
+    readImpact = async () => impact({ continuitySegments: [segment()] });
     const view = await mount();
     try {
         await view.start();
-        expect(confirmText()).toContain("第 3 集 · 第 5 段 · 相遇");
-        expect(confirmText()).toContain("尾帧续接");
-        await flush(() => confirmations[0].options.onCancel());
-        expect(view.executions).toBe(0);
-        expect(view.busy).toBe(false);
+        expect(notices).toEqual(["已有 1 段视频引用此资产，原视频保留。"]);
+        expect(view.executions).toBe(1);
     } finally {
         await view.close();
     }
 });
 
-test("直接与续接按ID去重且过滤没有视频的项", async () => {
+test("直接与续接按 ID 去重且过滤没有视频的项", async () => {
     reset();
-    const direct = segment();
+    const shared = segment();
     readImpact = async () =>
         impact({
-            directSegments: [direct, segment({ id: "queued", episodeNumber: 99, hasVideo: false, videoStatus: "queued" })],
-            continuitySegments: [direct, segment({ id: "tail", segmentIndex: 2 }), segment({ id: "empty", episodeNumber: 98, hasVideo: false })],
+            directSegments: [shared, segment({ id: "pending", hasVideo: false, videoStatus: "queued" })],
+            continuitySegments: [shared, segment({ id: "running", hasVideo: false, videoStatus: "running" })],
         });
     const view = await mount();
     try {
         await view.start();
-        const text = confirmText();
-        expect(text).toContain("已有 2 段视频");
-        expect(text.match(/第 2 集 · 第 2 段/g)).toHaveLength(1);
-        expect(text.match(/第 2 集 · 第 3 段/g)).toHaveLength(1);
-        expect(text).not.toContain("第 99 集");
-        expect(text).not.toContain("第 98 集");
-        await flush(() => confirmations[0].options.onCancel());
-        expect(view.executions).toBe(0);
+        expect(notices).toEqual(["已有 1 段视频引用此资产，原视频保留。"]);
+        expect(view.executions).toBe(1);
     } finally {
         await view.close();
     }
 });
 
-test("解锁自定义图即使零视频仍确认，取消不写、确认才执行", async () => {
+test("解锁自定义图时显示影响并仅提交一次", async () => {
     reset();
     const view = await mount();
     try {
         await view.start({ unlock: true });
-        expect(confirmText()).toContain("解锁");
-        expect(view.executions).toBe(0);
-        await flush(() => confirmations[0].options.onCancel());
-        expect(view.executions).toBe(0);
-        expect(view.busy).toBe(false);
-        await view.start({ unlock: true });
-        await flush(() => confirmations[1].options.onOk());
-        expect(reads).toHaveLength(2);
+        expect(notices).toEqual(["将解锁「林夏」并生成新图。"]);
+        expect(reads).toHaveLength(1);
         expect(view.executions).toBe(1);
         expect(view.busy).toBe(false);
     } finally {
@@ -310,7 +266,7 @@ test("影响读取失败显示错误且允许重新点击重试", async () => {
         await view.start();
         expect(errors).toEqual(["影响读取断开"]);
         expect(view.executions).toBe(0);
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.busy).toBe(false);
         readImpact = async () => impact();
         await view.start();
@@ -331,7 +287,7 @@ test("kind、castId或影响数组不匹配时拒绝继续并释放锁", async (
             readImpact = async () => value as DramaWorkflowImpact;
             await view.start();
             expect(view.executions).toBe(0);
-            expect(confirmations).toHaveLength(0);
+            expect(notices).toHaveLength(0);
             expect(view.busy).toBe(false);
         }
         expect(errors).toHaveLength(malformed.length);
@@ -354,7 +310,7 @@ test("账号变化后迟到影响不能确认或执行，新账号可以重新�
         await switchAccount();
         expect(view.busy).toBe(false);
         await flush(() => pending.resolve(impact({ directSegments: [segment()] })));
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(0);
         expect(errors).toHaveLength(0);
         readImpact = async () => impact();
@@ -379,17 +335,20 @@ test("仅storage作用域切换释放旧读取，迟到读取不释放新操作�
         await switchStorageScope();
         expect(userStore.getState().user.id).toBe("user-a");
         expect(view.busy).toBe(false);
+        await view.start();
+        expect(reads).toHaveLength(1);
+        await flush(() => setActiveUserScope("user-a"));
         readImpact = () => newRead.promise;
         await view.start();
         expect(view.busy).toBe(true);
         await flush(() => oldRead.resolve(impact({ directSegments: [segment()] })));
         expect(view.busy).toBe(true);
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(0);
         await flush(() => newRead.resolve(impact()));
         expect(view.executions).toBe(1);
         expect(view.busy).toBe(false);
-        expect(errors).toHaveLength(0);
+        expect(errors).toHaveLength(1);
     } finally {
         oldRead.resolve(impact());
         newRead.resolve(impact());
@@ -397,39 +356,33 @@ test("仅storage作用域切换释放旧读取，迟到读取不释放新操作�
     }
 });
 
-test("仅storage作用域切换销毁旧确认，无关storage事件不打断确认", async () => {
+test("无关 storage 事件不打断读取，作用域变更后迟到结果不提交", async () => {
     reset();
-    readImpact = async () => impact({ directSegments: [segment()] });
+    const pending = deferred<DramaWorkflowImpact>();
+    readImpact = () => pending.promise;
     const view = await mount();
     try {
         await view.start();
-        const oldConfirm = confirmations[0];
         await flush(() => browser.dispatchEvent(new browser.StorageEvent("storage", { key: "other-key", newValue: "changed" })));
-        expect(oldConfirm.destroyed).toBe(0);
         expect(view.busy).toBe(true);
         await switchStorageScope();
-        expect(oldConfirm.destroyed).toBe(1);
         expect(view.busy).toBe(false);
-        await view.start();
-        const newConfirm = confirmations[1];
-        await flush(() => oldConfirm.options.onOk());
+        await flush(() => pending.resolve(impact({ directSegments: [segment()] })));
         expect(view.executions).toBe(0);
-        expect(view.busy).toBe(true);
-        expect(newConfirm.destroyed).toBe(0);
-        await flush(() => newConfirm.options.onOk());
-        expect(view.executions).toBe(1);
-        expect(view.busy).toBe(false);
+        expect(notices).toHaveLength(0);
     } finally {
+        pending.resolve(impact());
         await view.close();
     }
 });
 
-test("空闲时仅storage作用域切换后，下次请求采用新票据", async () => {
+test("空闲时作用域切换并恢复认证后，下次请求采用新票据", async () => {
     reset();
     const pendingExecute = deferred<unknown>();
     const view = await mount(() => pendingExecute.promise);
     try {
         await switchStorageScope();
+        await flush(() => setActiveUserScope("user-a"));
         expect(view.busy).toBe(false);
         await view.start();
         expect(view.executions).toBe(1);
@@ -458,7 +411,7 @@ test("切作品后旧读取不能释放新作品的锁或启动旧操作", async
         expect(view.busy).toBe(true);
         await flush(() => oldRead.resolve(impact({ directSegments: [segment()] })));
         expect(view.busy).toBe(true);
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(0);
         await flush(() => newRead.resolve(impact()));
         expect(reads.map(({ projectId }) => projectId)).toEqual(["project-a", "project-b"]);
@@ -471,34 +424,7 @@ test("切作品后旧读取不能释放新作品的锁或启动旧操作", async
     }
 });
 
-test("账号或作品切换销毁旧确认，迟到onOk不能执行或影响新确认", async () => {
-    for (const scope of ["account", "project"]) {
-        reset();
-        readImpact = async () => impact({ directSegments: [segment()] });
-        const view = await mount();
-        try {
-            await view.start();
-            const oldConfirm = confirmations[0];
-            if (scope === "account") await switchAccount();
-            else await view.render("project-b");
-            expect(oldConfirm.destroyed).toBe(1);
-            expect(view.busy).toBe(false);
-            await view.start();
-            const newConfirm = confirmations[1];
-            await flush(() => oldConfirm.options.onOk());
-            expect(view.executions).toBe(0);
-            expect(view.busy).toBe(true);
-            expect(newConfirm.destroyed).toBe(0);
-            await flush(() => newConfirm.options.onOk());
-            expect(view.executions).toBe(1);
-            expect(view.busy).toBe(false);
-        } finally {
-            await view.close();
-        }
-    }
-});
-
-test("同帧双点及读取、确认、执行各阶段重复点击都只启动一次", async () => {
+test("同帧双点及读取、执行各阶段重复点击都只启动一次", async () => {
     reset();
     const pendingRead = deferred<DramaWorkflowImpact>();
     const pendingExecute = deferred<unknown>();
@@ -514,11 +440,6 @@ test("同帧双点及读取、确认、执行各阶段重复点击都只启动�
         await view.start();
         expect(reads).toHaveLength(1);
         await flush(() => pendingRead.resolve(impact({ directSegments: [segment()] })));
-        await view.start();
-        expect(confirmations).toHaveLength(1);
-        expect(view.executions).toBe(0);
-        expect(reads).toHaveLength(1);
-        await flush(() => confirmations[0].options.onOk());
         await view.start();
         expect(view.executions).toBe(1);
         expect(view.busy).toBe(true);
@@ -547,7 +468,7 @@ test("表单重挂取消未完成的影响读取，旧读取不能启动隐藏�
         await flush(view.cancelBeforeExecution);
         expect(view.busy).toBe(false);
         await flush(() => pendingRead.resolve(impact({ directSegments: [segment()] })));
-        expect(confirmations).toHaveLength(0);
+        expect(notices).toHaveLength(0);
         expect(view.executions).toBe(0);
         expect(errors).toHaveLength(0);
         readImpact = async () => impact();
@@ -560,28 +481,13 @@ test("表单重挂取消未完成的影响读取，旧读取不能启动隐藏�
     }
 });
 
-test("表单重挂销毁执行前确认，取消回调稳定且旧确认不能影响新操作", async () => {
+test("取消执行前读取的回调跨渲染保持稳定", async () => {
     reset();
-    readImpact = async () => impact({ directSegments: [segment()] });
     const view = await mount();
     try {
         const cancelBeforeExecution = view.cancelBeforeExecution;
         await view.render();
         expect(view.cancelBeforeExecution).toBe(cancelBeforeExecution);
-        await view.start();
-        const oldConfirm = confirmations[0];
-        await flush(cancelBeforeExecution);
-        expect(oldConfirm.destroyed).toBe(1);
-        expect(view.busy).toBe(false);
-        await view.start();
-        const newConfirm = confirmations[1];
-        await flush(() => oldConfirm.options.onOk());
-        expect(view.executions).toBe(0);
-        expect(view.busy).toBe(true);
-        expect(newConfirm.destroyed).toBe(0);
-        await flush(() => newConfirm.options.onOk());
-        expect(view.executions).toBe(1);
-        expect(view.busy).toBe(false);
     } finally {
         await view.close();
     }
@@ -611,12 +517,12 @@ test("表单重挂不取消已进入执行阶段的保存与生成", async () =>
 });
 
 test("卸载和切换会话使执行票据失效，旧回执不释放新操作的锁", async () => {
-    for (const stage of ["read", "confirm", "execute"]) {
+    for (const stage of ["read", "execute"]) {
         reset();
         const pendingRead = deferred<DramaWorkflowImpact>();
         const pendingExecute = deferred<unknown>();
         if (stage === "read") readImpact = () => pendingRead.promise;
-        else readImpact = async () => impact({ directSegments: stage === "confirm" ? [segment()] : [] });
+        else readImpact = async () => impact();
         const view = await mount(() => pendingExecute.promise);
         try {
             await view.start();
@@ -627,11 +533,7 @@ test("卸载和切换会话使执行票据失效，旧回执不释放新操作�
             await view.close();
             if (stage === "read") {
                 await flush(() => pendingRead.resolve(impact({ directSegments: [segment()] })));
-                expect(confirmations).toHaveLength(0);
-                expect(view.executions).toBe(0);
-            } else if (stage === "confirm") {
-                expect(confirmations[0].destroyed).toBe(1);
-                await flush(() => confirmations[0].options.onOk());
+                expect(notices).toHaveLength(0);
                 expect(view.executions).toBe(0);
             } else {
                 expect(view.tickets[0]()).toBe(false);

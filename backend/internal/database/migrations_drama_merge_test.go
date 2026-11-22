@@ -138,7 +138,12 @@ func TestDramaMergePreservesNativeUpstreamThrough79(t *testing.T) {
 					t.Fatalf("native upstream ledger changed: before=%+v after=%+v err=%v", record, after, err)
 				}
 			}
-			for name, expected := range map[string]int64{"canvas_model3d": 80, "model3d_base_url": 81, "model3d_asset_timestamps": 82, "channel_model_provider_defaults": 83, "task_provider_progress": 84, "model3d_requests": 85} {
+			firstLocalVersion := int64(80)
+			if version >= 78 {
+				firstLocalVersion = 110
+			}
+			for offset, name := range []string{"canvas_model3d", "model3d_base_url", "model3d_asset_timestamps", "channel_model_provider_defaults", "task_provider_progress", "model3d_requests"} {
+				expected := firstLocalVersion + int64(offset)
 				var record schemaMigration
 				if err := db.First(&record, "name = ?", name).Error; err != nil || record.Version != expected {
 					t.Fatalf("migration %s: %+v, expected %d, error=%v", name, record, expected, err)

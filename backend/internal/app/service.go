@@ -142,18 +142,20 @@ type CreateTaskRequest struct {
 	submission      *taskSubmission
 	// callerHoldsStorageMu 只给已经持有 Service.storageMu 的内部调用设置。
 	// 文件容量检查不能再锁一次，否则审批改参数会自锁。
-	callerHoldsStorageMu bool
-	ClientOperationID    string         `json:"clientOperationId,omitempty"`
-	ProjectID            string         `json:"projectId"`
-	Type                 string         `json:"type"`
-	Operation            string         `json:"operation"`
-	Prompt               string         `json:"prompt"`
-	Provider             string         `json:"provider"`
-	Model                string         `json:"model"`
-	LogicalModelID       string         `json:"logicalModelId"`
-	Input                map[string]any `json:"input"`
-	TraceID              string         `json:"-"`
-	RequestID            string         `json:"-"`
+	callerHoldsStorageMu  bool
+	ClientOperationID     string         `json:"clientOperationId,omitempty"`
+	ProjectID             string         `json:"projectId"`
+	Type                  string         `json:"type"`
+	Operation             string         `json:"operation"`
+	Prompt                string         `json:"prompt"`
+	Provider              string         `json:"provider"`
+	Model                 string         `json:"model"`
+	LogicalModelID        string         `json:"logicalModelId"`
+	MaxChargeMicrocredits *int64         `json:"maxChargeMicrocredits,omitempty"`
+	IdempotencyKey        string         `json:"idempotencyKey,omitempty"`
+	Input                 map[string]any `json:"input"`
+	TraceID               string         `json:"-"`
+	RequestID             string         `json:"-"`
 }
 
 type TaskListOptions struct {
@@ -226,6 +228,7 @@ func (s *Service) StartWorker() {
 	s.startDramaScheduler()
 	s.startInspirationFeedWorker()
 	s.startConsumptionReportWorker()
+	s.startFeishuFeedbackWorker()
 	go s.syncAgentSessionLimit()
 	s.runWorkerLoop(func(ctx context.Context) {
 		ticker := time.NewTicker(3 * time.Second)

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 
-import { getActiveUserScope } from "@/lib/user-scope";
+import { assertCurrentUserSession, captureUserSession, subscribeUserSessionInvalidation } from "@/lib/user-scope";
 import { getDramaCastImpact } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 import { generatedCastVideoSegments } from "../workflow-impact";
@@ -15,17 +15,11 @@ type RegenerationRequest = {
     execute: (isCurrent: () => boolean) => Promise<unknown>;
 };
 
-function subscribeToScopeChanges(listener: () => void) {
-    window.addEventListener("storage", listener);
-    return () => window.removeEventListener("storage", listener);
-}
-
 /** 点击生成即授权；读取依赖后直接执行，已有视频影响通过非阻断提示说明。 */
 export function useCastRegenerationGuard(projectId: string) {
     const { message } = App.useApp();
     const operation = useDramaOperationScope(projectId);
     const userId = useUserStore((state) => state.user?.id);
-    const userScope = useSyncExternalStore(subscribeToScopeChanges, getActiveUserScope, getActiveUserScope);
     const [busy, setBusy] = useState(false);
     type Pending = { ticket: ReturnType<typeof operation.capture>; executing: boolean };
     const active = useRef<Pending | null>(null);
@@ -37,17 +31,37 @@ export function useCastRegenerationGuard(projectId: string) {
     }, []);
     useEffect(() => {
         setBusy(false);
+        const unsubscribe = subscribeUserSessionInvalidation(() => {
+            active.current = null;
+            setBusy(false);
+        });
         return () => {
+            unsubscribe();
             active.current = null;
         };
-    }, [projectId, userId, userScope]);
+    }, [projectId, userId]);
 
     const request = async ({ castId, name, restyleSegments, unlock, execute }: RegenerationRequest) => {
         if (active.current) return;
+        let session: ReturnType<typeof captureUserSession>;
+        try {
+            session = captureUserSession();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "账号已切换，请重新打开后重试");
+            return;
+        }
         const pending: Pending = { ticket: operation.capture(), executing: false };
         active.current = pending;
         setBusy(true);
-        const current = () => active.current === pending && operation.isCurrent(pending.ticket);
+        const current = () => {
+            if (active.current !== pending || !operation.isCurrent(pending.ticket)) return false;
+            try {
+                assertCurrentUserSession(session);
+                return true;
+            } catch {
+                return false;
+            }
+        };
         try {
             let impact;
             try {
@@ -58,8 +72,8 @@ export function useCastRegenerationGuard(projectId: string) {
                 if (current()) message.error(error instanceof Error ? error.message : "影响范围读取失败，请重试");
                 return;
             }
-            if (generatedCastVideoSegments(impact).length || unlock) {
-                const count = generatedCastVideoSegments(impact).length;
+            const count = generatedCastVideoSegments(impact).length;
+            if (count || unlock) {
                 message.info(`${unlock ? `将解锁「${name}」并生成新图。` : ""}${count ? `已有 ${count} 段视频引用此资产${restyleSegments ? "，将标记为待更新" : "，原视频保留"}。` : ""}`);
             }
             if (current()) {

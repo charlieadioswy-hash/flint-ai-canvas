@@ -1,8 +1,8 @@
 import localforage from "localforage";
 import type { StateStorage } from "zustand/middleware";
 
-import { isUserScopedPersistenceSuppressed, scopedStorageKey } from "@/lib/user-scope";
 import type { BrowserStorageLockGuard } from "@/lib/browser-storage-lock";
+import { assertCurrentUserSession, captureUserSession, isUserScopedPersistenceSuppressed, scopedStorageKey } from "@/lib/user-scope";
 
 localforage.config({
     name: "yingce",
@@ -41,13 +41,27 @@ async function guardedStorageRequest<T>(key: string, guard: BrowserStorageLockGu
             guard.assertHeld();
             const transaction = database.transaction(storeName, mode);
             const request = requestFor(transaction.objectStore(storeName));
-            const abort = () => { try { transaction.abort(); } catch { /* Already committed/aborted. */ } };
+            const abort = () => {
+                try {
+                    transaction.abort();
+                } catch {
+                    /* Already committed/aborted. */
+                }
+            };
             guard.signal.addEventListener("abort", abort, { once: true });
             const release = () => guard.signal.removeEventListener("abort", abort);
-            transaction.onabort = () => { release(); reject(transaction.error || new Error(`IndexedDB 存储事务中断：${key}`)); };
+            transaction.onabort = () => {
+                release();
+                reject(transaction.error || new Error(`IndexedDB 存储事务中断：${key}`));
+            };
             transaction.oncomplete = () => {
                 release();
-                try { guard.assertHeld(); resolve(request.result); } catch (error) { reject(error); }
+                try {
+                    guard.assertHeld();
+                    resolve(request.result);
+                } catch (error) {
+                    reject(error);
+                }
             };
         });
     } finally {
@@ -59,9 +73,12 @@ export function localForageStorageForScope(scope?: string, guard?: BrowserStorag
     const keyFor = (name: string) => scopedStorageKey(name, scope);
     return {
         getItem: async (name) => {
-            if (guard) return (await guardedStorageRequest(keyFor(name), guard, "readonly", (store) => store.get(keyFor(name)))) || null;
             if (!browserStorageAvailable()) return null;
-            return (await localforage.getItem<string>(keyFor(name))) || null;
+            const session = captureUserSession(true);
+            const key = scopedStorageKey(name, scope ?? session.scope);
+            const value = guard ? await guardedStorageRequest(key, guard, "readonly", (store) => store.get(key) as IDBRequest<string | undefined>) : await localforage.getItem<string>(key);
+            assertCurrentUserSession(session, true);
+            return value || null;
         },
         setItem: async (name, value) => {
             if (guard) {

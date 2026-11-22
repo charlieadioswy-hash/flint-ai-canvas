@@ -1155,6 +1155,8 @@ test("从资产库批选返回单集时恢复三栏，清除全局批选模式�
         await click(button(view.container, "选择当前范围"));
         expect(view.container.querySelectorAll('.drama-workflow-asset-selection input[type="checkbox"]')).toHaveLength(2);
         expect(view.container.textContent).toContain("清空选择（2）");
+        await waitForQuote();
+        const preflightsBeforeSwitch = batchChecks.length;
         await view.update({ variant: "episode" });
         expect(view.container.querySelector('[aria-label="按集查看资产"]')).toBeNull();
         expect(view.container.querySelector(".drama-workflow-asset-selection")).toBeNull();
@@ -1165,7 +1167,7 @@ test("从资产库批选返回单集时恢复三栏，清除全局批选模式�
             expect(view.container.querySelector<HTMLInputElement>(`[aria-label="选择本集全部${label}"]`)?.checked).toBe(false);
             expect(button(view.container, `生成${label}图片`).disabled).toBe(true);
         }
-        expect(batchChecks).toHaveLength(0);
+        expect(batchChecks).toHaveLength(preflightsBeforeSwitch);
         expect(batchExecutions).toHaveLength(0);
     } finally {
         await view.dispose();

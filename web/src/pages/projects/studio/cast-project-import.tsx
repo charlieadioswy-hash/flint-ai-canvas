@@ -1,11 +1,11 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { App, Button, Checkbox, Select } from "antd";
 import { Link2 } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { dramaKeys } from "@/lib/drama/drama-query-keys";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { getActiveUserScope, isUserSessionInvalidated, subscribeUserSessionInvalidation } from "@/lib/user-scope";
 import { importDramaCast, listDramaCast, listDramas, type DramaCast } from "@/services/api/drama";
 import { useUserStore } from "@/stores/use-user-store";
 import { CAST_KIND_LABEL, MediaThumb } from "../drama-shared";
@@ -28,7 +28,8 @@ type CastProjectImportProps = {
 export function CastProjectImport(props: CastProjectImportProps) {
     const userId = useUserStore((state) => state.user?.id);
     const accountScope = getActiveUserScope();
-    return <CastProjectImportSession key={JSON.stringify([props.projectId, props.episodeId, props.kind, userId, accountScope])} {...props} userId={userId} accountScope={accountScope} />;
+    const invalidated = useSyncExternalStore(subscribeUserSessionInvalidation, isUserSessionInvalidated, () => false);
+    return <CastProjectImportSession key={JSON.stringify([props.projectId, props.episodeId, props.kind, userId, accountScope, invalidated])} {...props} userId={userId} accountScope={accountScope} />;
 }
 
 function CastProjectImportSession({ projectId, episodeId, currentCast, kind, disabled = false, onClose, onImported, onStateChange, userId, accountScope }: CastProjectImportProps & { userId?: string; accountScope: string }) {
@@ -45,7 +46,7 @@ function CastProjectImportSession({ projectId, episodeId, currentCast, kind, dis
     const [matchByName, setMatchByName] = useState(true);
     const [replaceExisting, setReplaceExisting] = useState(false);
     const sessionIsActive = () => Boolean(userId && accountScope === userId && useUserStore.getState().user?.id === userId && getActiveUserScope() === accountScope);
-    const ownerIsActive = sessionIsActive();
+    const ownerIsActive = sessionIsActive() && operation.isCurrent(operation.capture());
     const projects = useQuery({ queryKey: ["dramas", "cast-import", userId, accountScope, projectId, query], queryFn: ({ signal }) => listDramas({ page: 1, pageSize: 100, q: query || undefined }, signal), enabled: Boolean(ownerIsActive && projectId) });
     const sourceProjects = projects.data?.items.filter((item) => item.project.id !== projectId) || [];
     const source = useQuery({
@@ -60,7 +61,7 @@ function CastProjectImportSession({ projectId, episodeId, currentCast, kind, dis
     type ImportRequest = { ticket: ReturnType<typeof operation.capture>; payload: Parameters<typeof importDramaCast>[1] };
     const importAssets = useMutation({
         mutationFn: ({ ticket, payload }: ImportRequest) => {
-            if (!sessionIsActive() || !operation.isCurrent(ticket)) throw new Error("当前作品或账号已切换，请重新选择素材");
+            if (!sessionIsActive() || isUserSessionInvalidated() || !operation.isCurrent(ticket)) throw new Error("当前作品或账号已切换，请重新选择素材");
             return importDramaCast(ticket.projectId, payload);
         },
         onSuccess: (result, { ticket }) => {

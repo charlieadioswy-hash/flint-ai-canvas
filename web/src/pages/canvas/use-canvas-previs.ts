@@ -4,12 +4,18 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
-import { fitImageNodeSize, preserveImageNodeSize } from "@/lib/canvas/canvas-node-size";
+import { fitImageNodeSize, fitNodeSize, preserveImageNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
+import { resolvePrevisShotCameraMove } from "@/lib/canvas/previs/previs-camera-techniques";
 import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { createPrevisSceneFromTemplate, type PrevisTemplateId } from "@/lib/canvas/previs/previs-templates";
+import type { DramaPrevisRequest } from "@/lib/canvas/drama-previs";
+import { dramaCastAssetCategory, dramaSegmentPrompt } from "@/lib/canvas/drama-canvas-projection";
+import { ensureDramaCanvasAssets } from "@/services/drama-canvas";
+import { resourceFileUrl } from "@/services/api/resources";
 import { mergePrevisOutputPreview, upsertPrevisSceneById } from "@/lib/canvas/previs/previs-session";
+import { PREVIS_DEFAULT_WORLD } from "@/lib/canvas/previs/previs-world";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -38,7 +44,7 @@ const PREVIS_NODE_SIZE = { width: 520, height: 340 } as const;
 const PREVIS_LEGACY_NODE_SIZE = { width: 760, height: 500 } as const;
 
 function shouldUpgradePrevisNodeSize(node: CanvasNodeData) {
-    // 只迁移预演台曾经写入的默认尺寸；用户后续手动调整过的节点保持原样。
+    // 只迁移世界引擎曾经写入的默认尺寸；用户后续手动调整过的节点保持原样。
     const isLegacyDefault = node.width === PREVIS_LEGACY_NODE_SIZE.width && node.height === PREVIS_LEGACY_NODE_SIZE.height;
     const isEarlyCompactDefault = node.width <= 720 && node.height <= 320;
     return isLegacyDefault || isEarlyCompactDefault;
@@ -79,8 +85,8 @@ export function useCanvasPrevis({
     }, [projectId]);
 
     /**
-     * 新建镜头。templateId 由调用方（模板选择弹窗）显式给出 —— 这里不设默认模板，
-     * 否则又会回到「无条件塞一个默认演员」的老问题。
+     * 新建镜头。画布入口一律传 "empty"：直接得到空白场景，不弹模板选择，也不塞默认演员。
+     * 新场景默认开启世界环境（天空、太阳、地面），打开即是可拍的外景空地。
      */
     const createPrevisShot = useCallback(
         (templateId: PrevisTemplateId, position?: Position) => {
@@ -88,7 +94,7 @@ export function useCanvasPrevis({
             const shotIndex = Math.max(0, ...shots.map((node) => node.metadata?.shotIndex || 0)) + 1;
             let scene = createPrevisSceneFromTemplate(templateId, translate("canvasPage.previs.shot", { index: shotIndex }));
             const shot = scene.shots[0];
-            scene = { ...scene, shots: [{ ...shot, name: translate("canvasPage.previs.shot", { index: shotIndex }) }] };
+            scene = { ...scene, world: { ...PREVIS_DEFAULT_WORLD }, shots: [{ ...shot, name: translate("canvasPage.previs.shot", { index: shotIndex }) }] };
             const node = createCanvasNode(CanvasNodeType.Video, position || getCanvasCenter(), {
                 workflowKind: "shot",
                 workflowTitle: translate("canvasPage.previs.shot", { index: shotIndex }),
@@ -182,7 +188,15 @@ export function useCanvasPrevis({
                 title: translate("canvasPage.previs.compositionTitle", { title: sourceNode.title }),
                 position: existingPreview?.position || { x: sourceNode.position.x - previewSize.width - 36, y: sourceNode.position.y },
                 ...preserveImageNodeSize(existingPreview, previewSize),
-                metadata: { ...existingPreview?.metadata, ...imageMetadata(image), prompt: output.prompt, workflowKind: "reference_set", assetTags: ["预演台构图", `镜头:${sourceNode.title}`], producedModel: undefined, producedModelCandidate: undefined },
+                metadata: {
+                    ...existingPreview?.metadata,
+                    ...imageMetadata(image),
+                    prompt: output.prompt,
+                    workflowKind: "reference_set",
+                    assetTags: ["世界引擎构图", `镜头:${sourceNode.title}`],
+                    producedModel: undefined,
+                    producedModelCandidate: undefined,
+                },
             };
             if (previewIndex >= 0) nextNodes[previewIndex] = previewNode;
             else nextNodes.push(previewNode);
@@ -198,14 +212,13 @@ export function useCanvasPrevis({
                     type: CanvasNodeType.Video,
                     title: translate("canvasPage.previs.clayVideoTitle", { title: sourceNode.title }),
                     position: existingVideo?.position || { x: sourceNode.position.x, y: sourceNode.position.y + sourceNode.height + 48 },
-                    width: existingVideo?.width || 360,
-                    height: existingVideo?.height || 220,
+                    ...preserveImageNodeSize(existingVideo, previsVideoNodeSize(videoUpload, image)),
                     metadata: {
                         ...existingVideo?.metadata,
                         ...videoMetadata(videoUpload),
                         prompt: output.prompt,
                         workflowKind: "reference_video",
-                        assetTags: ["预演台白膜", `镜头:${sourceNode.title}`],
+                        assetTags: ["世界引擎白膜", `镜头:${sourceNode.title}`],
                         producedModel: undefined,
                         producedModelCandidate: undefined,
                     },
@@ -234,7 +247,7 @@ export function useCanvasPrevis({
                         ...imageMetadata(depthImage),
                         prompt: output.prompt,
                         workflowKind: "reference_set",
-                        assetTags: ["预演台深度", `镜头:${sourceNode.title}`],
+                        assetTags: ["世界引擎深度", `镜头:${sourceNode.title}`],
                         producedModel: undefined,
                         producedModelCandidate: undefined,
                     },
@@ -253,14 +266,13 @@ export function useCanvasPrevis({
                     type: CanvasNodeType.Video,
                     title: translate("canvasPage.previs.depthVideoTitle", { title: sourceNode.title }),
                     position: existingDepthVideo?.position || { x: sourceNode.position.x + sourceNode.width + 48, y: sourceNode.position.y + sourceNode.height + 48 },
-                    width: existingDepthVideo?.width || 360,
-                    height: existingDepthVideo?.height || 220,
+                    ...preserveImageNodeSize(existingDepthVideo, previsVideoNodeSize(depthVideoUpload, image)),
                     metadata: {
                         ...existingDepthVideo?.metadata,
                         ...videoMetadata(depthVideoUpload),
                         prompt: output.prompt,
                         workflowKind: "reference_video",
-                        assetTags: ["预演台深度", `镜头:${sourceNode.title}`],
+                        assetTags: ["世界引擎深度", `镜头:${sourceNode.title}`],
                         producedModel: undefined,
                         producedModelCandidate: undefined,
                     },
@@ -288,7 +300,7 @@ export function useCanvasPrevis({
                 previsClayVideoNodeId: clayVideoId,
                 composerContent: output.prompt,
                 prompt: output.prompt,
-                videoCameraMoveId: output.shot.cameraMove,
+                videoCameraMoveId: resolvePrevisShotCameraMove(output.scene, output.shot),
                 videoCameraMovePrompt: output.prompt,
                 referenceAssetNodeIds,
             };
@@ -390,5 +402,97 @@ export function useCanvasPrevis({
         [connectionsRef, domainProjectId, message, nodesRef, previsNodeId, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds],
     );
 
-    return { addPrevisToCanvas, applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene };
+    const prepareDramaPrevis = useCallback(
+        async (request: DramaPrevisRequest) => {
+            const scope = getActiveUserScope();
+            const { buildDramaPrevisScene, findDramaPrevisDraft } = await import("@/lib/canvas/drama-previs");
+            if (projectIdRef.current !== projectId || getActiveUserScope() !== scope) throw new Error("画布或账号已切换，请重新打开剧情段");
+            const source = nodesRef.current.find((node) => node.id === request.sourceNodeId);
+            const ref = source?.metadata?.dramaRef;
+            if (!source || ref?.kind !== "segment" || ref.projectId !== request.episode.projectId || ref.id !== request.segment.id) throw new Error("剧情段来源已变化，请重新投送");
+            const scenes = currentPrevisScenes(projectId, previsScenes);
+            const existing = findDramaPrevisDraft(nodesRef.current, scenes, request.episode.projectId, request.segment.id);
+            if (existing) return existing.node.id;
+
+            const scene = buildDramaPrevisScene(request);
+            const prompt = dramaSegmentPrompt(request.segment);
+            const referenceInputs = request.segment.request.references.flatMap((reference) => (reference.sent && reference.resourceId ? [{ ...reference, resourceId: reference.resourceId, firstFrame: false }] : []));
+            if (request.segment.request.firstFrameResourceId) {
+                const firstFrame = !request.segment.request.tailFrameAsReference;
+                referenceInputs.push({ resourceId: request.segment.request.firstFrameResourceId, castId: "", kind: "image", label: firstFrame ? "首帧" : "开场参考", name: `第 ${request.segment.index} 段尾帧`, sent: true, firstFrame });
+            }
+            const imageFor = (resourceId: string) => nodesRef.current.find((item) => item.type === CanvasNodeType.Image && item.metadata?.storageKey === `resource:${resourceId}`);
+            const missing = referenceInputs.filter((reference) => !imageFor(reference.resourceId));
+            const assetIds = missing.length
+                ? await ensureDramaCanvasAssets(
+                      request.episode.projectId,
+                      missing.map((reference) => ({ resourceId: reference.resourceId, title: `${reference.label} · ${reference.name}`, category: reference.kind === "image" ? "material" : dramaCastAssetCategory(reference.kind) })),
+                  )
+                : new Map<string, string>();
+            const currentSource = nodesRef.current.find((item) => item.id === source.id)?.metadata?.dramaRef;
+            if (projectIdRef.current !== projectId || getActiveUserScope() !== scope || currentSource?.projectId !== ref.projectId || currentSource?.kind !== "segment" || currentSource.id !== ref.id) throw new Error("画布或剧情段已变化，请重新打开");
+            if (missing.some((reference) => !assetIds.has(reference.resourceId))) throw new Error("部分参考图已不可用，请在制作台检查后重试");
+            const latestScenes = currentPrevisScenes(projectId, previsScenes);
+            const raced = findDramaPrevisDraft(nodesRef.current, latestScenes, request.episode.projectId, request.segment.id);
+            if (raced) return raced.node.id;
+            const pendingImages: CanvasNodeData[] = [];
+            const references = referenceInputs.map((reference) => {
+                const existingImage = imageFor(reference.resourceId) || pendingImages.find((item) => item.metadata?.storageKey === `resource:${reference.resourceId}`);
+                if (existingImage) return existingImage;
+                const image = createCanvasNode(CanvasNodeType.Image, findAvailableGenerationGroupPosition([...nodesRef.current, ...pendingImages], getCanvasCenter(), { width: 240, height: 160 }), {
+                    content: resourceFileUrl(reference.resourceId),
+                    storageKey: `resource:${reference.resourceId}`,
+                    assetId: assetIds.get(reference.resourceId),
+                    status: "success",
+                    ...(reference.castId ? { dramaRef: { projectId: request.episode.projectId, kind: "cast", id: reference.castId, baseResourceId: reference.resourceId } as const } : {}),
+                });
+                image.title = `${reference.label} · ${reference.name}`;
+                image.width = 240;
+                image.height = 160;
+                pendingImages.push(image);
+                return image;
+            });
+            const firstFrameIndex = referenceInputs.findIndex((reference) => reference.firstFrame);
+            const firstFrameNodeId = firstFrameIndex >= 0 ? references[firstFrameIndex].id : undefined;
+            const node = createCanvasNode(CanvasNodeType.Video, findAvailableGenerationGroupPosition([...nodesRef.current, ...pendingImages], getCanvasCenter(), PREVIS_NODE_SIZE), {
+                workflowKind: "shot",
+                workflowTitle: scene.title,
+                workflowDescription: prompt,
+                generationMode: "video",
+                videoEditOperation: request.segment.request.operation || undefined,
+                videoStartFrameNodeId: firstFrameNodeId,
+                referenceAssetNodeIds: references.filter((_, index) => !referenceInputs[index].firstFrame).map((item) => item.id),
+                status: NODE_STATUS_IDLE,
+                composerContent: prompt,
+                prompt,
+                seconds: String(scene.shots.reduce((total, shot) => total + shot.duration, 0)),
+                dramaRef: { ...ref, baseResourceId: request.segment.videoResourceId },
+                previsSceneId: scene.id,
+                previsShotId: scene.activeShotId,
+            });
+            node.title = `${scene.title} · 预演`;
+            Object.assign(node, PREVIS_NODE_SIZE);
+            const nextNodes = [...nodesRef.current, ...pendingImages, node];
+            const nextConnections = [...connectionsRef.current, ...[...new Set(references.map((reference) => reference.id))].map((referenceId) => ({ id: nanoid(), fromNodeId: referenceId, toNodeId: node.id }))];
+            nodesRef.current = nextNodes;
+            connectionsRef.current = nextConnections;
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            updateProject(projectId, { previsScenes: upsertPrevisSceneById(latestScenes, scene) });
+            message.info("已带入本段镜头脚本与参考图；3D 布局从空场景开始，请安排站位与机位");
+            return node.id;
+        },
+        [connectionsRef, getCanvasCenter, message, nodesRef, previsScenes, projectId, setConnections, setNodes, updateProject],
+    );
+
+    return { addPrevisToCanvas, applyPrevisOutput, createPrevisShot, openPrevisWorkbench, prepareDramaPrevis, savePrevisScene };
+}
+
+/**
+ * 白膜 / 深度视频节点按录制画幅取尺寸（9:16 是竖框，不再固定 360×220 横框）。
+ * 读不到视频宽高时用同一镜头的构图截图比例；用户手动调过尺寸的节点保持不变（preserveImageNodeSize）。
+ */
+function previsVideoNodeSize(video: { width?: number; height?: number }, fallback: { width: number; height: number }) {
+    const valid = (value?: number) => typeof value === "number" && Number.isFinite(value) && value > 0;
+    return valid(video.width) && valid(video.height) ? fitNodeSize(video.width!, video.height!) : fitNodeSize(fallback.width, fallback.height);
 }

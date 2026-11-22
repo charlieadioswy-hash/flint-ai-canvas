@@ -22,6 +22,9 @@ func TestSystemReadinessTracksStartupAndDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := service.New(repository.New(db), t.TempDir())
+	if err := svc.ValidateRuntime(); err != nil {
+		t.Fatal(err)
+	}
 	status := newSystemStatus(db, svc)
 	router := gin.New()
 	registerSystemStatusRoutes(router.Group("/api"), status)

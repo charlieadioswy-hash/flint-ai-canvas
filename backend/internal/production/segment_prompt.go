@@ -43,7 +43,8 @@ type SegmentPromptInput struct {
 	Shots           []SegmentShot
 	References      []SegmentReference
 	// FirstFrame 表示请求会附带上一段视频的最后一帧作为本段首帧。
-	FirstFrame bool
+	FirstFrame           bool
+	TailFrameAsReference bool
 	// Independent 表示各段并行独立生成：不带上一段画面，段尾也不需要为下一段做硬定格。
 	Independent bool
 	// PauseMs 是台词后的气口，已计入镜头时长；为 0 时按默认值。
@@ -173,15 +174,11 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	for _, shot := range in.Shots {
 		total += shot.DurationMs
 	}
-	refLabel := map[string]string{}
-	for _, ref := range in.References {
-		refLabel[ref.Name] = ref.Label
-	}
-	withRef := func(name string) string {
-		if label := refLabel[name]; label != "" {
-			return name + "（" + label + "）"
+	withRef := func(ref SegmentReference) string {
+		if ref.Label != "" {
+			return ref.Name + "（" + ref.Label + "）"
 		}
-		return name
+		return ref.Name
 	}
 
 	if in.Index > 0 && in.Independent {
@@ -196,6 +193,8 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	if len(in.Shots) > 0 {
 		first := in.Shots[0]
 		switch {
+		case in.TailFrameAsReference:
+			fmt.Fprintf(&b, "以第%d段视频最后一帧作为本段开场参考。本段起幅：", in.Index)
 		case in.FirstFrame:
 			fmt.Fprintf(&b, "首帧即第%d段视频最后一帧（随请求附带）。本段起幅：", in.Index)
 		case in.Index > 0 && in.Independent:
@@ -227,7 +226,7 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	scenes := []string{}
 	for _, ref := range in.References {
 		if ref.Kind == "scene" {
-			scenes = append(scenes, withRef(ref.Name))
+			scenes = append(scenes, withRef(ref))
 		}
 	}
 	if len(scenes) == 0 {
@@ -256,14 +255,14 @@ func SegmentVideoPrompt(in SegmentPromptInput) string {
 	if len(characters) > 0 {
 		b.WriteString("\n【角色与参考图】\n")
 		for _, ref := range characters {
-			b.WriteString(withRef(ref.Name) + "。\n")
+			b.WriteString(withRef(ref) + "。\n")
 		}
 	}
 
 	if len(props) > 0 {
 		b.WriteString("\n【道具与参考图】\n")
 		for _, ref := range props {
-			b.WriteString(withRef(ref.Name) + "。\n")
+			b.WriteString(withRef(ref) + "。\n")
 		}
 	}
 

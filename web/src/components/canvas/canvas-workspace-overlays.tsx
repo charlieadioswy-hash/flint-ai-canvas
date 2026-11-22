@@ -208,7 +208,7 @@ export function CanvasNodePanelOverlay({
 
 function resolveNodePanelWidth(node: CanvasNodeData, viewport: ViewportTransform, requestedWidth?: number) {
     if (requestedWidth) return requestedWidth;
-    return clamp(Math.round(node.width * viewport.k * 1.5), 680, 920);
+    return clamp(Math.round(node.width * viewport.k * 1.5), node.type === CanvasNodeType.Config ? 680 : 720, 920);
 }
 
 type ConnectionCreateNodeType =

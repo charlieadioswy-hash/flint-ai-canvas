@@ -27,10 +27,14 @@ test("本集完整配置读取保留内容、编码目标与取消信号", async
     const controller = new AbortController();
     apiClient.defaults.adapter = async (config) => {
         expect(config.url).toBe("/dramas/project%2F1/episodes/episode%2F1/style");
-        expect(config.signal).toBe(controller.signal);
+        expect(config.signal?.aborted).toBe(false);
+        controller.abort();
+        expect(config.signal?.aborted).toBe(true);
         return { config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: view } };
     };
-    expect(await getDramaEpisodeStyle("project/1", "episode/1", controller.signal)).toEqual(view);
+    await expect(getDramaEpisodeStyle("project/1", "episode/1", controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    apiClient.defaults.adapter = async (config) => ({ config, headers: {}, status: 200, statusText: "OK", data: { code: 0, data: view } });
+    expect(await getDramaEpisodeStyle("project/1", "episode/1")).toEqual(view);
 });
 
 test("旧版和缺失完整配置的成功响应明确失败，不伪装成可编辑的本集设置", async () => {

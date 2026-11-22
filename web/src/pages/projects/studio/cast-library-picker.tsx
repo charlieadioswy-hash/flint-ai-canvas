@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { AssetLibraryPickerModal, type AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
-import { ASSET_CATEGORY_LABELS, normalizeAssetCategory } from "@/lib/asset-category";
+import { ASSET_CATEGORY_LABELS, normalizeAssetCategory, type AssetCategory } from "@/lib/asset-category";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import type { DramaCast } from "@/services/api/drama";
 import { getImageBlob, uploadImage } from "@/services/image-storage";
@@ -62,7 +62,7 @@ export function CastLibraryPicker({
     open: boolean;
     cast: Pick<DramaCast, "kind" | "name">;
     onClose: () => void;
-    onPick: (resourceId: string, name: string) => Promise<unknown>;
+    onPick: (resourceId: string, name: string, asset?: { assetId: string; category: AssetCategory }) => Promise<unknown>;
     segment?: boolean;
     referenceGroup?: "主体" | "风格";
 }) {
@@ -114,7 +114,8 @@ export function CastLibraryPicker({
                 const pool = new Map([...items, ...(pickedItems || [])].map((item) => [item.id, item]));
                 const item = ids[0] ? pool.get(ids[0]) : undefined;
                 if (!item) throw new Error("请选择一张图片");
-                await onPick(await pickedImageResourceId(item), item.title);
+                const linkedAsset = item.remoteAssetId && item.asset?.kind === "image" ? { assetId: item.remoteAssetId, category: normalizeAssetCategory(item.category) } : undefined;
+                await onPick(await pickedImageResourceId(item), item.title, linkedAsset);
                 onClose();
             }}
         />

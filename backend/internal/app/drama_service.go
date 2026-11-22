@@ -20,7 +20,7 @@ const (
 	dramaMaxChapters      = 3000
 	dramaMaxChapterRunes  = 60000
 	dramaMaxNovelRunes    = 6_000_000
-	dramaInboxShotLimit   = 60
+	dramaInboxItemLimit   = 99
 	dramaEpisodeJobsLimit = 40
 )
 
@@ -578,9 +578,17 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 		// Title 只放名称，前端按原因把同类失败折叠成一组，不再逐条重复“参考图生成失败”。
 		summary.Inbox = append(summary.Inbox, DramaInboxItem{ID: "cast:" + cast.ID, Kind: "cast_failed", Severity: "error", Title: cast.Name, Detail: firstNonEmpty(truncateRunes(castErrors[cast.ID], 240), "参考图生成失败"), CastID: cast.ID, CastKind: cast.Kind})
 	}
-	failedSegments, err := s.repo.FailedDramaSegments(project.ID, dramaInboxShotLimit)
+	failedSegmentTotal, err := s.repo.CountFailedDramaSegments(project.ID)
 	if err != nil {
 		return DramaSummary{}, err
+	}
+	listLimit := dramaInboxSegmentListLimit(len(summary.Inbox), dramaInboxItemLimit)
+	var failedSegments []model.DramaSegment
+	if listLimit > 0 {
+		failedSegments, err = s.repo.FailedDramaSegments(project.ID, listLimit)
+		if err != nil {
+			return DramaSummary{}, err
+		}
 	}
 	numberByEpisode := map[string]int{}
 	for _, episode := range episodes {
@@ -595,6 +603,12 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 		}
 		summary.Inbox = append(summary.Inbox, DramaInboxItem{ID: "segment:" + segment.ID, Kind: "segment_failed", Severity: "error", Title: fmt.Sprintf("第 %d 集 · 第 %d 段", numberByEpisode[segment.EpisodeID], segment.SegmentIndex+1), Detail: reason, EpisodeID: segment.EpisodeID, EpisodeNumber: numberByEpisode[segment.EpisodeID], SegmentID: segment.ID, SegmentIndex: segment.SegmentIndex, Media: media})
 	}
+	failures := 0
+	for _, item := range summary.Inbox {
+		if item.Severity == "error" && item.Kind != "segment_failed" {
+			failures++
+		}
+	}
 	if settings.ReviewMode == DramaReviewSample && !productionRow.SampleApproved {
 		for _, episode := range episodes {
 			if episode.Number == 1 && episode.Stage == model.DramaEpisodeDone && !episode.FinalStale {
@@ -602,6 +616,8 @@ func (s *Service) DramaSummary(userID string, projectID string) (DramaSummary, e
 			}
 		}
 	}
+	summary.InboxFailureCount = failures + failedSegmentTotal
+	summary.InboxCount = len(summary.Inbox) - len(failedSegments) + failedSegmentTotal
 
 	return summary, nil
 }
@@ -647,6 +663,12 @@ func (s *Service) DramaEpisodeDetail(userID string, projectID string, episodeID 
 	if job, jobErr := s.repo.LatestDramaJob(project.ID, model.DramaJobScript, episode.ID); jobErr == nil {
 		view := dramaJobView(*job)
 		detail.ScriptJob = &view
+	}
+	if job, jobErr := s.repo.LatestDramaJob(project.ID, model.DramaJobCompose, episode.ID); jobErr == nil {
+		view := dramaJobView(*job)
+		detail.ComposeJob = &view
+	} else if !errors.Is(jobErr, gorm.ErrRecordNotFound) {
+		return DramaEpisodeDetail{}, jobErr
 	}
 	if err := s.fillDramaSegmentViews(project.ID, productionRow, &detail); err != nil {
 		return DramaEpisodeDetail{}, err
@@ -1035,7 +1057,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 		return cast, ok
 	}
 	// 排队作业的等待原因一次算好：本集作业、剧本作业与各段的提示词、视频作业。
-	waiting := []*DramaJobView{detail.ScriptJob}
+	waiting := []*DramaJobView{detail.ScriptJob, detail.ComposeJob}
 	for i := range detail.Jobs {
 		waiting = append(waiting, &detail.Jobs[i])
 	}
@@ -1058,7 +1080,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 			view.VideoWait = job.Wait
 			continue
 		}
-		view.VideoWait = firstNonEmpty(dramaVideoWaitReason(settings, p, &detail.Episode, rows, i, detail.Shots, lookup), "排队中，等待调度提交")
+		view.VideoWait = firstNonEmpty(dramaVideoWaitReason(settings, p, &detail.Episode, rows, i, detail.Shots, lookup, dramaJobListExtractPending(detail.Jobs, detail.Episode.ID)), "排队中，等待调度提交")
 	}
 	return nil
 }
@@ -1344,28 +1366,125 @@ func (s *Service) UpdateDramaSegment(userID string, projectID string, episodeID 
 			}
 			fields["audio_cast_ids_json"] = encodeStringList(ids)
 		}
-		if len(fields) > 0 {
-			keepPrompt, err := captureDramaSegmentReferenceEdit(tx, projectID, episode.ID, index, fields)
-			if err != nil {
-				return err
-			}
-			if err := tx.SaveDramaSegmentReferenceFields(episode.ID, index, fields, keepPrompt); err != nil {
-				return err
+		rows, err := tx.DramaSegments(episode.ID)
+		if err != nil {
+			return err
+		}
+		for _, current := range rows {
+			if current.SegmentIndex == index {
+				return saveDramaSegmentEdits(tx, current, fields, req.VideoPromptOverride != nil, prompt)
 			}
 		}
-		if req.VideoPromptOverride != nil {
-			labels, err := dramaSegmentOverrideLabels(tx, projectID, episode.ID, index, prompt)
-			if err != nil {
-				return err
-			}
-			return tx.SaveDramaSegmentOverride(model.DramaSegment{ProjectID: project.ID, EpisodeID: episode.ID, SegmentIndex: index, VideoPromptOverride: prompt, ReferenceLabelsJSON: labels})
-		}
-		return nil
+		return BadAuthRequest("剧情段不存在")
 	}); err != nil {
+		if errors.Is(err, repository.ErrDramaSegmentEditConflict) {
+			return dramaSegmentChangedError()
+		}
 		return err
 	}
 	s.wakeDramaScheduler()
 	return nil
+}
+
+// saveDramaSegmentEdits records the authored numbering and its selection in the same revision.
+func saveDramaSegmentEdits(tx *repository.Repository, current model.DramaSegment, fields map[string]any, editedPrompt bool, prompt string) error {
+	referenceChanged := func(key, before string) bool {
+		after, present := fields[key]
+		return present && after != before
+	}
+	imagesChanged := referenceChanged("reference_cast_ids_json", current.ReferenceCastIDsJSON) ||
+		referenceChanged("reference_images_json", current.ReferenceImagesJSON)
+	audioChanged := referenceChanged("audio_cast_ids_json", current.AudioCastIDsJSON)
+	if !imagesChanged && !audioChanged && !editedPrompt {
+		return nil
+	}
+	if imagesChanged || editedPrompt {
+		shots, err := tx.DramaShots(current.EpisodeID)
+		if err != nil {
+			return err
+		}
+		casts, err := tx.DramaCasts(current.ProjectID)
+		if err != nil {
+			return err
+		}
+		castByID := make(map[string]model.DramaCast, len(casts))
+		for _, cast := range casts {
+			castByID[cast.ID] = cast
+		}
+		references := func(row model.DramaSegment) []DramaSegmentReference {
+			for _, draft := range buildDramaSegmentDrafts(DramaSettings{}, dramaBibleMeta{}, shots, castByID, []model.DramaSegment{row}) {
+				if draft.view.Index == row.SegmentIndex {
+					return draft.view.Request.References
+				}
+			}
+			return nil
+		}
+		before := dramaSegmentPromptLabels(references(current))
+		snapshot := dramaSegmentStoredLabels(current, before)
+		next := current
+		if v, ok := fields["reference_cast_ids_json"].(string); ok {
+			next.ReferenceCastIDsJSON = v
+		}
+		if v, ok := fields["reference_images_json"].(string); ok {
+			next.ReferenceImagesJSON = v
+		}
+		after := references(next)
+		if imagesChanged && !editedPrompt && dramaSegmentPromptHasReferences(current.VideoPromptOverride) {
+			authored := dramaSegmentAuthoredLabels(current, current.VideoPromptOverride, before, true)
+			oldRefs := make([]DramaSegmentReference, 0, len(authored))
+			for _, ref := range authored {
+				old := DramaSegmentReference{Label: ref.Label, Name: ref.Name}
+				if id, ok := strings.CutPrefix(ref.Identity, "cast:"); ok {
+					old.CastID = id
+				} else {
+					old.ResourceID = strings.TrimPrefix(ref.Identity, "resource:")
+				}
+				oldRefs = append(oldRefs, old)
+			}
+			prompt, err = remapDramaSegmentPromptReferences(current.VideoPromptOverride, oldRefs, after)
+			if err != nil {
+				return err
+			}
+			fields["video_prompt_override"] = prompt
+		}
+		if editedPrompt {
+			fields["video_prompt_override"] = prompt
+		}
+		if _, saved := fields["video_prompt_override"]; saved {
+			delete(snapshot, dramaSegmentOverrideLabelKey(current.VideoPromptOverride))
+			if dramaSegmentPromptHasReferences(prompt) {
+				snapshot[dramaSegmentOverrideLabelKey(prompt)] = dramaSegmentPromptLabels(after)
+			}
+		}
+		if len(snapshot) > 0 {
+			encoded, err := json.Marshal(snapshot)
+			if err != nil {
+				return err
+			}
+			fields["reference_labels_json"] = string(encoded)
+		} else if current.ReferenceLabelsJSON != "" {
+			fields["reference_labels_json"] = ""
+		}
+		// Asset descriptions and provider reference numbering are compiled again at submission.
+		if imagesChanged && !audioChanged && current.PromptStatus == model.DramaMediaReady && current.VideoPrompt != "" {
+			authored := dramaSegmentAuthoredLabels(current, current.VideoPrompt, before, false)
+			if len(production.UnknownReferenceTokens(current.VideoPrompt, len(authored))) == 0 {
+				fields["prompt_status"] = model.DramaMediaReady
+			}
+		}
+	}
+	if editedPrompt {
+		switch {
+		case prompt != "":
+			if current.PromptStatus != model.DramaMediaReady || imagesChanged || audioChanged {
+				fields["prompt_status"] = model.DramaMediaStale
+			}
+			fields["prompt_error"] = ""
+		case current.PromptStatus == model.DramaPromptReview && !imagesChanged && !audioChanged:
+			fields["prompt_status"], fields["prompt_error"] = model.DramaMediaReady, ""
+		}
+	}
+	return tx.SaveDramaSegmentEdits(current, fields)
 }
 
 // dramaSegmentReferenceIDs 校验用户指定的参考图：必须是本作品的设定，去重并保持顺序。
@@ -1394,11 +1513,21 @@ func dramaSegmentReferenceIDs(repo *repository.Repository, projectID string, ids
 	return result, nil
 }
 
-// dramaShotCastIDs 返回镜头引用的全部设定：出场角色、关键道具与场景。
+// dramaShotCastIDs 返回镜头引用的全部设定：出场角色、关键道具、场景与造型行。
+// 出视频时造型会替换本体参考图；放行/等待参考图时也必须包含造型，否则只带文字外观。
 func dramaShotCastIDs(shot model.DramaShot) []string {
 	ids := append(decodeStringList(shot.CastIDsJSON), decodeStringList(shot.PropIDsJSON)...)
+	ids = append(ids, decodeStringList(shot.LookCastIDsJSON)...)
 	if shot.SceneCastID != "" {
 		ids = append(ids, shot.SceneCastID)
 	}
 	return ids
+}
+
+// dramaInboxSegmentListLimit 在已有待处理条目之外，最多再列出多少条失败剧情段，使列表总数不超过 limit。
+func dramaInboxSegmentListLimit(existing, limit int) int {
+	if limit <= 0 || existing >= limit {
+		return 0
+	}
+	return limit - existing
 }

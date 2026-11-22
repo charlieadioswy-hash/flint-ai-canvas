@@ -127,7 +127,7 @@ export default function DramaCreatePage() {
     const [libraryOpen, setLibraryOpen] = useState(false);
     const [customStyle, setCustomStyle] = useState(false);
     const [language, setLanguage] = useState(LANGUAGES[0]);
-    const [reviewMode, setReviewMode] = useState<DramaReviewMode>("sample");
+    const [reviewMode, setReviewMode] = useState<DramaReviewMode>("every");
     // 默认先只跑文本：先看剧情、镜头、设定和段提示词对不对，再决定花钱生成参考图与视频。
     const [mediaMode, setMediaMode] = useState<DramaMediaMode>("manual");
     const [videoContinuity, setVideoContinuity] = useState<DramaVideoContinuity>("tail_frame");

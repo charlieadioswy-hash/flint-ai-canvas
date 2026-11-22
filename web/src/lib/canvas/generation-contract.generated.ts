@@ -51,6 +51,7 @@ export type Options = {
     generateAudio?: boolean;
     watermark?: boolean;
     audioVoice?: string;
+    audioMode?: string;
     audioFormat?: string;
     audioSpeed?: string;
     audioLanguage?: string;
@@ -197,6 +198,15 @@ export const GENERATION_OPTION_FIELDS = [
         "name": "audioVoice",
         "node": "audioVoice",
         "task": "audioVoice"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioMode",
+        "node": "audioMode",
+        "task": "audioMode"
     },
     {
         "kind": "string",

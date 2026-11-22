@@ -61,7 +61,7 @@ func TestPostgresProviderRequestIDMigrationPreservesDataAndAcceptsGatewayIDs(t *
 		t.Fatal(err)
 	}
 	for _, entry := range schemaMigrations {
-		if entry.version < 109 {
+		if entry.name != "provider_request_id_text" {
 			if err := db.Create(&schemaMigration{Version: entry.version, Name: entry.name, Checksum: entry.checksum, AppliedAt: time.Now()}).Error; err != nil {
 				t.Fatal(err)
 			}

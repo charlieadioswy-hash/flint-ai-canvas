@@ -188,7 +188,7 @@ func ExtractJSONObject(raw string) (string, error) {
 }
 
 func ParseBible(raw string, chapters ...Chapter) (Bible, error) {
-	return parseBible(raw, "", chapters...)
+	return parseBible(raw, "", true, chapters...)
 }
 
 // ParseBibleForKind 只解析本次请求的一类设定。kind 必须是 character、scene 或 prop。
@@ -199,10 +199,15 @@ func ParseBibleForKind(raw string, kind string, chapters ...Chapter) (Bible, err
 	default:
 		return Bible{}, fmt.Errorf("未知的作品圣经提取类型：%s", kind)
 	}
-	return parseBible(raw, kind, chapters...)
+	return parseBible(raw, kind, false, chapters...)
 }
 
-func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
+// ParseAssetBible accepts subsequent asset updates with only scenes or props.
+func ParseAssetBible(raw string, chapters ...Chapter) (Bible, error) {
+	return parseBible(raw, "", false, chapters...)
+}
+
+func parseBible(raw string, kind string, requireCharacters bool, chapters ...Chapter) (Bible, error) {
 	var bible Bible
 	text, err := extractBibleJSON(raw)
 	if err != nil {
@@ -217,8 +222,8 @@ func parseBible(raw string, kind string, chapters ...Chapter) (Bible, error) {
 	if err := json.Unmarshal([]byte(text), &bible); err != nil {
 		return bible, err
 	}
-	bible, err = normalizeBible(bible, kind == "", chapters)
-	if err == nil && kind == "" && len(bible.Characters) == 0 {
+	bible, err = normalizeBible(bible, requireCharacters, chapters)
+	if err == nil && requireCharacters && len(bible.Characters) == 0 {
 		err = errors.New("作品圣经没有识别到角色")
 	}
 	return bible, err

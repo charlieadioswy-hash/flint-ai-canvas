@@ -77,7 +77,7 @@ function WorkflowModeSession({ summary, episodeStyle, saveStoryboardOnConfirm = 
     const catalog = useDramaModelCatalog();
     const selected = MODES.find((item) => item.value === mode)!;
     const preset = resolveWorkflowConfigurationStyle(draft.stylePrompt, draft.styleSelection?.mode === "preset" ? draft.styleSelection : undefined);
-    const sample = (preset?.name === draft.styleName ? preset.cover : undefined) || "/short-drama-styles/chinese-2d.jpg";
+    const sample = (preset && preset.name === draft.styleName ? preset.cover : undefined) || "/short-drama-styles/chinese-2d.jpg";
     const videoOptions = catalog.data?.options.video || [];
     const videoModel = videoOptions.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(draft.models.video));
     const videoResolution = dramaVideoResolutionValue(videoModel, draft.videoResolution);

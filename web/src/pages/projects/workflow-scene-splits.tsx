@@ -21,6 +21,7 @@ export function WorkflowSceneSplits({
     onOpenSegment,
     initialSegmentIndex,
     buttonLabel = "段分镜",
+    triggerVisible = true,
 }: {
     summary: DramaSummary;
     detail: DramaEpisodeDetail;
@@ -28,15 +29,18 @@ export function WorkflowSceneSplits({
     onOpenSegment: (index: number) => void;
     initialSegmentIndex?: number;
     buttonLabel?: string;
+    triggerVisible?: boolean;
 }) {
     const userId = useUserStore((state) => state.user?.id || "");
     const owner = `${userId}:${getActiveUserScope()}:${summary.project.id}:${detail.episode.id}`;
-    const [opened, setOpened] = useState<{ owner: string; revision: number; episodeRevision: number }>();
+    const [opened, setOpened] = useState<{ owner: string; revision: number; episodeRevision: number; initialSegmentIndex?: number }>();
     return (
         <>
-            <Button size="small" disabled={!detail.shots.length || !detail.segments.length} onClick={() => setOpened({ owner, revision: summary.production.revision, episodeRevision: detail.episode.revision })}>
-                {buttonLabel}
-            </Button>
+            {triggerVisible ? (
+                <Button size="small" disabled={!detail.shots.length || !detail.segments.length} onClick={() => setOpened({ owner, revision: summary.production.revision, episodeRevision: detail.episode.revision, initialSegmentIndex })}>
+                    {buttonLabel}
+                </Button>
+            ) : null}
             <AppModal open={opened?.owner === owner} closable={false} maskClosable={false} keyboard={false} footer={null} width={1120} flush destroyOnHidden>
                 {opened?.owner === owner ? (
                     <SceneSplitDialog
@@ -45,7 +49,7 @@ export function WorkflowSceneSplits({
                         detail={detail}
                         baseline={opened}
                         userId={userId}
-                        initialSegmentIndex={initialSegmentIndex}
+                        initialSegmentIndex={opened.initialSegmentIndex}
                         onClose={() => setOpened(undefined)}
                         onChanged={onChanged}
                         onOpenSegment={(index) => {

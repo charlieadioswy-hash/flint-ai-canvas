@@ -58,6 +58,15 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     return parseGeminiImagePayload(response);
 }
 
+function extractThinkingLevel(config: AiConfig): string | undefined {
+    try {
+        const parsed = JSON.parse(config.imageParameters || "{}");
+        if (typeof parsed.thinkingLevel === "string") return parsed.thinkingLevel;
+        if (typeof parsed.thinking_level === "string") return parsed.thinking_level;
+    } catch {}
+    return (config as { thinkingLevel?: string }).thinkingLevel;
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const selectedModel = config.model || config.imageModel;
     assertMediaSettings(config, "image", selectedModel);
@@ -69,7 +78,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const n = Number(normalizedImage.count);
     if (wangsuBaseProtocol(requestConfig.interfaceType) === "gemini-image") {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
+            return await requestGeminiImages(requestConfig, prompt, [], n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality, extractThinkingLevel(config), normalizedImage.imageResolution), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
@@ -150,7 +159,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (wangsuBaseProtocol(requestConfig.interfaceType) === "gemini-image") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality), options);
+            return await requestGeminiImages(requestConfig, requestPrompt, references, n, buildGeminiImageGenerationConfig(normalizedImage.size, normalizedImage.quality, extractThinkingLevel(config), normalizedImage.imageResolution), options);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }

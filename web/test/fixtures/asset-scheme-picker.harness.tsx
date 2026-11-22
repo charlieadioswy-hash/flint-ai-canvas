@@ -114,34 +114,23 @@ test("默认明确选择单特写加三视图，不受不使用选项排第一�
     expect(defaultAssetSettings()).toBeUndefined();
 });
 
-test("10种模板展示各自构图，裁头身体与完整头身及大头照保持区别", async () => {
+test("各模板展示独立的参考构图预览", async () => {
     const view = await mount();
     try {
         const options = view.container.querySelectorAll('[aria-label="角色参考图方案"] [role="radio"]');
         expect(options).toHaveLength(10);
-        const composition: Array<[DramaAssetMode, number, number, number, number]> = [
-            ["none", 0, 0, 0, 0],
-            ["closeup_turnaround", 1, 3, 0, 0],
-            ["closeup_front_no_face", 1, 0, 1, 0],
-            ["closeup_turnaround_no_head", 1, 0, 3, 0],
-            ["closeup_fullbody", 1, 1, 0, 0],
-            ["dual_closeup_front_back_no_head", 2, 0, 2, 0],
-            ["triple_closeup_front_no_face", 4, 0, 1, 0],
-            ["turnaround_triple_closeup", 3, 3, 0, 0],
-            ["turnaround_five_angle_halfbody", 0, 3, 0, 0],
-            ["headshot_fullbody", 0, 0, 1, 1],
-        ];
-        for (const [mode, closeup, full, headless, headshot] of composition) {
+        for (const { mode } of catalog.schemes) {
             const preview = view.container.querySelector(`[data-template="${mode}"]`)!;
             expect(preview.getAttribute("aria-hidden")).toBe("true");
-            for (const [crop, count] of Object.entries({ closeup, full, headless, headshot })) expect(preview.querySelectorAll(`[data-crop="${crop}"]`)).toHaveLength(count);
-            expect(preview.querySelectorAll('[data-crop="headless"] .is-skin')).toHaveLength(0);
+            const image = preview.querySelector("img");
+            if (mode === "none") {
+                expect(image).toBeNull();
+                continue;
+            }
+            const source = `/character-template-previews/${mode}.jpg`;
+            expect(image?.getAttribute("src")).toBe(source);
+            expect(await Bun.file(new URL(`../../public${source}`, import.meta.url)).exists()).toBe(true);
         }
-        const angles = view.container.querySelector('[data-template="turnaround_five_angle_halfbody"]')!;
-        expect(Array.from(angles.querySelectorAll('[data-crop="halfbody"]'), (figure) => figure.getAttribute("data-view"))).toEqual(["front", "side", "left-three-quarter", "three-quarter", "back"]);
-        const faces = view.container.querySelector('[data-template="turnaround_triple_closeup"]')!;
-        expect(faces.querySelector('[data-view="left-three-quarter"] g[transform="translate(80 0) scale(-1 1)"]')).not.toBeNull();
-        expect(faces.querySelector('[data-crop="closeup"][data-view="three-quarter"]')).not.toBeNull();
         expect(view.container.textContent).toContain("多个视角合在同一张图中");
         expect(view.container.textContent).not.toContain("声纹");
     } finally {

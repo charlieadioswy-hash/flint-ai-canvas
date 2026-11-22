@@ -66,7 +66,9 @@ mock.module("@/pages/projects/drama-shared", () => ({
     CAST_KIND_LABEL: { character: "角色", scene: "场景", prop: "道具", look: "造型" },
 }));
 mock.module("@/services/api/drama-shot-media", () => ({ getDramaShotMedia: async () => ({ status: "idle" }) }));
+const dramaApi = await import("@/services/api/drama");
 mock.module("@/services/api/drama", () => ({
+    ...dramaApi,
     insertDramaShot: async () => {
         throw new Error("本专项不执行插镜");
     },
@@ -115,13 +117,15 @@ afterAll(() => {
         else Reflect.deleteProperty(globalThis, key);
     }
 });
+const { setActiveUserScope } = await import("@/lib/user-scope");
+
 function reset() {
     pendingStorage.clear();
     writes.length = notices.length = confirms.length = 0;
     history = [];
     portalModal = false;
     store.setState({ user: { id: "user-a" } });
-    browser.localStorage.setItem("yingce:active-user-scope", "user-a");
+    setActiveUserScope("user-a");
 }
 async function settle() {
     for (let i = 0; i < 4; i++) await Bun.sleep(5);

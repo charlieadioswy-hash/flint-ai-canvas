@@ -44,12 +44,17 @@ func dramaEpisodeVideoTimeline(repo *repository.Repository, userID, projectID, e
 			return view, err
 		}
 		view.Total = len(segments)
+		durations, err := dramaSegmentSourceDurations(repo, userID, segments, false)
+		if err != nil {
+			return view, err
+		}
 		for _, segment := range segments {
-			if segment.VideoStatus == model.DramaMediaReady && segment.VideoResourceID != "" && segment.VideoSeconds > 0 {
+			if segment.VideoStatus == model.DramaMediaReady && segment.VideoResourceID != "" &&
+				(durations[segment.VideoResourceID] > 0 || segment.VideoSeconds > 0) {
 				view.Ready++
 			}
 		}
-		view.Timeline, err = buildDramaTimeline(segments, aspect)
+		view.Timeline, _, err = buildDramaTimeline(segments, aspect, durations, false)
 		if err != nil {
 			return view, err
 		}
@@ -60,12 +65,6 @@ func dramaEpisodeVideoTimeline(repo *repository.Repository, userID, projectID, e
 		for _, shot := range shots {
 			if !byIndex[shot.SegmentIndex] {
 				return view, fmt.Errorf("第 %d 段尚未就绪，请完成全部段视频后再合成", shot.SegmentIndex+1)
-			}
-		}
-		for _, segment := range segments {
-			resource, err := repo.ResourceForUser(userID, segment.VideoResourceID)
-			if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != "video" || !strings.HasPrefix(resource.MimeType, "video/") {
-				return view, fmt.Errorf("第 %d 段视频资源不可用，请先生成或采用有效视频", segment.SegmentIndex+1)
 			}
 		}
 		return view, nil

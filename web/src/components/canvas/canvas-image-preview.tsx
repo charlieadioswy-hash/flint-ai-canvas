@@ -19,7 +19,16 @@ type CanvasImagePreviewProps = {
 const FIT_TRANSFORM: ViewportTransform = { x: 0, y: 0, k: 1 };
 
 export function CanvasImagePreview(props: CanvasImagePreviewProps) {
-    return <CanvasImagePreviewContent key={JSON.stringify([props.src, props.storageKey])} {...props} />;
+    const [trigger] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null));
+    const close = () => {
+        props.onClose();
+        if (trigger) {
+            window.requestAnimationFrame(() => {
+                if (trigger.isConnected && document.activeElement === document.body) trigger.focus({ preventScroll: true });
+            });
+        }
+    };
+    return <CanvasImagePreviewContent key={JSON.stringify([props.src, props.storageKey])} {...props} onClose={close} />;
 }
 
 function CanvasImagePreviewContent({ src = "", storageKey, alt: altProp, onClose }: CanvasImagePreviewProps) {

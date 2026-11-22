@@ -160,10 +160,13 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		// Polling can report a malformed or mismatched UUID. The adapter rejects
 		// it later, so logging must retain the original request identity now.
 		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
-	} else if extracted, err := firstJSONString(payload, "task_id", "id", "request_id", "name"); err == nil {
-		log.ProviderRequestID = firstNonEmpty(nestedTaskID, extracted, log.ProviderRequestID)
-	} else {
-		log.ProviderRequestID = firstNonEmpty(nestedTaskID, log.ProviderRequestID)
+	} else if log.ProviderRequestID == "" && log.RequestKind != "poll" && log.RequestKind != "cancel" {
+		keys := []string{"task_id", "taskId", "id", "name"}
+		if log.Capability == "text" {
+			keys = append(keys, "request_id")
+		}
+		extracted, _ := firstJSONString(payload, keys...)
+		log.ProviderRequestID = firstNonEmpty(nestedTaskID, extracted)
 	}
 	if !liblibImage {
 		log.ProviderStatus = strings.ToLower(firstNonEmpty(stringField(payload, "status"), log.ProviderStatus))

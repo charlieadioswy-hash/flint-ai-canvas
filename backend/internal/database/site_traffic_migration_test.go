@@ -14,16 +14,16 @@ import (
 )
 
 func TestSiteTrafficMigrationIsAdditiveAndPreservesPublishedLedger(t *testing.T) {
-	var migration migration
-	for _, item := range schemaMigrations {
-		if item.version == 108 {
-			migration = item
-			break
-		}
-	}
-	if migration.version != 108 || migration.name != "site_traffic_events" || migration.checksum != "sha256:site-traffic-events-v99-20261111" || migration.apply == nil {
-		t.Fatalf("unexpected traffic migration: %+v", migration)
-	}
+	t.Run("Flint v108", func(t *testing.T) {
+		testSiteTrafficMigration(t, 108, false)
+	})
+	t.Run("upstream v99", func(t *testing.T) {
+		testSiteTrafficMigration(t, 99, true)
+	})
+}
+
+func testSiteTrafficMigration(t *testing.T, version int64, upstream bool) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Dialector{DriverName: "sqlite", DSN: ":memory:"}, &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +37,31 @@ func TestSiteTrafficMigrationIsAdditiveAndPreservesPublishedLedger(t *testing.T)
 	if err := db.AutoMigrate(&schemaMigration{}); err != nil {
 		t.Fatal(err)
 	}
+	if upstream {
+		// Seed a published identity that distinguishes the upstream ledger.
+		record := schemaMigration{Version: 78, Name: "drama_cast_voice_looks", Checksum: "sha256:drama-cast-voice-looks-v78-20261101", AppliedAt: time.Now().UTC()}
+		if err := db.Create(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := migrationsForDatabase(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migration migration
+	for _, item := range plan {
+		if item.version == version {
+			migration = item
+			break
+		}
+	}
+	if migration.version != version || migration.name != "site_traffic_events" || migration.checksum != "sha256:site-traffic-events-v99-20261111" || migration.apply == nil {
+		t.Fatalf("unexpected traffic migration: %+v", migration)
+	}
 	// 登记其他迁移身份，隔离验证流量迁移，不重跑无关业务转换。
-	records := make([]schemaMigration, 0, len(schemaMigrations)-1)
-	for _, item := range schemaMigrations {
-		if item.version == migration.version {
+	records := make([]schemaMigration, 0, len(plan)-1)
+	for _, item := range plan {
+		if item.version == migration.version || (upstream && item.version == 78) {
 			continue
 		}
 		records = append(records, schemaMigration{

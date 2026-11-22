@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULT_CANVAS_AGENT_SKILL_ID, ensureDefaultCanvasAgentSkill } from "@/services/skill-defaults";
 
 function skill(skillId: string, isAdded = true) {
@@ -38,3 +38,8 @@ describe("ensureDefaultCanvasAgentSkill", () => {
         expect(listCalls).toBe(2);
     });
 });
+
+import { useUserStore } from "@/stores/use-user-store";
+const skillUser = { id: "skill-user", username: "member", displayName: "Member", role: "user" as const, status: "active" as const };
+beforeEach(() => useUserStore.setState({ user: skillUser, hydrated: true }));
+afterEach(() => useUserStore.setState({ user: null, hydrated: false }));

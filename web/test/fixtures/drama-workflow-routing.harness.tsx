@@ -1,4 +1,4 @@
-import { afterAll, expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, spyOn, test } from "bun:test";
 import { Window } from "happy-dom";
 import { createElement, StrictMode, useEffect, type ReactNode } from "react";
 import { create } from "zustand";
@@ -38,13 +38,17 @@ let listItems: DramaListItem[] = [];
 let summary: DramaSummary;
 let location: ReturnType<typeof useLocation>;
 let navigate: ReturnType<typeof useNavigate>;
-const userStore = create(() => ({ user: { id: "routing-user" } }));
+const userStore = create(() => ({ user: { id: "routing-user" }, features: { teamsEnabled: false } }));
 const agentStore = create<{
     open: boolean;
     closeAgent: () => void;
+    page: { context: { projectId: string } } | null;
+    setPage: (page: { context: { projectId: string } } | null) => void;
 }>((set) => ({
     open: true,
     closeAgent: () => set({ open: false }),
+    page: null,
+    setPage: (page) => set({ page }),
 }));
 
 function Box({ children, className }: { children?: ReactNode; className?: string }) {
@@ -53,7 +57,9 @@ function Box({ children, className }: { children?: ReactNode; className?: string
 function WorkflowMock() {
     return <div>确定步骤制作台</div>;
 }
+const antd = await import("antd");
 mock.module("antd", () => ({
+    ...antd,
     App: { useApp: () => ({ message: { success: noop, info: noop, error: noop, warning: noop }, modal: { confirm: noop } }) },
     Modal: ({ open, children }: { open?: boolean; children?: ReactNode }) => (open ? <div role="dialog">{children}</div> : null),
     Button: ({ children, icon, loading: _loading, type: _type, size: _size, shape: _shape, danger: _danger, ...props }: Record<string, unknown>) => createElement("button", props, icon as ReactNode, children as ReactNode),
@@ -110,7 +116,7 @@ mock.module("@/components/layout/workspace-page", () => ({
     PaginationBar: () => null,
 }));
 mock.module("@/components/layout/collection-toolbar", () => ({ CollectionToolbar: Box }));
-mock.module("@/components/layout/workspace-state", () => ({ WorkspaceLoadingState: () => <p>加载中</p>, WorkspaceErrorState: () => <p>读取失败</p>, WorkspaceNoResultsState: () => null }));
+mock.module("@/components/layout/workspace-state", () => ({ WorkspaceState: Box, WorkspaceLoadingState: () => <p>加载中</p>, WorkspaceErrorState: () => <p>读取失败</p>, WorkspaceNoResultsState: () => null }));
 mock.module("@/components/ui/product/relative-time", () => ({ RelativeTime: () => null }));
 mock.module("@/components/ui/base/segmented-control", () => ({ SegmentedControl: () => null }));
 mock.module("@/pages/projects/drama-shared", () => ({
@@ -141,6 +147,9 @@ const studioMocks: Record<string, string[]> = {
     "asset-transfer": ["AssetImportModal", "AssetPackageModal"],
     "chapter-picker": ["ChapterPickerModal"],
     "final-view": ["FinalView"],
+    "studio-opening": ["StudioOpening"],
+    "project-asset-audit": ["ProjectAssetAudit"],
+    "episode-rename-modal": ["EpisodeRenameModal"],
     genesis: ["StudioGenesis"],
     "segment-dialog": ["SegmentDialog"],
     "queue-bar": ["QueueBar"],
@@ -311,17 +320,25 @@ test("进入短剧页只隐藏画布 Agent，返回后恢复同一实例及打�
 });
 
 test("历史 guide 含查询参数和 hash 时预取新步骤工作流", async () => {
-    preloadWorkspaceRoute("/projects/project-a/guide?step=assets#characters");
-    await settle();
-    const Page = workspaceRoutePages.projectGuide as (props: object) => { type: unknown };
-    expect(Page({}).type).toBe(WorkflowMock);
+    const preload = spyOn(workspaceRoutePages.projectGuide, "preload");
+    try {
+        preloadWorkspaceRoute("/projects/project-a/guide?step=assets#characters");
+        expect(preload).toHaveBeenCalledTimes(1);
+        expect(await preload.mock.results[0].value).toMatchObject({ default: WorkflowMock });
+    } finally {
+        preload.mockRestore();
+    }
 });
 
 test("带粘贴参数的新建路由预取创建包装页", async () => {
-    preloadWorkspaceRoute("/projects/new?paste=1#source");
-    await settle();
-    const Page = workspaceRoutePages.projectCreate as (props: object) => { type: unknown };
-    expect(Page({}).type).toBe(CreatePage);
+    const preload = spyOn(workspaceRoutePages.projectCreate, "preload");
+    try {
+        preloadWorkspaceRoute("/projects/new?paste=1#source");
+        expect(preload).toHaveBeenCalledTimes(1);
+        expect(await preload.mock.results[0].value).toMatchObject({ default: CreatePage });
+    } finally {
+        preload.mockRestore();
+    }
 });
 
 test("默认项目制作入口直接呈现确定步骤界面", async () => {

@@ -65,7 +65,8 @@ export type CanvasGenerationBatchStatus = "queued" | "running" | "partial_failed
 export type CanvasGenerationBatchItemStatus = "waiting" | "submitting" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasWorkflowKind = "free" | "script" | "story_input" | "character" | "scene" | "storyboard" | "shot" | "final" | "styleboard" | "reference_set" | "reference_video" | "action_board";
-export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "reference_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat" | "enhance";
+export type CanvasVideoEditOperation = "text_to_video" | "image_to_video" | "reference_to_video" | "extend" | "inpaint" | "replace_element" | "camera_motion" | "style_transfer" | "audio_to_video" | "compare_versions" | "concat" | "enhance" | "depth";
+export type CanvasVideoReferenceMode = "text" | "all" | "frames";
 export type CanvasSkillCategory = "writing" | "storyboard" | "image" | "video" | "utility";
 export type CanvasSkillOutputMode = "text" | "json" | "image_prompt" | "workflow";
 export type StoryboardColumn =
@@ -139,7 +140,7 @@ export type StoryboardRow = {
     videoNodeId?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
-    /** 与该分镜行关联的预演台场景 ID。由 Agent 或用户创建预演后写入。 */
+    /** 与该分镜行关联的世界引擎场景 ID。由 Agent 或用户创建预演后写入。 */
     previsSceneId?: string;
     /** 最后一次生成白膜预演后的缩略图 URL，用于在分镜行内展示预览图。 */
     previsSnapshotUrl?: string;
@@ -278,6 +279,8 @@ export type CanvasDramaRef = {
     projectId: string;
     kind: "cast" | "segment" | "final";
     id: string;
+    /** 区分作品设定和段内参考图，使拖动到其他分组后仍能定位原设定。 */
+    castRole?: "setting" | "reference";
     episodeId?: string;
     segmentIndex?: number;
     /** 投送或最近一次同步时短剧侧的当前资源；短剧现状与它不同且与节点媒体也不同，说明短剧侧已更新。 */
@@ -295,6 +298,8 @@ export type CanvasNodeMetadata = {
     outputMask?: OutputMaskBinding;
     providerOptions?: Record<string, Record<string, unknown>>;
     dramaRef?: CanvasDramaRef;
+    /** 段内图片的原始引用槽，精修换图或移出组后仍用于避免重复投送。 */
+    dramaSegmentImage?: { segmentId: string; slot: string };
     /** Namespaced extension ownership for nodes contributed by a unified plugin. */
     pluginId?: string;
     pluginNodeId?: string;
@@ -318,6 +323,7 @@ export type CanvasNodeMetadata = {
               sourceType?: string;
           };
     content?: string;
+    officialAssetId?: string;
     previewContent?: string;
     /** Original file and immutable pixel-corrected variants; references share the current content/storageKey. */
     imageRotation?: {
@@ -381,6 +387,8 @@ export type CanvasNodeMetadata = {
     generateAudio?: string;
     watermark?: string;
     audioVoice?: string;
+    audioMode?: string;
+    audioVoiceBindings?: Array<{ characterNodeId: string; audioNodeId: string }>;
     audioFormat?: string;
     audioSpeed?: string;
     audioLanguage?: string;
@@ -472,6 +480,7 @@ export type CanvasNodeMetadata = {
     /** Whether the video file contains an audio track when this is known. */
     hasAudio?: boolean;
     assetId?: string;
+    assetVersionId?: string;
     assetTags?: string[];
     assetCategory?: AssetCategory;
     workflowKind?: CanvasWorkflowKind;
@@ -501,6 +510,11 @@ export type CanvasNodeMetadata = {
     characterVisualStatus?: string;
     characterVoiceStatus?: string;
     characterVoiceName?: string;
+    characterVoiceSampleResourceId?: string;
+    characterVoiceSampleUrl?: string;
+    sharedCharacter?: boolean;
+    selectedOutfitId?: string;
+    officialCharacterSnapshot?: import("@/services/api/official-assets").OfficialAssetReference["character"];
     characterVoiceProfile?: {
         name: string;
         provider: string;
@@ -557,7 +571,11 @@ export type CanvasNodeMetadata = {
         bitrateLevel?: "low" | "medium" | "high";
         bitrate?: number;
     };
+    /** 相对深度视频任务参数，供结果节点重试使用。 */
+    videoDepth?: { sourceNodeId: string; model: string };
     videoEditOperation?: CanvasVideoEditOperation;
+    videoReferenceMode?: CanvasVideoReferenceMode;
+    videoRemake?: boolean;
     arkPrivateAssetUpload?: string;
     videoCameraMoveId?: string;
     videoCameraMovePrompt?: string;
@@ -596,7 +614,7 @@ export type CanvasNodeMetadata = {
     model3dFormat?: import("@/lib/model3d-formats").Model3DPreviewFormat;
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
-    /** 用户手动改过节点名称；原位重新生成时保留，不再换成提示词摘要。 */
+    /** true 表示保留节点名称，false 表示由生成提示词自动命名。 */
     manualTitle?: boolean;
     storyboard?: StoryboardData;
     storyboardShotDuration?: StoryboardShotDuration;

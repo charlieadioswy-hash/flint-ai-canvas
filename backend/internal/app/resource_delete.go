@@ -27,6 +27,16 @@ func (s *Service) PurgeArchivedUserAssets(userID string, ids []string) error {
 	return s.deleteUserAssetsWithResources(userID, ids, true, true)
 }
 
+func (s *Service) DeleteArchivedWorkspaceAssets(actorID, teamID string, ids []string) error {
+	if teamID == "" {
+		return s.PurgeArchivedUserAssets(actorID, ids)
+	}
+	if _, err := s.requireTeamMember(actorID, teamID, true); err != nil {
+		return err
+	}
+	return s.PurgeArchivedUserAssets(model.TeamContentKey(teamID), ids)
+}
+
 func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, purge bool, archivedOnly ...bool) error {
 	requireArchived := len(archivedOnly) > 0 && archivedOnly[0]
 	if strings.TrimSpace(userID) == "" || len(ids) == 0 || len(ids) > 1000 {
@@ -65,7 +75,15 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 	//   - purge=false 是内部普通删除：回收站（archived）素材同样直接删除，其余素材保留引用保护。
 	//   - 无论哪种，被其他素材复用的资源与物理对象都保留，物理删除一律经 Outbox 异步执行。
 	deleteReferencedResources := purge
-	if !purge {
+	_, team := model.TeamIDFromContentKey(userID)
+	if team {
+		for _, asset := range assetRecords {
+			if asset.Status != model.AssetVersionStatusArchived {
+				return BadAuthRequest("请先归档素材，再执行清理")
+			}
+		}
+		deleteReferencedResources = false
+	} else if !purge {
 		if len(assetRecords) != 1 {
 			return BadAuthRequest("普通删除仅支持单个素材")
 		}
@@ -120,7 +138,16 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 			}
 		}
 	}
-	if len(ownedIDs) > 0 {
+	if len(ownedIDs) > 0 || team {
+		retained, retainedErr := s.repo.OfficialRecommendationResourceIDs()
+		if retainedErr != nil {
+			return retainedErr
+		}
+		for _, resourceID := range ownedIDs {
+			if _, exists := retained[resourceID]; exists {
+				return BadAuthRequest("素材正在被官方素材库或待审核推荐引用，暂不能删除")
+			}
+		}
 		var snapshot repository.ResourceReferenceSnapshot
 		var snapshotErr error
 		if deleteReferencedResources {
@@ -171,6 +198,18 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 					document.SecondaryJSON = ""
 				}
 			}
+			if team {
+				for _, raw := range []string{document.PrimaryJSON, document.SecondaryJSON} {
+					found, err := referencesWorkspaceAsset(raw, seen)
+					if err != nil {
+						return fmt.Errorf("%s引用无法解析，已停止清理：%w", document.Kind, err)
+					}
+					if found {
+						usages = append(usages, resourceUsage{Kind: document.Kind, ID: document.ID, Title: document.Title})
+						break
+					}
+				}
+			}
 			referencedIDs := documentReferencedResourceIDs(document.PrimaryJSON, ownedIDSet)
 			for resourceID := range documentReferencedResourceIDs(document.SecondaryJSON, ownedIDSet) {
 				referencedIDs[resourceID] = struct{}{}
@@ -198,6 +237,9 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 		}
 	}
 	if message := resourceOccupiedMessage(usages); message != "" {
+		if team {
+			return teamError(409, "team_asset_referenced", message)
+		}
 		return BadAuthRequest(message)
 	}
 
@@ -220,6 +262,9 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 	if err := s.repo.DeleteAssetsAndResources(userID, assetIDs, ownedIDs, deletionJobs, deleteReferencedResources, requireArchived); err != nil {
 		if errors.Is(err, repository.ErrAssetNotArchived) {
 			return NewAppError(409, "回收站素材已还原或状态已变化，请刷新后重新清空")
+		}
+		if errors.Is(err, repository.ErrOfficialResourceReferenced) {
+			return BadAuthRequest("素材正在被官方素材库或待审核推荐引用，暂不能删除")
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return NotFound("素材不存在或无权删除")
@@ -258,6 +303,15 @@ func resourceDeletionJobs(userID string, physicalObjects map[string]*model.Resou
 			StorageSettingID: resource.StorageSettingID, ObjectKey: resource.ObjectKey,
 			Status: model.ResourceDeletionStatusPending, NextAttemptAt: now,
 		})
+		// 云端播放副本是独立对象；资源记录删除后只能由 outbox 保留其对象键。
+		if resource.Provider != "local" && resource.PlaybackStatus == model.PlaybackStatusReady && resource.PlaybackObjectKey != "" && resource.PlaybackObjectKey != resource.ObjectKey {
+			jobs = append(jobs, model.ResourceDeletionJob{
+				ID: newID(), UserID: userID, ResourceID: resource.ID,
+				Provider: resource.Provider, Endpoint: resource.Endpoint, Bucket: resource.Bucket,
+				StorageSettingID: resource.StorageSettingID, ObjectKey: resource.PlaybackObjectKey,
+				Status: model.ResourceDeletionStatusPending, NextAttemptAt: now,
+			})
+		}
 	}
 	return jobs
 }

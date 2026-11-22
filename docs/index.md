@@ -26,6 +26,11 @@
 
 - [画布 3D 模型生成](design/model3d-generation.mdx)：文本、单图与多视图节点、后台配置、异步任务恢复与模型预览设计；[API 与行业调研](design/model3d-api-research.mdx) 记录官方协议、计费边界和 FBX / ABC 导出可行性。
 
+- [短剧拆镜与段间连续性调研](design/short-drama-shot-continuity-research.md)：对照制作台、同类产品和公开 Skill，区分同镜续拍、同场换镜与换场，附真实样片回查方法（调研建议，未实施）。
+
+- [团队空间、积分划拨与素材共享](design/team-workspace-design.md)：自由画布、创作页和素材库在个人与团队之间复用，按空间隔离作品与费用。使用入口见[功能清单](content/docs/overview/features.mdx)。
+
+
 - [资源访问与 OSS/CDN 分发架构重构](design/resource-delivery-architecture.md)：资源身份、场景授权与分发策略分离，统一访问合同、全入口迁移、旧实现退场及流量/安全验收门槛（核心代码已实施，待真实 OSS/CDN 链路验收）。
 
 - [短信渠道插件与登录注册策略](design/sms-channels-and-auth-policy.md)：阿里云/腾讯云官方 SDK 候选基线、多渠道与模板路由、发送记录、验证码安全、短信和邮箱登录注册组合及分阶段验收（核心代码已实施，待真实 OSS/CDN 链路验收）。
@@ -36,6 +41,10 @@
 
 - [云端 Agent 架构优化方案](design/cloud-agent-architecture-optimization.md)：跨端生成合同、引用绑定、审批依赖、报价预算、运行存储与工作上下文的现状审查、分阶段方案和验收门槛（提案，未实施）。
 
+- [yingce-bridge 多设备本地执行架构](design/yingce-bridge-architecture.md)：Web 主产品 + 本地执行代理；账号设备绑定、能力发现、ComfyUI/Ollama/CLI/MCP 适配、本机权限、文件同步、安全回执与多设备调度（提案，未实施）。
+
+- [yingce-bridge 断连、恢复与分布式执行可靠性](design/yingce-bridge-reliability.md)：Chubby/RIFL/Sagas/Ray/Beldi 论文与 Temporal/Kubernetes/KubeEdge 对照；启动授权、有限离线执行、账本核对、取消语义、结果交付与故障注入矩阵（研究与协议提案，未实施）。
+
 - [影策品牌首页](design/story-creation-homepage.md)：六幕电影卷轴、公开入口、故事素材、工作台预览与响应式降级。
 
 - [插件平台与市场演进调研](design/plugin-platform-and-marketplace-research.md)：插件机制代码审计、对外回应、外部 SDK 与隔离运行时、独立插件验收、受控目录到公开市场的分阶段方案（调研建议，未实施）。
@@ -43,6 +52,8 @@
 - [多平台账号池最终指导方案](design/account-pool-design.mdx)：影策后端通用账号池框架、平台适配标准 `yingce.accountpool/v1`、独立适配服务、LibTV（官方 MCP）与即梦（官方 dreamina CLI）接入、页面内扫码添加账号、多档位调度、价格沿用渠道模型、部署约束、分期与 P0 验证清单（最终指导方案，未实施）。
 
 - [站点及外观与皮肤主题设计合同](design/site-appearance-and-skins.mdx)：品牌一致性、登录页与邮件、SEO/备案、三层皮肤令牌、无闪屏启动顺序和验收边界。
+
+- [管理后台信息架构与报表重设计](design/admin-console-redesign.md)：32 个入口的重复与分散、浮层承载主流程、报表口径缺陷的代码证据；5 组 19 入口、浮层规范、用户详情页、价格与倍率、积分账本、运营报表口径、后端缺口和分阶段计划（提案，未实施）。
 
 - [UI 皮肤库架构设计](design/ui-skin-library.mdx)：Foundation 固定尺度与可换肤层分离、皮肤清单格式、OKLCH 颜色推导、校验规则和分步迁移（提案，未实施）。
 
@@ -90,6 +101,7 @@ ADR-0001～0007 的站内手工剪辑方案已随产品减负退场，保留为�
 - [模型参数与生成进度合同](content/docs/backend/model-capabilities-progress.mdx)：模型能力来源、已配置图片/视频参数、供应商组合限制、3D 参数与验证边界。
 - [Wangsu 分辨率核查与修复](content/docs/backend/wangsu-resolution-audit.mdx)：逐模型依据、真实调用边界、尺寸修复和两阶段配置迁移。
 - [图片合规检测](content/docs/backend/image-moderation.mdx)：手动节点入口、后台多 Provider 与唯一生效版本、统一报告、调用预算和恢复边界。
+- [相对深度视频](content/docs/backend/video-depth.mdx)
 - [后端数据库](content/docs/backend/backend-database.mdx)
 - [代码地图](content/docs/backend/code-map.mdx)
 - [待办](content/docs/progress/todo.mdx)

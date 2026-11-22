@@ -460,6 +460,19 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 	if requestKind == "upload-signature" || requestKind == "upload" {
 		callLog.RequestBody, callLog.ResponseBody = "", ""
 	}
+	if metadata.ProtocolReceipt != nil && (requestKind == "create" || requestKind == "poll") {
+		if requestKind == "create" {
+			callLog.ProviderRequestID = ""
+		}
+		if requestErr == nil && statusCode >= 200 && statusCode < 300 {
+			if receipt, err := metadata.ProtocolReceipt.decode(responseBody); err == nil {
+				callLog.ProviderStatus = firstNonEmpty(callLog.ProviderStatus, string(receipt.Status))
+				if requestKind == "create" {
+					callLog.ProviderRequestID = receipt.TaskID
+				}
+			}
+		}
+	}
 	callLog.Error = withUserVisibleLogError(requestErr, callLog.Error)
 	if (requestKind == "upload-signature" || requestKind == "upload") && callLog.Status == model.ApiCallStatusFailed {
 		callLog.Error = "供应商素材上传请求失败"

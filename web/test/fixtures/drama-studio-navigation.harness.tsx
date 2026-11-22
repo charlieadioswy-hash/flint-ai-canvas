@@ -49,6 +49,9 @@ for (const [path, names] of [
     ["asset-transfer", ["AssetImportModal", "AssetPackageModal"]],
     ["chapter-picker", ["ChapterPickerModal"]],
     ["final-view", ["FinalView"]],
+    ["studio-opening", ["StudioOpening"]],
+    ["project-asset-audit", ["ProjectAssetAudit"]],
+    ["episode-rename-modal", ["EpisodeRenameModal"]],
     ["genesis", ["StudioGenesis"]],
     ["queue-bar", ["QueueBar"]],
     ["script-view", ["ScriptView"]],
@@ -84,6 +87,8 @@ let insertResult: Promise<{ shot: DramaShot }> | undefined;
 let removeResult: Promise<void> | undefined;
 mock.module("@/services/api/drama", () => ({
     approveDramaEpisode: noopRequest,
+    composeDramaEpisode: noopRequest,
+    formatDramaInboxCount: String,
     deleteDramaShot: async () => {
         await removeResult;
         return {};

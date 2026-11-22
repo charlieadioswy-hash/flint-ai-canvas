@@ -292,8 +292,9 @@ test("单镜已有稿中的资产名保留原文，同一个附图在括号中�
         ["shot-ref:hall-view", "王府大厅"],
         ["shot-ref:upload", "参考图3"],
     ]);
-    expect(chips[0].previousSibling?.textContent).toEndWith("林晚（");
-    expect(chips[1].previousSibling?.textContent).toEndWith("王府大厅 (");
+    const precedingText = (chip: HTMLElement) => chip.previousSibling?.textContent?.replace(/\u200b/g, "") || chip.previousSibling?.previousSibling?.textContent;
+    expect(precedingText(chips[0])).toEndWith("林晚（");
+    expect(precedingText(chips[1])).toEndWith("王府大厅 (");
     expect(serializeEditableValue(editor)).toBe(prompt);
 
     const reordered = { ...config, prompt: "王府大厅（@[shot-image:hall-view]），林晚（参考图 3）。", referenceResourceIds: ["upload", "hall-view", "hero-image"] };

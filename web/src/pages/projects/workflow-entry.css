@@ -537,12 +537,12 @@
 .drama-entry-flow li[aria-current="step"]::after {
     position: absolute;
     bottom: -12px;
-    left: calc(50% - 5px);
-    width: 0;
-    height: 0;
-    border-right: 5px solid transparent;
-    border-bottom: 6px solid var(--text-primary);
-    border-left: 5px solid transparent;
+    left: 50%;
+    width: 10px;
+    height: 6px;
+    background: var(--text-primary);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    transform: translateX(-50%);
     content: "";
 }
 

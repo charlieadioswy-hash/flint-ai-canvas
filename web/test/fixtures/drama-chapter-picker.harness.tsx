@@ -53,6 +53,7 @@ mock.module("antd", () => ({
     Button: ({ children, type: _type, loading: _loading, icon: _icon, ...props }: Record<string, any>) => createElement("button", props, children),
     InputNumber: ({ onChange, size: _size, ...props }: Record<string, any>) => createElement("input", { type: "number", ...props, onInput: (event: any) => onChange(Number(event.target.value)) }),
 }));
+mock.module("@/pages/projects/studio/chapter-rename-button", () => ({ ChapterRenameButton: () => null }));
 mock.module("@/pages/projects/chapter-pick-list", () => ({
     ChapterPickList: ({ items, selected, onChange, onPreview }: any) => (
         <div>

@@ -22,6 +22,7 @@ import {
     Infinity as InfinityIcon,
     KeyRound,
     Layers3,
+    LibraryBig,
     LogIn,
     MailSearch,
     Mail,
@@ -58,6 +59,7 @@ import { publishWorkspaceSidebarCollapsed, readWorkspaceSidebarCollapsed, subscr
 import { AppFeedbackProvider } from "@/components/layout/app-feedback";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { getIsolatedAdminAntTheme } from "../theme/admin-ant-theme";
@@ -128,9 +130,12 @@ const adminNavigation: AdminNavigationGroup[] = [
             { path: "/admin/pose-library", keywords: "姿势 动作 pose", label: "姿势库", shortLabel: "姿势", icon: <PersonStanding className="size-4" /> },
             { path: "/admin/settings/drawing-engine", keywords: "绘图 画板 引擎", label: "绘图工具", shortLabel: "绘图", icon: <Paintbrush className="size-4" /> },
             { path: "/admin/plugins", keywords: "插件 扩展 协议 plugin", label: "插件管理", shortLabel: "插件", icon: <PlugZap className="size-4" /> },
+            { path: "/admin/mcp", keywords: "MCP 工具 连接 市场 Agent", label: "MCP 管理", shortLabel: "MCP", icon: <PlugZap className="size-4" /> },
             { path: "/admin/skills", keywords: "技能 skill", label: "技能管理", shortLabel: "技能", icon: <Wand2 className="size-4" /> },
             { path: "/admin/skill-curation", keywords: "技能 分类 推荐", label: "技能分类", shortLabel: "分类", icon: <Sparkles className="size-4" /> },
             { path: "/admin/resources", keywords: "资源 文件 素材 存储 清理", label: "存储资源", shortLabel: "资源", icon: <Database className="size-4" /> },
+            { path: "/admin/official-assets", keywords: "官方 素材 角色卡 预设 公共资产", label: "官方素材库", shortLabel: "素材", icon: <LibraryBig className="size-4" /> },
+            { path: "/admin/official-asset-recommendations", keywords: "素材 推荐 审核 角色卡 退回 发布", label: "素材推荐审核", shortLabel: "审核", icon: <Inbox className="size-4" /> },
         ],
     },
     {
@@ -406,6 +411,9 @@ function MobileAdminNavigation() {
                 </button>
             </Dropdown>
             <div className="flex shrink-0 items-center gap-1">
+                <button type="button" className="admin-mobile-navigation-action admin-mobile-agent-entry" aria-label="打开 Agent 助手" title="打开 Agent 助手" onClick={() => useGlobalAgentStore.getState().openAgent()}>
+                    <Bot className="size-4" />
+                </button>
                 <AdminTooltip title="返回创作台">
                     <Link to="/" className="admin-mobile-navigation-action" aria-label="返回创作台">
                         <Home className="size-4" aria-hidden="true" />

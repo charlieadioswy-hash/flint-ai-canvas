@@ -61,6 +61,43 @@ description: 从产品功能快速定位主要代码入口
 | 六表与迁移 | `backend/internal/model/image_moderation.go`、`database/schema.go`、`database/migrations.go` 的迁移 44 |
 
 功能边界见[图片合规检测](/docs/backend/image-moderation)，真实场景验收见[待测试](/docs/progress/pending-test)。
+
+## 团队空间
+
+- `web/src/router.tsx` 为个人和团队挂载相同的 `pages/canvas`、`pages/create`、`pages/assets`；`lib/workspace-routes.ts` 选择 API 前缀，`lib/user-scope.ts` 隔离本地缓存。`pages/teams` 只负责空间、成员、邀请和钱包。
+- `backend/internal/handler/team.go` 挂载现有内容、资源、实时同步和任务 handler；`internal/app/team.go` 校验成员，给内容服务传入空间归属键。
+- `internal/app/team_task.go` 为标准任务准备团队报价及支付账户，执行和结算使用同一队列、Worker 和账本。`internal/app/team_wallet.go` 管理划拨和额度。
+- `internal/app/team_assets.go` 编排跨空间发布及成员写入权限。素材、历史版本和媒体复用通用表。旧内容转换及其回滚测试见 `internal/database/migration_workspace_content.go`、`migration_workspace_content_test.go`。
+- 公司与小组共享成员授权入口 `activeTeamMemberships`。`internal/repository/team_credit_overview.go` 生成当前用户的跨空间积分明细，首页和空间弹窗复用 `web/src/components/layout/team-space-directory.tsx`。所有对外团队接口从 `RegisterTeamWorkspaceRoutes` 挂载，统一受 `teamsEnabled` 控制。
+
+## 图片用量计费
+
+- 规则与计算：`model/image_billing.go`、`imagebilling/pricing.go`；价格校验、换算和报价在 `app/channel_models_pricing.go`、`app/image_billing.go`、`app/finance.go`、`app/logical_model_quote.go`。
+- 实际用量与结算：声明式协议映射 `protocol/manifest_adapter.go` → `app/provider_protocol_result.go` → `repository/finance_image.go`；恢复素材保留图层元数据，迁移为 `database/migration_image_billing.go`（105）。
+- 官方接口：`plugin-packages/volcengine-ark-seedream/` 及对应插件包，5.5 参数与默认能力在 `app/seedream55.go`；前端模型价格编辑、服务端报价和账单展示分别位于 `pages/admin/components/image-usage-price-fields.tsx`、`lib/model-pricing.ts`、`credit-operations-panel.tsx`。
+
+## 微信登录
+
+- HTTP：`handler/auth_wechat.go` → `service/aliases_wechat.go` → `app/auth_wechat.go` → `auth/wechat.go`。账号会话复用 `auth/linuxdo.go` 的公共 OAuth 收尾，首次注册复用 `auth/auth.go` 的验证与事务流程。
+- 持久化：`repository/oauth.go` 的一次性状态与身份，`repository/account.go` 的绑定与通用重新核验；迁移版本 102。
+- Web：`services/api/wechat.ts`；后台 `pages/admin/components/wechat-settings-section.tsx` 嵌入访问设置；登录入口 `auth-login-form.tsx`，首次注册 `wechat-registration-form.tsx`，个人设置 `profile-pane.tsx`。
+
+## 创作对话同步
+
+- HTTP：`handler/creation_history.go` → `service/aliases_creation_history.go` → `app/creation_history.go`；持久化在 `repository/creation_history.go` 和 `model/creation_history.go`。
+- Web：`services/creation-history-sync.ts` 维护账号队列、修订合并及冲突备份；`creation-history-payload.ts` 定义可持久化字段，`creation-history-media.ts` 上传本地媒体并恢复授权路径；真实入口为 `pages/create/index.tsx`。
+- 迁移：Schema 101；资源引用保护在 `repository/resource_reference.go` 和 `resource_cleanup.go`，SQLite → PostgreSQL 复制清单登记三张历史表。
+
+## Agent 记忆、Pi 与 MCP
+
+- 用户工作回忆：`app/cloud_agent_memory_recall.go`、`repository/agent_memory_recall.go`；长期偏好沿用 `cloud_agent_memory_document*.go`。冻结注入在 `cloud_agent_skill_catalog.go`，按需检索工具为 `memory_search`。
+- Pi `1.5.2` 与真实运行回归：`backend/agent-runtime/pi/agent-runtime.mjs`、`agent-runtime.compaction.test.mjs`；受管模型桥、真实 Token 计量和缓存前缀在 `app/cloud_agent_pi_model.go`。
+- MCP HTTP 接口：`handler/mcp.go` → `service/aliases_mcp.go` → `app/mcp.go`；领域实现 `internal/integrations/mcp/`，`access.go` 负责平台用户与参数范围，`admission.go` 负责共享协调器限流，`outbound/mcp.go` 负责独立出站策略；持久化在 `repository/mcp.go` / `mcp_quota.go`、`model/models_mcp.go`，迁移 100 / 103 在 `database/migration_mcp.go` / `migration_mcp_security.go`。
+- MCP 工具发现、审批预览与执行：`app/cloud_agent_tools_mcp.go`；分类与 Schema 仍使用统一工具注册表。外部 IO 在检查点事务外执行，独立回执防止重复调用。
+- 前端：`web/src/components/mcp/` 与 `services/api/agent-mcp.ts`；个人入口在 Agent 设置，平台市场和连接在 `pages/admin/mcp/`。
+- Agent 并发准入与存储账本：`repository/agent_limits.go`、`repository/cloud_agent.go`、`model/agent_storage_usage.go`，迁移 104 在 `database/migration_agent_limits.go`。控制状态可在历史配额耗尽时完成取消和失败收尾。
+- 运行时生命周期：`yingce-agent/session-admission.mjs`、`run-directories.mjs` 与嵌入版 `internal/agent/runtime/directories.go`；生产资源边界由 `docker-compose.deploy.yml` 声明。跨标签页会话失效、固定账号请求和晚响应拦截在 `web/src/lib/user-scope.ts`、`user-session.ts`、`services/api/request.ts` 与 Agent / 文本 SSE 入口。
+
 ## 网站访问统计
 
 - 匿名采集与分类：`web/src/lib/site-traffic.ts`、`services/site-traffic.ts`；后台路由 `/admin/traffic` 在 `pages/admin/traffic/`，API 校验在 `services/api/site-traffic.ts`，三类 CSV 在 `traffic-csv.ts`。
@@ -85,6 +122,8 @@ description: 从产品功能快速定位主要代码入口
 
 主题登记与切换在 `web/src/themes/`：`registry.ts` 按皮肤 ID 查找，`load.ts` 自动载入，`apply.ts` 处理画布预设还原与品牌变量。各主题目录封装助手形象、空状态、404、字体和样式，静态资源在 `web/public/themes/`。入口通过 `application.tsx` 加载；后台外观提交在 `stores/use-appearance-store.ts` 应用当前主题。使用与扩展说明见 `web/src/themes/README.md`。
 
+龙影水墨和云鹤仙观的皮肤参数由前端主题包与 `backend/internal/app/appearance_skins.go` 共用 `appearance_theme_packs.json`。读取旧版外观配置时，`appearance.go` 按皮肤库剩余容量补入缺少的主题，直到管理员保存新版配置。
+
 ## 渠道配置与媒体参数
 
 - 网站与 Key 管理：`web/src/pages/admin/channels/`；统一批量弹窗与模板库：`pages/admin/components/channel-model-batch-*`、`capability-template-panel.tsx`、`pricing-template-panel.tsx`、`saved-*-templates.ts`。业务 API 在 `services/api/channel-websites.ts`、`wallet.ts`。
@@ -108,6 +147,7 @@ description: 从产品功能快速定位主要代码入口
 - 简易制作台：`web/src/pages/projects/workflow.tsx` 协调创作与作品管理；`workflow-episodes.tsx` 管理分集，`workflow-production.tsx` 与 `workflow-storyboard-page.tsx` 按集 → 段 → 镜头组织单集、段列表、段内镜头及段视频预览；批量生成与失败重试以真实段为范围。`workflow-segment-card.tsx`、`simple-studio-segment-editor.tsx` 保留剧情段卡片与原编辑弹窗，单镜生成在 `workflow-shot-media-dialog.tsx` 内完成。段导航调整已通过组件与后端专项、前端构建及 lint，真实浏览器仍待验收。`studio/studio-route.ts` 保留简易／详细视图与定位，`studio/project-topbar.tsx` 提供工作区顶栏。旧 `view`、`tab` 深链接继续进入详细台。
 - 媒体操作：`studio/use-drama-media-action.tsx` 与 `drama-media-action-dialog.tsx` 直接调用预检与执行接口，不经过短剧 Agent 建议。服务端 `app/drama_studio_actions.go` 及 `handler/drama_routes.go` 校验真实目标、作品／目标版本、范围、报价与显式确认；`segment_assets` 聚合本段缺失参考图及必要本体依赖，复用已有图片和在途任务，不放行整集或自动继续视频。
 - 剧集成片恢复：`RetryFailedDramaEpisodeRender` 与 `RetryDramaEpisodeRender` 只重试最新版本的失败合成，复用已有已采用视频。工作区侧栏闲置行为在 `components/layout/use-project-sidebar-idle.ts`，不写全局偏好。
+- 项目资产与审核：`web/src/pages/projects/studio/segment-references.tsx`、`segment-project-images.tsx`、`project-asset-audit.tsx` 与 `lib/drama/asset-usage.ts`。提示词彩色名称引用和保存编号在 `lib/drama/asset-references.ts`。`app/provider_drama_references.go` 校验逻辑编号与素材身份，`internal/protocol/video_references.go` 按插件声明读取实际 JSON 槽位或 multipart 文件，生成出站编号。
 - 设定与跨季素材：`app/drama_cast_materials.go`（手工草稿、独立风格、预览与生图共用的提示词编排），`app/drama_cast_import.go`（来源权限、同名匹配、角色造型映射与原子导入）；迁移 `database/drama_cast_styles_import.go`。前端 `studio/cast-create-dialog.tsx`、`cast-project-import.tsx`、`cast-image-fields.tsx`；`panels.tsx` 管理角色缩略图切换与独立造型列表，`cast-looks.tsx` 管理新增造型和图片预览。
 - 风格组合：`web/src/lib/drama/style-composition.ts` 分离表现形式与题材词库，生成稳定组合 ID；`drama-styles.ts` 是风格解析入口，`pages/projects/style-picker.tsx` 同时提供创建页选择器与素材编辑紧凑选择器。`drama.css` 的 reduced-motion 规则保留 rc-motion 完成事件，避免分镜弹窗停在进出场状态。
 - 段编辑的依赖失效：`repository/repository_drama.go` 的 `markLaterSegmentsStale` / `invalidateDramaSegment` 按作品衔接模式维护版本与排队任务；独立出片只影响本段，尾帧续接保留后续段级联失效。结果关联回归见 `app/drama_parallel_result_test.go`。
@@ -189,6 +229,7 @@ description: 从产品功能快速定位主要代码入口
 
 - 对话呈现：`web/src/components/canvas/canvas-cloud-agent-panel-parts.tsx` 管理可点击的对话标题、历史入口及唯一主要执行状态；`canvas-cloud-agent-chat-ui.tsx` 管理正文、折叠过程、审批与错误。`AgentConversation` 在历史恢复完成的空会话内挂载原版 `canvas-agent-welcome.tsx`，使用 `agent-welcome` 光球、居中欢迎文案与三个入口；创作入口只填草稿，技能入口打开真实技能库；场景技能组合在 `canvas-agent-skill-library-modal.tsx` 的 `presets` 插槽中，仅主动打开技能库时呈现。
 - 默认停靠：`lib/canvas/agent-panel-dock.ts` 默认选择右侧栏；`components/canvas/use-agent-panel-dock.ts` 与 `layouts/user-layout.tsx` 共用可用宽度条件，保留已保存的浮窗偏好和窄屏回退。
+- 推理档位：`web/src/components/canvas/use-agent-reasoning-preference.ts` 按账号与模型保存 Agent 档位，面板恢复时根据当前模型能力校验。没有有效选择时提交 `auto`，由模型配置决定默认档位。
 - 底部工具条：`canvas-toolbar.tsx`、`canvas-zoom-controls.tsx` 使用 `FloatingDock` 的局部 `toolbar` 变体；`canvas-bottom-toolbar.css` 负责紧凑实色外观，缩放控件按主条实测宽高和侧栏占位避让；节点/连线计数与镜头跟随浮条已移除。
 - 默认纯白：`styles/globals.css` 的 `--background`、`lib/canvas-theme.ts` 的浅色画布及 `lib/canvas/canvas-appearance.ts` 的经典浅色预设统一为 `#FFFFFF`。已有自定义配色和暗色独立保留。
 - 交互回归：`web/test/agent-sidebar-presentation.test.tsx` 的独立 DOM 用例覆盖停靠、草稿、单一执行状态和审批边界；底部控件真实组件用例在 `web/test/fixtures/canvas-bottom-controls.harness.tsx`。
@@ -250,7 +291,7 @@ description: 从产品功能快速定位主要代码入口
 | 产品模型与渠道选择 | `web/src/components/model-picker.tsx`、`pages/admin/components/channel-model-editor.tsx` | `lib/model-picker-groups.ts` 只构建跨渠道展示分组；`lib/user-session.ts` 透传渠道展示名；`components/model-logo.tsx` 按需加载原色图标；后端 `app/channel_models.go` 校验写入，`app/model_catalog.go` 发布目录，schema v24 增加 `channel_label` |
 | 系统渠道规格利润率与批量调价 | `web/src/pages/admin/components/channel-model-manager.tsx`、`channel-model-reprice-dialog.tsx` | 弹窗按模型分组展示多规格、重新计算与逐项编辑；`channel-model-cost-summary.tsx` 展示价格，`channel-model-pricing.ts` 精确四舍五入并组装最终售价；后端 `handler/finance.go` 接收批量请求，`app/channel_model_pricing.go` 校验权限、最终价格及快照版本，`repository/channel_model_pricing.go` 事务保存及版本冲突检测 |
 | 我的素材 | `web/src/pages/assets/` | `stores/use-asset-store.ts`、`services/image-storage.ts` |
-| 技能库 | `web/src/pages/skills/` | `services/api/skills.ts`、`services/skill-runtime.ts`、`components/skills/skill-runtime-picker.tsx` |
+| 技能库 | `web/src/pages/skills/` | `services/api/skills.ts`、`services/skill-runtime.ts`、`components/skills/skill-runtime-picker.tsx`；`lib/skill-access.ts` 区分有效用户使用与管理员管理，后端 `skills/authorization.go` 在业务边界核对账号，`handler/skill_authorization.go` 在管理请求解析前鉴权 |
 | 后台技能管理（`/admin/skills`、`/admin/skills/:skillId/edit`） | `web/src/pages/admin/skills/` | `skills-page.tsx` 列表、上下架与删除；`admin-skill-workbench-page.tsx` 以管理员接口挂载 `SkillWorkbench`；基本信息复用 `skill-editor-drawer.tsx` 的 `admin` 模式；接口 `services/api/admin-skills.ts`；后端 `handler/admin_skill_routes.go`、`app/admin_skills.go`（权限与审计）、`skills/skills_admin.go` |
 | 技能工作台（`/skills/:skillId/edit`） | `web/src/pages/skills/workbench/` | `index.tsx` 导出 `SkillWorkbench`（接口适配器 `SkillWorkbenchApi`，用户端与后台共用）并管工作副本、保存与离开保护；`skill-workbench-explorer.tsx` 文件树与键盘导航；`skill-code-editor.tsx` 单 EditorView + 每标签 EditorState；`skill-quick-open.tsx`；样式 `skill-workbench.css`；纯函数 `lib/skills/skill-workbench-model.ts`（文件树、路径校验、批量操作折叠） |
 | 画布列表 | `web/src/pages/canvas/index.tsx` | `stores/canvas/use-canvas-store.ts` |
@@ -302,7 +343,7 @@ Pi SDK 执行前的参数校验失败由 `agent-runtime/pi/agent-runtime.mjs` �
 | 生成 Composer | `web/src/components/canvas/canvas-node-prompt-panel.tsx`、`canvas-config-composer.tsx` |
 | 风格中心、用户风格编辑与项目快照 | `web/src/components/canvas/canvas-style-picker-modal.tsx`、`style-profile-editor-modal.tsx`、`style-asset-binding-modal.tsx`、`web/src/lib/canvas/style-profile.ts`、`web/src/services/api/style-profiles.ts` |
 | 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx` |
-| 3D 导演台 | `web/src/components/canvas/director/` |
+| 世界引擎（原 3D 预演台） | 工作台与视口在 `web/src/components/canvas/previs/`，场景算法在 `web/src/lib/canvas/previs/`，类型在 `web/src/types/previs.ts`；运镜手法表与大师手法配方 `previs-camera-techniques.ts`（纯数据）、求值 `previs-camera-moves.ts`（CAM、截图、录制共用 `resolvePrevisViewFraming`）、检查器 `previs-camera-move-section.tsx`；录制转 MP4 在 `web/src/lib/canvas/canvas-video-merge.ts`（FFmpeg.wasm 排队执行，参数见 `canvas-video-merge-args.ts`）；Agent 写入在 `backend/internal/app/cloud_agent_previs*.go`，运镜白名单 `cloud_agent_previs_camera.go`、配方 `cloud_agent_previs_camera_recipes.go`、镜头检查 `cloud_agent_previs_review.go`，说明书完整范例由 `cloud_agent_previs_recipes_manual_test.go` 原样执行校验；手法表由 `web/test/previs-camera-moves.test.ts` 逐项比对，配方由 `backend/internal/app/testdata/previs_camera_recipes.json` 前后端共同校对；说明书在 `backend/internal/prompts/previs-manual/` |
 | 节点生成上下文 | `web/src/components/canvas/canvas-node-generation.ts` |
 | 布局和连线算法 | `web/src/lib/canvas/canvas-layout.ts`、`canvas-frame.ts` |
 | 任务结果准备与按节点提交 | `web/src/lib/canvas/canvas-generation-task-sync.ts`、`canvas-generation-result.ts`；持久化协调在 `web/src/services/canvas-generation-consumer.ts` |

@@ -205,7 +205,7 @@ test("an offline edit outside the loaded remote page resumes without replacing l
     const requests: string[] = [];
     apiClient.defaults.adapter = async (config) => {
         requests.push(config.url!);
-        expect(config.signal).toBe(controller.signal);
+        expect(config.signal?.aborted).toBe(false);
         return response(config, { project: cloud });
     };
     expect(await canvasContentHash(local)).not.toBe(local.remoteContentHash);
@@ -252,8 +252,9 @@ test("aborting an in-flight missing candidate stops the next scene request", asy
     let release!: () => void;
     const requestStarted = new Promise<void>((resolve) => { started = resolve; });
     const holdResponse = new Promise<void>((resolve) => { release = resolve; });
+    let requestSignal: InternalAxiosRequestConfig["signal"];
     apiClient.defaults.adapter = async (config) => {
-        expect(config.signal).toBe(controller.signal);
+        requestSignal = config.signal;
         requests.push(config.url!);
         started();
         await holdResponse;
@@ -262,7 +263,9 @@ test("aborting an in-flight missing candidate stops the next scene request", asy
     const projects = [scene("first", "2026-10-03T00:00:00Z"), scene("second", "2026-10-02T00:00:00Z")];
     const pending = loadScreenCreationEntry(entryOptions(projects), controller.signal);
     await requestStarted;
+    expect(requestSignal?.aborted).toBe(false);
     controller.abort();
+    expect(requestSignal?.aborted).toBe(true);
     release();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(requests).toEqual(["/canvas-projects/first"]);

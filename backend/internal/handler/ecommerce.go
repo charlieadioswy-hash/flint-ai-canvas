@@ -16,7 +16,8 @@ import (
 const maxEcommerceProjectSaveBytes int64 = 128 << 20
 
 func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
-	r.POST("/admin/ecommerce/skills/install", func(c *gin.Context) {
+	skillAdmin := r.Group("", requireSkillAdministration(svc))
+	skillAdmin.POST("/admin/ecommerce/skills/install", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -43,7 +44,7 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"installed": true})
 	})
-	r.POST("/admin/ecommerce/skills/install/github", func(c *gin.Context) {
+	skillAdmin.POST("/admin/ecommerce/skills/install/github", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -68,7 +69,7 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"installed": true})
 	})
-	r.PATCH("/admin/ecommerce/skills/:id/name", func(c *gin.Context) {
+	skillAdmin.PATCH("/admin/ecommerce/skills/:id/name", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -131,7 +132,7 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Header("Cache-Control", "private, no-store")
 		ok(c, data)
 	})
-	r.GET("/admin/ecommerce/skills", func(c *gin.Context) {
+	skillAdmin.GET("/admin/ecommerce/skills", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -145,7 +146,7 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Header("Cache-Control", "private, no-store")
 		ok(c, gin.H{"skills": items})
 	})
-	r.PATCH("/admin/ecommerce/skills/:id", func(c *gin.Context) {
+	skillAdmin.PATCH("/admin/ecommerce/skills/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -373,7 +374,7 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"status": req.Status})
 	})
-	r.POST("/ecommerce/skills/prompt", func(c *gin.Context) {
+	r.POST("/ecommerce/skills/prompt", requireSkillAccess(svc), func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)

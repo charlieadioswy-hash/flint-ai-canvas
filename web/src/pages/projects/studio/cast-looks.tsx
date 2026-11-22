@@ -366,7 +366,19 @@ export function CastLooks({
                                 <span className="drama-look-body">
                                     <b className="truncate">{look.lookName || "未命名造型"}</b>
                                     <small>{chapterLabel(look.lookFromChapter, look.lookToChapter)}</small>
-                                    <small>{look.imageStatus === "draft" ? "已保存，待生成或上传" : look.locked ? "自定义图已锁定" : look.imagePrompt ? "使用自定义提示词" : "按外观描述生成"}</small>
+                                    <small>
+                                        {look.imageStatus === "draft"
+                                            ? "已保存，待生成或上传"
+                                            : look.imageStatus === ""
+                                              ? "还没有造型图，点右侧生成或上传"
+                                              : look.imageStatus === "failed"
+                                                ? "造型图失败，可重试生成"
+                                                : look.locked
+                                                  ? "自定义图已锁定"
+                                                  : look.imagePrompt
+                                                    ? "使用自定义提示词"
+                                                    : "按外观描述生成"}
+                                    </small>
                                 </span>
                                 <span className="drama-look-actions">
                                     <Button size="small" type="text" icon={<Pencil className="size-3.5" />} aria-label={`编辑造型 ${look.lookName}`} disabled={busy || mediaBusy(look.imageStatus)} onClick={() => setEditingId(look.id)} />

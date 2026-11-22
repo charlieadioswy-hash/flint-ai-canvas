@@ -22,6 +22,7 @@ for (const [key, value] of Object.entries({
 const { act, useEffect, useMemo, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { createMemoryRouter, Outlet, RouterProvider } = await import("react-router");
+const antd = await import("antd");
 const { useUserStore } = await import("../../src/stores/use-user-store");
 const initialUserState = useUserStore.getInitialState();
 const restoreEntry = mock(async () => ({}));
@@ -34,8 +35,11 @@ const t = (key: string, options?: { defaultValue?: string }) => options?.default
 const noop = () => {};
 
 // 被测范围保留真实 SidebarNav、ScreenCreationEntry 与 Router；替换媒体工作区和账号周边依赖。
-mock.module("antd", () => ({ Popover: ({ children }: { children: React.ReactNode }) => children }));
-mock.module("react-i18next", () => ({ useTranslation: () => ({ t, i18n: { language: "zh" } }) }));
+mock.module("antd", () => ({ ...antd, Popover: ({ children }: { children: React.ReactNode }) => children }));
+mock.module("react-i18next", () => ({
+    initReactI18next: { type: "3rdParty", init: () => {} },
+    useTranslation: () => ({ t, i18n: { language: "zh" } }),
+}));
 mock.module("motion/react", () => ({ LayoutGroup: ({ children }: { children: React.ReactNode }) => children, motion: { span: ({ className }: { className: string }) => <span className={className} /> }, useReducedMotion: () => true }));
 mock.module("../../src/hooks/use-workspace-logout", () => ({ useWorkspaceLogout: () => ({ handleLogout: noop }) }));
 mock.module("../../src/lib/workspace-route-modules", () => ({ preloadWorkspaceRoute: noop }));

@@ -37,6 +37,7 @@ const { CanvasNodeType } = await import("../../src/types/canvas");
 const api = await import("../../src/services/api/drama");
 const { ApiError } = await import("../../src/services/api/request");
 const resources = await import("../../src/services/api/resources");
+const projects = await import("../../src/services/api/projects");
 const imageStorage = await import("../../src/services/image-storage");
 const imageLoader = await import("../../src/services/canvas-image-loader");
 const character = { id: "hero", name: "主角", kind: "character", imageStatus: "ready", imageResourceId: "base" } as DramaCast;
@@ -513,7 +514,7 @@ const segment = {
     },
 } as DramaSegment;
 
-async function renderReferences(onSave: (patch: DramaSegmentReferencePatch) => Promise<unknown>, currentSegment = segment, onOpenCast: (id: string) => void = () => {}) {
+async function renderReferences(onSave: (patch: DramaSegmentReferencePatch) => Promise<unknown>, currentSegment = segment, onOpenCast: (id: string) => void = () => {}, onOpenAssets = () => {}) {
     const castById = new Map<string, DramaCast>([
         ["hero", { ...character, imageResourceId: undefined, voiceSampleResourceId: "voice-1" }],
         ["second", { ...character, id: "second", name: "配角", aliasesJson: '["小乙"]', imageResourceId: undefined, voiceSampleResourceId: "voice-2" }],
@@ -525,7 +526,7 @@ async function renderReferences(onSave: (patch: DramaSegmentReferencePatch) => P
         root.render(
             <QueryClientProvider client={client}>
                 <App>
-                    <ReferenceBoard segment={currentSegment} shots={[]} castById={castById} busy={false} onSave={onSave} onOpenCast={onOpenCast} />
+                    <ReferenceBoard projectId="project" segment={currentSegment} shots={[]} castById={castById} busy={false} onSave={onSave} onOpenCast={onOpenCast} onOpenAssets={onOpenAssets} />
                 </App>
             </QueryClientProvider>,
         ),
@@ -533,7 +534,7 @@ async function renderReferences(onSave: (patch: DramaSegmentReferencePatch) => P
 }
 
 async function openReferenceMenu() {
-    await click("管理参考资产");
+    await click("项目资产窗口");
     const menu = document.querySelector<HTMLElement>('[aria-label="搜索参考资产"]');
     expect(menu).not.toBeNull();
     return menu!;
@@ -581,13 +582,13 @@ test("opening a cast from the management menu closes the menu before leaving the
     const save = mock(async () => {});
     await renderReferences(save, segment, openCast);
     const menu = await openReferenceMenu();
-    const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.replace(/\s/g, "") === "管理参考资产")!;
+    const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.replace(/\s/g, "") === "项目资产窗口")!;
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     await click("查看主角设定", menu);
     expect(openCast.mock.calls).toEqual([["hero"]]);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     // 浮层退出动画尚未结束时仍可挂载，但必须已进入关闭状态。
-    expect(!menu.isConnected || menu.closest(".ant-popover")?.className.includes("-leave")).toBe(true);
+    expect(!menu.isConnected || menu.closest(".ant-drawer")?.className.includes("-leave") || menu.closest(".ant-drawer")?.getAttribute("aria-hidden") === "true").toBe(true);
     expect(save).not.toHaveBeenCalled();
 });
 
@@ -621,6 +622,7 @@ test("reference rail maps vertical wheel to horizontal scroll and preserves dire
 
 test("reference upload remains available in the management menu and appends only the uploaded image", async () => {
     const save = mock(async () => {});
+    const link = spyOn(projects, "linkProjectAsset").mockImplementation(async () => ({}) as Awaited<ReturnType<typeof projects.linkProjectAsset>>);
     const upload = spyOn(resources, "uploadResourceFile").mockResolvedValue({ id: "uploaded-reference" } as Awaited<ReturnType<typeof resources.uploadResourceFile>>);
     await renderReferences(save);
     const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
@@ -632,12 +634,52 @@ test("reference upload remains available in the management menu and appends only
     Object.defineProperty(input, "files", { configurable: true, value: [file] });
     await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
     expect(upload).toHaveBeenCalledWith(file, "image", { fileName: "补充景物.png" });
+    expect(link).toHaveBeenCalledWith("project", { assetId: "uploaded-reference", category: "material", title: "补充景物", source: "uploaded" });
     expect(save).toHaveBeenCalledWith({
         referenceImages: [
             { resourceId: "extra", name: "夜景" },
             { resourceId: "uploaded-reference", name: "补充景物" },
         ],
     });
+});
+
+async function selectReferenceKind(kind: string, menu: ParentNode) {
+    const filter = menu.querySelector<HTMLElement>(`[role="radio"] [data-asset-kind="${kind}"]`)?.closest("button");
+    expect(filter).not.toBeNull();
+    await act(async () => filter!.click());
+    expect(filter?.getAttribute("aria-checked")).toBe("true");
+}
+
+test("asset drawer keeps failed additions and removals uncommitted", async () => {
+    const save = mock(async () => {
+        throw new Error("保存失败");
+    });
+    await renderReferences(save);
+    await click("项目资产窗口");
+    const drawer = document.querySelector(".drama-asset-drawer")!;
+    const menu = drawer.querySelector('[aria-label="搜索参考资产"]')!;
+    expect(drawer.textContent).toContain("项目资产 · 选择本段参考");
+    await click("添加参考图王府大厅", menu);
+    expect(save).toHaveBeenLastCalledWith({ referenceCastIds: ["hero", "hall"] });
+    expect(menu.querySelector('[aria-label="添加参考图王府大厅"]')?.getAttribute("aria-pressed")).toBe("false");
+    expect(menu.querySelector('[aria-label="移除参考图王府大厅"]')).toBeNull();
+    expect(host.querySelector('[aria-label="参考资产缩略图"]')?.textContent).not.toContain("王府大厅");
+    await click("移除参考图主角", menu);
+    expect(save).toHaveBeenLastCalledWith({ referenceCastIds: [] });
+    expect(menu.querySelector('[aria-label="移除参考图主角"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector('[aria-label="参考资产缩略图"]')?.textContent).toContain("主角");
+});
+
+test("asset drawer links to the project episode audit without changing references", async () => {
+    const save = mock(async () => {});
+    const openAssets = mock(() => {});
+    await renderReferences(save, segment, undefined, openAssets);
+    await click("项目资产窗口");
+    const drawer = document.querySelector(".drama-asset-drawer")!;
+    await click("按集核查", drawer);
+    expect(openAssets).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-expanded="false"]')?.textContent).toContain("项目资产窗口");
 });
 
 test("reference removal updates only the selected source and keeps library/upload entry points", async () => {
@@ -743,7 +785,7 @@ test("voice controls stay under the character asset and a look inherits the base
 test("secondary asset menu searches by alias, filters categories, and toggles selected references", async () => {
     const save = mock(async () => {});
     await renderReferences(save);
-    await click("管理参考资产");
+    await click("项目资产窗口");
     const menu = document.querySelector('[aria-label="搜索参考资产"]')!;
     expect(menu).not.toBeNull();
     const input = menu.querySelector<HTMLInputElement>('[aria-label="搜索资产"]')!;
@@ -757,7 +799,7 @@ test("secondary asset menu searches by alias, filters categories, and toggles se
     expect(menu.querySelector('[aria-label="配角资产"]')).not.toBeNull();
     expect(menu.querySelector('[aria-label="主角资产"]')).toBeNull();
     await type("");
-    await click("场景", menu);
+    await selectReferenceKind("scene", menu);
     expect(menu.querySelector('[aria-label="配角资产"]')).toBeNull();
     await click("添加参考图王府大厅", menu);
     expect(save).toHaveBeenLastCalledWith({ referenceCastIds: ["hero", "hall"] });
@@ -769,7 +811,7 @@ test("secondary asset menu searches by alias, filters categories, and toggles se
 test("voice edits made in the secondary menu apply without a save action", async () => {
     const save = mock(async () => {});
     await renderReferences(save);
-    await click("管理参考资产");
+    await click("项目资产窗口");
     const menu = document.querySelector('[aria-label="搜索参考资产"]')!;
     await click("关闭配角的音色", menu);
     expect(save).toHaveBeenLastCalledWith({ audioCastIds: ["hero"] });

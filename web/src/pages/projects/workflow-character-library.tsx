@@ -179,17 +179,24 @@ function CharacterDialog({
     const dirty = draft.mode === "info" ? characterTarget && Object.keys(changes).length > 0 : draft.mode === "save" ? name !== target?.name : Boolean(library);
     const currentTarget = target ? cast.find((item) => item.id === target.id) : undefined;
     const stale = draft.revision !== summary.production.revision || Boolean(target && (!currentTarget || currentTarget.revision !== target.revision));
-    const ownerIsActive = Boolean(userId && userId === getActiveUserScope());
-    const disabled = busy || pending || stale || !ownerIsActive;
     const renderTicket = operation.capture();
+    const ownerIsActive = Boolean(userId && userId === getActiveUserScope() && operation.isCurrent(renderTicket));
+    const disabled = busy || pending || stale || !ownerIsActive;
+    const readInSession = async <T,>(read: () => Promise<T>) => {
+        const ticket = operation.capture();
+        if (!operation.isCurrent(ticket)) throw new DOMException("账号已切换", "AbortError");
+        const result = await read();
+        if (!operation.isCurrent(ticket)) throw new DOMException("账号已切换", "AbortError");
+        return result;
+    };
     const list = useQuery({
         queryKey: ["drama-character-library", userId, getActiveUserScope(), projectId, page, query],
-        queryFn: () => listCharacters({ page, pageSize: 12, query }),
+        queryFn: () => readInSession(() => listCharacters({ page, pageSize: 12, query })),
         enabled: draft.mode === "import" && ownerIsActive,
     });
     const usage = useQuery({
         queryKey: ["drama-character-usage", userId, getActiveUserScope(), projectId, draft.target?.id, summary.production.revision],
-        queryFn: ({ signal }) => getDramaCharacterUsage(projectId, draft.target!.id, signal),
+        queryFn: ({ signal }) => readInSession(() => getDramaCharacterUsage(projectId, draft.target!.id, signal)),
         enabled: draft.mode === "info" && Boolean(draft.target) && ownerIsActive,
     });
 

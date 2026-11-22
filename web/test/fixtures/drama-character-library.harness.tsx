@@ -154,6 +154,8 @@ function castOf(extra: Partial<DramaCast> = {}): DramaCast {
 function summaryOf(revision = 12, projectId = "project-a") {
     return { project: { id: projectId }, production: { revision } } as DramaSummary;
 }
+const { setActiveUserScope } = await import("@/lib/user-scope");
+
 function reset() {
     notices.length = 0;
     confirms.length = 0;
@@ -164,7 +166,7 @@ function reset() {
     usagePending = undefined;
     libraryError = false;
     store.setState({ user: user() });
-    browser.localStorage.setItem("yingce:active-user-scope", "user-a");
+    setActiveUserScope("user-a");
 }
 async function settle() {
     for (let i = 0; i < 4; i++) await Bun.sleep(5);

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createElement, Suspense } from "react";
+import { renderToString } from "react-dom/server";
+import { preloadableLazy } from "../src/lib/preloadable-lazy";
 
 function source(path: string) {
     return readFileSync(resolve(import.meta.dir, path), "utf8");
@@ -45,14 +48,17 @@ describe("workspace route loading", () => {
         expect(html).not.toContain('style="background:#ffffff"');
         expect(html).toContain("html.dark body");
 
-        const { preloadableLazy } = await import("../src/lib/preloadable-lazy");
         function Loaded() {
-            return null;
+            return createElement("div", null, "route ready");
         }
-        const Page = preloadableLazy(async () => ({ default: Loaded }));
-        expect((Page({}) as { type: unknown }).type).not.toBe(Loaded);
+        let calls = 0;
+        const Page = preloadableLazy(async () => {
+            calls += 1;
+            return { default: Loaded };
+        });
         await Page.preload();
-        expect((Page({}) as { type: unknown }).type).toBe(Loaded);
+        expect(renderToString(createElement(Suspense, { fallback: "loading" }, createElement(Page)))).toContain("route ready");
+        expect(calls).toBe(1);
     });
 
     test("keeps the creation page at root and preserves the create compatibility route", () => {
@@ -133,18 +139,17 @@ describe("workspace route loading", () => {
 });
 
 describe("workspace wallet entry", () => {
-    test("opens the credits modal instead of a dedicated wallet page", () => {
+    test("opens personal credits in the wallet modal", () => {
         const router = source("../src/router.tsx");
         const modules = source("../src/lib/workspace-route-modules.ts");
         const host = source("../src/components/layout/workspace-wallet-modal.tsx");
         const palette = source("../src/components/layout/workspace-command-palette.tsx");
         const canvasTopBar = source("../src/pages/canvas/canvas-project-top-bar.tsx");
-        const topBar = source("../src/components/layout/workspace-top-bar.tsx");
         const css = source("../src/styles/globals.css");
 
         expect(router).toContain('path: "/wallet"');
         expect(router).toContain("element: <RequireAuth>{null}</RequireAuth>");
-        expect(router).not.toContain("WalletPage");
+        expect(router).not.toMatch(/\bWalletPage\b/);
         expect(router).not.toContain("loadWalletPage");
         expect(modules).not.toContain("pages/wallet");
         expect(host).toContain('pathname !== "/wallet"');
@@ -153,8 +158,18 @@ describe("workspace wallet entry", () => {
         expect(palette).not.toContain('"/wallet"');
         expect(canvasTopBar).toContain("openWorkspaceWallet()");
         expect(canvasTopBar).not.toContain('to="/wallet"');
-        expect(topBar).toContain("openWorkspaceWallet()");
         expect(css).not.toContain(".wallet-library-page");
         expect(css).not.toContain(".wallet-market-page");
+    });
+
+    test("limits topbar credit controls to team workspaces", () => {
+        const topBar = source("../src/components/layout/workspace-top-bar.tsx");
+
+        expect(topBar).toContain("const showTeamWallet = creditsEnabled && teamsEnabled && user && teamId;");
+        expect(topBar).toMatch(/\{showTeamWallet && \(\s*<div className="app-workspace-topbar-wallet">/);
+        expect(topBar).toContain("onClick={openSpaceDirectory}");
+        expect(topBar).toContain("to={`/teams/${encodeURIComponent(teamId)}/wallet`}");
+        expect(topBar).toContain("onClick={openTeamInvitations}");
+        expect(topBar).not.toContain("openWorkspaceWallet");
     });
 });

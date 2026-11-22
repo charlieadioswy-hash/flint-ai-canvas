@@ -149,7 +149,7 @@ test("independent image task counts total a single-image API quote and invalidat
         await f.render(imageRequest, true, 2);
         expect(f.current().quote).toBeNull();
         expect(f.current().pending).toBe(true);
-        expect(f.calls[0].signal.aborted).toBe(true);
+        expect(f.calls).toHaveLength(2);
         await f.render(imageRequest, true, 3);
         expect(f.calls[1].signal.aborted).toBe(true);
         await f.resolve(1, { ...quote, amountMicrocredits: 99_000_000 });

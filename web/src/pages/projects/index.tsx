@@ -1,7 +1,8 @@
 import { useDeferredValue, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Dropdown, Input } from "antd";
-import { Clapperboard, ExternalLink, FileUp, MoreHorizontal, Search, Trash2 } from "lucide-react";
+import { App, Dropdown } from "antd";
+import { Clapperboard, ExternalLink, FileUp, MoreHorizontal, Trash2 } from "lucide-react";
+import { ListSearchInput } from "@/components/ui/base/list-search-input";
 import { Link, useNavigate } from "react-router";
 
 import { CollectionToolbar } from "@/components/layout/collection-toolbar";
@@ -11,6 +12,8 @@ import { deleteDrama, listDramas, type DramaListItem, type DramaStatus } from "@
 
 import { formatCredits, MediaThumb, STATUS_LABEL } from "./drama-shared";
 import { progressFillStyle } from "@/lib/progress-fill";
+import { dramaSummaryQuery } from "@/lib/drama/drama-summary-query";
+import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { RelativeTime } from "@/components/ui/product/relative-time";
 import { DramaWorkflowEntry } from "./workflow-entry";
 import { dramaProjectPath } from "./guide-state";
@@ -166,14 +169,12 @@ export default function DramaListPage() {
                                     setPagination((current) => ({ ...current, page: 1 }));
                                 }}
                             >
-                                <Input
-                                    prefix={<Search />}
+                                <ListSearchInput
                                     value={keyword}
-                                    allowClear
                                     placeholder="搜索作品名"
                                     aria-label="搜索作品名"
-                                    onChange={(event) => {
-                                        setKeyword(event.target.value);
+                                    onValueChange={(value) => {
+                                        setKeyword(value);
                                         setPagination((current) => ({ ...current, page: 1 }));
                                     }}
                                 />
@@ -271,13 +272,18 @@ function DramaCover({ item }: { item: DramaListItem }) {
 }
 
 function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => void }) {
+    const queryClient = useQueryClient();
     const progress = item.episodeCount ? Math.round((item.doneCount / item.episodeCount) * 100) : 0;
     const needsAction = item.status === "paused" && Boolean(item.pauseReason);
     const path = item.hasDraftForm ? `/projects/new?draft=${encodeURIComponent(item.project.id)}` : dramaProjectPath(item.project.id, item.guideStep, item.episodeCount);
+    const preload = () => {
+        preloadWorkspaceRoute(path);
+        if (!item.hasDraftForm) void queryClient.prefetchQuery(dramaSummaryQuery(item.project.id));
+    };
     const stage = dramaListStage(item);
     return (
         <article className={`drama-library-card is-${item.status}`}>
-            <Link to={path} className="drama-library-open" aria-label={`打开《${item.project.name}》`}>
+            <Link to={path} viewTransition onPointerEnter={preload} onFocus={preload} onPointerDown={preload} className="drama-library-open" aria-label={`打开《${item.project.name}》`}>
                 <DramaCover item={item} />
                 <div className="drama-library-body">
                     <h3 title={item.project.name}>{item.project.name}</h3>
@@ -312,7 +318,15 @@ function DramaCard({ item, onDelete }: { item: DramaListItem; onDelete: () => vo
                     placement="bottomRight"
                     menu={{
                         items: [
-                            { key: "open", icon: <ExternalLink className="size-3.5" />, label: <Link to={path}>{item.hasDraftForm ? "编辑草稿" : dramaListAction(item)}</Link> },
+                            {
+                                key: "open",
+                                icon: <ExternalLink className="size-3.5" />,
+                                label: (
+                                    <Link to={path} viewTransition onPointerEnter={preload} onFocus={preload} onPointerDown={preload}>
+                                        {item.hasDraftForm ? "编辑草稿" : dramaListAction(item)}
+                                    </Link>
+                                ),
+                            },
                             { type: "divider" },
                             { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除作品", onClick: onDelete },
                         ],

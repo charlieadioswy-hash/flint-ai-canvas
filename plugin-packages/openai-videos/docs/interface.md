@@ -49,17 +49,16 @@
 | `create.body.resolution_name` | `{"$omitEmpty":{"$ref":"request.resolution"}}` |
 | `create.body.variants` | `{"$omitEmpty":{"$ref":"request.providerOptions.newapi.variants"}}` |
 | `create.files[0].name` | `"input_reference"` |
-| `create.files[0].source` | `{"$first":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}}}` |
+| `create.files[0].source` | `{"$if":{"condition":{"$eq":[{"$len":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}}},1]},"then":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}},"else":null}}` |
 | `create.files[0].filename` | `"input-reference.png"` |
+| `create.files[1].name` | `"input_reference[]"` |
+| `create.files[1].source` | `{"$if":{"condition":{"$gt":[{"$len":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}}},1]},"then":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}},"else":null}}` |
 | `poll.method` | `"GET"` |
 | `poll.path` | `"/v1/videos/{{taskId}}"` |
-| `poll.contentType` | `"application/json"` |
 | `cancel.method` | `"DELETE"` |
 | `cancel.path` | `"/v1/videos/{{taskId}}"` |
-| `cancel.contentType` | `"application/json"` |
 | `result.method` | `"GET"` |
 | `result.path` | `"/v1/videos/{{taskId}}/content"` |
-| `result.contentType` | `"application/json"` |
 | `result.headers.Accept` | `"video/mp4"` |
 
 ## Provider 扩展键
@@ -78,6 +77,8 @@
 | `response.videos` | `{"$coalesce":[{"$ref":"response.url"},{"$ref":"response.video_url"},{"$ref":"response.output.url"}]}` |
 | `response.errorPaths[0]` | `"error.code"` |
 | `response.resultEphemeral` | `true` |
+| `response.progress.path` | `"progress"` |
+| `response.progress.scale` | `100` |
 | `response.messagePaths[0]` | `"error.message"` |
 
 ## 响应与错误
@@ -86,7 +87,7 @@
 
 ## 兼容边界
 
-该包只代表上述线协议 profile；同一品牌的其他 endpoint、云区域或网关包装必须使用独立插件，不能根据模型名猜测。
+标准图生视频以单个 input_reference 文件发送。兼容网关的模型显式启用 reference_to_video 时支持多图，单图沿用 input_reference，多图按顺序发送所有 input_reference[] 文件。参考上限应按上游配置。
 
 <!-- YINGCE_MANIFEST_CONTRACT_START -->
 ## Manifest 完整接口定义
@@ -98,7 +99,7 @@
   "apiVersion": "yingce.plugin/v2",
   "id": "openai-videos",
   "name": "OpenAI Videos / Sora",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "author": "OpenAI / 影策",
   "description": "OpenAI Videos / Sora 独立请求协议插件。",
   "documentation": "<当前插件的完整 documentation，由 README.md 与 docs/interface.md 拼接而成；为避免 JSON 递归，此处不重复展开正文。>",
@@ -136,6 +137,15 @@
         "auth": {
           "type": "bearer",
           "field": "apiKey"
+        },
+        "videoReferences": {
+          "layout": "multipart-references",
+          "token": "参考图{n}",
+          "maxImagesByOperation": {
+            "text_to_video": 0,
+            "image_to_video": 1,
+            "reference_to_video": null
+          }
         },
         "parameters": [
           {
@@ -252,26 +262,105 @@
             {
               "name": "input_reference",
               "source": {
-                "$first": {
-                  "$filter": {
-                    "from": {
-                      "$sortByOrder": {
-                        "$ref": "request.images"
+                "$if": {
+                  "condition": {
+                    "$eq": [
+                      {
+                        "$len": {
+                          "$filter": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.images"
+                              }
+                            },
+                            "as": "media",
+                            "where": {
+                              "$ne": [
+                                {
+                                  "$ref": "media.role"
+                                },
+                                "mask"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      1
+                    ]
+                  },
+                  "then": {
+                    "$filter": {
+                      "from": {
+                        "$sortByOrder": {
+                          "$ref": "request.images"
+                        }
+                      },
+                      "as": "media",
+                      "where": {
+                        "$ne": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "mask"
+                        ]
                       }
-                    },
-                    "as": "media",
-                    "where": {
-                      "$ne": [
-                        {
-                          "$ref": "media.role"
-                        },
-                        "mask"
-                      ]
                     }
-                  }
+                  },
+                  "else": null
                 }
               },
               "filename": "input-reference.png"
+            },
+            {
+              "name": "input_reference[]",
+              "source": {
+                "$if": {
+                  "condition": {
+                    "$gt": [
+                      {
+                        "$len": {
+                          "$filter": {
+                            "from": {
+                              "$sortByOrder": {
+                                "$ref": "request.images"
+                              }
+                            },
+                            "as": "media",
+                            "where": {
+                              "$ne": [
+                                {
+                                  "$ref": "media.role"
+                                },
+                                "mask"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      1
+                    ]
+                  },
+                  "then": {
+                    "$filter": {
+                      "from": {
+                        "$sortByOrder": {
+                          "$ref": "request.images"
+                        }
+                      },
+                      "as": "media",
+                      "where": {
+                        "$ne": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "mask"
+                        ]
+                      }
+                    }
+                  },
+                  "else": null
+                }
+              }
             }
           ]
         },
@@ -291,10 +380,6 @@
           }
         },
         "response": {
-          "progress": {
-            "path": "progress",
-            "scale": 100
-          },
           "taskId": {
             "$coalesce": [
               {
@@ -358,6 +443,10 @@
             "error.code"
           ],
           "resultEphemeral": true,
+          "progress": {
+            "path": "progress",
+            "scale": 100
+          },
           "messagePaths": [
             "error.message"
           ]

@@ -285,6 +285,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
         metadata: {
             ...node.metadata,
             content: result.text,
+            ...(result.assetId ? { assetId: result.assetId, assetVersionId: undefined } : {}),
             richText: undefined,
             prompt,
             ...completedTaskMetadata(task),

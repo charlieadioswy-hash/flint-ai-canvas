@@ -49,6 +49,7 @@ const { RouterProvider, createMemoryRouter } = await import("react-router");
 const { SettingsPanel } = await import("@/pages/projects/studio/panels");
 const api = await import("@/services/api/drama");
 const { useUserStore } = await import("@/stores/use-user-store");
+const { setActiveUserScope } = await import("@/lib/user-scope");
 
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -88,7 +89,7 @@ const makeSummary = (): DramaSummary =>
     }) as DramaSummary;
 
 beforeEach(() => {
-    window.localStorage.setItem("yingce:active-user-scope", "user-a");
+    setActiveUserScope("user-a");
     useUserStore.setState({ user: { id: "user-a" } as never });
     writes.length = 0;
     hold = undefined;
@@ -306,7 +307,7 @@ test("账号切换不会提交旧账号尚未同步的生成配置", async () =>
     await render();
     await resolution("1080p");
     await act(async () => {
-        window.localStorage.setItem("yingce:active-user-scope", "user-b");
+        setActiveUserScope("user-b");
         useUserStore.setState({ user: { id: "user-b" } as never });
         await settle();
     });
@@ -346,7 +347,7 @@ test("账号 A 切 B 再切回 A 后，旧读取请求不能继续提交已卸�
     expect(writes).toHaveLength(0);
     for (const userId of ["user-b", "user-a"]) {
         await act(async () => {
-            window.localStorage.setItem("yingce:active-user-scope", userId);
+            setActiveUserScope(userId);
             useUserStore.setState({ user: { id: userId } as never });
             await settle();
         });
@@ -372,7 +373,7 @@ test("账号往返后旧写入回执不能追加旧页面的后续草稿", async
     await resolution("4K");
     for (const userId of ["user-b", "user-a"]) {
         await act(async () => {
-            window.localStorage.setItem("yingce:active-user-scope", userId);
+            setActiveUserScope(userId);
             useUserStore.setState({ user: { id: userId } as never });
             await settle();
         });

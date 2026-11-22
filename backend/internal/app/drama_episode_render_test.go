@@ -262,6 +262,18 @@ func TestRenderDramaEpisodeRejectsAnActiveOldVersion(t *testing.T) {
 	}
 }
 
+func TestRenderDramaEpisodeRejectsActivePartialCompose(t *testing.T) {
+	svc, fake, projectID, episode := readyDramaEpisodeForRender(t)
+	job := model.DramaJob{ID: newID(), ProjectID: projectID, EpisodeID: episode.ID, Kind: model.DramaJobCompose, Status: model.DramaJobQueued}
+	if err := fake.db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.RenderDramaEpisode("usr-drama", projectID, episode.ID, RenderDramaEpisodeRequest{ExpectedRevision: &episode.Revision})
+	if authStatus(err) != 409 || fake.byKind["render"] != 0 {
+		t.Fatalf("active partial compose must block full render: %v calls=%v", err, fake.byKind)
+	}
+}
+
 func TestRenderDramaEpisodeRecoversUnboundQueuedAssembly(t *testing.T) {
 	svc, fake, projectID, episode := readyDramaEpisodeForRender(t)
 	job := model.DramaJob{ID: newID(), ProjectID: projectID, EpisodeID: episode.ID, Kind: model.DramaJobRender, Status: model.DramaJobQueued}

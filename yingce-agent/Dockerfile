@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
       --registry="$NPM_REGISTRY" --cache=/root/.npm --prefix /app/agent-runtime
 COPY --chmod=0644 backend/agent-runtime/pi/agent-runtime.mjs /app/agent-runtime/agent-runtime.mjs
-COPY --chmod=0644 yingce-agent/server.mjs /app/server.mjs
+COPY --chmod=0644 yingce-agent/server.mjs yingce-agent/run-directories.mjs yingce-agent/session-admission.mjs /app/
 
 # COPY 的文件权限不能作为运行目录权限；非 root 用户需要目录执行权限。
 RUN chmod 0755 /app/agent-runtime

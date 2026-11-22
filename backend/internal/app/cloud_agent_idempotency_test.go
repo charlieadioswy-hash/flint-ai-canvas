@@ -64,7 +64,7 @@ func TestCloudAgentStartupIdempotencyConflictRestoresIdentity(t *testing.T) {
 }
 
 func TestCloudAgentIdempotencyConflictDoesNotRecoverAnotherBinding(t *testing.T) {
-	s, _, req := canvasStartupIdempotencyFixture(t)
+	s, db, req := canvasStartupIdempotencyFixture(t)
 	if _, err := s.CreateCloudAgentRun("user", req, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +86,9 @@ func TestCloudAgentIdempotencyConflictDoesNotRecoverAnotherBinding(t *testing.T)
 			}
 		})
 	}
+	if err := db.Create(&model.User{ID: "other-user", Username: "other-user", Role: model.UserRoleUser, Status: model.UserStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.CreateCloudAgentRun("other-user", req, ""); err == nil {
 		t.Fatal("another user accessed the original startup request")
 	} else {
@@ -93,6 +96,21 @@ func TestCloudAgentIdempotencyConflictDoesNotRecoverAnotherBinding(t *testing.T)
 		if !errors.As(err, &appErr) || appErr.Status != 404 || len(appErr.Details) != 0 {
 			t.Fatalf("ownership rejection leaked recovery details: %v", err)
 		}
+	}
+}
+
+func TestCloudAgentIdempotencyConflictDoesNotRecoverAnotherPageBinding(t *testing.T) {
+	s, _, page := cloudAgentDramaPageFixture(t)
+	req := cloudAgentDramaPageRequest(page, "drama-page-idempotency", "read_only")
+	if _, err := s.CreateCloudAgentRun("user", req, ""); err != nil {
+		t.Fatal(err)
+	}
+	otherPage := *page
+	otherPage.ShotID = "next-shot"
+	req.PageContext = &otherPage
+	_, err := s.CreateCloudAgentRun("user", req, "")
+	if conflict := requireAgentIdempotencyConflict(t, err); len(conflict.Details) != 0 {
+		t.Fatalf("cross-page conflict exposed a recoverable identity: %+v", conflict.Details)
 	}
 }
 

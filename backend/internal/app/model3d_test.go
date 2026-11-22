@@ -74,7 +74,7 @@ func model3DTestGLB() []byte {
 func setupModel3DTest(t *testing.T) (*Service, *gorm.DB, *model3DMock, *model.User) {
 	t.Helper()
 	db := newSQLiteTestDB(t)
-	if err := db.AutoMigrate(database.Models()...); err != nil {
+	if err := database.MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(repository.New(db), t.TempDir())

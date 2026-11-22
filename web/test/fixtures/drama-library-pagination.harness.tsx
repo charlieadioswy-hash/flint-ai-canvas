@@ -126,7 +126,9 @@ mock.module("@/pages/projects/drama-shared", () => ({
     formatCredits: String,
     MediaThumb: () => null,
 }));
+mock.module("@/lib/workspace-route-modules", () => ({ preloadWorkspaceRoute: () => {} }));
 mock.module("@/services/api/drama", () => ({
+    getDrama: async () => ({}),
     listDramas: async (params: ListRequest): Promise<DramaListPage> => {
         reads.push({ ...params });
         const matching = library.filter((item) => (!params.q || item.project.name.includes(params.q)) && (!params.status || item.status === params.status));

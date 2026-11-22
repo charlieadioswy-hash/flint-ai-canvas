@@ -1,11 +1,13 @@
+import { workspacePath, workspaceTeamId } from "@/lib/workspace-routes";
 import { migrateCanvasNodeModel } from "@/lib/canvas/migrate-canvas-node-model";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import { useNavigate, useSearchParams } from "react-router";
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { App, Button, Dropdown, Input, Modal } from "antd";
+import { App, Button, Dropdown, Modal } from "antd";
 import { Select } from "@/components/ui/base/select";
-import { ArrowDownAZ, Clapperboard, Clock3, Download, FileUp, History, ListFilter, LoaderCircle, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDownAZ, Clapperboard, Clock3, Download, FileUp, History, ListFilter, LoaderCircle, Plus, SlidersHorizontal } from "lucide-react";
+import { ListSearchInput } from "@/components/ui/base/list-search-input";
 
 import { CollectionGrid, PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { CollectionToolbar } from "@/components/layout/collection-toolbar";
@@ -69,19 +71,29 @@ export default function CanvasPage() {
         queryFn: ({ pageParam, signal }) => listRemoteCanvasProjectsPage({ page: pageParam, pageSize: 40, projectId: projectFilter, sort, query: debouncedKeyword, signal }),
         initialPageParam: 1,
         getNextPageParam: (last) => (last.hasMore ? last.page + 1 : undefined),
-        placeholderData: keepPreviousData,
+        placeholderData: (previousData, previousQuery) => (sessionHydrated && previousQuery?.queryKey[1] === userId ? keepPreviousData(previousData) : undefined),
+        staleTime: 60_000,
+        gcTime: 10 * 60 * 1000,
+        refetchOnWindowFocus: false,
         enabled: Boolean(userId) && sessionHydrated,
     });
-    const projects = useMemo<CanvasLibrarySummary[]>(
-        () =>
-            userId
-                ? libraryQuery.data?.pages.flatMap((page) => page.projects) || []
-                : localProjects
-                      .filter((project) => project.creationScene?.kind !== "irregular-screen")
-                      .map((project) => ({ ...project, nodeCount: project.nodes.length, previewNodes: project.nodes.filter((node) => node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video).slice(0, 4) })),
-        [libraryQuery.data, localProjects, userId],
-    );
-    const totalProjects = userId ? libraryQuery.data?.pages[0]?.total || 0 : projects.length;
+    const localSummaries = useMemo<CanvasLibrarySummary[]>(() => {
+        const list = localProjects
+            .filter((project) => project.creationScene?.kind !== "irregular-screen")
+            .map((project) => ({
+                ...project,
+                nodeCount: project.nodes.length,
+                previewNodes: project.nodes.filter((node) => node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video).slice(0, 4),
+            }));
+        list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        return list;
+    }, [localProjects]);
+    const projects = useMemo<CanvasLibrarySummary[]>(() => {
+        // 登录后的列表由服务端筛选和分页，本机缓存不能冒充查询结果。
+        if (userId) return sessionHydrated ? (libraryQuery.data?.pages.flatMap((page) => page.projects) ?? []) : [];
+        return sessionHydrated && hydrated ? localSummaries : [];
+    }, [libraryQuery.data, localSummaries, userId, sessionHydrated, hydrated]);
+    const totalProjects = userId ? (libraryQuery.data?.pages[0]?.total ?? 0) : projects.length;
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const deleteDialogOpen = useCanvasUiStore((state) => state.deleteProjectIds.length > 0);
@@ -90,14 +102,14 @@ export default function CanvasPage() {
     const [historyOpen, setHistoryOpen] = useState(false);
     const [associationOpen, setAssociationOpen] = useState(false);
     const [associationProjectId, setAssociationProjectId] = useState("");
-    const projectQuery = useQuery({ queryKey: ["projects"], queryFn: () => listProjects() });
+    const projectQuery = useQuery({ queryKey: ["projects"], queryFn: () => listProjects(), enabled: !workspaceTeamId });
 
     const mode = searchParams.get("mode");
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
     const handoffMode = mode === "handoff";
     const forwardedQuery = agentMode || handoffMode || searchParams.get("agent") === "1" ? `?${searchParams.toString()}` : "";
     const preloadProject = useCallback(() => {
-        void loadCanvasProjectPage();
+        void loadCanvasProjectPage().catch(() => undefined);
     }, []);
     const enterProject = useCallback(
         (id: string) => {
@@ -105,7 +117,7 @@ export default function CanvasPage() {
             openingProjectIdRef.current = id;
             setOpeningProjectId(id);
             preloadProject();
-            window.requestAnimationFrame(() => navigate(`/canvas/${id}${forwardedQuery}`, { state: canvasDraftNavigationState(id) }));
+            window.requestAnimationFrame(() => navigate(workspacePath(`/canvas/${id}${forwardedQuery}`), { state: canvasDraftNavigationState(id) }));
         },
         [forwardedQuery, navigate, preloadProject],
     );
@@ -198,7 +210,7 @@ export default function CanvasPage() {
             }
             const remoteSyncEnabled = hasRemoteUserDataSyncSession();
             // 源画布所属项目可能属于其他账号或已被删除，项目素材关联会直接拒绝；不属于当前账号时按自由画布导入。
-            const ownedProjectIds = remoteSyncEnabled && data.projects.some((item) => item.project?.projectId) ? new Set((await listProjects()).projects.map(({ project }) => project.id)) : new Set<string>();
+            const ownedProjectIds = !workspaceTeamId && remoteSyncEnabled && data.projects.some((item) => item.project?.projectId) ? new Set((await listProjects()).projects.map(({ project }) => project.id)) : new Set<string>();
             hideLoading();
             let remoteSyncWarning: unknown;
 
@@ -429,7 +441,7 @@ export default function CanvasPage() {
         <WorkspacePage className="studio-collection-page">
             <div className="studio-band">
                 <PageHeader
-                    title="我的画布"
+                    title="自由画布"
                     description="把镜头、素材和想法留在同一张画布里。"
                     meta={<span className="app-projects-header-meta">{totalProjects} 个</span>}
                     actions={
@@ -463,12 +475,14 @@ export default function CanvasPage() {
                         </Button>
                     }
                 >
-                    <Input prefix={<Search />} value={keyword} allowClear placeholder="搜索画布" aria-label="搜索画布" onChange={(event) => setKeyword(event.target.value)} />
-                    <Dropdown trigger={["click"]} placement="bottomLeft" menu={{ items: projectFilterItems, selectedKeys: [projectFilter], onClick: ({ key }) => setProjectFilter(String(key)) }}>
-                        <Button icon={<SlidersHorizontal />} aria-label="按所属项目筛选">
-                            {projectFilterLabel}
-                        </Button>
-                    </Dropdown>
+                    <ListSearchInput value={keyword} placeholder="搜索画布" aria-label="搜索画布" onValueChange={setKeyword} />
+                    {!workspaceTeamId && (
+                        <Dropdown trigger={["click"]} placement="bottomLeft" menu={{ items: projectFilterItems, selectedKeys: [projectFilter], onClick: ({ key }) => setProjectFilter(String(key)) }}>
+                            <Button icon={<SlidersHorizontal />} aria-label="按所属项目筛选">
+                                {projectFilterLabel}
+                            </Button>
+                        </Dropdown>
+                    )}
                     <Dropdown trigger={["click"]} placement="bottomLeft" menu={{ items: sortItems, selectedKeys: [sort], onClick: ({ key }) => setSort(key as typeof sort) }}>
                         <Button icon={sort === "updated" ? <Clock3 /> : sort === "name" ? <ArrowDownAZ /> : <ListFilter />} aria-label="画布排序">
                             {sortLabel}
@@ -481,16 +495,18 @@ export default function CanvasPage() {
                 {selectedIds.length ? (
                     <div className="collection-selection-bar">
                         <strong className="mr-auto font-medium">已选 {selectedIds.length} 个画布</strong>
-                        <Button
-                            size="small"
-                            disabled={!hydrated || projectQuery.isLoading}
-                            onClick={() => {
-                                setAssociationProjectId(selectedProjects[0]?.projectId || "");
-                                setAssociationOpen(true);
-                            }}
-                        >
-                            加入项目
-                        </Button>
+                        {!workspaceTeamId && (
+                            <Button
+                                size="small"
+                                disabled={!hydrated || projectQuery.isLoading}
+                                onClick={() => {
+                                    setAssociationProjectId(selectedProjects[0]?.projectId || "");
+                                    setAssociationOpen(true);
+                                }}
+                            >
+                                加入项目
+                            </Button>
+                        )}
                         {selectedProjects.some((project) => project.projectId) ? (
                             <Button
                                 size="small"

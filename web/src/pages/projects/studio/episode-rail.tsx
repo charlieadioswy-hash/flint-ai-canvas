@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Dropdown } from "antd";
 import { AntTooltip as Tooltip } from "@/components/ui/base/tooltip/ant-tooltip";
-import { ArrowDownToLine, ArrowUpToLine, Grid3x3, List, MoreHorizontal, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, BookOpenText, Grid3x3, List, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 
 import type { DramaEpisodeRow } from "@/services/api/drama";
 
@@ -28,15 +28,26 @@ function matchesFilter(episode: DramaEpisodeRow, filter: Filter) {
 }
 
 /** 列表行右上角的更多操作：在本集前后插入新的一集、删除本集。悬停、聚焦或当前集时显示，触屏常显。 */
-function EpisodeMenu({ episode, onInsert, onDelete }: { episode: DramaEpisodeRow; onInsert?: (episode: DramaEpisodeRow, position: "before" | "after") => void; onDelete?: (episode: DramaEpisodeRow) => void }) {
+function EpisodeMenu({
+    episode,
+    onRename,
+    onInsert,
+    onDelete,
+}: {
+    episode: DramaEpisodeRow;
+    onRename?: (episode: DramaEpisodeRow) => void;
+    onInsert?: (episode: DramaEpisodeRow, position: "before" | "after") => void;
+    onDelete?: (episode: DramaEpisodeRow) => void;
+}) {
     const items = [
+        ...(onRename ? [{ key: "rename", icon: <Pencil className="size-3.5" />, label: "修改名称", onClick: () => onRename(episode) }] : []),
         ...(onInsert
             ? [
                   { key: "before", icon: <ArrowUpToLine className="size-3.5" />, label: "在前面插入一集", onClick: () => onInsert(episode, "before") },
                   { key: "after", icon: <ArrowDownToLine className="size-3.5" />, label: "在后面插入一集", onClick: () => onInsert(episode, "after") },
               ]
             : []),
-        ...(onInsert && onDelete ? [{ type: "divider" as const }] : []),
+        ...((onRename || onInsert) && onDelete ? [{ type: "divider" as const }] : []),
         ...(onDelete ? [{ key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除本集", onClick: () => onDelete(episode) }] : []),
     ];
     return (
@@ -54,6 +65,8 @@ export function EpisodeRail({
     planning,
     onSelect,
     onAdd,
+    onAddChapters,
+    onRename,
     onInsert,
     onDelete,
 }: {
@@ -62,6 +75,8 @@ export function EpisodeRail({
     planning: boolean;
     onSelect: (id: string) => void;
     onAdd: () => void;
+    onAddChapters?: () => void;
+    onRename?: (episode: DramaEpisodeRow) => void;
     /** 在某一集前或后插入新的一集；不传时列表行不显示插入入口。 */
     onInsert?: (episode: DramaEpisodeRow, position: "before" | "after") => void;
     onDelete?: (episode: DramaEpisodeRow) => void;
@@ -187,7 +202,7 @@ export function EpisodeRail({
                                 return (
                                     <div
                                         key={episode.id}
-                                        className={`absolute left-0 top-0 w-full pb-[2px] ${onInsert || onDelete ? "drama-ep-row" : ""} ${episode.id === currentId ? "is-current" : ""}`}
+                                        className={`absolute left-0 top-0 w-full pb-[2px] ${onRename || onInsert || onDelete ? "drama-ep-row" : ""} ${onRename ? "has-rename" : ""} ${episode.id === currentId ? "is-current" : ""}`}
                                         style={{ height: item.size, transform: `translateY(${item.start}px)` }}
                                     >
                                         <button type="button" className={`drama-ep is-${tone}`} aria-current={episode.id === currentId} onClick={() => onSelect(episode.id)}>
@@ -202,7 +217,16 @@ export function EpisodeRail({
                                                 </span>
                                             </span>
                                         </button>
-                                        {onInsert || onDelete ? <EpisodeMenu episode={episode} onInsert={onInsert} onDelete={onDelete} /> : null}
+                                        {onRename || onInsert || onDelete ? (
+                                            <div className="drama-ep-actions">
+                                                {onRename ? (
+                                                    <button type="button" className="drama-ep-more" aria-label={`修改第 ${episode.number} 集名称`} title="修改名称" onClick={() => onRename(episode)}>
+                                                        <Pencil className="size-3.5" />
+                                                    </button>
+                                                ) : null}
+                                                <EpisodeMenu episode={episode} onRename={onRename} onInsert={onInsert} onDelete={onDelete} />
+                                            </div>
+                                        ) : null}
                                     </div>
                                 );
                             })}
@@ -210,6 +234,12 @@ export function EpisodeRail({
                     ) : (
                         <div className="px-3 py-10 text-center text-[var(--fs-tiny)] text-foreground/40">没有符合条件的分集</div>
                     )}
+                    {onAddChapters && !planning && filter === "all" && !deferredQuery ? (
+                        <button type="button" className="drama-rail-add" onClick={onAddChapters}>
+                            <BookOpenText className="size-3.5" />
+                            从原著加入剧集
+                        </button>
+                    ) : null}
                     {planning ? <div className="px-3 py-3 text-center text-[var(--fs-micro)] text-foreground/40">后续章节正在分集…</div> : null}
                     {!planning && filter === "all" && !deferredQuery ? (
                         <button type="button" className="drama-rail-add" onClick={onAdd}>

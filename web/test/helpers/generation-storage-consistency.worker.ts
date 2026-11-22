@@ -154,12 +154,13 @@ function installStorageHarness() {
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
-            const access = (mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest) => new Promise<unknown>((resolve, reject) => {
-                const transaction = database.transaction(storeName!, mode);
-                const request = operation(transaction.objectStore(storeName!));
-                transaction.oncomplete = () => resolve(request.result);
-                transaction.onabort = () => reject(transaction.error);
-            });
+            const access = (mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest) =>
+                new Promise<unknown>((resolve, reject) => {
+                    const transaction = database.transaction(storeName!, mode);
+                    const request = operation(transaction.objectStore(storeName!));
+                    transaction.oncomplete = () => resolve(request.result);
+                    transaction.onabort = () => reject(transaction.error);
+                });
             localforage.ready = (() => Promise.resolve()) as typeof localforage.ready;
             localforage.driver = () => localforage.INDEXEDDB;
             localforage.getItem = ((key: string) => access("readonly", (store) => store.get(key)).then((value) => value ?? null)) as typeof localforage.getItem;
@@ -841,7 +842,7 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             if (!rejection) {
                 // Re-open the durable snapshot before re-reading the same task;
                 // the HTTP path must retain its committed attach identity.
-                useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project.id === projectId ? restored : project) }));
+                useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => (project.id === projectId ? restored : project)) }));
                 await recoverScreenGeneration(projectId, new AbortController().signal, () => {});
                 await flushCanvasStorePersistence();
                 const replayed = parseCanvasStorageDocument(await localForageStorageForScope(getActiveUserScope()).getItem(CANVAS_STORE_KEY)).state.projects.find((project) => project.id === projectId)!;
@@ -853,17 +854,22 @@ async function runHTTPRegisteredGeneration(variant: "registered" | "mismatch" | 
             resetRemoteUserDataSync();
             return result;
         }
-        const needsRecovery = node.metadata?.status === "loading" || shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task);
+        const needsRecovery = node.metadata?.status === "loading" || (shouldRecoverCanvasMediaAsset(node) && !generationTaskOutputsApplied(node, task));
         const { applyCanvasGenerationTaskNodeEffect } = await import("../../src/services/canvas-generation-consumer");
-        const nodesRef = { get current() { return useCanvasStore.getState().projects.find((project) => project.id === projectId)!.nodes; } };
+        const nodesRef = {
+            get current() {
+                return useCanvasStore.getState().projects.find((project) => project.id === projectId)!.nodes;
+            },
+        };
         const setNodes: import("react").Dispatch<import("react").SetStateAction<import("../../src/types/canvas").CanvasNodeData[]>> = (update) => {
             useCanvasStore.getState().updateProject(projectId, { nodes: typeof update === "function" ? update(nodesRef.current) : update });
         };
         let applied = 0;
-        const consume = () => consumeGenerationTaskNode(task, node.id, 0, async (input) => {
-            applied++;
-            await applyCanvasGenerationTaskNodeEffect({ ...input, projectId, nodeId: node.id, nodesRef, setNodes });
-        });
+        const consume = () =>
+            consumeGenerationTaskNode(task, node.id, 0, async (input) => {
+                applied++;
+                await applyCanvasGenerationTaskNodeEffect({ ...input, projectId, nodeId: node.id, nodesRef, setNodes });
+            });
         if (variant !== "registered") {
             let rejection = "";
             try {
@@ -974,55 +980,61 @@ async function runCanvasAssetPreparation() {
     }
 }
 
-self.onmessage = async (event: MessageEvent<Scenario>) => {
+async function respond(scenario: Scenario, send: (response: object) => void) {
     try {
-        if (event.data === "canvas-video-reentry") {
-            self.postMessage({ ok: true, result: await runCanvasBatchCommitRace(false, false, true, true) });
+        if (scenario === "canvas-video-reentry") {
+            send({ ok: true, result: await runCanvasBatchCommitRace(false, false, true, true) });
             return;
         }
-        if (event.data === "canvas-reentry-observation") {
-            self.postMessage({ ok: true, result: await runCanvasBatchCommitRace(false, false, true) });
+        if (scenario === "canvas-reentry-observation") {
+            send({ ok: true, result: await runCanvasBatchCommitRace(false, false, true) });
             return;
         }
-        if (event.data === "canvas-mask-batch" || event.data === "canvas-asset-preparation") {
-            const result = event.data === "canvas-mask-batch" ? await runCanvasBatchCommitRace(false, true) : await runCanvasAssetPreparation();
-            self.postMessage({ ok: true, result });
+        if (scenario === "canvas-mask-batch" || scenario === "canvas-asset-preparation") {
+            const result = scenario === "canvas-mask-batch" ? await runCanvasBatchCommitRace(false, true) : await runCanvasAssetPreparation();
+            send({ ok: true, result });
             return;
         }
         const result =
-            event.data === "http-creation-generation"
+            scenario === "http-creation-generation"
                 ? await runHTTPRegisteredGeneration("registered", false, true)
-                : event.data === "http-creation-generation-mismatch"
+                : scenario === "http-creation-generation-mismatch"
                   ? await runHTTPRegisteredGeneration("mismatch", false, true)
-                  : event.data === "http-creation-generation-missing"
+                  : scenario === "http-creation-generation-missing"
                     ? await runHTTPRegisteredGeneration("missing", false, true)
-                    : event.data === "http-screen-generation"
+                    : scenario === "http-screen-generation"
                       ? await runHTTPRegisteredGeneration("registered", true)
-                      : event.data === "http-screen-generation-mismatch"
+                      : scenario === "http-screen-generation-mismatch"
                         ? await runHTTPRegisteredGeneration("mismatch", true)
-                        : event.data === "http-screen-generation-missing"
+                        : scenario === "http-screen-generation-missing"
                           ? await runHTTPRegisteredGeneration("missing", true)
-                          : event.data === "http-generation-mismatch"
+                          : scenario === "http-generation-mismatch"
                             ? await runHTTPRegisteredGeneration("mismatch")
-                            : event.data === "http-generation-missing"
+                            : scenario === "http-generation-missing"
                               ? await runHTTPRegisteredGeneration("missing")
-                              : event.data === "http-registered-generation"
+                              : scenario === "http-registered-generation"
                                 ? await runHTTPRegisteredGeneration()
-                                : event.data === "image-cleanup"
+                                : scenario === "image-cleanup"
                                   ? await runImageCleanup()
-                                  : event.data === "scope-cleanup-switch"
+                                  : scenario === "scope-cleanup-switch"
                                     ? await runScopeCleanupAfterSwitch()
-                                    : event.data === "scope-cleanup-late-canvas-reference"
+                                    : scenario === "scope-cleanup-late-canvas-reference"
                                       ? await runScopeCleanupAfterLateCanvasReference()
-                                      : event.data === "canvas-multi-output"
+                                      : scenario === "canvas-multi-output"
                                         ? await runCanvasBatchCommitRace(true)
-                                        : event.data === "canvas-copy-generation"
+                                        : scenario === "canvas-copy-generation"
                                           ? await runCanvasCopyGeneration()
-                                          : event.data === "canvas-batch-commit-race"
+                                          : scenario === "canvas-batch-commit-race"
                                             ? await runCanvasBatchCommitRace()
-                                            : await runMediaCommitRace(event.data === "audio-commit-race" ? "audio" : "video");
-        self.postMessage({ ok: true, result });
+                                            : await runMediaCommitRace(scenario === "audio-commit-race" ? "audio" : "video");
+        send({ ok: true, result });
     } catch (error) {
-        self.postMessage({ ok: false, error: error instanceof Error ? error.stack || `${error.name}: ${error.message}` : String(error) });
+        send({ ok: false, error: error instanceof Error ? error.stack || `${error.name}: ${error.message}` : String(error) });
     }
-};
+}
+
+if (process.argv[2] === "--scenario") {
+    await respond(process.argv[3] as Scenario, (response) => console.log(JSON.stringify(response)));
+} else {
+    self.onmessage = (event: MessageEvent<Scenario>) => void respond(event.data, (response) => self.postMessage(response));
+}

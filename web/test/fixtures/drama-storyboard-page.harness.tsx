@@ -176,6 +176,7 @@ const { dramaKeys } = await import("@/lib/drama/drama-query-keys");
 afterAll(() => browser.happyDOM.abort());
 
 const settings = {
+    stylePrompt: "",
     episodeSeconds: 60,
     aspectRatio: "16:9",
     videoResolution: "720p",
@@ -795,7 +796,7 @@ test("参考生视频窗口的生成配置自动生效，镜头数量仍待确�
         expect(view.host.textContent).not.toContain("作品设置已有更新");
         await click(view.host, "确认并进入分镜");
         expect(saved).toHaveLength(1);
-        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "reference_video", directorTemplate: "", shotCountMode: "fixed", targetShotCount: 24 }, models: { video: { modelKey: "video-new" } }, aspectRatio: "9:16" });
+        expect(saved[0]).toMatchObject({ storyboard: { generationMode: "reference_video", directorTemplate: "", shotCountMode: "fixed", targetShotCount: 30 }, models: { video: { modelKey: "video-new" } }, aspectRatio: "9:16" });
     } finally {
         await view.close();
     }

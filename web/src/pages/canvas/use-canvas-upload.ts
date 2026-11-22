@@ -8,6 +8,7 @@ import type { InsertAssetPayload } from "@/components/canvas/asset-picker-modal"
 import { CANVAS_PROJECT_CHAPTER_DND_TYPE, type CanvasProjectChapterPayload } from "@/lib/canvas/canvas-project-chapter-dnd";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { audioUploadTitleFromFileName } from "@/lib/audio-upload-title";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
@@ -50,6 +51,7 @@ type CanvasUploadProgress = {
 };
 
 type FileNodeUploadOptions = {
+    preserveSelection?: boolean;
     // 批量上传由批量入口统一展示进度、选中结果和汇总提示，并在全部完成后只刷新一次项目。
     batch?: { onLocalOnly: () => void };
     // Agent 输入框添加的附件：用调用方给的节点 ID（输入框立即就能引用它），不弹全局进度、不改选区；
@@ -95,7 +97,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const imageInputRef = useRef<HTMLInputElement>(null);
-    const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
+    const uploadTargetRef = useRef<{ nodeId?: string; position?: Position; preserveSelection?: boolean } | null>(null);
     const assetInsertPositionRef = useRef<Position | null>(null);
     const uploadStatusIdRef = useRef(0);
     const statusTimersRef = useRef<Set<number>>(new Set());
@@ -195,7 +197,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                           )
                         : [...current, placeholder],
                 );
-                if (!silent) selectInsertedNode(id, "close");
+                if (!silent && !options.preserveSelection) selectInsertedNode(id, "close");
                 let lastPercent: number | undefined;
                 let lastPaintAt = 0;
                 const onProgress = (loaded: number, total: number) => {
@@ -231,10 +233,13 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                     progress.done(translate("canvasPage.upload.placeholderRemoved"));
                     return null;
                 }
+                const originalFileName = original?.metadata?.originalFileName;
+                const hasOriginalFileTitle = typeof originalFileName === "string" && originalFileName.length > 0 && (currentNode.title === originalFileName || currentNode.title === audioUploadTitleFromFileName(originalFileName));
+                const useUploadedTitle = replaceId && currentNode.title === original?.title && (placeholder.type !== CanvasNodeType.Audio || hasOriginalFileTitle);
                 const uploadedNode: CanvasNodeData = {
                     ...currentNode,
                     type: placeholder.type,
-                    title: replaceId && currentNode.title === original?.title ? file.name : currentNode.title,
+                    title: useUploadedTitle ? placeholder.title : currentNode.title,
                     metadata: {
                         ...currentNode.metadata,
                         ...metadata,
@@ -421,8 +426,8 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
     );
 
     const handleUploadRequest = useCallback(
-        (nodeId?: string, position?: Position) => {
-            uploadTargetRef.current = { nodeId, position };
+        (nodeId?: string, position?: Position, options?: Pick<FileNodeUploadOptions, "preserveSelection">) => {
+            uploadTargetRef.current = { nodeId, position, ...options };
             if (!nodeId) {
                 setUploadModalOpen(true);
                 return;
@@ -508,12 +513,12 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
     );
 
     const replaceNodeMedia = useCallback(
-        async (nodeId: string, file: File) => {
+        async (nodeId: string, file: File, options?: Pick<FileNodeUploadOptions, "preserveSelection">) => {
             const currentNode = nodesRef.current.find((node) => node.id === nodeId);
             if (!currentNode || !uploadNodeType(file)) return false;
             const typedNode = [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio, CanvasNodeType.Text].includes(currentNode.type as CanvasNodeType);
             if (typedNode && uploadNodeType(file) !== currentNode.type) return false;
-            return Boolean(await createFileNode(file, currentNode.position, nodeId));
+            return Boolean(await createFileNode(file, currentNode.position, nodeId, options));
         },
         [createFileNode, nodesRef],
     );
@@ -598,7 +603,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                         message.warning(translate("canvasPage.upload.sameTypeRequired"));
                         return;
                     }
-                    await replaceNodeMedia(target.nodeId, file);
+                    await replaceNodeMedia(target.nodeId, file, { preserveSelection: target.preserveSelection });
                     return;
                 }
                 const position = target?.position || getCanvasCenter();
@@ -739,7 +744,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                     workflowKind: "character",
                     characterAssetId: payload.assetId,
                     characterVersionId: payload.versionId,
-                    characterVersionPolicy: "current",
+                    characterVersionPolicy: payload.officialAssetId ? "pinned" : "current",
                     characterName: payload.title,
                     characterPrompt: payload.prompt,
                     characterAliases: payload.aliases,
@@ -748,9 +753,12 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                     characterVisualStatus: payload.visualStatus,
                     characterVoiceStatus: payload.voiceStatus,
                     characterVoiceName: payload.voiceName,
+                    characterVoiceSampleResourceId: payload.voiceSampleResourceId,
                     characterVoiceProfile: payload.voiceProfile,
                     characterVoiceInstructions: payload.voiceInstructions,
                     assetId: payload.assetId,
+                    officialAssetId: payload.officialAssetId,
+                    officialCharacterSnapshot: payload.officialCharacterSnapshot,
                     status: NODE_STATUS_SUCCESS,
                     fontSize: 14,
                 },
@@ -781,6 +789,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                     bytes: payload.bytes,
                     mimeType: payload.mimeType || "audio/mpeg",
                     assetId: payload.assetId,
+                    officialAssetId: payload.officialAssetId,
                     status: NODE_STATUS_SUCCESS,
                 },
             } satisfies CanvasNodeData;
@@ -808,6 +817,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
                     bytes: payload.bytes,
                     mimeType: payload.mimeType || "video/mp4",
                     assetId: payload.assetId,
+                    officialAssetId: payload.officialAssetId,
                 },
             } satisfies CanvasNodeData;
         }
@@ -829,7 +839,7 @@ export function useCanvasUpload({ canvasId, domainProjectId, nodesRef, selectedN
             position: { x: center.x - size.width / 2, y: center.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: { ...metadata, prompt: payload.title, assetId: payload.assetId, originalFileName: payload.originalFileName },
+            metadata: { ...metadata, prompt: payload.title, assetId: payload.assetId, officialAssetId: payload.officialAssetId, originalFileName: payload.originalFileName },
         } satisfies CanvasNodeData;
     }, []);
 

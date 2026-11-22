@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { Window } from "happy-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ImageCapabilityConfig, ModelCapabilityConfig } from "../src/lib/model-capabilities";
 import type { AiConfig } from "../src/stores/use-config-store";
 import type { CanvasNodeData } from "../src/types/canvas";
@@ -258,32 +259,43 @@ test("empty freeform canvas directly offers Agent, creation and import actions",
     }
 });
 
-test("sidebar groups assets, skills and history at the bottom with active routes and feature gates", async () => {
+test("sidebar keeps assets in primary navigation and gates bottom tools and skills", async () => {
     const f = await fixture();
     const before = useUserStore.getState();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { enabled: false } } });
     try {
-        for (const enabled of [true, false]) {
-            await act(async () => useUserStore.setState({ user: null, features: { ...defaultFeatureAvailability, taskCenterEnabled: enabled, imageWorkbenchEnabled: enabled, videoWorkbenchEnabled: enabled } }));
+        const activeUser = { id: "sidebar-user", username: "sidebar", displayName: "Sidebar", role: "user", status: "active" } as const;
+        for (const { enabled, user } of [
+            { enabled: true, user: activeUser },
+            { enabled: false, user: activeUser },
+            { enabled: true, user: null },
+        ]) {
+            await act(async () => useUserStore.setState({ hydrated: true, user, features: { ...defaultFeatureAvailability, taskCenterEnabled: enabled, imageWorkbenchEnabled: enabled, videoWorkbenchEnabled: enabled } }));
             await f.render(
-                <MemoryRouter initialEntries={["/skills"]}>
-                    <App>
-                        <WorkspaceSidebarNav collapsed={false} onNavigate={() => {}} onOpenSearch={() => {}} onExpand={() => {}} onCollapse={() => {}} />
-                    </App>
-                </MemoryRouter>,
+                <QueryClientProvider client={queryClient}>
+                    <MemoryRouter initialEntries={["/skills"]}>
+                        <App>
+                            <WorkspaceSidebarNav collapsed={false} onNavigate={() => {}} onOpenSearch={() => {}} onExpand={() => {}} onCollapse={() => {}} />
+                        </App>
+                    </MemoryRouter>
+                </QueryClientProvider>,
             );
             const groups = f.host.querySelectorAll('[data-nav-group-heading="资产与工具"]');
             expect(groups).toHaveLength(1);
             const group = groups[0];
             expect(group.classList.contains("mt-auto")).toBe(true);
-            expect([...group.querySelectorAll("[data-nav-id]")].map((item) => item.getAttribute("data-nav-id"))).toEqual(enabled ? ["assets", "skills", "tasks"] : ["assets", "skills"]);
+            expect(f.host.querySelector('[data-nav-id="assets"]')).not.toBeNull();
+            expect(group.querySelector('[data-nav-id="assets"]')).toBeNull();
+            expect([...group.querySelectorAll("[data-nav-id]")].map((item) => item.getAttribute("data-nav-id"))).toEqual([...(enabled ? ["toolbox-image", "toolbox-video"] : []), ...(user ? ["skills"] : []), ...(enabled ? ["tasks"] : [])]);
             expect(f.host.querySelector('[data-nav-group-heading="资源与工具"]')).toBeNull();
             expect(f.host.querySelector('[data-nav-group-heading="资产与历史"]')).toBeNull();
-            expect(group.querySelector('[data-nav-id="skills"]')!.classList.contains("is-active")).toBe(true);
+            expect(Boolean(group.querySelector('[data-nav-id="skills"].is-active'))).toBe(Boolean(user));
             expect(Boolean(f.host.querySelector('[data-nav-id="toolbox-image"]'))).toBe(enabled);
             expect(Boolean(f.host.querySelector('[data-nav-id="toolbox-video"]'))).toBe(enabled);
         }
     } finally {
         await f.dispose();
+        queryClient.clear();
         useUserStore.setState(before);
     }
 });

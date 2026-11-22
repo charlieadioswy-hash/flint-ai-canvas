@@ -128,7 +128,7 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
         "@/services/api/ark-portraits": { arkPortraitOverviewQueryKey: ["ark-portraits"], getArkPortraitOverview: async () => undefined },
         "@/components/layout/workspace-state": stateModule.exports,
         "@/stores/use-asset-store": { useAssetStore: Object.assign((selector: (value: ReturnType<typeof store>) => unknown) => selector(store()), { getState: store }) },
-        "@/stores/use-user-store": { useUserStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, runtimeLimits: { recycleBinRetentionDays: 30 } }) },
+        "@/stores/use-user-store": { useUserStore: (selector: (value: unknown) => unknown) => selector({ user: { id: "user" }, features: { teamsEnabled: false }, runtimeLimits: { recycleBinRetentionDays: 30 } }) },
         "@/services/user-data-sync": {
             emptyAssetTrashWithRemoteSync: async () => {
                 emptyTrashCalls++;
@@ -172,7 +172,7 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
             return Number(text(find((element) => element.props.className === "assets-filter-count", button)));
         },
         canEmptyTrash() {
-            return descendants(find((element) => element.type === "PageHeader").props.actions).some((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？");
+            return descendants(tree).some((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？");
         },
         emptyState() {
             const { title, description } = find((element) => element.type === stateModule.exports.WorkspaceState).props;
@@ -185,12 +185,11 @@ function harness(initialAssets: Asset[], initialRemote: PageData | undefined, ar
             render();
         },
         search(keyword: string) {
-            find((element) => element.props.placeholder === "搜索标题、内容、标签或来源").props.onChange({ target: { value: keyword } });
+            find((element) => element.props.placeholder === "搜索标题、内容、标签或来源").props.onValueChange(keyword);
             render();
         },
         async emptyTrash() {
-            const actions = find((element) => element.type === "PageHeader").props.actions;
-            await find((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？", actions).props.onConfirm();
+            await find((element) => element.type === "Popconfirm" && element.props.title === "确定清空回收站吗？").props.onConfirm();
             render();
         },
         placeholder(previous: PageData, userId: string, viewMode: string) {

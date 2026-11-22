@@ -100,12 +100,11 @@ async function render(kind: DramaCastKind | null = "character", busy = false, op
         root!.render(
             <QueryClientProvider client={client}>
                 <WorkflowAssetScope summary={currentSummary} cast={cast} kind={kind ?? undefined} busy={busy} {...scopeOptions} onChanged={() => undefined}>
-                    {(items, refreshing, sharedCast) => (
+                    {(items, refreshing) => (
                         <>
                             <output aria-label="可见资产" data-refreshing={String(refreshing)}>
                                 {items.map((item) => item.id).join(",")}
                             </output>
-                            <output aria-label="共享待引用资产">{sharedCast.map((item) => item.id).join(",")}</output>
                         </>
                     )}
                 </WorkflowAssetScope>
@@ -157,7 +156,7 @@ test("读集失败时展示失败，不回退为全部资产或扩大批选", as
     await click("批量选择");
     expect([...container.querySelectorAll("button")].find((item) => item.textContent === "选择当前范围")!.disabled).toBe(true);
 });
-test("跨集与跨类型选择保留真实ID，只选当前范围不隐式扩大全集", async () => {
+test("跨集与跨类型保留选择，提交只包含当前范围的真实 ID", async () => {
     await render();
     await click("批量选择");
     await choose("e1");
@@ -175,7 +174,7 @@ test("跨集与跨类型选择保留真实ID，只选当前范围不隐式扩大
     await click("选择当前范围");
     await render("scene");
     await click("选择当前范围");
-    expect(batchCalls.at(-1)).toEqual(["base", "look", "second", "room"]);
+    expect(batchCalls.at(-1)).toEqual(["room"]);
     expect(batchCalls.at(-1)).not.toContain("key");
 });
 test("旧集迟到响应不能污染当前集范围", async () => {
@@ -210,8 +209,8 @@ test("忙碌时不允许改范围或批选", async () => {
     expect([...container.querySelectorAll("button")].find((item) => item.textContent === "批量选择")!.disabled).toBe(true);
 });
 
-test("受控单集隐藏全局工具栏，空分镜展示共享主体并明确说明", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+test("受控单集隐藏全局工具栏，空分镜保持空引用范围", async () => {
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     expect(container.textContent).toContain("正在读取本集引用资产");
     expect(container.querySelector("select")).toBeNull();
@@ -221,20 +220,18 @@ test("受控单集隐藏全局工具栏，空分镜展示共享主体并明确�
         requests.get("e1")!.resolve({ episode: { id: "e1" }, shots: [], segments: [] } as unknown as DramaEpisodeDetail);
         await settle();
     });
-    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("base,look,second,room,key");
-    expect(container.textContent).toContain("本集尚未编排分镜，展示作品共享主体。");
+    expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("");
     expect(batchCalls).toHaveLength(0);
 });
 
 test("已有分镜或人工段时仅展示真实引用，空引用不能扩大为共享主体", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     await act(async () => {
         requests.get("e1")!.resolve(episode("e1", ["look", "room"]));
         await settle();
     });
     expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("base,look,room");
-    expect(container.querySelector('[aria-label="共享待引用资产"]')?.textContent).toBe("second,key");
     expect(container.textContent).not.toContain("展示作品共享主体");
     await render(null, false, { ...options, episodeId: "e2" });
     await act(async () => {
@@ -242,12 +239,11 @@ test("已有分镜或人工段时仅展示真实引用，空引用不能扩大�
         await settle();
     });
     expect(container.querySelector('[aria-label="可见资产"]')?.textContent).toBe("");
-    expect(container.querySelector('[aria-label="共享待引用资产"]')?.textContent).toBe("base,look,second,room,key");
     expect(container.textContent).not.toContain("展示作品共享主体");
 });
 
-test("共享回退只适用于已成功读取的空集，读取失败和无效集都保持阻断", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+test("受控单集读取失败和无效集都保持阻断", async () => {
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     await act(async () => {
         requests.get("e1")!.reject(new Error("offline"));
@@ -263,7 +259,7 @@ test("共享回退只适用于已成功读取的空集，读取失败和无效�
 });
 
 test("受控切集时旧集的空分镜迟到响应不能把当前引用范围扩大为共享池", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     const old = requests.get("e1")!;
     await render(null, false, { ...options, episodeId: "e2" });
@@ -277,7 +273,7 @@ test("受控切集时旧集的空分镜迟到响应不能把当前引用范围�
 });
 
 test("同集版本刷新与失败保留已挂载列表并回报只读状态，重试成功后恢复", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     await act(async () => {
         requests.get("e1")!.resolve(episode("e1", ["look"]));
@@ -310,7 +306,7 @@ test("同集版本刷新与失败保留已挂载列表并回报只读状态，�
 });
 
 test("跨集读取失败不继承上一集已读取的引用列表", async () => {
-    const options = { episodeId: "e1", showToolbar: false, sharedBeforeStoryboard: true };
+    const options = { episodeId: "e1", showToolbar: false };
     await render(null, false, options);
     await act(async () => {
         requests.get("e1")!.resolve(episode("e1", ["look", "room"]));

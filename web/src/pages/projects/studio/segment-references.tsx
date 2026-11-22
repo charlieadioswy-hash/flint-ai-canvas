@@ -1,18 +1,24 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Input, Popover } from "antd";
-import { ArrowDown, ArrowUp, Check, Library, Plus, RotateCcw, Search, Trash2, Upload, ZoomIn } from "lucide-react";
+import { App, Button, Input } from "antd";
+import { ArrowDown, ArrowUp, Check, Library, Plus, RotateCcw, Search, Upload, ZoomIn } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
+import { AppDrawer } from "@/components/ui/product/app-drawer";
+import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import type { DramaCast, DramaSegment, DramaSegmentReferencePatch, DramaShot } from "@/services/api/drama";
 import { uploadResourceFile } from "@/services/api/resources";
+import { linkProjectAsset } from "@/services/api/projects";
 import { MediaThumb, parseList } from "../drama-shared";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoicePreview } from "./cast-voice";
 import { referenceMissingReason } from "./segment-parts";
 import "./segment-references.css";
+import { EpisodeReferencePicker, ProjectReferencePicker, type ReferenceImageAsset } from "./segment-project-images";
+import "./asset-kind.css";
 
 const ASSET_KINDS = ["character", "scene", "prop"] as const;
-const KIND_LABEL = { character: "人物", scene: "场景", prop: "道具", image: "附加图片" };
+const KIND_LABEL = { character: "角色", scene: "环境", prop: "道具", image: "素材" };
 type AssetKind = keyof typeof KIND_LABEL;
 type Reference = DramaSegment["request"]["references"][number];
 
@@ -29,24 +35,32 @@ function castName(cast: DramaCast) {
 
 /** 缩略图遵循请求顺序，详细选择与音色控制留在参考资产菜单。 */
 export function ReferenceBoard({
+    projectId,
     segment,
     shots,
     castById,
     busy: saving,
     onSave,
     onOpenCast,
+    onOpenAssets,
 }: {
+    projectId: string;
     segment: DramaSegment;
     shots: DramaShot[];
     castById: Map<string, DramaCast>;
     busy: boolean;
     onSave: (patch: DramaSegmentReferencePatch) => Promise<unknown>;
     onOpenCast: (id: string) => void;
+    onOpenAssets?: () => void;
 }) {
     const { message } = App.useApp();
+    const queryClient = useQueryClient();
     const [menuOpen, setMenuOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
+    const [projectSource, setProjectSource] = useState<"project" | "episode" | null>(null);
     const [uploading, setUploading] = useState(false);
+    const [addingImage, setAddingImage] = useState(false);
+    const [uploadDraft, setUploadDraft] = useState<{ resourceId: string; name: string }>();
     const [voiceDraft, setVoiceDraft] = useState<string[] | null>(null);
     const [savingVoice, setSavingVoice] = useState(false);
     const [voiceError, setVoiceError] = useState("");
@@ -77,7 +91,7 @@ export function ReferenceBoard({
         rail.addEventListener("wheel", onWheel, { passive: false });
         return () => rail.removeEventListener("wheel", onWheel);
     }, []);
-    const busy = saving || uploading || savingVoice;
+    const busy = saving || uploading || addingImage || savingVoice;
     const openPreview = (image: { resourceId: string; name: string }) => {
         setMenuOpen(false);
         setPreview(image);
@@ -96,7 +110,7 @@ export function ReferenceBoard({
         if (!savingVoice && !voiceError && voiceDraft && JSON.stringify(voiceDraft) === JSON.stringify((request.audioReferences || []).map((voice) => voice.castId))) setVoiceDraft(null);
     }, [request.audioReferences, savingVoice, voiceDraft, voiceError]);
     const saveVoices = async (next: string[]) => {
-        if (voiceSaveLock.current || saving || uploading) return;
+        if (voiceSaveLock.current || busy) return;
         voiceSaveLock.current = true;
         setVoiceDraft(next);
         setVoiceError("");
@@ -119,12 +133,20 @@ export function ReferenceBoard({
         if (ids.includes(cast.id)) saveIDs(ids.filter((id) => id !== cast.id));
         else saveIDs([...ids, cast.id]);
     };
-    const addImage = async (resourceId: string, name: string) => {
-        if (request.references.some((ref) => ref.resourceId === resourceId)) {
-            message.info("本段已添加这张参考图");
-            return;
+    const addImage = async (resourceId: string, name: string, asset?: ReferenceImageAsset) => {
+        if (!projectId || !resourceId) throw new Error("项目或图片信息缺失，请刷新后重试");
+        setAddingImage(true);
+        try {
+            if (request.references.some((ref) => ref.resourceId === resourceId)) {
+                message.info("本段已添加这张参考图");
+                return;
+            }
+            await linkProjectAsset(projectId, { assetId: asset?.assetId || resourceId, category: asset?.category || "material", title: name, source: "uploaded" });
+            void queryClient.invalidateQueries({ queryKey: ["project-asset-picker", projectId] });
+            if (mounted.current) await onSave({ referenceImages: [...images, { resourceId, name }] });
+        } finally {
+            setAddingImage(false);
         }
-        await onSave({ referenceImages: [...images, { resourceId, name }] });
     };
     const upload = async (file: File) => {
         if (!file.type.startsWith("image/") || file.size > 20 * 1024 * 1024) {
@@ -134,7 +156,10 @@ export function ReferenceBoard({
         setUploading(true);
         try {
             const resource = await uploadResourceFile(file, "image", { fileName: file.name });
-            await addImage(resource.id, file.name.replace(/\.[^.]+$/, ""));
+            const draft = { resourceId: resource.id, name: file.name.replace(/\.[^.]+$/, "") };
+            setUploadDraft(draft);
+            await addImage(draft.resourceId, draft.name);
+            setUploadDraft(undefined);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "添加参考图失败");
         } finally {
@@ -191,6 +216,7 @@ export function ReferenceBoard({
                 key={cast.id}
                 name={castName(cast)}
                 kind={KIND_LABEL[cast.kind]}
+                assetKind={cast.kind}
                 resourceId={ref?.resourceId || cast.imageResourceId}
                 badge={ref?.label}
                 checked={Boolean(ref)}
@@ -213,6 +239,7 @@ export function ReferenceBoard({
                 key={ref.resourceId}
                 name={ref.name}
                 kind={KIND_LABEL.image}
+                assetKind="image"
                 resourceId={ref.resourceId}
                 badge={ref.label}
                 checked
@@ -225,7 +252,7 @@ export function ReferenceBoard({
             />
         );
     };
-    const first = segment.index === 0 && !request.firstFrameResourceId && !request.firstFramePending;
+    const frameLabel = request.tailFrameAsReference ? "开场参考" : "首帧";
     const voiceActions = (
         <>
             {segment.audioReferenceMode === "custom" ? (
@@ -260,75 +287,115 @@ export function ReferenceBoard({
     return (
         <section className="drama-sdx-section drama-sdx-reference-board" aria-label="本段参考资产">
             <div className="drama-sdx-section-head">
+                <strong>本段资产</strong>
                 <span className="drama-sdx-count">
-                    本段参考 {request.references.filter((ref) => ref.sent).length}/{request.references.length}
+                    {request.references.length} 项 · 随请求发送 {request.references.filter((ref) => ref.sent).length} 张
                 </span>
-                <Popover
-                    trigger="click"
-                    placement="bottomLeft"
+                <small>
+                    {segment.referenceMode === "custom" ? "手动指定" : "按镜头自动取"} · 本段最多发送 {request.referenceCapacity} 张{request.modelMaxImages ? ` · 模型上限 ${request.modelMaxImages} 张（含首帧）` : ""}
+                </small>
+                {segment.referenceMode === "custom" ? (
+                    <Button size="small" type="text" disabled={busy} icon={<RotateCcw className="size-3.5" />} onClick={() => save({ autoReferences: true })}>
+                        恢复自动参考
+                    </Button>
+                ) : null}
+            </div>
+            <div className="drama-sdx-assets-foot">
+                <Button size="small" icon={<Library className="size-3.5" />} aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+                    项目资产窗口
+                </Button>
+                <AppDrawer
                     destroyOnHidden
                     open={menuOpen}
-                    onOpenChange={setMenuOpen}
-                    content={
-                        <AssetMenu
-                            casts={[...castById.values()]}
-                            images={request.references.filter((ref) => !ref.castId)}
-                            ids={ids}
-                            busy={busy}
-                            renderCast={renderCast}
-                            renderImage={renderImage}
-                            details={
-                                <>
-                                    <div className="drama-sdx-assets-foot">
-                                        <small>
-                                            {segment.referenceMode === "custom" ? "手动指定" : "按镜头自动取"} · 本段最多发送 {request.referenceCapacity} 张{request.modelMaxImages ? ` · 模型上限 ${request.modelMaxImages} 张（含首帧）` : ""}
-                                        </small>
-                                        {segment.referenceMode === "custom" ? (
-                                            <Button size="small" type="text" disabled={busy} icon={<RotateCcw className="size-3.5" />} onClick={() => save({ autoReferences: true })}>
-                                                恢复自动参考
-                                            </Button>
-                                        ) : null}
-                                    </div>
-                                    <div className="drama-sdx-frame-note">
-                                        <span>{first ? "开场段：无首帧，按提示词与参考图生成" : request.firstFrameResourceId ? `首帧：第 ${segment.index} 段尾帧` : `首帧：等待第 ${segment.index} 段视频生成`}</span>
-                                    </div>
-                                </>
-                            }
-                            voiceActions={
+                    onClose={() => setMenuOpen(false)}
+                    title="项目资产 · 选择本段参考"
+                    size="min(1040px, 100vw)"
+                    rootClassName="drama-root drama-asset-drawer"
+                    extra={
+                        onOpenAssets ? (
+                            <Button
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    onOpenAssets();
+                                }}
+                            >
+                                按集核查
+                            </Button>
+                        ) : undefined
+                    }
+                >
+                    <AssetMenu
+                        groupOrder={Array.from(
+                            new Set(
+                                ids.flatMap((id) => {
+                                    const kind = castById.get(id)?.kind;
+                                    return kind ? [kind] : [];
+                                }),
+                            ),
+                        )}
+                        onMoveGroup={(order) => {
+                            const grouped = order.flatMap((kind) => ids.filter((id) => castById.get(id)?.kind === kind));
+                            saveIDs([...grouped, ...ids.filter((id) => !castById.has(id))]);
+                        }}
+                        casts={[...castById.values()]}
+                        images={request.references.filter((ref) => !ref.castId)}
+                        ids={ids}
+                        busy={busy}
+                        renderCast={renderCast}
+                        renderImage={renderImage}
+                        voiceActions={
+                            audioLimit || selectedVoices.length || voiceError || segment.audioReferenceMode === "custom" ? (
                                 <>
                                     <small>
                                         音色 {selectedVoices.length}/{audioLimit} · {segment.audioReferenceMode === "custom" ? "手动选择" : "按对白自动开启"} · {audioLimit ? `当前模型音色不可多于 ${audioLimit} 个` : "当前模型不支持参考音色"}
                                     </small>
                                     {voiceActions}
-                                    {selectedVoices.length > audioLimit ? <p className="drama-sdx-hint is-error">已选音色超过模型上限，请在人物卡片下关闭部分音色。</p> : null}
                                 </>
-                            }
-                            onLibrary={() => {
-                                setMenuOpen(false);
-                                setLibraryOpen(true);
-                            }}
-                            onUpload={() => fileRef.current?.click()}
-                        />
-                    }
-                >
-                    <Button size="small" icon={<Search className="size-3.5" />} aria-expanded={menuOpen}>
-                        管理参考资产
-                    </Button>
-                </Popover>
+                            ) : null
+                        }
+                        onLibrary={() => {
+                            setMenuOpen(false);
+                            setLibraryOpen(true);
+                        }}
+                        onUpload={() => fileRef.current?.click()}
+                        onProject={(source) => {
+                            setMenuOpen(false);
+                            setProjectSource(source);
+                        }}
+                    />
+                </AppDrawer>
                 <Button size="small" icon={<Library className="size-3.5" />} disabled={busy} onClick={() => setLibraryOpen(true)}>
-                    素材库
+                    从素材库导入
                 </Button>
                 <Button size="small" icon={<Upload className="size-3.5" />} loading={uploading} disabled={busy} onClick={() => fileRef.current?.click()}>
                     上传参考图
                 </Button>
             </div>
+            {uploadDraft && !busy ? (
+                <div className="drama-sdx-assets-foot" role="status">
+                    <span>「{uploadDraft.name}」尚未添加到本段</span>
+                    <Button
+                        size="small"
+                        onClick={() => {
+                            void addImage(uploadDraft.resourceId, uploadDraft.name)
+                                .then(() => setUploadDraft(undefined))
+                                .catch((error) => message.error(error instanceof Error ? error.message : "添加参考图失败"));
+                        }}
+                    >
+                        重试添加
+                    </Button>
+                    <Button size="small" type="text" onClick={() => setUploadDraft(undefined)}>
+                        取消添加
+                    </Button>
+                </div>
+            ) : null}
             <div ref={railRef} className="drama-sdx-reference-rail" role="region" aria-label="参考资产缩略图" tabIndex={0} data-canvas-wheel-scroll>
                 {request.firstFrameResourceId ? (
                     <ReferenceTile
                         name="上一段尾帧"
                         resourceId={request.firstFrameResourceId}
                         label="预览上一段尾帧"
-                        title={`首帧：第 ${segment.index} 段尾帧`}
+                        title={`${frameLabel}：第 ${segment.index} 段尾帧`}
                         onOpen={() => openPreview({ resourceId: request.firstFrameResourceId!, name: "上一段尾帧" })}
                     />
                 ) : null}
@@ -369,6 +436,8 @@ export function ReferenceBoard({
                 }}
             />
             <CastLibraryPicker open={libraryOpen} cast={{ kind: "character", name: segment.title }} segment onClose={() => setLibraryOpen(false)} onPick={addImage} />
+            {projectSource === "project" ? <ProjectReferencePicker projectId={projectId} onClose={() => setProjectSource(null)} onPick={addImage} /> : null}
+            {projectSource === "episode" ? <EpisodeReferencePicker projectId={projectId} onClose={() => setProjectSource(null)} onPick={addImage} /> : null}
             {preview ? <CanvasImagePreview storageKey={`resource:${preview.resourceId}`} alt={preview.name} onClose={() => setPreview(undefined)} /> : null}
         </section>
     );
@@ -389,27 +458,31 @@ function ReferenceTile({ name, resourceId, label, title, related, onOpen }: { na
 
 /** 二级资产菜单保留已选项；搜索角色名、别名或造型名后可直接添加或移除。 */
 function AssetMenu({
+    groupOrder,
+    onMoveGroup,
     casts,
     images,
     ids,
     busy,
     renderCast,
     renderImage,
-    details,
     voiceActions,
     onLibrary,
     onUpload,
+    onProject,
 }: {
+    groupOrder: DramaCast["kind"][];
+    onMoveGroup: (order: DramaCast["kind"][]) => void;
     casts: DramaCast[];
     images: Reference[];
     ids: string[];
     busy: boolean;
     renderCast: (cast: DramaCast) => ReactNode;
     renderImage: (ref: Reference) => ReactNode;
-    details: ReactNode;
     voiceActions: ReactNode;
     onLibrary: () => void;
     onUpload: () => void;
+    onProject: (source: "project" | "episode") => void;
 }) {
     const [kind, setKind] = useState<AssetKind | "all">("all");
     const [query, setQuery] = useState("");
@@ -419,15 +492,44 @@ function AssetMenu({
     const filteredImages = kind === "all" || kind === "image" ? images.filter((ref) => matches(ref.name)) : [];
     return (
         <div className="drama-root drama-sdx-asset-menu" aria-label="搜索参考资产">
-            {details}
             <Input allowClear value={query} prefix={<Search className="size-3.5" />} placeholder="搜索人物、别名、造型、场景或道具" aria-label="搜索资产" onChange={(event) => setQuery(event.target.value)} />
-            <nav className="drama-sdx-asset-menu-kinds" aria-label="资产分类">
-                {(["all", ...ASSET_KINDS, "image"] as const).map((value) => (
-                    <button key={value} type="button" aria-pressed={kind === value} onClick={() => setKind(value)}>
-                        {value === "all" ? "全部" : KIND_LABEL[value]}
-                    </button>
-                ))}
-            </nav>
+            <SegmentedControl<AssetKind | "all">
+                ariaLabel="资产分类"
+                value={kind}
+                onChange={setKind}
+                options={(["all", ...ASSET_KINDS, "image"] as const).map((value) => ({
+                    value,
+                    label: (
+                        <>
+                            <span data-asset-kind={value === "all" ? undefined : value} className={value === "all" ? undefined : "drama-asset-kind"}>
+                                {value === "all" ? "全部" : KIND_LABEL[value]}
+                            </span>
+                            <span className="app-segmented-count">{value === "all" ? casts.length + images.length : value === "image" ? images.length : casts.filter((cast) => cast.kind === value).length}</span>
+                        </>
+                    ),
+                }))}
+            />
+            {groupOrder.length > 1 ? (
+                <details className="drama-reference-settings">
+                    <summary>调整参考分组顺序</summary>
+                    {groupOrder.map((kind, index) => (
+                        <div className="drama-sdx-group-head" key={kind}>
+                            <strong className="drama-asset-kind" data-asset-kind={kind}>
+                                {KIND_LABEL[kind]}
+                            </strong>
+                            <Button size="small" type="text" disabled={busy || index === 0} aria-label={"提前" + KIND_LABEL[kind] + "分组"} icon={<ArrowUp className="size-3.5" />} onClick={() => onMoveGroup(moved(groupOrder, index, index - 1))} />
+                            <Button
+                                size="small"
+                                type="text"
+                                disabled={busy || index === groupOrder.length - 1}
+                                aria-label={"后移" + KIND_LABEL[kind] + "分组"}
+                                icon={<ArrowDown className="size-3.5" />}
+                                onClick={() => onMoveGroup(moved(groupOrder, index, index + 1))}
+                            />
+                        </div>
+                    ))}
+                </details>
+            ) : null}
             <div className="drama-sdx-asset-menu-results">
                 {filteredCasts.map(renderCast)}
                 {filteredImages.map(renderImage)}
@@ -435,8 +537,14 @@ function AssetMenu({
             </div>
             <div className="drama-sdx-assets-foot">
                 <small>已添加 {ids.length + images.length} 项 · 点击卡片按钮添加或移除</small>
+                <Button size="small" disabled={busy} onClick={() => onProject("project")}>
+                    从本项目导入
+                </Button>
+                <Button size="small" disabled={busy} onClick={() => onProject("episode")}>
+                    从分集图片导入
+                </Button>
                 <Button size="small" disabled={busy} onClick={onLibrary}>
-                    素材库
+                    从素材库导入
                 </Button>
                 <Button size="small" disabled={busy} onClick={onUpload}>
                     上传参考图
@@ -450,6 +558,7 @@ function AssetMenu({
 function AssetCard({
     name,
     kind,
+    assetKind,
     resourceId,
     badge,
     checked,
@@ -464,6 +573,7 @@ function AssetCard({
 }: {
     name: string;
     kind: string;
+    assetKind: AssetKind;
     resourceId?: string;
     badge?: string;
     checked: boolean;
@@ -477,7 +587,7 @@ function AssetCard({
     children?: ReactNode;
 }) {
     return (
-        <article className={`drama-sdx-asset ${checked ? "is-checked" : ""}`} aria-label={`${name}资产`}>
+        <article className={`drama-sdx-asset ${checked ? "is-checked" : ""}`} data-asset-kind={assetKind} aria-label={`${name}资产`}>
             <button
                 type="button"
                 className="drama-sdx-asset-thumb"
@@ -487,7 +597,7 @@ function AssetCard({
                     if (resourceId) onPreview({ resourceId, name });
                 }}
             >
-                {resourceId ? <MediaThumb resourceId={resourceId} alt={name} /> : <span>暂无{kind}图片</span>}
+                <MediaThumb resourceId={resourceId} alt={name} fallback={<span>{resourceId ? "图片暂不可用" : `暂无${kind}图片`}</span>} />
                 {badge ? <em>{badge}</em> : null}
                 {resourceId ? <ZoomIn className="drama-sdx-asset-zoom size-4" /> : null}
             </button>
@@ -498,10 +608,19 @@ function AssetCard({
             ) : (
                 <strong className="drama-sdx-asset-text">{name}</strong>
             )}
+            <span className="drama-asset-kind">{kind}</span>
             <small className="drama-sdx-asset-note">{note}</small>
             <div className="drama-sdx-asset-actions">
-                <Button size="small" type="text" icon={checked ? <Trash2 className="size-3.5" /> : <Plus className="size-3.5" />} disabled={disabled} aria-label={checked ? `移除参考图${name}` : `添加参考图${name}`} onClick={onToggle}>
-                    {checked ? "移除" : "添加"}
+                <Button
+                    size="small"
+                    type="text"
+                    icon={checked ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
+                    disabled={disabled}
+                    aria-pressed={checked}
+                    aria-label={checked ? `移除参考图${name}` : `添加参考图${name}`}
+                    onClick={onToggle}
+                >
+                    {checked ? "已引用" : "引用到本段"}
                 </Button>
                 {checked ? (
                     <>

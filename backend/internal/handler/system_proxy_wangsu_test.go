@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"yingce/backend/internal/auth"
+	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 	"yingce/backend/internal/service"
@@ -32,7 +33,7 @@ func TestWangsuSystemProxyHTTP(t *testing.T) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.User{}, &model.UserGroup{}, &model.UserGroupChannel{}, &model.UserGroupModelOverride{}, &model.AuthSession{}, &model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.IDSequence{}, &model.SystemSetting{}, &model.Asset{}, &model.CanvasProject{}, &model.Task{}, &model.TaskLog{}, &model.Result{}, &model.TaskTextDelta{}, &model.ApiCallLog{}); err != nil {
+	if err := database.MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
 	for _, row := range []any{
@@ -138,9 +139,17 @@ func TestWangsuSystemProxyHTTP(t *testing.T) {
 func TestWangsuSystemProxyAuthorization(t *testing.T) {
 	channel := &model.ModelChannel{ModelsJSON: `["model"]`}
 	svc := &service.Service{}
+	declaredPaths := func(protocol model.ChannelInterfaceType) []string {
+		t.Helper()
+		contract, err := svc.ResolveSystemProxyContract(protocol, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contract.DeclaredPostPaths()
+	}
 	for _, id := range []string{"wangsu-chat", "wangsu-openai-chat", "wangsu-responses", "wangsu-openai-responses", "wangsu-anthropic", "wangsu-gemini", "wangsu-gemini-image", "wangsu-images", "wangsu-openai-images", "wangsu-chat-image", "wangsu-audio", "wangsu-openai-audio", "wangsu-videos", "wangsu-openai-videos"} {
 		protocol := model.ChannelInterfaceType(id)
-		if err := authorizeSystemProxy(channel, protocol, svc.SystemProxyDeclaredPostPaths(protocol), http.MethodPost, "/unsupported", "application/json", []byte(`{"model":"model"}`)); err == nil {
+		if err := authorizeSystemProxy(channel, protocol, declaredPaths(protocol), http.MethodPost, "/unsupported", "application/json", []byte(`{"model":"model"}`)); err == nil {
 			t.Errorf("%s accepted unsupported path", id)
 		}
 	}
@@ -153,7 +162,7 @@ func TestWangsuSystemProxyAuthorization(t *testing.T) {
 		{"wangsu-gemini", "/models/model:generateContent"},
 	} {
 		protocol := model.ChannelInterfaceType(tc.id)
-		declared := svc.SystemProxyDeclaredPostPaths(protocol)
+		declared := declaredPaths(protocol)
 		if err := authorizeSystemProxy(channel, protocol, declared, http.MethodPost, tc.path, "application/json", []byte(`{"model":"model"}`)); err != nil {
 			t.Errorf("%s rejected its supported path: %v", tc.id, err)
 		}
@@ -168,7 +177,7 @@ func TestWangsuSystemProxyAuthorization(t *testing.T) {
 		{"wangsu-openai-videos", "/videos"},
 	} {
 		protocol := model.ChannelInterfaceType(tc.id)
-		if err := authorizeSystemProxy(channel, protocol, svc.SystemProxyDeclaredPostPaths(protocol), http.MethodPost, tc.path, "application/json", []byte(`{"model":"unauthorized"}`)); err == nil {
+		if err := authorizeSystemProxy(channel, protocol, declaredPaths(protocol), http.MethodPost, tc.path, "application/json", []byte(`{"model":"unauthorized"}`)); err == nil {
 			t.Errorf("%s accepted unauthorized request", tc.id)
 		}
 	}

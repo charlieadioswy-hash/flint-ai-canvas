@@ -22,6 +22,7 @@ mock.module("antd", () => ({
     App: { useApp: () => ({ message: {} }) },
     Button: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => <button onClick={onClick}>{children}</button>,
     InputNumber: () => null,
+    Popconfirm: ({ children }: { children: React.ReactNode }) => children,
 }));
 mock.module("@/components/ui/base/tooltip/ant-tooltip", () => ({
     AntTooltip: ({ children }: { children: React.ReactNode }) => children,

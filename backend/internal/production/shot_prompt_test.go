@@ -160,7 +160,7 @@ func TestShotVideoPromptFallbackIncludesStructuredCurrentShot(t *testing.T) {
 	in.WrittenPrompt = "技能自由格式：先撞门，再抬眼，最后踢桌。"
 	prompt := ShotVideoPrompt(in)
 	timeline := shotPromptTimeline(t, prompt)
-	for _, want := range []string{"茶室", "起幅：青衣人站在窗边，右手捏着钥匙", "50mm近景，随情绪推近。", "本镜从黑场淡入。", "青衣人缓缓抬眼", "视线停在门口，手指收紧", "青衣人：“你终于来了。”", "00.00—06.00"} {
+	for _, want := range []string{"茶室", "起幅：青衣人站在窗边，右手捏着钥匙", "50mm近景，缓慢推近。", "本镜从黑场淡入。", "青衣人缓缓抬眼", "视线停在门口，手指收紧", "青衣人：“你终于来了。”", "00.00—06.00"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("fallback missing %q:\n%s", want, prompt)
 		}

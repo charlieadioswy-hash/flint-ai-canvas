@@ -52,7 +52,8 @@ test("HTTP 创作消息复用已登记图片并持久化，并发重放不新建
     const result = await runScenario<{ rejection: string; applied: number; message: Message; restored: Array<{ title: string; messages: Message[] }>; assets: unknown[]; requests: string[] }>("http-creation-generation");
     expect(result.rejection).toBe("");
     expect(result.applied).toBe(1);
-    expect(result.message).toMatchObject({ status: "done", error: undefined, resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] });
+    expect(result.message).toMatchObject({ status: "done", resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] });
+    expect(result.message.error).toBeUndefined();
     expect(result.restored[0]).toMatchObject({ title: "保留标题", messages: [{ status: "done", resultStorageKeys: ["resource:http-image"], generationEffectKeys: ["attach-message:task-http-recovery:http-message:0"] }] });
     expect(result.restored[0]?.messages[0]?.resultUrls).toBeUndefined();
     expect(result.assets).toHaveLength(1);
@@ -185,23 +186,15 @@ test("并发生成结果经真实持久化消费链路及重新读取后保留�
     }
 });
 
-function runScenario<T>(scenario: Scenario): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-        const worker = new Worker(new URL("../helpers/generation-storage-consistency.worker.ts", import.meta.url).href, { type: "module" });
-        const finish = () => {
-            worker.terminate();
-        };
-        worker.onmessage = (event: MessageEvent<ScenarioResponse<T>>) => {
-            finish();
-            if (event.data.ok) resolve(event.data.result);
-            else reject(new Error(event.data.error));
-        };
-        worker.onerror = (event) => {
-            finish();
-            reject(event.error ?? new Error(event.message));
-        };
-        worker.postMessage(scenario);
-    });
+async function runScenario<T>(scenario: Scenario): Promise<T> {
+    // Bun 1.3.9 can crash while tearing down repeated Workers on macOS.
+    const fixture = new URL("../helpers/generation-storage-consistency.worker.ts", import.meta.url).pathname;
+    const child = Bun.spawn([process.execPath, fixture, "--scenario", scenario], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (code !== 0) throw new Error(`${scenario} exited with ${code}: ${stderr}`);
+    const response = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") as ScenarioResponse<T>;
+    if (!response.ok) throw new Error(response.error);
+    return response.result;
 }
 
 test("generation image cleanup removes unused generation-image blobs and preserves referenced ones", async () => {

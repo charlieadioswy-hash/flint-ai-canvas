@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
-import { getActiveUserScope } from "@/lib/user-scope";
+import { assertCurrentUserSession, captureUserSession, getActiveUserScope } from "@/lib/user-scope";
 import { useUserStore } from "@/stores/use-user-store";
 
-type OperationTicket = { projectId: string; account: string; epoch: number };
+type OperationTicket = { projectId: string; account: string; epoch: number; session: ReturnType<typeof captureUserSession> };
 
 function accountKey() {
     return JSON.stringify([getActiveUserScope(), useUserStore.getState().user?.id ?? null]);
@@ -28,10 +28,16 @@ export function useDramaOperationScope(projectId: string) {
             scope.current.epoch += 1;
         };
     }, []);
-    const capture = useCallback((): OperationTicket => ({ ...scope.current }), []);
+    const capture = useCallback((): OperationTicket => ({ ...scope.current, session: captureUserSession(true) }), []);
     const isCurrent = useCallback((ticket: OperationTicket) => {
         const current = scope.current;
-        return current.mounted && current.epoch === ticket.epoch && current.projectId === ticket.projectId && current.account === ticket.account && ticket.account === accountKey();
+        if (!current.mounted || current.epoch !== ticket.epoch || current.projectId !== ticket.projectId || current.account !== ticket.account || ticket.account !== accountKey()) return false;
+        try {
+            assertCurrentUserSession(ticket.session);
+            return true;
+        } catch {
+            return false;
+        }
     }, []);
     return { capture, isCurrent };
 }

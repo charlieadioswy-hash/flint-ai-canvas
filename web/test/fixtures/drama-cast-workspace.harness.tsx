@@ -22,6 +22,7 @@ for (const [key, value] of Object.entries({
     Event: dom.Event,
     MouseEvent: dom.MouseEvent,
     ResizeObserver: dom.ResizeObserver,
+    MutationObserver: dom.MutationObserver,
     getComputedStyle: dom.getComputedStyle.bind(dom),
     requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
     IS_REACT_ACT_ENVIRONMENT: true,
@@ -95,8 +96,10 @@ let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let client: InstanceType<typeof QueryClient>;
 
+const { setActiveUserScope } = await import("../../src/lib/user-scope");
+
 beforeEach(() => {
-    window.localStorage.setItem("yingce:active-user-scope", "workspace-user");
+    setActiveUserScope("workspace-user");
     useUserStore.setState({ user: { id: "workspace-user" } as never });
     host = document.createElement("div");
     document.body.append(host);
@@ -294,7 +297,7 @@ test("参考图历史打开所选原图，并使用当前参考图的缩放预�
     await act(async () => previewStage.dispatchEvent(new dom.KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 }) as unknown as Event));
     await settleUntil(() => !document.querySelector(".canvas-image-preview-modal"));
     expect(document.querySelector(".drama-cast-dialog")).toBe(editor);
-    expect(document.activeElement).toBe(historyTrigger);
+    await settleUntil(() => document.activeElement === historyTrigger);
     expect(onClose).not.toHaveBeenCalled();
     expect(adopt).not.toHaveBeenCalled();
 });
@@ -1916,6 +1919,7 @@ for (const changed of ["project", "account", "persistence scope", "unmounted"] a
             else if (changed === "account") await act(async () => useUserStore.setState({ user: { id: "other-user" } as never }));
             else if (changed === "persistence scope") {
                 window.localStorage.setItem("yingce:active-user-scope", "other-scope");
+                await act(async () => window.dispatchEvent(new dom.StorageEvent("storage", { key: "yingce:active-user-scope", newValue: "other-scope" })));
                 await render(<CastProjectImport {...props} />);
             } else await render(null);
             expect(onStateChange).toHaveBeenLastCalledWith(false, false);

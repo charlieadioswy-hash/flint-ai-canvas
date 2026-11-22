@@ -214,7 +214,11 @@ export function WorkflowStoryboardPage({
                                         预览本段
                                     </Button>
                                 </div>
-                                <div className="drama-storyboard-action-group" role="group" aria-label="本段调整">
+                            </>
+                        ) : null}
+                        <div className="drama-storyboard-action-group" role="group" aria-label="本段调整">
+                            {segment ? (
+                                <>
                                     <span>调整</span>
                                     <Button size="small" icon={<Pencil className="size-4" />} onClick={() => onOpenSegment(segment.index)}>
                                         编辑本段
@@ -240,15 +244,17 @@ export function WorkflowStoryboardPage({
                                     >
                                         {boardLabel}
                                     </Button>
-                                    <WorkflowSceneSplits summary={summary} detail={detail} initialSegmentIndex={segment.index} buttonLabel="重拆本段" onChanged={onChanged} onOpenSegment={onOpenSegment} />
-                                </div>
-                                <div className="drama-storyboard-action-group" role="group" aria-label="本段视图">
-                                    <span>视图</span>
-                                    <Button size="small" type="text" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
-                                        {collapsed ? "展开" : "收起"}
-                                    </Button>
-                                </div>
-                            </>
+                                </>
+                            ) : null}
+                            <WorkflowSceneSplits summary={summary} detail={detail} initialSegmentIndex={segment?.index} triggerVisible={Boolean(segment)} buttonLabel="重拆本段" onChanged={onChanged} onOpenSegment={onOpenSegment} />
+                        </div>
+                        {segment ? (
+                            <div className="drama-storyboard-action-group" role="group" aria-label="本段视图">
+                                <span>视图</span>
+                                <Button size="small" type="text" aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
+                                    {collapsed ? "展开" : "收起"}
+                                </Button>
+                            </div>
                         ) : null}
                     </div>
                 </header>

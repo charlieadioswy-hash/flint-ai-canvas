@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 
@@ -24,6 +25,7 @@ func newProjectSettingsTestService(t *testing.T) (*Service, *gorm.DB) {
 		&model.Shot{}, &model.ShotArtifact{}, &model.VoiceProfile{},
 		&model.Task{}, &model.TaskLog{}, &model.Result{}, &model.ApiCallLog{},
 		&model.CreationRun{}, &model.CreationSubmission{},
+		&model.CreationConversationResource{},
 		&model.CloudAgentResourceLease{}, &model.Tool{}, &model.WorkbenchTool{},
 		&model.Announcement{}, &model.AnnouncementImageDraft{},
 		&model.DramaProduction{}, &model.DramaCast{}, &model.DramaEpisode{}, &model.DramaSegment{}, &model.DramaTake{},
@@ -159,12 +161,19 @@ func TestProjectUnitSummaryPersistsWordCount(t *testing.T) {
 }
 
 func TestProjectCoverAppearsInResourceReferences(t *testing.T) {
-	service, db := newProjectSettingsTestService(t)
+	db, err := database.Open(database.Config{Driver: "sqlite", DSN: "file:" + newID() + "?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.New(db)
 	project := model.Project{ID: "project-cover-reference", UserID: "user-1", Name: "封面引用", CoverResourceID: "cover-resource"}
 	if err := db.Create(&project).Error; err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := service.repo.ResourceReferenceSnapshot("user-1", "", []string{"cover-resource"})
+	snapshot, err := repo.ResourceReferenceSnapshot("user-1", "", []string{"cover-resource"})
 	if err != nil {
 		t.Fatal(err)
 	}

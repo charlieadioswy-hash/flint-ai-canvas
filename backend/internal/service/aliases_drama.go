@@ -43,4 +43,5 @@ type (
 	DramaJianyingDraftRequest          = app.DramaJianyingDraftRequest
 	DramaJianyingDraftPreview          = app.DramaJianyingDraftPreview
 	DramaAssetPackageRequest           = app.DramaAssetPackageRequest
+	RestoreDramaSegmentTakeRequest     = app.RestoreDramaSegmentTakeRequest
 )

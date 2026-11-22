@@ -51,7 +51,7 @@ func TestMigrationListCopiesCompleteMergedSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	covered := map[string]bool{"schema_migrations": true, "sqlite_sequence": true}
+	covered := map[string]bool{"schema_migrations": true, "yingce_schema_migrations": true, "sqlite_sequence": true}
 	for _, migration := range migrations() {
 		covered[migration.name] = true
 		if _, err := migration.run(source, target, true); err != nil {
@@ -69,7 +69,9 @@ func TestMigrationListCopiesCompleteMergedSchema(t *testing.T) {
 }
 
 func TestMigrationListCoversSchemaModels(t *testing.T) {
-	want := make(map[string]bool, len(database.Models()))
+	want := map[string]bool{
+		"official_assets": false, "official_asset_imports": false, "official_asset_recommendations": false,
+	}
 	cache := &sync.Map{}
 	for _, value := range database.Models() {
 		parsed, err := schema.Parse(value, cache, schema.NamingStrategy{})
@@ -121,7 +123,7 @@ func TestCanvasHistoryCompositeKeyMigration(t *testing.T) {
 	}
 }
 
-func TestChannelWebsiteMigrationDependencyOrder(t *testing.T) {
+func TestMigrationDependencyOrder(t *testing.T) {
 	positions := make(map[string]int)
 	for i, migration := range migrations() {
 		positions[migration.name] = i
@@ -132,6 +134,10 @@ func TestChannelWebsiteMigrationDependencyOrder(t *testing.T) {
 		{"channel_websites", "channel_protocol_selections"},
 		{"channel_models", "channel_protocol_selections"},
 		{"users", "channel_protocol_selections"},
+		{"users", "mcp_connection_grants"},
+		{"mcp_connections", "mcp_connection_grants"},
+		{"users", "mcp_storage_usages"},
+		{"users", "agent_storage_usages"},
 	} {
 		parent, parentFound := positions[dependency[0]]
 		child, childFound := positions[dependency[1]]

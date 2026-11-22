@@ -7,6 +7,9 @@ import * as modelSelection from "../src/lib/model-selection";
 import * as modelPricing from "../src/lib/model-pricing";
 import * as modelCapabilities from "../src/lib/model-capabilities";
 import * as mediaSettings from "../src/lib/media-settings";
+import * as videoReferenceMode from "../src/lib/canvas/canvas-video-reference-mode";
+import * as videoRegeneration from "../src/lib/canvas/canvas-video-regeneration";
+import * as mentionEditable from "../src/components/canvas/canvas-mention-editable";
 import * as configStore from "../src/stores/use-config-store";
 import * as promptConfig from "../src/components/canvas/canvas-node-prompt-config";
 import * as promptResize from "../src/components/canvas/canvas-node-prompt-resize";
@@ -21,7 +24,7 @@ import { currentGenerationBatchLimit } from "../src/lib/generation-batch-limit";
 import { useUserStore } from "../src/stores/use-user-store";
 import { executeImageGeneration } from "../src/pages/canvas/canvas-image-generation-executor";
 import { resolveVideoImageReferences } from "../src/services/api/video-reference-roles";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "../src/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoReferenceMode } from "../src/types/canvas";
 import type { Asset } from "../src/stores/use-asset-store";
 import type { LogicalModelQuote, ModelQuoteRequest } from "../src/services/api/logical-models";
 
@@ -200,6 +203,10 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         react: { ...hooks, createElement: (type: string, props: any, ...children: any[]) => jsx(type, { ...props, children }), Fragment: "Fragment" },
         "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
         "react/jsx-dev-runtime": { jsxDEV: jsx, Fragment: "Fragment" },
+        "react-i18next": { useTranslation: () => ({ t: (key: string) => key }) },
+        "@/lib/canvas/canvas-video-reference-mode": videoReferenceMode,
+        "@/lib/canvas/canvas-video-regeneration": videoRegeneration,
+        "./canvas-mention-editable": mentionEditable,
         "@/stores/use-config-store": { ...configStore, useEffectiveConfig: () => config },
         "@/stores/use-asset-store": { useAssetStore: (selector: (state: { assets: Asset[] }) => unknown) => selector({ assets: library }) },
         "@/stores/use-user-store": { useUserStore: (selector: (state: unknown) => unknown) => selector({ features: { creditsEnabled: true } }) },
@@ -301,7 +308,7 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
             return find("CanvasResourceMentionTextarea").props.value;
         },
         submitButton() {
-            return descendants(tree).find((item) => item.type === "Button" && String(item.props.className).includes("canvas-node-composer-submit"))!.props;
+            return descendants(tree).find((item) => item.type === "button" && item.props.className === "canvas-node-generate-button")!.props;
         },
         changeCount(count: number) {
             find("CanvasImageCountControl").props.onChange(count);
@@ -323,6 +330,14 @@ function harness(library: Asset[], prompt = "让 @[asset:robot-asset] 转身", c
         replaceAssets(next: Asset[]) {
             library = next;
             resolveGenerationContext = (nodeId, text) => resolveContext(nodeId, text);
+            render();
+        },
+        chooseMode(mode: CanvasVideoReferenceMode) {
+            find("SegmentedControl").props.onChange(mode);
+            render();
+        },
+        restoreFrames(patch: Partial<CanvasNodeMetadata>) {
+            target = { ...target, metadata: { ...target.metadata, ...patch } };
             render();
         },
         chooseFrames(patch: Partial<CanvasNodeMetadata>) {
@@ -434,11 +449,13 @@ test("canvas quote totals use the account batch limit instead of the model outpu
 test("an unconnected asset mention drives the real panel capability, quote and provider first-frame identity", () => {
     const h = harness([imageAsset()], "让 @[asset:robot-asset] 转身，保持 @[asset:robot-asset] 一致");
     expect(h.requirements().input?.imageCount).toBe(1);
+    expect(h.quote.intent.operation).toBe("reference_to_video");
+    h.chooseMode("frames");
     expect(h.compatibility()).toBe("");
     expect(h.quote.intent.inputs.image).toBe(1);
     expect(h.quote.intent.operation).toBe("image_to_video");
     expect(h.frameOptions().map((item: any) => item.nodeId)).toEqual(["robot-asset"]);
-    h.chooseFrames({ videoStartFrameNodeId: h.frameOptions()[0].nodeId });
+    expect(h.node.metadata?.videoStartFrameNodeId).toBe("robot-asset");
     const context = h.context();
     const metadata = buildVideoGenerationMetadata(h.node, context);
     expect(metadata.videoStartFrameNodeId).toBe("robot-asset");
@@ -450,10 +467,15 @@ test("connected and asset identities use exactly the submission resolver's count
     const context = h.context();
     expect(h.requirements().input?.imageCount).toBe(context.imageCount);
     expect(h.quote.intent.inputs.image).toBe(context.imageCount);
-    expect(h.frameOptions().map((item: any) => item.nodeId)).toEqual(context.referenceImages.map((image) => image.id));
     expect(context.referenceImages.map((image) => image.id)).toEqual(["connected-image", "robot-asset"]);
+    h.chooseMode("frames");
+    expect(h.frameOptions().map((item: any) => item.nodeId)).toEqual(context.referenceImages.map((image) => image.id));
     h.chooseFrames({ videoStartFrameNodeId: "robot-asset", videoEndFrameNodeId: "connected-image" });
-    expect(resolveVideoImageReferences(context.referenceImages, buildVideoGenerationMetadata(h.node, context)).map(({ role }) => role)).toEqual(["last_frame", "first_frame"]);
+    const frames = h.context();
+    expect(resolveVideoImageReferences(frames.referenceImages, buildVideoGenerationMetadata(h.node, frames)).map(({ image, role }) => [image.id, role])).toEqual([
+        ["robot-asset", "first_frame"],
+        ["connected-image", "last_frame"],
+    ]);
     h.edit("让机器人转身");
     expect(h.node.metadata?.videoStartFrameNodeId).toBeUndefined();
     expect(h.node.metadata?.videoEndFrameNodeId).toBe("connected-image");
@@ -463,7 +485,7 @@ test("connected and asset identities use exactly the submission resolver's count
 
 test("removing the only asset token clears stale asset frames and disables an image-only 512 model", () => {
     const h = harness([imageAsset()]);
-    h.chooseFrames({ videoStartFrameNodeId: "robot-asset", videoEndFrameNodeId: "robot-asset" });
+    h.restoreFrames({ videoStartFrameNodeId: "robot-asset", videoEndFrameNodeId: "robot-asset" });
     h.edit("只有文字的转身视频");
     expect(h.node.metadata?.videoStartFrameNodeId).toBeUndefined();
     expect(h.node.metadata?.videoEndFrameNodeId).toBeUndefined();
@@ -502,7 +524,7 @@ test("switching panel node props isolates the prompt draft before resolving or c
 test("deleting an asset then removing its token clears stale frames while preserving a connected frame", () => {
     for (const connected of [false, true]) {
         const h = harness([imageAsset()], undefined, connected);
-        h.chooseFrames({ videoStartFrameNodeId: "robot-asset", videoEndFrameNodeId: connected ? "connected-image" : "robot-asset" });
+        h.restoreFrames({ videoStartFrameNodeId: "robot-asset", videoEndFrameNodeId: connected ? "connected-image" : "robot-asset" });
         h.replaceAssets([]);
         // A dangling mention is still reported by the submission resolver.
         expect(() => h.context()).toThrow();

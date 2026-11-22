@@ -1,7 +1,7 @@
 import { preserveVideoSettings } from "@/lib/media-settings";
 import { VideoSettingsPanel, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, videoProfileForOperation } from "@/lib/model-capabilities";
 import type { ModelRequirements } from "@/lib/model-selection";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -13,7 +13,9 @@ type VideoPopoverProps = { config: AiConfig; requirements?: ModelRequirements; o
 export function CanvasVideoSettingsPopover({ config, requirements, onConfigChange, ...popover }: VideoPopoverProps) {
     const { t } = useTranslation();
     const theme = canvasThemes[useActiveTheme()];
-    const profile = modelCapabilityConfigFor(config, config.model).video;
+    const modelProfile = modelCapabilityConfigFor(config, config.model).video;
+    const operation = requirements?.videoOperation;
+    const profile = modelProfile && operation ? videoProfileForOperation(modelProfile, operation) : modelProfile;
     const selected = profile ? preserveVideoSettings(profile, { seconds: config.videoSeconds, ratio: config.size, resolution: config.vquality }, resolveModelRequestConfig(config, config.model).interfaceType) : undefined;
     const parts: string[] = [];
     if (profile?.resolutions.length && selected) parts.push(videoResolutionLabel(selected.resolution));
@@ -21,7 +23,7 @@ export function CanvasVideoSettingsPopover({ config, requirements, onConfigChang
     parts.push(videoSecondsLabel(selected?.seconds || config.videoSeconds));
     return (
         <CanvasSettingsPopover {...popover} label={t("canvasC.videoSettings.label")} summary={parts.join(" · ")}>
-            <VideoSettingsPanel config={config} requirements={requirements} onConfigChange={onConfigChange} theme={theme} className="space-y-3" />
+            <VideoSettingsPanel config={config} operation={operation} requirements={requirements} onConfigChange={onConfigChange} theme={theme} className="space-y-3" />
         </CanvasSettingsPopover>
     );
 }
