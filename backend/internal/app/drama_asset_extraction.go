@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -214,7 +215,7 @@ func dramaAssetExtractionSource(tx *repository.Repository, projectID string, req
 	return payload, truncateRunes(label, 200), nil
 }
 
-// 独立查漏只派发显式请求的 Bible 作业，保持制作暂停状态，也不规划后续分镜或媒体。
+// 独立查漏保持原有制作状态。仅剩预算等待的查漏时，已获准的媒体可继续派发。
 func (r *dramaRun) tickAssetExtraction() (bool, error) {
 	jobs, err := r.s.repo.DramaAssetExtractionJobs(r.project.ID, model.DramaJobQueued, model.DramaJobRunning)
 	if err != nil || len(jobs) == 0 {
@@ -231,7 +232,46 @@ func (r *dramaRun) tickAssetExtraction() (bool, error) {
 	if err := r.dispatchJobs(queued); err != nil {
 		return true, err
 	}
-	// 独立查漏用相同预算准入，但预算不足不能把已完成的作品改成“暂停”。队列单独显示预算等待原因。
-	r.production.Status, r.production.PauseReason = status, pauseReason
-	return true, r.s.repo.SaveDramaProductionProgress(r.production, status, false)
+	if status == model.DramaStatusRunning && r.production.Status == status {
+		pending, err := r.s.repo.DramaAssetExtractionJobs(r.project.ID, model.DramaJobQueued, model.DramaJobRunning)
+		if err != nil {
+			return true, err
+		}
+		if dramaExtractionWaitingForBudget(pending) {
+			if err := r.loadCasts(); err != nil {
+				return true, err
+			}
+			if err := r.planCastImages(false); err != nil {
+				return true, err
+			}
+			if err := r.persistPlannedJobs(true); errors.Is(err, repository.ErrDramaGuideChanged) {
+				return true, r.saveProgress(status, false)
+			} else if err != nil {
+				return true, err
+			}
+			queued, err := r.queuedJobsForGuide()
+			if err != nil {
+				return true, err
+			}
+			media := queued[:0]
+			for _, job := range queued {
+				if dramaDispatchPool(job.Kind) != dramaPoolText {
+					media = append(media, job)
+				}
+			}
+			if err := r.dispatchJobs(media); err != nil {
+				return true, err
+			}
+		}
+	}
+	return true, r.saveProgress(status, r.production.Status != status || r.production.PauseReason != pauseReason)
+}
+
+func dramaExtractionWaitingForBudget(jobs []model.DramaJob) bool {
+	for _, job := range jobs {
+		if job.Status != model.DramaJobQueued || job.Error != dramaBudgetPauseReason {
+			return false
+		}
+	}
+	return len(jobs) > 0
 }

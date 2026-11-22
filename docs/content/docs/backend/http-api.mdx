@@ -79,6 +79,8 @@ description: 信封、错误码与 OpenAPI
 
 批量使用 `POST /api/dramas/:id/actions/batch/preflight`，请求 `{action,targetIds,episodeId?,videoModel?,baseRevision?,regenerate?,restyleSegments?,castDrafts?}`；`action` 为 `cast_image/segment_video/segment_prompt/segment_assets`，必须显式提供 1–200 个真实资产或段 ID，空范围不代表全部，同作品可跨集选择，重复 ID 去重。返回 `{action,targetIds,baseRevision,ready,reason?,confirmationToken,amountMicrocredits,priced,items,counts}`；逐项状态为 `ready/already_queued/skipped_ready/blocked/conflict/failed`。提示词状态为空且没有真实活跃任务时仍可显式请求撰写，有排队或运行作业则跳过。只对可入队的真实目标求和报价，`segment_assets` 按去重后的资产及缺失父角色计算，`sourceTargetIds` 保留来源段归因；阻塞资产不拖累其它可执行资产。余额或剩余预算不足时整批可执行项不入队，并保留所需报价。模型已有成功视频但后处理失败的段须先重新处理，批量生成不重新调用付费生成。
 
+短剧任务和关联精修画布在建单、重试、换线增加冻结额或按实耗补扣前，都在同一事务内锁定作品并校验剩余预算。实耗补扣超预算时保留用量供核对。超预算的独立资产查漏保留在队列中，预算内的其他查漏和已请求的主体生图仍可派发。提示词精简保留上一步已成功的任务，暂停中的作品需要选择「继续制作」才会续跑。流水线任务通过作品制作队列重试。
+
 `segment_video` 在尾帧续接模式下，前段属于本批可执行范围或已在队列时，后段可一起计价、入队，派发仍等待前段的真实尾帧，不提前调用模型。报价按各段实际模型、时长及续接输入分别计算后求和，不复用首段价格；前段未选择且未就绪，或前段有真实阻断时，后段仍阻断，不隐式生成范围外内容。本批重试会使中间成功段的旧尾帧失效时，若中间段未重新排队，同样阻断后继段。按钮随选择范围重新计价；仅部分所选段可生成时，在按钮中显示实际可生成数量与所选数量。
 
 `regenerate`、`restyleSegments` 与 `castDrafts` 仅用于 `cast_image`。`regenerate=true` 将已成功图片也纳入实际报价与入队范围，仍跳过排队／运行目标并保护锁定主体及模型依赖。`castDrafts` 按明确选中的资产 ID 映射到 `castDraft` 结构，仅在预检模拟；范围外 key 及执行携带草稿均拒绝。主视觉如需同时重试失败造型，客户端必须将这些造型逐一加入 `targetIds`，服务端不扩展到其它造型。两个布尔选项参与令牌快照；`restyleSegments=true` 只在实际入队资产的同一事务中标记其引用视频过期，保留旧资源，失败则图片队列和视频影响全部回滚。自动报价期间不保存草稿；保存后重新预检，费用或生成范围变化时停止执行并更新按钮。
@@ -1092,7 +1094,7 @@ Agent 已不再注入、召回或写入下列经验条目，记忆设置页只�
 | 409   | 409  | `conflict`                             | 冲突                                                                                                                                                             |
 | 409   | 409  | `project_name_conflict`                | `POST /projects` 同一用户下已有同名项目；客户端可有限更换名称重试                                                                                                |
 | 409   | 409  | `skill_version_conflict`               | `PUT /skills/:id/files` 的 `baseVersionId` 已不是当前版本；`details.currentVersionId` 为最新版本，客户端需重新加载后再编辑                                       |
-| 400   | 400  | `drama_budget_exhausted`               | 关联短剧的精修画布上创建生成任务时，作品已达到预算上限（预算含画布精修花费）；在短剧设置里提高预算后再生成                                                       |
+| 400   | 400  | `drama_budget_exhausted`               | 关联短剧的精修画布创建或重试生成任务时，剩余作品预算不足以覆盖本次冻结额，在短剧设置里提高预算后可重试                                                           |
 | 409   | 409  | `drama_segment_changed`                | 把画布视频采用为剧情段视频时，段版本与 `expectedRevision` 不符或刚被并发修改；刷新单集详情后重新采用                                                             |
 | 409   | 409  | `drama_episode_confirm_required`       | `DELETE /dramas/:id/episodes/:episodeId` 删除的集生成过视频，`confirm` 缺失或与“第 N 集”不一致；`details.confirmText` 是当前应输入的文字，用户输入后带上重新提交 |
 | 409   | 409  | `agent_interjection_run_finished`      | 插话时本轮已结束；客户端把这条留在本机队列，作为下一轮发送                                                                                                       |
@@ -1349,6 +1351,8 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 
 独立镜头音频使用平台 TTS 模型，`operation=audio`、`prompt` 为最多 1000 字的朗读文本、`audioVoice` 为真实模型音色，`audioInstructions` 为最多 4000 字的演绎要求；请求固定 MP3、1 倍速，拒绝图片、首尾帧与视频规格。真实音频产物按实际 MIME 保存和下载；完成后状态为 `awaiting_adoption`，先试听再显式采用，不自动覆盖已采用音频或角色声音。资产包只导出所选集内已采用的独立音频，镜头清单的 `audio` 为文件路径，`audioText` 为该版本实际朗读文本；不会混入成片或剪映时间线。
 
+镜头音频和角色音色试听使用按秒收费的模型时，服务端按朗读文本估算时长，预检标记 `estimated`，并以已确认的报价为本次扣费上限。逻辑模型的确认令牌包含本次报价所用的线路和价格档。音频生成后按实测时长向上取整到秒结算，释放多余冻结积分。超出授权上限的账单进入人工核对，管理员确认结算时最多按原授权金额扣费。对已退款的音频恢复后确认补扣时，也使用实测时长，并校验原授权和作品预算。供应线路按秒计成本时，成本使用实测时长。
+
 单镜视频默认提示词在本地结合本集配置、所属段、场景与当前主体设定组装，不调用文本模型。有效段稿（含优先使用的手工改写）的镜头数量、顺序与时间边界能可靠对应时，只提取当前镜头的细节；否则使用当前镜头的起幅、动作、运镜、对白及声音规则。时间码从零开始，前后镜只作衔接背景，不执行其他镜头剧情；参考图编号按本次实际附件重新映射，未附图的主体只使用文字设定。读取、草稿报价、保存与执行共用同一组装规则，返回的 `config.prompt` 即当前有效稿。可选 `promptSourceHash` 非空表示未手改的自动稿，配置和段上下文变化后自动更新；空串表示手工稿（包括主动清空），省略的旧配置仅在正文为空或完全等于镜头原始运动描述时升级。客户端应保留此字段；它不作为授权凭据。手工改稿保留，重新组装不生成媒体、不扣费；有效正文变化会使旧执行快照失效。新视频任务回写时再次核对有效正文，在途上下文已变化的结果仅进入历史，用户仍可主动采用。视频配置可用 `cameraIntent` 单独保存手选运镜，包括「无运镜」。手选值优先；未设置时依次读取旧提示词中的运镜标记和分镜默认值。只更改运镜不将自动正文转为手工稿。
 | `GET /dramas/:id/cast` · `PATCH /dramas/:id/cast/:castId` | 读取 / 修改角色、道具与场景设定（名称、别名、外观、声线、锁定、`imagePrompt`、`imageStyleId/imageStyleName/imageStylePrompt`）；图片提示词最多 12000 字，独立风格字段分别最多 64/120/4000 字，三项全空表示沿用作品风格 |
 | `POST /dramas/:id/cast` | 手工新增 `{ kind, name, appearance?, description?, imagePrompt?, imageStyleId?, imageStyleName?, imageStylePrompt?, expectedRevision? }`，`kind=character/prop/scene`，名称 1–60 字；引导阶段必须提供当前制作版本，普通制作台可省略，保存后递增制作版本；返回 `{ cast }`，保存 `imageStatus=draft`，不创建生成任务 |
@@ -1437,7 +1441,7 @@ install 的 Base URL、协议、能力和成本全部从服务端快照读取，
 
 短剧是事实源与调度方，关联的画布是精修台：前端按需把设定、剧情段与成片投送到画布（节点 `metadata.dramaRef` 回指短剧对象），写回只经显式采用（设定参考图走 `PUT …/cast/:castId/image`，段视频走 `PUT …/segments/:index/video`），没有双向自动同步。
 
-- 预算口径：`GET /dramas/:id` 的 `production.spentMicrocredits` 是作品总花费，含关联画布上生成任务的花费；其中画布部分为 `canvasSpentMicrocredits`。画布花费在读取时汇总：任务的 `project_id` 是关联到作品的画布，按其计费订单下单金额计（已退款除外，在途订单也计入），口径与流水线一致。派发、继续制作与修改设置都按总花费判断预算；关联画布上创建生成任务时作品预算已用完返回 400 `drama_budget_exhausted`。
+- `GET /dramas/:id` 的 `production.spentMicrocredits` 是作品总花费，`canvasSpentMicrocredits` 是其中的关联画布部分。作品预算计入已结算实收和未结算冻结额。关联画布的建单或重试金额超过剩余预算时，返回 400 `drama_budget_exhausted`。
 - 资源保护：短剧表直接持有的资源（设定参考图、剧情段视频与尾帧、成片以及全部版本记录）在资源引用快照里记为 `短剧` 引用，素材“彻底删除”与 24 小时孤儿资源清理都会保留它们。
 - 段视图新增 `revision`（采用时的乐观并发校验）与 `videoSeconds`（当前视频进入成片的秒数，与成片时间线一致）。
 

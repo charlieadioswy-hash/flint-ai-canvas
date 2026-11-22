@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func newDramaExtractionSource(t *testing.T, step, status string) (*Service, *fakeDramaBackend, DramaSummary) {
@@ -470,6 +471,87 @@ func TestDramaAssetExtractionHonorsBudgetWithoutResumingProduction(t *testing.T)
 	job, _ = svc.repo.DramaJob(source.Project.ID, result.Job.ID)
 	if p.Status != model.DramaStatusCompleted || job.Status != model.DramaJobSucceeded || len(fake.requests) != 1 {
 		t.Fatalf("increased budget must only resume scope request: p=%+v job=%+v requests=%v", p, job, fake.byKind)
+	}
+}
+
+func TestDramaAssetExtractionBudgetWaitDoesNotBlockLaterKind(t *testing.T) {
+	svc, fake, source := newDramaExtractionSource(t, model.DramaGuideCompleted, model.DramaStatusCompleted)
+	projectID := source.Project.ID
+	budget := int64(100)
+	configured, err := svc.UpdateDramaSettings("usr-drama", projectID, UpdateDramaSettingsRequest{BudgetMicrocredits: &budget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: configured.Production.Revision, Kind: "scene", AllChapters: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: configured.Production.Revision, Kind: "prop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submit := svc.dramaTaskHook
+	svc.dramaTaskHook = func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error) {
+		metadata, _ := req.Input["metadata"].(map[string]any)
+		if metadataString(metadata, "dramaJobId") == first.Job.ID {
+			return nil, repository.ErrDramaBudgetInsufficient
+		}
+		return submit(userID, req, timeline)
+	}
+	runDramaTicks(t, svc, projectID, 2)
+	waiting, err := svc.repo.DramaJob(projectID, first.Job.ID)
+	if err != nil || waiting.Status != model.DramaJobQueued || waiting.Error != dramaBudgetPauseReason {
+		t.Fatalf("the over-budget check should wait: %+v, %v", waiting, err)
+	}
+	completed, err := svc.repo.DramaJob(projectID, second.Job.ID)
+	if err != nil || completed.Status != model.DramaJobSucceeded || len(fake.requests) != 1 {
+		t.Fatalf("the next kind should complete: %+v, %v", completed, err)
+	}
+	unlimited := int64(0)
+	if _, err := svc.UpdateDramaSettings("usr-drama", projectID, UpdateDramaSettingsRequest{BudgetMicrocredits: &unlimited}); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err = svc.repo.DramaJob(projectID, first.Job.ID)
+	if err != nil || waiting.Error != "" {
+		t.Fatalf("changing the budget should clear stale waiting: %+v, %v", waiting, err)
+	}
+}
+
+func TestDramaAssetExtractionBudgetWaitAllowsExplicitCastImage(t *testing.T) {
+	svc, fake, source := newDramaExtractionSource(t, model.DramaGuideCompleted, model.DramaStatusRunning)
+	projectID := source.Project.ID
+	extraction, err := svc.ExtractDramaAssets("usr-drama", projectID, ExtractDramaAssetsRequest{ExpectedRevision: source.Production.Revision, Kind: "scene", AllChapters: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cast := range []model.DramaCast{
+		{ID: "requested-cast", ProjectID: projectID, Kind: "character", Name: "明确排队", ImageStatus: model.DramaMediaQueued},
+		{ID: "unrequested-cast", ProjectID: projectID, Kind: "character", Name: "尚未请求"},
+	} {
+		if err := fake.db.Create(&cast).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	submit := svc.dramaTaskHook
+	svc.dramaTaskHook = func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error) {
+		metadata, _ := req.Input["metadata"].(map[string]any)
+		if metadataString(metadata, "dramaJobId") == extraction.Job.ID {
+			return nil, repository.ErrDramaBudgetInsufficient
+		}
+		return submit(userID, req, timeline)
+	}
+	runDramaTicks(t, svc, projectID, 2)
+	waiting, err := svc.repo.DramaJob(projectID, extraction.Job.ID)
+	if err != nil || waiting.Status != model.DramaJobQueued || waiting.Error != dramaBudgetPauseReason {
+		t.Fatalf("extraction should remain queued: %+v, %v", waiting, err)
+	}
+	requested, err := svc.repo.DramaCast(projectID, "requested-cast")
+	if err != nil || requested.ImageStatus != model.DramaMediaReady || requested.ImageResourceID == "" {
+		t.Fatalf("requested image should be generated: %+v, %v", requested, err)
+	}
+	unrequested, err := svc.repo.DramaCast(projectID, "unrequested-cast")
+	if err != nil || unrequested.ImageStatus != "" || unrequested.ImageResourceID != "" {
+		t.Fatalf("unrequested image should remain untouched: %+v, %v", unrequested, err)
 	}
 }
 

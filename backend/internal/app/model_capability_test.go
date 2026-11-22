@@ -459,8 +459,19 @@ func TestCapabilitySpecFromModelCapabilityConfigAllowsAudioWithoutConfig(t *test
 	if err != nil {
 		t.Fatalf("audio projection error = %v", err)
 	}
-	if spec.Capability != "audio" || len(spec.Inputs) != 0 || len(spec.Options) != 0 {
+	if spec.Capability != "audio" || len(spec.Inputs) != 0 || len(spec.Options) != 4 {
 		t.Fatalf("audio projection = %#v", spec)
+	}
+}
+
+func TestCapabilitySpecAudioExplicitOptionsSurviveDecoding(t *testing.T) {
+	spec, err := DecodeCapabilitySpec(`{"version":1,"capability":"audio","audioOptionsExplicit":true}`)
+	if err != nil || !spec.AudioOptionsExplicit || len(spec.Options) != 0 {
+		t.Fatalf("explicitly disabled audio options were restored: %#v, %v", spec, err)
+	}
+	legacy, err := DecodeCapabilitySpec(`{"version":1,"capability":"audio","options":{}}`)
+	if err != nil || !legacy.AudioOptionsExplicit || len(legacy.Options) != 4 {
+		t.Fatalf("legacy audio options were not restored: %#v, %v", legacy, err)
 	}
 }
 

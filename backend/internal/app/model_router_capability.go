@@ -30,13 +30,14 @@ type CapabilityImageSize struct {
 }
 
 type CapabilitySpec struct {
-	ImageParameters []protocol.ImageParameter   `json:"imageParameters"`
-	Version         int                         `json:"version"`
-	Capability      string                      `json:"capability"`
-	Operations      []string                    `json:"operations,omitempty"`
-	Inputs          map[string]InputConstraint  `json:"inputs,omitempty"`
-	Options         map[string]OptionConstraint `json:"options,omitempty"`
-	ImageSize       *CapabilityImageSize        `json:"imageSize,omitempty"`
+	ImageParameters      []protocol.ImageParameter   `json:"imageParameters"`
+	Version              int                         `json:"version"`
+	Capability           string                      `json:"capability"`
+	Operations           []string                    `json:"operations,omitempty"`
+	Inputs               map[string]InputConstraint  `json:"inputs,omitempty"`
+	Options              map[string]OptionConstraint `json:"options,omitempty"`
+	ImageSize            *CapabilityImageSize        `json:"imageSize,omitempty"`
+	AudioOptionsExplicit bool                        `json:"audioOptionsExplicit,omitempty"`
 }
 
 type InputConstraint struct {
@@ -52,12 +53,14 @@ type OptionConstraint struct {
 }
 
 type ModelRequestIntent struct {
-	Capability       string                    `json:"capability"`
-	Operation        string                    `json:"operation,omitempty"`
-	Inputs           map[string]int            `json:"inputs,omitempty"`
-	Options          map[string]any            `json:"options,omitempty"`
-	ProviderOptions  map[string]map[string]any `json:"providerOptions,omitempty"`
-	styleProfileJSON string
+	Capability          string                    `json:"capability"`
+	Operation           string                    `json:"operation,omitempty"`
+	Inputs              map[string]int            `json:"inputs,omitempty"`
+	Options             map[string]any            `json:"options,omitempty"`
+	ProviderOptions     map[string]map[string]any `json:"providerOptions,omitempty"`
+	styleProfileJSON    string
+	audioBillingSeconds int64
+	audioRouteKey       string
 	// ReferenceVideoDurationsMs 仅用于报价：按顺序给出参考视频时长，长度须等于 inputs.video。
 	// 真实任务不读取它，按秒计费的参考视频时长始终由后端实测。
 	ReferenceVideoDurationsMs []int64 `json:"referenceVideoDurationsMs,omitempty"`
@@ -70,8 +73,15 @@ func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, oper
 		capability = capabilityFromTaskType(taskType)
 	}
 	intent := ModelRequestIntent{Capability: capability, Operation: strings.TrimSpace(operation), Inputs: map[string]int{}, Options: map[string]any{}}
+	if capability == "audio" {
+		config, _ := input["config"].(map[string]any)
+		intent.audioBillingSeconds = requestedBillingQuantity(capability, config)
+	}
 	if metadata, ok := input["metadata"].(map[string]any); ok {
 		intent.styleProfileJSON = metadataString(metadata, "styleProfileJson")
+		if source := metadataString(metadata, "source"); capability == "audio" && (source == "drama_shot_media" || source == "drama_cast_assistance") {
+			intent.audioRouteKey = stringValue(input["prompt"])
+		}
 		if namespaces, ok := metadata["providerOptions"].(map[string]any); ok {
 			if options, ok := namespaces["liblib-image"].(map[string]any); ok {
 				if networks, present := options["additionalNetwork"]; present {
@@ -291,6 +301,15 @@ func NormalizeCapabilitySpec(spec CapabilitySpec) (CapabilitySpec, error) {
 			return spec, BadAuthRequest("能力参数 step 必须大于 0")
 		}
 		normalizedOptions[name] = constraint
+	}
+	if spec.Capability == "audio" {
+		// Revisions written before explicit audio options used an empty map.
+		if !spec.AudioOptionsExplicit && len(normalizedOptions) == 0 {
+			for _, name := range []string{"audioVoice", "audioFormat", "audioSpeed", "audioInstructions"} {
+				normalizedOptions[name] = OptionConstraint{Values: []any{"*"}}
+			}
+		}
+		spec.AudioOptionsExplicit = true
 	}
 	spec.Options = normalizedOptions
 	if spec.Capability == "image" && spec.ImageParameters != nil {

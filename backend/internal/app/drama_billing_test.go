@@ -1,12 +1,15 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // seedDramaBillingOrder 在 taskProjectID 下建一条带计费订单的已完成任务；taskProjectID 是作品 ID（流水线）或画布 ID（精修）。
@@ -120,4 +123,271 @@ func mustDramaProduction(t *testing.T, svc *Service, project string) *model.Dram
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestDramaTaskReservationRejectsOrdersAboveRemainingBudget(t *testing.T) {
+	s, _, _ := shotMediaFixture(t)
+	const user, project = "user", "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	jobs := []model.DramaJob{
+		{ID: "budget-job-first", ProjectID: project, Kind: model.DramaJobCastImage, Status: model.DramaJobQueued},
+		{ID: "budget-job-second", ProjectID: project, Kind: model.DramaJobCastImage, Status: model.DramaJobQueued},
+	}
+	if err := s.repo.CreateDramaJobs(jobs); err != nil {
+		t.Fatal(err)
+	}
+	persist := func(job *model.DramaJob, amount int64) error {
+		task := &model.Task{ID: "task-" + job.ID, UserID: user, ProjectID: project, Type: "canvas_image", Status: model.TaskStatusQueued}
+		order := &model.BillingOrder{ID: "order-" + job.ID, UserID: user, TaskID: task.ID, IdempotencyKey: task.ID, AmountMicrocredits: amount, Status: model.BillingStatusReserved}
+		_, err := s.persistDramaTask(job, task, order)
+		return err
+	}
+	if err := persist(&jobs[0], 60); err != nil {
+		t.Fatal(err)
+	}
+	if err := persist(&jobs[1], 60); !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		t.Fatalf("second reservation = %v, want insufficient production budget", err)
+	}
+	pending, err := s.repo.DramaJobsByStatus(project, model.DramaJobQueued)
+	if err != nil || len(pending) != 1 || pending[0].ID != jobs[1].ID || pending[0].TaskID != "" {
+		t.Fatalf("blocked job did not stay queued: %+v, %v", pending, err)
+	}
+	totals, err := s.dramaBillingTotals(mustDramaProduction(t, s, project))
+	if err != nil || totals.HeldMicrocredits() != 60 {
+		t.Fatalf("rejected reservation changed holds: %+v, %v", totals, err)
+	}
+	if err := persist(&jobs[1], 40); err != nil {
+		t.Fatalf("reservation equal to remaining budget failed: %v", err)
+	}
+}
+
+func TestDramaBudgetGuardsRouteReplacementAndTaskCenterRetry(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	const user, project = "user", "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	job := model.DramaJob{ID: "budget-route-job", ProjectID: project, Status: model.DramaJobQueued, Kind: model.DramaJobSegmentPrompt}
+	if err := s.repo.CreateDramaJobs([]model.DramaJob{job}); err != nil {
+		t.Fatal(err)
+	}
+	task := &model.Task{ID: "budget-route-task", UserID: user, ProjectID: project, Status: model.TaskStatusQueued, Type: "canvas_text", RouteID: "first", InputJSON: "{}"}
+	order := &model.BillingOrder{ID: "budget-route-order", UserID: user, TaskID: task.ID, IdempotencyKey: task.ID, AmountMicrocredits: 60, Status: model.BillingStatusReserved}
+	if _, err := s.persistDramaTask(&job, task, order); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(task).Update("status", model.TaskStatusRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+	replace := func(amount int64) error {
+		newOrder := &model.BillingOrder{UserID: user, TaskID: task.ID, AmountMicrocredits: amount}
+		return s.repo.SwitchTaskLogicalRoute(task.ID, "first", "fallback", "{}", order.ID, "channel", "fallback-model", newOrder, model.BillingCostSnapshot{})
+	}
+	if err := replace(120); !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		t.Fatalf("over-budget replacement = %v", err)
+	}
+	saved, err := s.repo.Task(task.ID)
+	if err != nil || saved.RouteID != "first" {
+		t.Fatalf("rejected replacement changed the route: %+v, %v", saved, err)
+	}
+	if err := replace(100); err != nil {
+		t.Fatalf("replacement equal to remaining budget: %v", err)
+	}
+	if err := db.Model(task).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.RefundBillingOrder(order.ID, "测试任务失败"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.DramaJob{}).Where("id = ?", job.ID).Update("task_id", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(task).Update("input_json", `{"metadata":{"source":"drama_production","domainProjectId":"drama-project"}}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RetryTask(user, task.ID); err == nil || !strings.Contains(err.Error(), "作品制作队列") {
+		t.Fatalf("generic retry should direct the user to the production queue: %v", err)
+	}
+	saved, err = s.repo.Task(task.ID)
+	if err != nil || saved.Status != model.TaskStatusFailed || saved.BillingOrderID != order.ID {
+		t.Fatalf("rejected generic retry changed the task: %+v, %v", saved, err)
+	}
+}
+
+func TestDramaBudgetGuardsLinkedCanvasRouteReplacement(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	const user, project = "user", "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	canvas := model.CanvasProject{ID: "linked-canvas", ProjectID: project, UserID: user}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "canvas-route-task", UserID: user, ProjectID: canvas.ID, Status: model.TaskStatusRunning, RouteID: "initial", BillingOrderID: "canvas-order"}
+	order := model.BillingOrder{ID: task.BillingOrderID, UserID: user, TaskID: task.ID, IdempotencyKey: task.ID, AmountMicrocredits: 60, Status: model.BillingStatusReserved}
+	if err := s.repo.CreateTaskWithCreditReservation(&task, &order, 8); err != nil {
+		t.Fatal(err)
+	}
+	replacement := model.BillingOrder{UserID: user, TaskID: task.ID, AmountMicrocredits: 120}
+	err := s.repo.SwitchTaskLogicalRoute(task.ID, "initial", "fallback", "{}", order.ID, "channel", "model", &replacement, model.BillingCostSnapshot{})
+	if !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		t.Fatalf("linked canvas switch did not check production budget: %v", err)
+	}
+}
+
+func TestDramaBudgetGuardsLinkedCanvasAdmissionAndRetry(t *testing.T) {
+	s, db, _ := shotAudioFixture(t)
+	const user, project, canvasID = "user", "drama-project", "linked-canvas"
+	if err := db.Create(&model.CanvasProject{ID: canvasID, ProjectID: project, UserID: user}).Error; err != nil {
+		t.Fatal(err)
+	}
+	req := CreateTaskRequest{Type: "canvas_audio", Operation: "audio", ProjectID: canvasID, Prompt: "你好", Input: map[string]any{
+		"mode": "audio", "prompt": "你好", "config": map[string]any{"channelId": "channel", "model": "gpt-4o-mini-tts", "audioVoice": "alloy"},
+	}}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateTask(user, req); err == nil || !strings.Contains(err.Error(), "剩余预算不足") {
+		t.Fatalf("25 microcredit order against a budget of 10: %v", err)
+	}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 25}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateTask(user, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(task).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.RefundBillingOrder(task.BillingOrderID, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RetryTask(user, task.ID); err == nil || !strings.Contains(err.Error(), "剩余预算不足") {
+		t.Fatalf("over-budget retry: %v", err)
+	}
+	saved, err := s.repo.Task(task.ID)
+	if err != nil || saved.Status != model.TaskStatusFailed || saved.BillingOrderID != task.BillingOrderID {
+		t.Fatalf("rejected retry changed task: %+v, %v", saved, err)
+	}
+}
+
+func TestDramaBudgetRejectsTokenSettlementSupplement(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	const project = "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "token-task", UserID: "user", ProjectID: project, Type: "canvas_text", Status: model.TaskStatusSucceeded}
+	order := model.BillingOrder{ID: "token-order", UserID: "user", TaskID: task.ID, IdempotencyKey: "token-order", Capability: "text", BillingMode: "token", OutputTokenPriceMicrocredits: 1_000_000, MultiplierBasisPoints: 10_000, AmountMicrocredits: 60, Status: model.BillingStatusRunning}
+	if err := s.repo.CreateTaskWithCreditReservation(&task, &order, 8); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ApiCallLog{ID: "token-usage", BillingOrderID: order.ID, RequestKind: "generate", Billable: true, Status: model.ApiCallStatusSucceeded, UsageAvailable: true, OutputTokens: 120}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.SettleBillingOrder(order.ID, ""); !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		t.Fatalf("token supplement should be blocked: %v", err)
+	}
+	saved, err := s.repo.BillingOrder(order.ID)
+	if err != nil || saved.Status == model.BillingStatusSettled || saved.OutputTokens != 120 || saved.ReservedAmountMicrocredits != 60 {
+		t.Fatalf("expected pending order and retained usage: %+v, %v", saved, err)
+	}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 120}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.SettleBillingOrder(order.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	saved, err = s.repo.BillingOrder(order.ID)
+	if err != nil || saved.Status != model.BillingStatusSettled || saved.ActualAmountMicrocredits != 120 {
+		t.Fatalf("expected measured charge after top-up: %+v, %v", saved, err)
+	}
+}
+
+func TestDramaBudgetPauseSkipsOutdatedBudget(t *testing.T) {
+	s, _, _ := shotMediaFixture(t)
+	const project = "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 10, "status": model.DramaStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	run := &dramaRun{s: s, production: mustDramaProduction(t, s, project)}
+	_ = run.pauseForBudget()
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.saveProgress(model.DramaStatusRunning, true); err != nil {
+		t.Fatal(err)
+	}
+	current := mustDramaProduction(t, s, project)
+	if current.Status != model.DramaStatusRunning || current.PauseReason != "" {
+		t.Fatalf("outdated pause changed production: %+v", current)
+	}
+}
+
+func TestDramaBudgetPausesAndResumesPromptCondensation(t *testing.T) {
+	s, db, _ := shotMediaFixture(t)
+	const user, project = "user", "drama-project"
+	settings := DramaSettings{Models: DramaModels{Text: DramaModelChoice{ChannelID: "channel", ModelKey: "text-test"}}}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 50, "status": model.DramaStatusRunning, "settings_json": encodeDramaSettings(settings)}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := json.Marshal(map[string]string{"text": strings.Repeat("镜头缓缓移动，主角穿过大厅。", 25)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(dramaRevisionPayload{Revision: 1, MaxChars: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "overlong-segment-prompt", UserID: user, ProjectID: project, Type: "canvas_text", Status: model.TaskStatusSucceeded, ResultJSON: string(result)}
+	segment := model.DramaSegment{ID: "segment-to-condense", ProjectID: project, EpisodeID: "episode", Revision: 1, PromptStatus: model.DramaMediaRunning}
+	job := model.DramaJob{ID: "condense-job", ProjectID: project, EpisodeID: segment.EpisodeID, ShotID: segment.ID, TaskID: task.ID, Kind: model.DramaJobSegmentPrompt, Status: model.DramaJobRunning, PayloadJSON: string(payload)}
+	for _, row := range []any{&task, &segment, &job} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.tickDrama(mustDramaProduction(t, s, project)); err != nil {
+		t.Fatal(err)
+	}
+	paused := mustDramaProduction(t, s, project)
+	pending, err := s.repo.DramaJob(project, job.ID)
+	if err != nil || paused.Status != model.DramaStatusPaused || pending.Status != model.DramaJobRunning || pending.TaskID != task.ID || pending.PayloadJSON != string(payload) {
+		t.Fatalf("budget pause must retain the original result and continuation: %+v, %+v, %v", paused, pending, err)
+	}
+	budget := int64(100)
+	if _, err := s.UpdateDramaSettings(user, project, UpdateDramaSettingsRequest{BudgetMicrocredits: &budget}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.tickDrama(mustDramaProduction(t, s, project)); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := s.repo.DramaJob(project, job.ID)
+	if err != nil || waiting.TaskID != task.ID || waiting.PayloadJSON != string(payload) || mustDramaProduction(t, s, project).Status != model.DramaStatusPaused {
+		t.Fatalf("saving budget alone changed the paused continuation: %+v, %v", waiting, err)
+	}
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"status": model.DramaStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	resumed := &dramaRun{s: s, production: mustDramaProduction(t, s, project), project: &model.Project{ID: project, UserID: user}, settings: settings}
+	for range 2 {
+		if err := resumed.syncJobs(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	completed, err := s.repo.DramaJob(project, job.ID)
+	var tasks int64
+	if countErr := db.Model(&model.Task{}).Where("project_id = ?", project).Count(&tasks).Error; countErr != nil {
+		t.Fatal(countErr)
+	}
+	if err != nil || completed.TaskID == task.ID || completed.Status != model.DramaJobRunning || tasks != 2 {
+		t.Fatalf("expected exactly one continuation of the original task: %+v, tasks=%d, %v", completed, tasks, err)
+	}
 }

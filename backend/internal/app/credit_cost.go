@@ -53,6 +53,9 @@ func billingCreditCost(order model.BillingOrder) (*int64, error) {
 		return nil, nil
 	}
 	cost := order.CostPricing
+	if order.Capability == "audio" && order.CostBillingMode == "per_second" && order.CostQuantity <= 0 {
+		return nil, nil
+	}
 	var amount int64
 	var err error
 	switch order.CostBillingMode {

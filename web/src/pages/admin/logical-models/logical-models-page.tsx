@@ -743,7 +743,7 @@ function logicalModelPayload(values: LogicalModelFormValues, sourceSpecs: Capabi
 }
 
 function hasCapabilityRules(spec?: CapabilitySpec) {
-    return Boolean(spec && ((spec.operations?.length || 0) > 0 || Object.keys(spec.inputs || {}).length > 0 || Object.keys(spec.options || {}).length > 0));
+    return Boolean(spec && (spec.audioOptionsExplicit || (spec.operations?.length || 0) > 0 || Object.keys(spec.inputs || {}).length > 0 || Object.keys(spec.options || {}).length > 0));
 }
 
 function simulationColumns(): ColumnsType<RouteSimulationResult["candidates"][number]> {

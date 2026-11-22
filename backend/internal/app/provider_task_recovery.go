@@ -290,6 +290,16 @@ func (s *Service) settleRecoveredBilling(task *model.Task, providerRequestID str
 	if order.Status == model.BillingStatusSettled {
 		return nil
 	}
+	if order.Capability == "audio" && (order.BillingMode == "per_second" || order.CostBillingMode == "per_second") {
+		durationMs, err := s.AudioOutputDurationMs(*task)
+		if err != nil && order.BillingMode == "per_second" {
+			return err
+		}
+		if order.Status == model.BillingStatusRefunded {
+			return s.repo.RestoreRefundedAudioBillingOrder(order.ID, providerRequestID, durationMs)
+		}
+		return billing.SettleBillingWithAudioDuration(order.ID, providerRequestID, durationMs)
+	}
 	if order.Status == model.BillingStatusRefunded {
 		return billing.RestoreRefundedBilling(task.BillingOrderID, providerRequestID)
 	}

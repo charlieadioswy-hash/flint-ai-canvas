@@ -22,7 +22,7 @@ export function readCastImageOptions(value?: string): DramaCastImageOptions {
     )
         throw new Error("图片配置格式错误");
     for (const key of ["subjectReferenceIds", "styleReferenceIds"] as const) {
-        if (parsed[key] !== undefined && (!Array.isArray(parsed[key]) || parsed[key].some((id: unknown) => typeof id !== "string"))) throw new Error("参考图片配置格式错误");
+        if (parsed[key] != null && (!Array.isArray(parsed[key]) || parsed[key].some((id: unknown) => typeof id !== "string"))) throw new Error("参考图片配置格式错误");
     }
     return { model: parsed.model || {}, ratio: parsed.ratio || "", resolution: parsed.resolution || "", subjectReferenceIds: parsed.subjectReferenceIds || [], styleReferenceIds: parsed.styleReferenceIds || [] };
 }
@@ -34,6 +34,42 @@ export function castImageOptionsDraft(value?: string): CastImageOptionsDraft {
     } catch {
         return { options: readCastImageOptions(), corrupt: true };
     }
+}
+
+export function mergeCastImageOptions(previous: DramaCastImageOptions, draft: DramaCastImageOptions, current: DramaCastImageOptions): DramaCastImageOptions {
+    const modelChanged = dramaChoiceKey(previous.model) !== dramaChoiceKey(draft.model);
+    const mergeReferences = (key: "subjectReferenceIds" | "styleReferenceIds") => {
+        if (current[key].length === previous[key].length && current[key].every((id, index) => id === previous[key][index])) return [...draft[key]];
+        const before = new Set(previous[key]);
+        const edited = new Set(draft[key]);
+        const retained = current[key].filter((id) => !before.has(id) || edited.has(id));
+        const shared = new Set(retained.filter((id) => before.has(id)));
+        const draftOrder = draft[key].filter((id) => shared.has(id));
+        const previousOrder = previous[key].filter((id) => shared.has(id));
+        if (draftOrder.some((id, index) => id !== previousOrder[index])) {
+            // Preserve new remote entries in place while moving references reordered locally.
+            let index = 0;
+            for (let i = 0; i < retained.length; i++) {
+                if (shared.has(retained[i])) retained[i] = draftOrder[index++];
+            }
+        }
+        const added = draft[key].filter((id) => !before.has(id));
+        return [...new Set([...retained, ...added])];
+    };
+    return {
+        model: modelChanged ? draft.model : current.model,
+        ratio: modelChanged || draft.ratio !== previous.ratio ? draft.ratio : current.ratio,
+        resolution: modelChanged || draft.resolution !== previous.resolution ? draft.resolution : current.resolution,
+        subjectReferenceIds: mergeReferences("subjectReferenceIds"),
+        styleReferenceIds: mergeReferences("styleReferenceIds"),
+    };
+}
+
+export function castImageReferenceError(options: DramaCastImageOptions) {
+    const references = [...options.subjectReferenceIds, ...options.styleReferenceIds];
+    if (references.length > 8) return "主体和风格参考合计最多 8 张，请移除多余的参考图";
+    if (new Set(references).size !== references.length) return "同一张图同时出现在主体和风格参考中，请移除其中一张";
+    return "";
 }
 
 export function resolveCastImageSpecifications(kind: DramaCast["kind"], options: Pick<DramaCastImageOptions, "model" | "ratio" | "resolution">, settings: DramaSettings | undefined, models: readonly DramaModelOption[] | undefined) {
@@ -66,7 +102,7 @@ export function CastImageOptions({
     onChanged: () => void;
     onDirtyChange?: (dirty: boolean) => void;
     value?: CastImageOptionsDraft;
-    onChange?: (draft: CastImageOptionsDraft) => void;
+    onChange?: (draft: SetStateAction<CastImageOptionsDraft>) => void;
 }) {
     const userId = useUserStore((state) => state.user?.id || "");
     return <CastImageOptionsSession key={`${userId}:${projectId}:${episodeId || ""}:${cast.id}:${value ? "controlled" : cast.imageOptionsJson || ""}`} {...{ projectId, episodeId, cast, disabled, onChanged, onDirtyChange, userId, value, onChange }} />;
@@ -83,11 +119,10 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
     });
     const options = value?.options ?? localOptions;
     const corrupt = value?.corrupt ?? localCorrupt;
-    const setCorrupt = (corrupt: boolean) => (value ? onChange?.({ options, corrupt }) : setLocalCorrupt(corrupt));
-    const setOptions = (next: SetStateAction<DramaCastImageOptions>) => {
-        const options = typeof next === "function" ? next(value?.options ?? localOptions) : next;
-        if (value) onChange?.({ options, corrupt });
-        else setLocalOptions(options);
+    const setCorrupt = (corrupt: boolean) => (value ? onChange?.((current) => ({ ...current, corrupt })) : setLocalCorrupt(corrupt));
+    const setOptions = (update: (options: DramaCastImageOptions) => DramaCastImageOptions) => {
+        if (value) onChange?.((current) => ({ ...current, options: update(current.options) }));
+        else setLocalOptions(update);
     };
     const initial = useRef(JSON.stringify(options));
     const [saving, setSaving] = useState(false);
@@ -104,6 +139,8 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
         enabled: Boolean(episodeId && summary.data),
     });
     const disabled = inputDisabled || Boolean(episodeId && (!episodeSettings.data || episodeSettings.isError));
+    const pickerState = useRef({ options, inputDisabled, picker });
+    pickerState.current = { options, inputDisabled, picker };
     const catalog = useDramaModelCatalog();
     const current = () => mounted.current && (useUserStore.getState().user?.id || "") === userId;
     useEffect(() => {
@@ -187,11 +224,11 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                             showPrice={false}
                             value={effectiveModel}
                             onChange={(model) => {
-                                if (!disabled && !savingRef.current) setOptions({ ...options, model, ratio: "", resolution: "" });
+                                if (!disabled && !savingRef.current) setOptions((current) => ({ ...current, model, ratio: "", resolution: "" }));
                             }}
                         />
                     </fieldset>
-                    <Button size="small" disabled={disabled || saving || !dramaChoiceKey(options.model)} onClick={() => setOptions({ ...options, model: {}, ratio: "", resolution: "" })}>
+                    <Button size="small" disabled={disabled || saving || !dramaChoiceKey(options.model)} onClick={() => setOptions((current) => ({ ...current, model: {}, ratio: "", resolution: "" }))}>
                         使用{configurationScope}模型
                     </Button>
                 </Field>
@@ -203,7 +240,7 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                             value={options.ratio}
                             labelRender={() => ratioLabel}
                             options={[{ value: "", label: inheritedRatio ? `${inheritedRatio}（${cast.kind === "character" ? `${configurationScope}配置` : "默认画幅"}）` : defaultRatioLabel }, ...ratios.map((value) => ({ value, label: value }))]}
-                            onChange={(ratio) => setOptions({ ...options, ratio })}
+                            onChange={(ratio) => setOptions((current) => ({ ...current, ratio }))}
                         />
                     </Field>
                     <Field label="分辨率">
@@ -216,7 +253,7 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                                 { value: "", label: defaultResolution ? `${defaultResolution.toUpperCase()}（${inheritedResolution ? `${configurationScope}配置` : "模型默认"}）` : defaultResolutionLabel },
                                 ...resolutions.map((value) => ({ value, label: value.toUpperCase() })),
                             ]}
-                            onChange={(resolution) => setOptions({ ...options, resolution })}
+                            onChange={(resolution) => setOptions((current) => ({ ...current, resolution }))}
                         />
                     </Field>
                 </div>
@@ -235,7 +272,7 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                                             icon={<X className="size-3" />}
                                             aria-label={`移除${label}参考 ${index + 1}`}
                                             disabled={disabled || saving}
-                                            onClick={() => setOptions({ ...options, [key]: options[key].filter((value) => value !== id) })}
+                                            onClick={() => setOptions((current) => ({ ...current, [key]: current[key].filter((value) => value !== id) }))}
                                         />
                                     </div>
                                 ))}
@@ -265,9 +302,11 @@ function CastImageOptionsSession({ projectId, episodeId, cast, disabled: inputDi
                     referenceGroup={picker === "subject" ? "主体" : "风格"}
                     onClose={() => setPicker(undefined)}
                     onPick={async (id) => {
-                        if (!current() || disabled || savingRef.current) throw new Error("当前状态已变化，请重新选择");
-                        if ([...options.subjectReferenceIds, ...options.styleReferenceIds].includes(id)) throw new Error("这张图已在参考组中");
-                        if (referenceCount >= 8) throw new Error("参考图片最多 8 张");
+                        const latest = pickerState.current;
+                        if (!current() || latest.inputDisabled || latest.picker !== picker) throw new Error("当前状态已变化，请重新选择");
+                        const references = [...latest.options.subjectReferenceIds, ...latest.options.styleReferenceIds];
+                        if (references.includes(id)) throw new Error("这张图已在参考组中");
+                        if (references.length >= 8) throw new Error("参考图片最多 8 张");
                         const key = picker === "subject" ? "subjectReferenceIds" : "styleReferenceIds";
                         setOptions((value) => ({ ...value, [key]: [...value[key], id] }));
                     }}

@@ -324,19 +324,29 @@ func (r *Repository) MarkBillingUncertain(id string, errorText string) error {
 }
 
 func (r *Repository) SettleBillingOrder(id string, providerRequestID string) error {
-	return r.settleBillingOrder(id, providerRequestID, nil)
+	return r.settleBillingOrder(id, providerRequestID, nil, false)
 }
 
 func (r *Repository) SettleBillingOrderWithAudioDuration(id string, providerRequestID string, durationMs int64) error {
-	return r.settleBillingOrder(id, providerRequestID, &durationMs)
+	return r.settleBillingOrder(id, providerRequestID, &durationMs, false)
 }
 
-func (r *Repository) settleBillingOrder(id string, providerRequestID string, audioDurationMs *int64) error {
+// ResolveAudioBillingOrder settles measured audio after an administrator confirms it.
+func (r *Repository) ResolveAudioBillingOrder(id string, providerRequestID string, durationMs int64) error {
+	return r.settleBillingOrder(id, providerRequestID, &durationMs, true)
+}
+
+func (r *Repository) settleBillingOrder(id string, providerRequestID string, audioDurationMs *int64, resolveAudio bool) error {
 	var observedUsage *BillingUsage
 	var observedUsageSource string
 	var observedActual int64
 	observedActualAvailable := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		production, err := repo.lockBillingDramaProduction(id, false)
+		if err != nil {
+			return err
+		}
 		var order model.BillingOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
 			return err
@@ -373,6 +383,9 @@ func (r *Repository) settleBillingOrder(id string, providerRequestID string, aud
 			}
 			observedActual = actual
 			observedActualAvailable = true
+			if err := repo.CheckDramaBudget(production, actual-order.AmountMicrocredits); err != nil {
+				return err
+			}
 			refund := max(reserved-actual, int64(0))
 			supplement := max(actual-reserved, int64(0))
 			updated := tx.Model(&model.CreditAccount{}).
@@ -460,7 +473,13 @@ func (r *Repository) settleBillingOrder(id string, providerRequestID string, aud
 				return err
 			}
 			if billingChargeLimitApplies(order) && actual > order.ChargeLimitMicrocredits {
-				return errors.New(mediaLabel + "实际费用超过本次授权上限，需人工核对")
+				if !resolveAudio || order.Capability != "audio" {
+					return errors.New(mediaLabel + "实际费用超过本次授权上限，需人工核对")
+				}
+				actual = order.ChargeLimitMicrocredits
+			}
+			if err := repo.CheckDramaBudget(production, actual-order.AmountMicrocredits); err != nil {
+				return err
 			}
 			reserved := order.ReservedAmountMicrocredits
 			if reserved <= 0 {
@@ -499,6 +518,9 @@ func (r *Repository) settleBillingOrder(id string, providerRequestID string, aud
 				return err
 			}
 			note := mediaLabel + "按实际输出时长结算"
+			if resolveAudio {
+				note = "人工核对音频实测时长，扣费受原授权上限约束"
+			}
 			if supplement > 0 {
 				note += "，已补扣差额"
 			}
@@ -538,6 +560,12 @@ func (r *Repository) settleBillingOrder(id string, providerRequestID string, aud
 		}
 		now := time.Now()
 		orderUpdates := map[string]any{"status": model.BillingStatusSettled, "actual_amount_microcredits": order.AmountMicrocredits, "settled_at": &now, "updated_at": now}
+		if order.Capability == "audio" && order.CostBillingMode == "per_second" {
+			orderUpdates["cost_quantity"] = int64(0)
+			if audioDurationMs != nil && *audioDurationMs > 0 {
+				orderUpdates["cost_quantity"] = (*audioDurationMs + 999) / 1000
+			}
+		}
 		if providerRequestID != "" {
 			orderUpdates["provider_request_id"] = providerRequestID
 		}
@@ -605,7 +633,20 @@ func audioBillingAmount(unitPrice int64, quantity int64, multiplierBPS int64) (i
 // The conditional refunded -> settled update keeps concurrent/repeated manual
 // recovery requests idempotent.
 func (r *Repository) RestoreRefundedBillingOrder(id string, providerRequestID string) error {
+	return r.restoreRefundedBillingOrder(id, providerRequestID, nil)
+}
+
+func (r *Repository) RestoreRefundedAudioBillingOrder(id string, providerRequestID string, durationMs int64) error {
+	return r.restoreRefundedBillingOrder(id, providerRequestID, &durationMs)
+}
+
+func (r *Repository) restoreRefundedBillingOrder(id string, providerRequestID string, audioDurationMs *int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		production, err := repo.lockBillingDramaProduction(id, true)
+		if err != nil {
+			return err
+		}
 		var order model.BillingOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", id).Error; err != nil {
 			return err
@@ -623,6 +664,21 @@ func (r *Repository) RestoreRefundedBillingOrder(id string, providerRequestID st
 		}
 
 		actual := order.AmountMicrocredits
+		var measuredSeconds int64
+		if order.Capability == "audio" {
+			if audioDurationMs != nil && *audioDurationMs > 0 {
+				measuredSeconds = (*audioDurationMs + 999) / 1000
+			}
+			if order.BillingMode == "per_second" {
+				if measuredSeconds <= 0 {
+					return errors.New("音频实际时长不可用，无法按秒恢复结算")
+				}
+				actual, err = audioBillingAmount(order.UnitPriceMicrocredits, measuredSeconds, order.MultiplierBasisPoints)
+				if err != nil {
+					return err
+				}
+			}
+		}
 		var usage *BillingUsage
 		var usageSource string
 		priceRule := 0
@@ -647,6 +703,9 @@ func (r *Repository) RestoreRefundedBillingOrder(id string, providerRequestID st
 		}
 		if actual < 0 {
 			return errors.New("invalid restored billing amount")
+		}
+		if err := repo.CheckDramaBudget(production, actual); err != nil {
+			return err
 		}
 
 		updated := tx.Model(&model.CreditAccount{}).
@@ -677,6 +736,14 @@ func (r *Repository) RestoreRefundedBillingOrder(id string, providerRequestID st
 			"error":                        "",
 			"updated_at":                   now,
 		}
+		if order.Capability == "audio" {
+			if order.BillingMode == "per_second" {
+				orderUpdates["quantity"] = measuredSeconds
+			}
+			if order.CostBillingMode == "per_second" {
+				orderUpdates["cost_quantity"] = measuredSeconds
+			}
+		}
 		if providerRequestID != "" {
 			orderUpdates["provider_request_id"] = providerRequestID
 		}
@@ -704,7 +771,7 @@ func (r *Repository) RestoreRefundedBillingOrder(id string, providerRequestID st
 			consumeNote += "；按提交时的视频 Token 公式快照结算"
 		}
 		if chargeCapped {
-			consumeNote += "；已按本轮 Agent 硬上限结算"
+			consumeNote += "；已按原授权上限结算"
 		}
 		return tx.Create(&model.CreditLedgerEntry{
 			ID:                         newRepositoryID(),

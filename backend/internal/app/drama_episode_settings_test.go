@@ -187,7 +187,11 @@ func TestDramaEpisodeSettingsRejectQueuedAndRunningMedia(t *testing.T) {
 				case "shot":
 					err = fake.db.Create(&model.DramaShotMedia{ID: "busy-shot", ProjectID: projectID, EpisodeID: detail.Episode.ID, ShotID: detail.Shots[0].ID, Kind: "image", Status: status}).Error
 				case "storyboard":
-					err = fake.db.Create(&model.DramaStoryboardBoard{ID: "busy-board", ProjectID: projectID, EpisodeID: detail.Episode.ID, Status: status}).Error
+					task := model.Task{ID: "busy-board-task", ProjectID: projectID, UserID: "usr-drama", Type: "canvas_image", Status: model.TaskStatus(status)}
+					if err := fake.db.Create(&task).Error; err != nil {
+						t.Fatal(err)
+					}
+					err = fake.db.Create(&model.DramaStoryboardBoard{ID: "busy-board", ProjectID: projectID, EpisodeID: detail.Episode.ID, TaskID: task.ID, Status: status}).Error
 				case "cast":
 					casts, _ := svc.repo.DramaCasts(projectID)
 					err = fake.db.Model(&model.DramaCast{}).Where("id = ?", casts[0].ID).Updates(map[string]any{"image_episode_id": detail.Episode.ID, "image_status": status}).Error

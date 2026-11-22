@@ -33,6 +33,8 @@ const (
 	dramaCreditsReason     = "积分不足，充值后点击继续制作"
 )
 
+var errDramaContinuationPaused = errors.New("制作已暂停，继续制作后自动精简")
+
 var dramaWake = struct {
 	once sync.Once
 	ch   chan struct{}
@@ -162,14 +164,14 @@ func (s *Service) tickDrama(productionRow *model.DramaProduction) error {
 		if err := run.syncJobs(); err != nil {
 			return err
 		}
-		return s.repo.SaveDramaProductionProgress(run.production, status, run.production.Status != status)
+		return run.saveProgress(status, run.production.Status != status)
 	}
 	previousStage, previousBible := run.production.Stage, run.production.BibleJSON
 	if err := run.syncJobs(); err != nil {
 		return err
 	}
 	if run.production.Status != model.DramaStatusRunning {
-		return s.repo.SaveDramaProductionProgress(run.production, model.DramaStatusRunning, true)
+		return run.saveProgress(model.DramaStatusRunning, true)
 	}
 	if run.production.Stage != previousStage || run.production.BibleJSON != previousBible {
 		// 已收尾的文字任务不再回放，不能因后面的规划快照过期而丢失其作品进度。
@@ -183,6 +185,7 @@ func (s *Service) tickDrama(productionRow *model.DramaProduction) error {
 		return err
 	}
 	run.production.GuideStep, run.production.Revision = current.GuideStep, current.Revision
+	run.production.BudgetMicrocredits = current.BudgetMicrocredits
 	run.production.MediaRequestsOnly, run.production.AssetsReleased = current.MediaRequestsOnly, current.AssetsReleased
 	run.settings = parseDramaSettings(current.SettingsJSON)
 	if err := run.loadCasts(); err != nil {
@@ -201,11 +204,15 @@ func (s *Service) tickDrama(productionRow *model.DramaProduction) error {
 	}
 	now := time.Now()
 	run.production.LastTickAt = &now
-	return s.repo.SaveDramaProductionProgress(run.production, model.DramaStatusRunning, run.production.Status != model.DramaStatusRunning)
+	return run.saveProgress(model.DramaStatusRunning, run.production.Status != model.DramaStatusRunning)
 }
 
 // 入队与引导编辑共用作品行锁：先编辑则旧规划作废，先入队则编辑会发现文字任务。
 func (r *dramaRun) persistJobs() error {
+	return r.persistPlannedJobs(false)
+}
+
+func (r *dramaRun) persistPlannedJobs(allowBudgetWaitingExtraction bool) error {
 	return r.s.repo.Transaction(func(tx *repository.Repository) error {
 		current, err := tx.DramaProductionForUpdate(r.project.ID)
 		if err != nil {
@@ -213,7 +220,10 @@ func (r *dramaRun) persistJobs() error {
 		}
 		if scoped, err := tx.DramaAssetExtractionJobs(r.project.ID, model.DramaJobQueued, model.DramaJobRunning); err != nil {
 			return err
-		} else if len(scoped) > 0 {
+		} else if len(scoped) > 0 && (!allowBudgetWaitingExtraction || !dramaExtractionWaitingForBudget(scoped)) {
+			return repository.ErrDramaGuideChanged
+		}
+		if allowBudgetWaitingExtraction && current.Status != model.DramaStatusRunning {
 			return repository.ErrDramaGuideChanged
 		}
 		if (dramaGuideActive(current) || dramaGuideActive(r.production)) && (current.GuideStep != r.production.GuideStep || current.Revision != r.production.Revision) {
@@ -288,7 +298,7 @@ func (r *dramaRun) syncJobs() error {
 				// 不中断本轮，前面已回写的作业花费随本轮进度一起保存。等待结算与后台抽尾帧是正常过程，不记告警。
 				var pending *dramaPendingBilling
 				var tail *dramaPendingTail
-				if !errors.As(deferred.err, &pending) && !errors.As(deferred.err, &tail) {
+				if !errors.As(deferred.err, &pending) && !errors.As(deferred.err, &tail) && !errors.Is(deferred.err, repository.ErrDramaBudgetInsufficient) && !errors.Is(deferred.err, errDramaContinuationPaused) {
 					slog.Warn("drama job sync deferred", "project", r.project.ID, "job", job.ID, "error", deferred.err)
 				}
 			}
@@ -505,18 +515,10 @@ type dramaPlanPayload struct {
 }
 
 // plan 根据业务对象的当前状态推导需要的工作；它是幂等的，重复执行只会跳过已排队项。
-func (r *dramaRun) plan() error {
-	p := r.production
-	if p.GuideStep == model.DramaGuideConfiguring {
-		return nil
-	}
-	if p.Stage == model.DramaStageBible {
-		_, err := r.enqueue(model.DramaJobBible, "", "", "", dramaPriorityBible, "建立作品圣经：角色、场景与风格", nil)
-		return err
-	}
+func (r *dramaRun) planCastImages(allowImplicit bool) error {
 	for i := range r.casts {
 		cast := &r.casts[i]
-		requested := cast.ImageStatus == model.DramaMediaQueued || (cast.ImageStatus == "" && r.assetsReleased() && !dramaGuideActive(p))
+		requested := cast.ImageStatus == model.DramaMediaQueued || (allowImplicit && cast.ImageStatus == "" && r.assetsReleased() && !dramaGuideActive(r.production))
 		if !requested || cast.Locked {
 			continue
 		}
@@ -544,6 +546,21 @@ func (r *dramaRun) plan() error {
 		if _, err := r.enqueue(model.DramaJobCastImage, cast.ImageEpisodeID, "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (r *dramaRun) plan() error {
+	p := r.production
+	if p.GuideStep == model.DramaGuideConfiguring {
+		return nil
+	}
+	if p.Stage == model.DramaStageBible {
+		_, err := r.enqueue(model.DramaJobBible, "", "", "", dramaPriorityBible, "建立作品圣经：角色、场景与风格", nil)
+		return err
+	}
+	if err := r.planCastImages(true); err != nil {
+		return err
 	}
 	if p.GuideStep == model.DramaGuideAssets {
 		return nil
@@ -911,11 +928,26 @@ func (r *dramaRun) dispatchJobs(queued []model.DramaJob) error {
 		if r.running[pool] >= r.settings.Concurrency {
 			continue
 		}
-		if budgeted && committed >= r.production.BudgetMicrocredits {
-			r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaBudgetPauseReason
-			return nil
+		scope, _ := dramaAssetExtraction(job)
+		if budgeted && committed >= r.production.BudgetMicrocredits && job.Kind != model.DramaJobRender {
+			if scope == nil {
+				return r.pauseForBudget()
+			}
+			if err := r.s.repo.SetQueuedDramaJobWait(job, dramaBudgetPauseReason); err != nil {
+				return err
+			}
+			continue
 		}
 		task, skip, err := r.submit(job)
+		if errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+			if scope == nil {
+				return r.pauseForBudget()
+			}
+			if err := r.s.repo.SetQueuedDramaJobWait(job, dramaBudgetPauseReason); err != nil {
+				return err
+			}
+			continue
+		}
 		if errors.Is(err, repository.ErrDramaJobChanged) {
 			// 派发期间作业被取消或重试：任务与计费预留已随绑定一起回滚，按最新状态在下一轮处理。
 			continue
@@ -924,9 +956,12 @@ func (r *dramaRun) dispatchJobs(queued []model.DramaJob) error {
 			message := err.Error()
 			switch {
 			case strings.Contains(message, "同时排队或运行的任务最多"):
+				if job.Error == dramaBudgetPauseReason {
+					return r.s.repo.SetQueuedDramaJobWait(job, "")
+				}
 				return nil
 			case strings.Contains(message, "积分不足"):
-				if scope, _ := dramaAssetExtraction(job); scope != nil {
+				if scope != nil {
 					recordDramaAttempt(job, "", "rejected", message, 0)
 					return r.failJob(job, message)
 				}
@@ -970,6 +1005,18 @@ func (r *dramaRun) dispatchJobs(queued []model.DramaJob) error {
 		}
 	}
 	return nil
+}
+
+func (r *dramaRun) pauseForBudget() error {
+	r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaBudgetPauseReason
+	return nil
+}
+
+func (r *dramaRun) saveProgress(expectedStatus string, statusChanged bool) error {
+	if statusChanged && r.production.Status == model.DramaStatusPaused && r.production.PauseReason == dramaBudgetPauseReason {
+		return r.s.repo.SaveDramaProductionProgress(r.production, expectedStatus, true, r.production.BudgetMicrocredits)
+	}
+	return r.s.repo.SaveDramaProductionProgress(r.production, expectedStatus, statusChanged)
 }
 
 func (r *dramaRun) markRunning(job *model.DramaJob) error {
@@ -1984,6 +2031,9 @@ func (r *dramaRun) condenseSegmentPrompt(job *model.DramaJob, payload dramaRevis
 		// 撰写期间镜头或参考图已改，这一版作废，调度会按新素材重写。
 		return nil
 	}
+	if r.production.Status != model.DramaStatusRunning {
+		return &dramaSyncDeferred{err: errDramaContinuationPaused}
+	}
 	episode, err := r.s.repo.DramaEpisode(r.project.ID, segment.EpisodeID)
 	if err != nil {
 		return err
@@ -1997,7 +2047,11 @@ func (r *dramaRun) condenseSegmentPrompt(job *model.DramaJob, payload dramaRevis
 	task, err := r.createTaskWith(job, settings.Models.textFor(DramaStepPrompt), "text", "text", production.SegmentCondensePrompt(prompt, payload.MaxChars), r.textInputWithSettings(job, production.SegmentCondenseSystemPrompt(), DramaStepPrompt, settings))
 	if err != nil {
 		job.PayloadJSON = previousPayload
-		if errors.Is(err, repository.ErrDramaJobChanged) {
+		if errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+			r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaBudgetPauseReason
+			return &dramaSyncDeferred{err: err}
+		}
+		if errors.Is(err, repository.ErrDramaJobChanged) || errors.Is(err, errDramaContinuationPaused) {
 			return &dramaSyncDeferred{err: err}
 		}
 		return &dramaResultIssue{message: fmt.Sprintf("视频提示词 %d 个字符，超过本段上限 %d 个字符，自动精简未能提交：%s", chars, payload.MaxChars, err.Error())}
@@ -2122,7 +2176,7 @@ func (r *dramaRun) submitBible(job *model.DramaJob) (*model.Task, bool, error) {
 	input := map[string]any{
 		"config":      map[string]any{"systemPrompt": systemPrompt},
 		"textOptions": map[string]any{"stream": true, "thinkingLevel": r.settings.TextThinking.levelFor(DramaStepBible)},
-		"metadata":    map[string]any{"source": "drama_production", "domainProjectId": r.project.ID},
+		"metadata":    r.metadata(job),
 	}
 	task, err := r.createTaskWith(job, r.settings.Models.textFor(DramaStepBible), "text", "text", prompt, input)
 	return task, false, err
@@ -2431,6 +2485,7 @@ func (s *Service) persistDramaTask(job *model.DramaJob, task *model.Task, order 
 	}
 	bound := *job
 	bound.Status, bound.TaskID, bound.CostMicrocredits = model.DramaJobRunning, task.ID, 0
+	bound.Error = ""
 	if bound.StartedAt == nil {
 		// 精简续任务沿用作业原来的开始时间，队列里的耗时不被截断。
 		now := time.Now()
@@ -2443,6 +2498,9 @@ func (s *Service) persistDramaTask(job *model.DramaJob, task *model.Task, order 
 		current, err := repo.DramaProductionForUpdate(job.ProjectID)
 		if err != nil {
 			return err
+		}
+		if job.Kind == model.DramaJobSegmentPrompt && job.Status == model.DramaJobRunning && current.Status != model.DramaStatusRunning {
+			return errDramaContinuationPaused
 		}
 		allowed, err := dramaGuideAllowsScopedJob(repo, current, *job)
 		if err != nil {

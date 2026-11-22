@@ -164,6 +164,7 @@ func (s *Service) prepareDramaCastAssistance(repo *repository.Repository, userID
 	if mode == "audio" {
 		config["audioVoice"], config["audioFormat"], config["audioSpeed"] = req.VoiceKey, "mp3", "1"
 		config["audioInstructions"] = strings.TrimSpace(strings.Join([]string{cast.VoiceInstructions, req.Instruction}, "\n"))
+		config["audioSeconds"] = dramaAudioReservationSeconds(prompt)
 	}
 	metadata := map[string]any{"source": "drama_cast_assistance", "dramaCastId": castID, "purpose": req.Purpose, "sourceRevision": cast.Revision}
 	input := map[string]any{"mode": mode, "prompt": prompt, "config": config, "metadata": metadata}
@@ -181,7 +182,7 @@ func (s *Service) prepareDramaCastAssistance(repo *repository.Repository, userID
 	if err != nil {
 		return plan, err
 	}
-	_, resolved, err := s.resolveTaskModelSelection(userID, input, req.Model.LogicalModelID, "canvas_"+mode, mode, frontendEnabled)
+	routed, resolved, err := s.resolveTaskModelSelection(userID, input, req.Model.LogicalModelID, "canvas_"+mode, mode, frontendEnabled)
 	if err != nil {
 		return blocked(err.Error())
 	}
@@ -190,7 +191,10 @@ func (s *Service) prepareDramaCastAssistance(repo *repository.Repository, userID
 	}
 	intent := ModelRequestIntentFromTaskInput(resolved, "canvas_"+mode, mode)
 	var quote *LogicalModelQuote
-	if req.Model.LogicalModelID != "" {
+	var routeSnapshot []any
+	if mode == "audio" && routed != nil {
+		quote, routeSnapshot, err = s.quoteDramaAudioRoute(userID, routed, intent)
+	} else if req.Model.LogicalModelID != "" {
 		quote, err = s.QuoteLogicalModel(userID, req.Model.LogicalModelID, intent)
 	} else {
 		quote, err = s.QuoteChannelModel(userID, ChannelModelQuoteRequest{ChannelID: req.Model.ChannelID, ModelKey: req.Model.ModelKey, Intent: intent})
@@ -198,7 +202,8 @@ func (s *Service) prepareDramaCastAssistance(repo *repository.Repository, userID
 	if err != nil || quote == nil {
 		return blocked("当前辅助任务无法取得有效报价")
 	}
-	plan.view.AmountMicrocredits, plan.view.Priced, plan.view.Estimated = quote.AmountMicrocredits, true, quote.Estimated
+	plan.view.AmountMicrocredits, plan.view.Priced = quote.AmountMicrocredits, true
+	plan.view.Estimated = quote.Estimated || (mode == "audio" && quote.BillingMode == "per_second")
 	if p.BudgetMicrocredits > 0 {
 		totals, err := repo.DramaBillingTotals(userID, []string{projectID})
 		if err != nil {
@@ -211,7 +216,10 @@ func (s *Service) prepareDramaCastAssistance(repo *repository.Repository, userID
 	}
 	req.ConfirmationToken, req.ClientOperationID = "", ""
 	plan.view.Ready = true
-	plan.view.ConfirmationToken = dramaCastAssistanceDigest([]any{projectID, cast, p.Revision, p.GuideStep, settings.StylePrompt, req, quote, intent})
+	plan.view.ConfirmationToken = dramaCastAssistanceDigest([]any{projectID, cast, p.Revision, p.GuideStep, settings.StylePrompt, req, quote, intent, routeSnapshot})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_" + mode, Operation: mode, Prompt: prompt, LogicalModelID: req.Model.LogicalModelID, Model: req.Model.ModelKey, Input: unresolved}
+	if routeSnapshot != nil {
+		plan.request.expectedRouteID = routed.Route.ID
+	}
 	return plan, nil
 }

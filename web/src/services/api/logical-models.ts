@@ -13,6 +13,7 @@ export type CapabilityImageSize = {
     presets?: CapabilityImageSizePreset[];
 };
 export type CapabilitySpec = {
+    audioOptionsExplicit?: boolean;
     imageParameters?: import("@/lib/image-parameters").ImageParameter[];
     version: 1;
     capability: "text" | "image" | "video" | "audio";

@@ -260,16 +260,18 @@ func (c *taskTerminalCoordinator) handleSuccessWithSettlement(task *model.Task, 
 			}
 		}
 		if audioBilling, ok := c.billing.(audioDurationTaskBilling); ok && capabilityFromTaskType(task.Type) == "audio" {
+			durationRequired := true
 			orderReader, readerOK := c.billing.(billingOrderReader)
 			if readerOK {
 				order, err := orderReader.BillingOrder(task.BillingOrderID)
 				if err != nil {
 					return err
 				}
-				// Only audio orders priced per second need measured output duration.
-				// Fixed-request audio must retain the ordinary settlement path even
-				// when the stored resource has no duration metadata.
-				if order == nil || order.Capability != "audio" || order.BillingMode != "per_second" {
+				if order == nil || order.Capability != "audio" {
+					return c.billing.SettleBilling(task.BillingOrderID, "")
+				}
+				durationRequired = order.BillingMode == "per_second"
+				if !durationRequired && order.CostBillingMode != "per_second" {
 					return c.billing.SettleBilling(task.BillingOrderID, "")
 				}
 			}
@@ -280,6 +282,9 @@ func (c *taskTerminalCoordinator) handleSuccessWithSettlement(task *model.Task, 
 				}
 				durationMs, err := output.AudioOutputDurationMs(*completedTask)
 				if err != nil {
+					if !durationRequired {
+						return c.billing.SettleBilling(task.BillingOrderID, "")
+					}
 					return err
 				}
 				return audioBilling.SettleBillingWithAudioDuration(task.BillingOrderID, "", durationMs)

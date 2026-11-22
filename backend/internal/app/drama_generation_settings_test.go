@@ -162,7 +162,11 @@ func TestDramaGenerationSettingsBlocksQueuedAndRunningTasks(t *testing.T) {
 				case "shot":
 					err = fixture.fake.db.Create(&model.DramaShotMedia{ID: "busy-shot", ProjectID: projectID, Status: status}).Error
 				case "storyboard":
-					err = fixture.fake.db.Create(&model.DramaStoryboardBoard{ID: "busy-storyboard", ProjectID: projectID, Status: status}).Error
+					task := model.Task{ID: "busy-board-task", ProjectID: projectID, UserID: "usr-drama", Type: "canvas_image", Status: model.TaskStatus(status)}
+					if err := fixture.fake.db.Create(&task).Error; err != nil {
+						t.Fatal(err)
+					}
+					err = fixture.fake.db.Create(&model.DramaStoryboardBoard{ID: "busy-storyboard", ProjectID: projectID, TaskID: task.ID, Status: status}).Error
 				case "cast-view":
 					err = fixture.fake.db.Create(&model.DramaCastView{ID: "busy-view", ProjectID: projectID, CastID: fixture.cast.ID, Status: status}).Error
 				}

@@ -181,6 +181,28 @@ func TestDramaStoryboardAdmissionUsesRealImageTaskAndQuote(t *testing.T) {
 	}
 }
 
+func TestDramaStoryboardTaskTerminalFailureReleasesSettings(t *testing.T) {
+	s, db, board := storyboardFixture(t, 2, 2, 2)
+	task, err := s.ExecuteDramaStoryboard("user", board.ProjectID, board.ID, storyboardConfirmed(t, s, board))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusFailed, model.TaskStatusCancelled, model.TaskStatusSucceeded} {
+		if err := db.Model(task).Update("status", status).Error; err != nil {
+			t.Fatal(err)
+		}
+		wantBusy := status == model.TaskStatusQueued || status == model.TaskStatusRunning
+		episodeBusy, err := s.repo.DramaEpisodeSettingsBusy(board.ProjectID, board.EpisodeID)
+		if err != nil || episodeBusy != wantBusy {
+			t.Fatalf("%s: episode busy = %t, %v", status, episodeBusy, err)
+		}
+		projectBusy, err := s.repo.DramaGenerationSettingsBusy(board.ProjectID)
+		if err != nil || projectBusy != wantBusy {
+			t.Fatalf("%s: project busy = %t, %v", status, projectBusy, err)
+		}
+	}
+}
+
 func TestDramaStoryboardUsesEpisodeVisualDirection(t *testing.T) {
 	s, db, board := storyboardFixture(t, 2, 2, 2)
 	p, err := s.repo.DramaProduction(board.ProjectID)

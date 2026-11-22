@@ -153,6 +153,11 @@ func (s *Service) QuoteLogicalModel(userID string, logicalModelID string, intent
 	if err != nil {
 		return nil, err
 	}
+	return s.quoteLogicalRoute(userID, access, routed, intent)
+}
+
+func (s *Service) quoteLogicalRoute(userID string, access *userGroupAccess, routed *RoutedModel, intent ModelRequestIntent) (*LogicalModelQuote, error) {
+	var err error
 	capability := normalizeCapability(intent.Capability)
 	if capability == "" {
 		return nil, BadAuthRequest("报价请求缺少模型能力类型")
@@ -246,12 +251,24 @@ func (s *Service) QuoteLogicalModel(userID string, logicalModelID string, intent
 	return quote, nil
 }
 
+func (s *Service) quoteDramaAudioRoute(userID string, routed *RoutedModel, intent ModelRequestIntent) (*LogicalModelQuote, []any, error) {
+	access, err := s.userGroupAccess(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	quote, err := s.quoteLogicalRoute(userID, access, routed, intent)
+	return quote, []any{routed.Route.ID, routed.Revision.ID, routed.PriceTier}, err
+}
+
 func quoteInput(intent ModelRequestIntent, modelKey string) map[string]any {
 	config := make(map[string]any, len(intent.Options)+1)
 	for key, value := range intent.Options {
 		config[key] = value
 	}
 	config["model"] = modelKey
+	if intent.Capability == "audio" && intent.audioBillingSeconds > 0 {
+		config["audioSeconds"] = intent.audioBillingSeconds
+	}
 	input := map[string]any{"mode": intent.Capability, "config": config}
 	if len(intent.ProviderOptions) > 0 {
 		namespaces := make(map[string]any)

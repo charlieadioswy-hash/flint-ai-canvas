@@ -105,10 +105,14 @@ func (s *Service) dramaDispatchWaits(p *model.DramaProduction) (func(job DramaJo
 	}
 	sortDramaJobsForDispatch(queued)
 	ahead := make(map[string]int, len(queued))
+	budgetWaiting := make(map[string]bool)
 	seen := map[string]int{}
 	for _, job := range queued {
 		pool := dramaDispatchPool(job.Kind)
 		ahead[job.ID] = seen[pool]
+		if p.BudgetMicrocredits > 0 && job.Error == dramaBudgetPauseReason {
+			budgetWaiting[job.ID] = true
+		}
 		seen[pool]++
 	}
 	policy, err := s.RuntimePolicy()
@@ -144,8 +148,8 @@ func (s *Service) dramaDispatchWaits(p *model.DramaProduction) (func(job DramaJo
 		if productionWait != "" && job.AssetKind == "" {
 			return productionWait
 		}
-		if job.AssetKind != "" && extractionBudgetWait != "" {
-			return extractionBudgetWait
+		if job.AssetKind != "" && (extractionBudgetWait != "" || budgetWaiting[job.ID]) {
+			return dramaBudgetPauseReason
 		}
 		if limit > 0 && active >= int64(limit) {
 			return fmt.Sprintf("等待账号空位：同时排队或运行的任务已达 %d 个上限（含画布等其他任务），有任务完成后自动提交", limit)

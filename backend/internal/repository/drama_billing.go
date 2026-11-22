@@ -1,6 +1,81 @@
 package repository
 
-import "yingce/backend/internal/model"
+import (
+	"errors"
+
+	"gorm.io/gorm"
+
+	"yingce/backend/internal/model"
+)
+
+var ErrDramaBudgetInsufficient = errors.New("剩余制作预算不足")
+
+// CheckDramaBudget must run inside the transaction holding the production lock.
+func (r *Repository) CheckDramaBudget(production *model.DramaProduction, additional int64) error {
+	if production == nil || production.BudgetMicrocredits <= 0 || additional <= 0 {
+		return nil
+	}
+	totals, err := r.DramaBillingTotals(production.UserID, []string{production.ProjectID})
+	if err != nil {
+		return err
+	}
+	spent := totals[production.ProjectID]
+	if additional > production.BudgetMicrocredits-spent.ChargedMicrocredits()-spent.HeldMicrocredits() {
+		return ErrDramaBudgetInsufficient
+	}
+	return nil
+}
+
+// lockTaskDramaProduction resolves both direct production tasks and linked canvas tasks.
+// Callers acquire this lock before any task, order or account lock.
+func (r *Repository) lockTaskDramaProduction(userID, projectID string) (*model.DramaProduction, error) {
+	if projectID == "" {
+		return nil, nil
+	}
+	var canvas model.CanvasProject
+	err := r.db.Select("project_id").First(&canvas, "id = ? AND user_id = ?", projectID, userID).Error
+	if err == nil {
+		projectID = canvas.ProjectID
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if projectID == "" {
+		return nil, nil
+	}
+	production, err := r.DramaProductionForUpdate(projectID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || err == nil && production.UserID != userID {
+		return nil, nil
+	}
+	return production, err
+}
+
+func (r *Repository) lockDramaProductionForTaskID(userID, taskID string) (*model.DramaProduction, error) {
+	if taskID == "" {
+		return nil, nil
+	}
+	var projectID string
+	if err := r.db.Model(&model.Task{}).Select("COALESCE(project_id, '')").Where("id = ? AND user_id = ?", taskID, userID).Scan(&projectID).Error; err != nil {
+		return nil, err
+	}
+	return r.lockTaskDramaProduction(userID, projectID)
+}
+
+// Resolve the production before locking the order, matching route switches and reservations.
+func (r *Repository) lockBillingDramaProduction(orderID string, restoring bool) (*model.DramaProduction, error) {
+	if r.Dialect() == "sqlite" {
+		if err := r.db.Model(&model.BillingOrder{}).Where("id = ?", orderID).UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+			return nil, err
+		}
+	}
+	var order model.BillingOrder
+	if err := r.db.Select("task_id", "user_id", "status").First(&order, "id = ?", orderID).Error; err != nil {
+		return nil, err
+	}
+	if order.Status == model.BillingStatusSettled || (!restoring && order.Status == model.BillingStatusRefunded) {
+		return nil, nil
+	}
+	return r.lockDramaProductionForTaskID(order.UserID, order.TaskID)
+}
 
 // DramaBillingTotals 是短剧作品按计费订单汇总的花费，每次读取都按订单当前状态重算，历史数据不需要迁移：
 //   - Charged 是已结算订单的实收（actual_amount_microcredits），已扣除差额退回；

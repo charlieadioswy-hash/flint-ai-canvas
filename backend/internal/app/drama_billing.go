@@ -27,7 +27,11 @@ func dramaOrderSpend(order model.BillingOrder) (charged int64, held int64, settl
 }
 
 func (s *Service) dramaBillingTotals(production *model.DramaProduction) (repository.DramaBillingTotals, error) {
-	totals, err := s.repo.DramaBillingTotals(production.UserID, []string{production.ProjectID})
+	return dramaBillingTotals(s.repo, production)
+}
+
+func dramaBillingTotals(repo *repository.Repository, production *model.DramaProduction) (repository.DramaBillingTotals, error) {
+	totals, err := repo.DramaBillingTotals(production.UserID, []string{production.ProjectID})
 	if err != nil {
 		return repository.DramaBillingTotals{}, err
 	}

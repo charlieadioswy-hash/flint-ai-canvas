@@ -92,6 +92,17 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
 		return nil, err
 	}
+	if task.ProjectID != "" {
+		metadata, _ := billingInput["metadata"].(map[string]any)
+		isDramaPipeline, err := s.repo.IsDramaJobTask(task.ProjectID, task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if isDramaPipeline || (metadataString(metadata, "source") == "drama_production" &&
+			(metadataString(metadata, "domainProjectId") == task.ProjectID || metadataString(metadata, "dramaJobId") != "")) {
+			return nil, BadAuthRequest("短剧流水线任务请在作品制作队列中重试，以重新检查制作预算")
+		}
+	}
 	if err := s.requireTaskGenerationFeatures(userID, task.ProjectID, task.Type, task.Operation, task.WorkbenchKind, billingInput); err != nil {
 		return nil, err
 	}
@@ -113,6 +124,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 		return nil, err
 	}
 	task, err = s.repo.RetryTaskWithBilling(userID, task, billingOrder, policy.Task.ActiveTaskLimit, authorizeRetryBillingRelease)
+	if errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		return nil, dramaTaskBudgetError()
+	}
 	if errors.Is(err, repository.ErrTaskBillingReview) {
 		return nil, BadAuthRequest("上一次调用费用仍在核对中，处理完成前不能重复提交")
 	}

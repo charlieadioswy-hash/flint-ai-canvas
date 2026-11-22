@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -205,7 +206,7 @@ func (s *Service) ResolveLogicalModel(access *userGroupAccess, logicalModelID st
 	if err != nil {
 		return nil, err
 	}
-	selected := weightedRoute(eligible)
+	selected := weightedRouteForKey(eligible, intent.audioRouteKey)
 	var priceTier *model.ChannelModelPriceTier
 	if cached.Model.PricePolicy == "channel" {
 		priceTier = channelModelPriceTierForIntent(selected.ChannelModel, intent, selected.CapabilitySpec)
@@ -565,6 +566,10 @@ func mergeIntentDefaults(options map[string]any, defaults map[string]any) map[st
 }
 
 func weightedRoute(routes []cachedLogicalRoute) cachedLogicalRoute {
+	return weightedRouteForKey(routes, "")
+}
+
+func weightedRouteForKey(routes []cachedLogicalRoute, key string) cachedLogicalRoute {
 	if len(routes) == 1 {
 		return routes[0]
 	}
@@ -575,11 +580,16 @@ func weightedRoute(routes []cachedLogicalRoute) cachedLogicalRoute {
 	if total <= 0 {
 		return routes[0]
 	}
+	totalUnsigned := uint64(total)
+	if key != "" {
+		sort.Slice(routes, func(i, j int) bool { return routes[i].Route.ID < routes[j].Route.ID })
+		hash := sha256.Sum256([]byte(key))
+		return routeAtWeight(routes, int64(binary.LittleEndian.Uint64(hash[:8])%totalUnsigned))
+	}
 	var raw [8]byte
 	if _, err := cryptorand.Read(raw[:]); err != nil {
 		return routes[0]
 	}
-	totalUnsigned := uint64(total)
 	// 丢弃不能整除 total 的低概率尾部，避免取模造成轻微权重偏差。
 	threshold := -totalUnsigned % totalUnsigned
 	randomValue := binary.LittleEndian.Uint64(raw[:])
@@ -589,7 +599,10 @@ func weightedRoute(routes []cachedLogicalRoute) cachedLogicalRoute {
 		}
 		randomValue = binary.LittleEndian.Uint64(raw[:])
 	}
-	pick := int64(randomValue % totalUnsigned)
+	return routeAtWeight(routes, int64(randomValue%totalUnsigned))
+}
+
+func routeAtWeight(routes []cachedLogicalRoute, pick int64) cachedLogicalRoute {
 	for _, route := range routes {
 		if pick < int64(route.Route.Weight) {
 			return route

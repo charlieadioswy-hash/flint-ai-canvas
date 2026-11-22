@@ -151,13 +151,18 @@ export function capabilitySpecFromChannelModel(item?: ChannelModel): CapabilityS
             }),
         };
     }
-    return emptyCapabilitySpec("audio");
+    return {
+        ...emptyCapabilitySpec("audio"),
+        audioOptionsExplicit: true,
+        options: Object.fromEntries(["audioVoice", "audioFormat", "audioSpeed", "audioInstructions"].map((name) => [name, { values: ["*"] }])),
+    };
 }
 
 export function mergeCapabilitySpecs(capability: CapabilityKind, specs: CapabilitySpec[]) {
     const matching = specs.filter((item) => item.capability === capability);
     if (matching.length === 0) return emptyCapabilitySpec(capability);
     const result = emptyCapabilitySpec(capability);
+    if (capability === "audio") result.audioOptionsExplicit = true;
     result.operations = Array.from(new Set(matching.flatMap((item) => item.operations || [])));
     for (const definition of inputDefinitions[capability]) {
         const declared = matching.some((item) => item.inputs?.[definition.name]);
@@ -647,7 +652,7 @@ function updateOption(current: CapabilitySpec, name: string, constraint: OptionC
     const options = { ...(current.options || {}) };
     if (constraint) options[name] = constraint;
     else delete options[name];
-    update({ options });
+    update({ options, ...(current.capability === "audio" ? { audioOptionsExplicit: true } : {}) });
 }
 
 function compactInputs(values: Record<string, { min: number; max: number }>) {

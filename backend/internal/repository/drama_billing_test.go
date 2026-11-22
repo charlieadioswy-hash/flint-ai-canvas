@@ -16,7 +16,7 @@ func newDramaBillingRepository(t *testing.T) (*Repository, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}, &model.Task{}, &model.CanvasProject{}); err != nil {
+	if err := db.AutoMigrate(&model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}, &model.Task{}, &model.CanvasProject{}, &model.DramaProduction{}); err != nil {
 		t.Fatal(err)
 	}
 	return &Repository{db: db}, db

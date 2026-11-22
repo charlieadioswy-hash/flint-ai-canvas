@@ -691,7 +691,7 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	if err != nil {
 		return plan, err
 	}
-	_, input, err = s.resolveTaskModelSelection(userID, input, config.Model.LogicalModelID, "canvas_"+kind, config.Operation, frontendEnabled)
+	routed, input, err := s.resolveTaskModelSelection(userID, input, config.Model.LogicalModelID, "canvas_"+kind, config.Operation, frontendEnabled)
 	if err != nil {
 		return blocked(err.Error())
 	}
@@ -705,7 +705,10 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	}
 	intent := ModelRequestIntentFromTaskInput(input, "canvas_"+kind, config.Operation)
 	var quote *LogicalModelQuote
-	if config.Model.LogicalModelID != "" {
+	var routeSnapshot []any
+	if kind == "audio" && routed != nil {
+		quote, routeSnapshot, err = s.quoteDramaAudioRoute(userID, routed, intent)
+	} else if config.Model.LogicalModelID != "" {
 		quote, err = s.QuoteLogicalModel(userID, config.Model.LogicalModelID, intent)
 	} else {
 		quote, err = s.QuoteChannelModel(userID, ChannelModelQuoteRequest{ChannelID: config.Model.ChannelID, ModelKey: config.Model.ModelKey, Intent: intent})
@@ -713,9 +716,10 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	if err != nil || quote == nil {
 		return blocked("当前镜头参数无法取得有效报价")
 	}
-	plan.view.AmountMicrocredits, plan.view.Priced, plan.view.Estimated = quote.AmountMicrocredits, true, quote.Estimated
+	plan.view.AmountMicrocredits, plan.view.Priced = quote.AmountMicrocredits, true
+	plan.view.Estimated = quote.Estimated || (kind == "audio" && quote.BillingMode == "per_second")
 	if p.BudgetMicrocredits > 0 {
-		totals, err := s.dramaBillingTotals(p)
+		totals, err := dramaBillingTotals(repo, p)
 		if err != nil {
 			return plan, err
 		}
@@ -728,8 +732,11 @@ func (s *Service) prepareDramaShotMediaDraft(repo *repository.Repository, userID
 	plan.view.ScopeHash = dramaShotMediaDigest([]any{projectID, shot, kind, config, effectivePrompt, p.Revision, p.GuideStep, intent})
 	// The digest never contains credentials or signed URLs. Resource identities
 	// and normalized parameters are immutable inputs; the real request is private.
-	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{projectID, shot, row, config, effectivePrompt, p.Revision, p.GuideStep, quote, intent})
+	plan.view.ConfirmationToken = dramaShotMediaDigest([]any{projectID, shot, row, config, effectivePrompt, p.Revision, p.GuideStep, quote, intent, routeSnapshot})
 	plan.request = CreateTaskRequest{ProjectID: projectID, Type: "canvas_" + kind, Operation: config.Operation, Prompt: stringValue(requestInput["prompt"]), LogicalModelID: config.Model.LogicalModelID, Model: config.Model.ModelKey, Input: requestInput}
+	if routeSnapshot != nil {
+		plan.request.expectedRouteID = routed.Route.ID
+	}
 	return plan, nil
 }
 

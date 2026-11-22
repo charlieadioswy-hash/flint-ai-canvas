@@ -5,7 +5,14 @@ import (
 	"unicode/utf8"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/production"
 )
+
+func dramaAudioReservationSeconds(text string) int64 {
+	// Use the slowest supported dialogue pace to leave room for delivery and pauses.
+	rules := production.StoryboardSettings{Dialogue: production.DialogueCustom, SpeechRate: production.MinCharsPerSecond}
+	return max(int64(1), (rules.SpokenMs(text)+999)/1000)
+}
 
 func normalizeDramaShotAudioConfig(config DramaShotMediaConfig) (DramaShotMediaConfig, error) {
 	config.Prompt, config.AudioVoice, config.AudioInstructions = strings.TrimSpace(config.Prompt), strings.TrimSpace(config.AudioVoice), strings.TrimSpace(config.AudioInstructions)
@@ -35,6 +42,7 @@ func normalizeDramaShotAudioConfig(config DramaShotMediaConfig) (DramaShotMediaC
 
 func dramaShotAudioInput(shot model.DramaShot, config DramaShotMediaConfig) map[string]any {
 	providerConfig := map[string]any{"audioVoice": config.AudioVoice, "audioFormat": "mp3", "audioSpeed": "1", "audioInstructions": config.AudioInstructions}
+	providerConfig["audioSeconds"] = dramaAudioReservationSeconds(config.Prompt)
 	if config.Model.ChannelID != "" {
 		providerConfig["channelId"], providerConfig["model"], providerConfig["channelModelKey"] = config.Model.ChannelID, config.Model.ModelKey, config.Model.ModelKey
 	}

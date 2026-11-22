@@ -637,6 +637,17 @@ func (r *Repository) DramaJob(projectID string, id string) (*model.DramaJob, err
 	return &job, nil
 }
 
+func (r *Repository) IsDramaJobTask(projectID, taskID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.DramaJob{}).Where("task_id = ? AND project_id = ?", taskID, projectID).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *Repository) SetQueuedDramaJobWait(job *model.DramaJob, reason string) error {
+	return r.db.Model(job).Where("project_id = ? AND status = ? AND COALESCE(task_id, '') = '' AND COALESCE(error, '') <> ?", job.ProjectID, model.DramaJobQueued, reason).
+		Update("error", reason).Error
+}
+
 // LatestDramaJob 返回某集某类工作的最近一条记录，用于回看剧本改编的提示词与模型返回。
 func (r *Repository) LatestDramaJob(projectID string, kind string, episodeID string) (*model.DramaJob, error) {
 	var job model.DramaJob
@@ -869,7 +880,7 @@ func (r *Repository) UpdateDramaProduction(projectID string, fields map[string]a
 }
 
 // SaveDramaProductionProgress 写入调度循环负责的进度字段；状态只在仍处于 expectedStatus 时改变。
-func (r *Repository) SaveDramaProductionProgress(production *model.DramaProduction, expectedStatus string, statusChanged bool) error {
+func (r *Repository) SaveDramaProductionProgress(production *model.DramaProduction, expectedStatus string, statusChanged bool, expectedBudget ...int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
 		if err := tx.Model(&model.DramaProduction{}).Where("project_id = ?", production.ProjectID).Updates(map[string]any{
@@ -881,8 +892,11 @@ func (r *Repository) SaveDramaProductionProgress(production *model.DramaProducti
 		if !statusChanged {
 			return nil
 		}
-		return tx.Model(&model.DramaProduction{}).Where("project_id = ? AND status = ?", production.ProjectID, expectedStatus).
-			Updates(map[string]any{"status": production.Status, "pause_reason": production.PauseReason}).Error
+		status := tx.Model(&model.DramaProduction{}).Where("project_id = ? AND status = ?", production.ProjectID, expectedStatus)
+		if len(expectedBudget) > 0 {
+			status = status.Where("budget_microcredits = ?", expectedBudget[0])
+		}
+		return status.Updates(map[string]any{"status": production.Status, "pause_reason": production.PauseReason}).Error
 	})
 }
 

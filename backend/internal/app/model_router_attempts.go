@@ -306,6 +306,9 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 		if errors.Is(err, repository.ErrBillingChargeLimit) {
 			return nil, creationConflict("备用线路报价超过已批准费用上限，未切换线路；请重新确认生成报价")
 		}
+		if errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+			return nil, BadAuthRequest("备用线路费用超过短剧剩余预算，请调整预算后在短剧制作队列中重试")
+		}
 		return nil, err
 	}
 	task.RouteID = selected.Route.ID

@@ -582,7 +582,11 @@ func (s *Service) ensureDramaCanvasBudget(projectID string) error {
 	if !exhausted {
 		return nil
 	}
-	budgetErr := BadAuthRequest("这部短剧已达到预算上限（含画布精修花费），请在短剧设置里提高预算后再生成")
+	return dramaTaskBudgetError()
+}
+
+func dramaTaskBudgetError() error {
+	budgetErr := BadAuthRequest("短剧剩余预算不足（含画布精修花费），请在短剧设置里提高预算后再生成")
 	budgetErr.Reason = ReasonDramaBudget
 	return budgetErr
 }

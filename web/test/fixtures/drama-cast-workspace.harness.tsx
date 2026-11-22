@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { DramaCast, DramaListPage, DramaSummary, DramaTake, DramaWorkflowImpact } from "../../src/services/api/drama";
 import type { CastImageFieldsValue } from "../../src/pages/projects/studio/cast-image-fields";
 import type { CastView } from "../../src/services/api/drama-cast-views";
+import type { ImageAsset } from "../../src/stores/use-asset-store";
 
 const dom = new Window({ url: "http://localhost/projects/current" });
 const globals = new Map<string, PropertyDescriptor | undefined>();
@@ -39,6 +40,7 @@ const { CastCreateDialog } = await import("../../src/pages/projects/studio/cast-
 const { CastProjectImport } = await import("../../src/pages/projects/studio/cast-project-import");
 const { WorkflowAssetLibrary } = await import("../../src/pages/projects/workflow-asset-library");
 const { CastImageFields } = await import("../../src/pages/projects/studio/cast-image-fields");
+const { castImageOptionsDraft, mergeCastImageOptions, castImageReferenceError } = await import("../../src/pages/projects/studio/cast-image-options");
 const { composeDramaStyleId, findDramaStyle } = await import("../../src/lib/drama/drama-styles");
 const api = await import("../../src/services/api/drama");
 const viewApi = await import("../../src/services/api/drama-cast-views");
@@ -47,6 +49,7 @@ const { dramaKeys } = await import("../../src/lib/drama/drama-query-keys");
 const viewState = await import("../../src/pages/projects/studio/cast-views-state");
 const resources = await import("../../src/services/api/resources");
 const imageStorage = await import("../../src/services/image-storage");
+const userDataSync = await import("../../src/services/user-data-sync");
 const canvasImageLoader = await import("../../src/services/canvas-image-loader");
 const { ApiError } = await import("../../src/services/api/request");
 const { useUserStore } = await import("../../src/stores/use-user-store");
@@ -708,7 +711,7 @@ test("版本变更时页面编辑优先有限重试，保留未编辑的远端�
 });
 
 test("文字冲突重试沿用远端未编辑的图片配置，后续输入也不会覆盖", async () => {
-    const refreshed = { ...hero, revision: 3, imageOptionsJson: JSON.stringify({ styleReferenceIds: ["remote-style"] }) };
+    const refreshed = { ...hero, revision: 3, imageOptionsJson: JSON.stringify({ subjectReferenceIds: null, styleReferenceIds: ["remote-style"] }) };
     let current = { ...refreshed };
     const save = spyOn(api, "updateDramaCast").mockImplementation(async (_project, _id, patch) => {
         if (save.mock.calls.length === 1) throw new ApiError("主体版本已变化", { status: 409, reason: "conflict" });
@@ -723,6 +726,116 @@ test("文字冲突重试沿用远端未编辑的图片配置，后续输入也�
     await fill("外貌描述", "页面继续编辑的外观");
     await waitForAutoSave();
     expect(save.mock.calls[2][2]).toEqual(expect.objectContaining({ appearance: "页面继续编辑的外观", imageOptions: expect.objectContaining({ styleReferenceIds: ["remote-style"] }) }));
+});
+
+test("编辑图片配置遇到冲突时合并远端其他图片字段并更新表单", async () => {
+    const target = { ...hero, imageOptionsJson: JSON.stringify({ subjectReferenceIds: ["subject-reference"] }) };
+    const refreshed = { ...target, revision: 3, imageOptionsJson: JSON.stringify({ subjectReferenceIds: ["subject-reference", "remote-subject"], styleReferenceIds: ["remote-style"] }) };
+    const save = spyOn(api, "updateDramaCast")
+        .mockRejectedValueOnce(new ApiError("主体版本已变化", { status: 409, reason: "conflict" }))
+        .mockImplementation(async (_project, _id, patch) => ({ cast: { ...refreshed, revision: 4, imageOptionsJson: JSON.stringify(patch.imageOptions) } }));
+    spyOn(api, "listDramaCast").mockResolvedValue({ cast: [refreshed] });
+    await render(<DialogHarness castId={target.id} items={[target]} />);
+    const editor = document.querySelector(".drama-cast-dialog")!;
+    await click("移除主体参考 1", editor);
+    await waitForAutoSave();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][2].imageOptions).toEqual(expect.objectContaining({ subjectReferenceIds: ["remote-subject"], styleReferenceIds: ["remote-style"] }));
+    expect(button("移除风格参考 1", editor)).toBeDefined();
+});
+
+test("主体参考图上传完成时单集配置仍在刷新，保留远端风格参考", async () => {
+    const asset: ImageAsset = {
+        id: "local-reference",
+        kind: "image",
+        title: "待上传的参考图",
+        coverUrl: "",
+        tags: [],
+        createdAt: "",
+        updatedAt: "",
+        data: { dataUrl: "data:image/png;base64,AA==", width: 1, height: 1, bytes: 1, mimeType: "image/png" },
+    };
+    const hydrated = useUserStore.getState().hydrated;
+    useUserStore.setState({ hydrated: true });
+    try {
+        spyOn(userDataSync, "loadAssetLibraryPage").mockResolvedValue({ assets: [asset], page: 1, pageSize: 40, total: 1, hasMore: false });
+        let completeUpload!: (result: Awaited<ReturnType<typeof imageStorage.uploadImage>>) => void;
+        const upload = spyOn(imageStorage, "uploadImage").mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    completeUpload = resolve;
+                }),
+        );
+        const refreshed = { ...hero, revision: 2, imageOptionsJson: JSON.stringify({ styleReferenceIds: ["remote-style"] }) };
+        const episodeStyle = { projectId: "current", episodeId: "episode-a", revision: 9, episodeRevision: 1, settings: dialogSummary.production.settings };
+        let completeSettings!: (result: typeof episodeStyle) => void;
+        const readSettings = spyOn(api, "getDramaEpisodeStyle")
+            .mockResolvedValueOnce(episodeStyle)
+            .mockImplementation(() => new Promise((resolve) => (completeSettings = resolve)));
+        let revision = 9;
+        spyOn(api, "getDrama").mockImplementation(async () => ({ ...dialogSummary, production: { ...dialogSummary.production, revision } }));
+        spyOn(api, "listDramaCast").mockResolvedValue({ cast: [refreshed] });
+        const save = spyOn(api, "updateDramaCast")
+            .mockRejectedValueOnce(new ApiError("主体版本已变化", { status: 409, reason: "conflict" }))
+            .mockImplementation(async (_projectId, _castId, patch) => {
+                revision = 10;
+                return { cast: { ...refreshed, ...patch, revision: save.mock.calls.length + 1, imageOptionsJson: JSON.stringify(patch.imageOptions) } };
+            });
+
+        await render(<DialogHarness castId={hero.id} items={[hero]} episodeId="episode-a" />);
+        const editor = document.querySelector(".drama-cast-dialog")!;
+        await settleUntil(() => !button("从资产库添加", editor.querySelector(".drama-cast-image-reference-row")!).disabled);
+        await click("从资产库添加", editor.querySelector(".drama-cast-image-reference-row")!);
+        const assetButton = '.asset-picker-card-action[title="待上传的参考图"]';
+        await settleUntil(() => Boolean(document.querySelector(assetButton)));
+        await act(async () => document.querySelector<HTMLButtonElement>(assetButton)!.click());
+        await click("添加到主体参考");
+        expect(upload).toHaveBeenCalledWith(asset.data.dataUrl);
+
+        await fill("外貌描述", "上传中编辑的外观", editor);
+        await waitForAutoSave();
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(button("移除风格参考 1", editor)).toBeDefined();
+        await settleUntil(() => readSettings.mock.calls.length > 1);
+
+        await act(async () => completeUpload({ ...asset.data, url: "", storageKey: "resource:uploaded-subject" }));
+        await act(async () => completeSettings({ ...episodeStyle, revision: 10 }));
+        await waitForAutoSave();
+        expect(save).toHaveBeenCalledTimes(3);
+        expect(save.mock.calls[2][2].imageOptions).toEqual(expect.objectContaining({ subjectReferenceIds: ["uploaded-subject"], styleReferenceIds: ["remote-style"] }));
+    } finally {
+        useUserStore.setState({ hydrated });
+    }
+});
+
+test("参考图合并保留本地换序和远端新增，并识别跨组重复和超限", () => {
+    const previous = castImageOptionsDraft('{"subjectReferenceIds":["a","b"]}').options;
+    const draft = { ...previous, subjectReferenceIds: ["b", "a"], styleReferenceIds: ["c"] };
+    const remote = { ...previous, subjectReferenceIds: ["a", "c", "b"] };
+    const merged = mergeCastImageOptions(previous, draft, remote);
+    expect(merged.subjectReferenceIds).toEqual(["b", "c", "a"]);
+    expect(merged.styleReferenceIds).toEqual(["c"]);
+    expect(castImageReferenceError(merged)).toContain("同时出现在主体和风格参考");
+    expect(castImageReferenceError({ ...merged, styleReferenceIds: ["d", "e", "f", "g", "h", "i"] })).toContain("合计最多 8 张");
+    const saved = castImageOptionsDraft('{"subjectReferenceIds":["a"],"styleReferenceIds":null}').options;
+    expect(mergeCastImageOptions(saved, { ...saved, subjectReferenceIds: ["b", "a"] }, saved).subjectReferenceIds).toEqual(["b", "a"]);
+});
+
+test("版本冲突重试的文字校验失败后，修正文案即可自动保存", async () => {
+    const refreshed = { ...hero, revision: 3, imageOptionsJson: JSON.stringify({ styleReferenceIds: ["remote-style"] }) };
+    spyOn(api, "listDramaCast").mockResolvedValue({ cast: [refreshed] });
+    const save = spyOn(api, "updateDramaCast")
+        .mockRejectedValueOnce(new ApiError("主体版本已变化", { status: 409, reason: "conflict" }))
+        .mockRejectedValueOnce(new ApiError("描述不符合要求", { status: 400 }))
+        .mockImplementation(async (_project, _id, patch) => ({ cast: { ...refreshed, ...patch, revision: 4, imageOptionsJson: JSON.stringify(patch.imageOptions) } }));
+    await render(<DialogHarness castId={hero.id} items={[hero]} />);
+    await fill("外貌描述", "被服务端拒绝的描述");
+    await waitForAutoSave();
+    expect(save).toHaveBeenCalledTimes(2);
+    await fill("外貌描述", "已修正的描述");
+    await waitForAutoSave();
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(save.mock.calls[2][2]).toEqual(expect.objectContaining({ expectedCastRevision: 3, appearance: "已修正的描述", imageOptions: expect.objectContaining({ styleReferenceIds: ["remote-style"] }) }));
 });
 
 test("造型冲突重试只覆盖页面实际编辑字段，保留远端名称章节与提示词", async () => {

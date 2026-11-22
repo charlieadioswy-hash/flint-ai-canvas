@@ -400,7 +400,22 @@ func (s *Service) resolveBillingOrder(actor *model.User, id string, action strin
 	}
 	switch action {
 	case "settle":
-		err = s.SettleBilling(id, order.ProviderRequestID)
+		if order.Capability == "audio" && order.BillingMode == "per_second" {
+			task, taskErr := s.repo.TaskForUser(order.UserID, order.TaskID)
+			if taskErr != nil {
+				return nil, taskErr
+			}
+			if task.Status != model.TaskStatusSucceeded || task.BillingOrderID != id {
+				return nil, BadAuthRequest("该订单缺少对应的成功音频任务")
+			}
+			durationMs, durationErr := s.AudioOutputDurationMs(*task)
+			if durationErr != nil {
+				return nil, durationErr
+			}
+			err = s.repo.ResolveAudioBillingOrder(id, order.ProviderRequestID, durationMs)
+		} else {
+			err = s.SettleBilling(id, order.ProviderRequestID)
+		}
 	case "refund":
 		err = s.RefundBilling(id, note)
 	}

@@ -11,3 +11,10 @@ func (r *Repository) DramaAssetExtractionJobs(projectID string, statuses ...stri
 		model.DramaJobBible, dramaAssetExtractionPayloadLike, statuses).Order("created_at asc").Find(&jobs).Error
 	return jobs, err
 }
+
+func (r *Repository) ClearDramaAssetExtractionWait(projectID, reason string) error {
+	return r.db.Model(&model.DramaJob{}).
+		Where("project_id = ? AND kind = ? AND payload_json LIKE ? AND status = ? AND error = ?",
+			projectID, model.DramaJobBible, dramaAssetExtractionPayloadLike, model.DramaJobQueued, reason).
+		Update("error", "").Error
+}

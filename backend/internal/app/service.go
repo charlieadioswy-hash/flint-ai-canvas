@@ -136,6 +136,7 @@ const taskLogPayloadLimit = 4000
 
 type CreateTaskRequest struct {
 	creationPrepare *creationTaskPreparation
+	expectedRouteID string
 	admission       *taskAdmission
 	workbenchKind   string
 	submission      *taskSubmission

@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func shotAudioFixture(t *testing.T) (*Service, *gorm.DB, DramaShotMediaView) {
@@ -52,7 +53,7 @@ func saveShotAudioTestResult(t *testing.T, db *gorm.DB, taskID, resourceID strin
 	if err := db.Create(&model.Resource{ID: resourceID, UserID: "user", Kind: "audio", Status: model.ResourceStatusReady, MimeType: "audio/mpeg", DurationMs: 2200, Size: 12}).Error; err != nil {
 		t.Fatal(err)
 	}
-	encoded, _ := json.Marshal(map[string]any{"mode": "audio", "audio": map[string]any{"resourceId": resourceID}})
+	encoded, _ := json.Marshal(map[string]any{"mode": "audio", "audio": map[string]any{"resourceId": resourceID, "storageKey": "resource:" + resourceID}})
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(encoded)}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +102,224 @@ func TestDramaQueueKeepsAudioResultAfterShotRemoved(t *testing.T) {
 	result := detail.Attempts[0].Task
 	if result == nil || result.ResultMode != "audio" || len(result.ResourceIDs) != 1 || result.ResourceIDs[0] != resourceID {
 		t.Fatalf("expected playable resource on audio task: %+v", result)
+	}
+}
+
+func dramaPerSecondAudioChoice(t *testing.T, s *Service, db *gorm.DB, policy, modelID string, price int64) DramaModelChoice {
+	t.Helper()
+	if err := db.Model(&model.ChannelModelPriceTier{}).Where("channel_model_id = ?", modelID).Update("billing_mode", "per_second").Error; err != nil {
+		t.Fatal(err)
+	}
+	if policy == "direct" {
+		return DramaModelChoice{ChannelID: "channel", ModelKey: "gpt-4o-mini-tts"}
+	}
+	const id, revision = "logical-tts", "logical-tts-revision"
+	billingMode := "per_second"
+	if policy == "mixed" {
+		policy, billingMode = "unified", "fixed_request"
+	}
+	for _, row := range []any{
+		&model.LogicalModel{ID: id, Code: id, Capability: "audio", Enabled: true, ActiveRevisionID: revision, PricePolicy: policy, BillingMode: billingMode, UnitPriceMicrocredits: price},
+		&model.LogicalModelRevision{ID: revision, LogicalModelID: id, Version: 1, CapabilitySpecJSON: `{"version":1,"capability":"audio","options":{}}`, DefaultOptionsJSON: "{}"},
+		&model.LogicalModelRoute{ID: "tts-route", LogicalModelRevisionID: revision, ChannelModelID: modelID, Enabled: true, Weight: 1},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if policy == "channel" {
+		for _, row := range []any{
+			&model.ChannelModel{ID: "audio-backup", ChannelID: "channel", ModelKey: "audio-backup", Capability: "audio", Protocol: model.ChannelInterfaceOpenAIAudio, Enabled: true},
+			&model.ChannelModelPriceTier{ID: "audio-backup-price", ChannelModelID: "audio-backup", BillingMode: "per_second", UnitPriceMicrocredits: price * 2, PriceConfigured: true, Enabled: true},
+			&model.LogicalModelRoute{ID: "tts-backup", LogicalModelRevisionID: revision, ChannelModelID: "audio-backup", Enabled: true, Weight: 1},
+		} {
+			if err := db.Create(row).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	s.invalidateRouteCatalog()
+	features := FeatureAvailability{ShortDramaEnabled: true, TaskCenterEnabled: true, CreditsEnabled: true, FrontendModelsEnabled: true}
+	if _, err := s.UpdateFeatureAvailability(&model.User{ID: "admin", Role: model.UserRoleAdmin}, features); err != nil {
+		t.Fatal(err)
+	}
+	return DramaModelChoice{LogicalModelID: id}
+}
+
+func TestDramaAudioPerSecondQuotesAndSettlesMeasuredDuration(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(*testing.T, string) (*Service, *gorm.DB, *model.Task, int64)
+	}{
+		{name: "shot", run: func(t *testing.T, policy string) (*Service, *gorm.DB, *model.Task, int64) {
+			s, db, saved := shotAudioFixture(t)
+			saved.Config.Model = dramaPerSecondAudioChoice(t, s, db, policy, "shot-audio-cm", 25)
+			if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: saved.Config}); err != nil {
+				t.Fatal(err)
+			}
+			quote, err := s.PreflightDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaActionRequest{})
+			if err != nil || !quote.Ready || (policy != "mixed" && (!quote.Estimated || quote.AmountMicrocredits < 100)) {
+				t.Fatalf("shot audio quote = %+v, %v", quote, err)
+			}
+			req := DramaShotMediaActionRequest{ExpectedRevision: &quote.Revision, BaseRevision: &quote.BaseRevision, ConfirmationToken: quote.ConfirmationToken, ClientOperationID: "shot-audio-by-second"}
+			task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "audio", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s, db, task, quote.AmountMicrocredits
+		}},
+		{name: "voice sample", run: func(t *testing.T, policy string) (*Service, *gorm.DB, *model.Task, int64) {
+			s, db, req := castAssistanceFixture(t)
+			req.Purpose, req.Model = "voice_sample", dramaPerSecondAudioChoice(t, s, db, policy, "assist-audio", 50)
+			req.SampleText, req.VoiceKey = "请把手电筒留在门边。", "alloy"
+			quote, err := s.PreflightDramaCastAssistance("user", "assist-project", "assist-cast", req)
+			if err != nil || !quote.Ready || (policy != "mixed" && (!quote.Estimated || quote.AmountMicrocredits < 200)) {
+				t.Fatalf("voice sample quote = %+v, %v", quote, err)
+			}
+			req.ConfirmationToken, req.ClientOperationID = quote.ConfirmationToken, "voice-sample-by-second"
+			task, err := s.ExecuteDramaCastAssistance("user", "assist-project", "assist-cast", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return s, db, task, quote.AmountMicrocredits
+		}},
+	}
+	for _, tc := range cases {
+		for _, policy := range []string{"direct", "unified", "channel", "mixed"} {
+			t.Run(tc.name+"/"+policy, func(t *testing.T) {
+				s, db, task, quoted := tc.run(t, policy)
+				order, err := s.repo.BillingOrder(task.BillingOrderID)
+				if err != nil || !order.ChargeLimitSet || order.ChargeLimitMicrocredits != quoted || order.ReservedAmountMicrocredits != quoted {
+					t.Fatalf("reserved order = %+v, %v", order, err)
+				}
+				saveShotAudioTestResult(t, db, task.ID, "tts-output")
+				if err := s.terminalCoordinator().handleSuccess(task); err != nil {
+					t.Fatal(err)
+				}
+				settled, err := s.repo.BillingOrder(order.ID)
+				if policy == "mixed" {
+					if err != nil || settled.Quantity != 1 || settled.ActualAmountMicrocredits != quoted || settled.CostQuantity != 3 || settled.Status != model.BillingStatusSettled {
+						t.Fatalf("mixed price settlement = %+v, %v", settled, err)
+					}
+					return
+				}
+				if err != nil || settled.Quantity != 3 || settled.RefundedAmountMicrocredits <= 0 || settled.Status != model.BillingStatusSettled {
+					t.Fatalf("measured settlement = %+v, %v", settled, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDramaAudioReviewSettlesWithinOriginalAuthorization(t *testing.T) {
+	s, db, saved := shotAudioFixture(t)
+	saved.Config.Model = dramaPerSecondAudioChoice(t, s, db, "direct", "shot-audio-cm", 25)
+	if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: saved.Config}); err != nil {
+		t.Fatal(err)
+	}
+	quote, err := s.PreflightDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaActionRequest{})
+	if err != nil || !quote.Ready {
+		t.Fatalf("preflight = %+v, %v", quote, err)
+	}
+	req := DramaShotMediaActionRequest{ExpectedRevision: &quote.Revision, BaseRevision: &quote.BaseRevision, ConfirmationToken: quote.ConfirmationToken, ClientOperationID: "audio-review"}
+	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "audio", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveShotAudioTestResult(t, db, task.ID, "long-audio")
+	if err := db.Model(&model.Resource{}).Where("id = ?", "long-audio").Update("duration_ms", 12000).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.terminalCoordinator().handleSuccess(task); err == nil {
+		t.Fatal("over-limit audio should require review")
+	}
+	order, err := s.repo.BillingOrder(task.BillingOrderID)
+	if err != nil || order.Status != model.BillingStatusUncertain || order.ReservedAmountMicrocredits != quote.AmountMicrocredits {
+		t.Fatalf("order awaiting review = %+v, %v", order, err)
+	}
+	resolved, err := s.ResolveBillingOrder(&model.User{ID: "admin", Role: model.UserRoleAdmin}, order.ID, ResolveBillingRequest{Action: "settle", Note: "核对实际音频时长"})
+	if err != nil || resolved.Status != model.BillingStatusSettled || resolved.ActualAmountMicrocredits != quote.AmountMicrocredits || resolved.Quantity != 12 {
+		t.Fatalf("review settlement = %+v, %v", resolved, err)
+	}
+}
+
+func TestDramaRefundedAudioRecoveryUsesMeasuredDuration(t *testing.T) {
+	s, db, saved := shotAudioFixture(t)
+	saved.Config.Model = dramaPerSecondAudioChoice(t, s, db, "direct", "shot-audio-cm", 25)
+	if _, err := s.SaveDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaSaveRequest{ExpectedRevision: &saved.Revision, Config: saved.Config}); err != nil {
+		t.Fatal(err)
+	}
+	quote, err := s.PreflightDramaShotMedia("user", "drama-project", "real-shot", "audio", DramaShotMediaActionRequest{})
+	if err != nil || !quote.Ready || quote.AmountMicrocredits <= 75 {
+		t.Fatalf("preflight = %+v, %v", quote, err)
+	}
+	req := DramaShotMediaActionRequest{ExpectedRevision: &quote.Revision, BaseRevision: &quote.BaseRevision, ConfirmationToken: quote.ConfirmationToken, ClientOperationID: "audio-recovery"}
+	task, err := s.ExecuteDramaShotMedia("user", "drama-project", "real-shot", "audio", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.RefundBillingOrder(task.BillingOrderID, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	saveShotAudioTestResult(t, db, task.ID, "recovered-audio")
+	task, err = s.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.settleRecoveredBilling(task, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved, err := s.repo.BillingOrder(task.BillingOrderID)
+	if err != nil || resolved.Status != model.BillingStatusSettled || resolved.ActualAmountMicrocredits != 75 || resolved.Quantity != 3 || resolved.CostQuantity != 3 {
+		t.Fatalf("recovered order = %+v, %v", resolved, err)
+	}
+}
+
+func TestDramaAudioSupplementRequiresCurrentBudget(t *testing.T) {
+	s, _, _ := shotAudioFixture(t)
+	const project = "drama-project"
+	if err := s.repo.UpdateDramaProduction(project, map[string]any{"budget_microcredits": 100}); err != nil {
+		t.Fatal(err)
+	}
+	task := model.Task{ID: "audio-after-fallback", UserID: "user", ProjectID: project, Type: "canvas_audio", Status: model.TaskStatusSucceeded}
+	order := model.BillingOrder{
+		ID: "audio-fallback-order", UserID: task.UserID, TaskID: task.ID, IdempotencyKey: task.ID,
+		Capability: "audio", BillingMode: "per_second", Quantity: 1, UnitPriceMicrocredits: 60, MultiplierBasisPoints: 10_000,
+		AmountMicrocredits: 60, ChargeLimitSet: true, ChargeLimitMicrocredits: 120, Status: model.BillingStatusRunning,
+	}
+	if err := s.repo.CreateTaskWithCreditReservation(&task, &order, 8); err != nil {
+		t.Fatal(err)
+	}
+	err := s.repo.SettleBillingOrderWithAudioDuration(order.ID, "", 2_000)
+	if !errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		t.Fatalf("supplement within authorization but above remaining budget: %v", err)
+	}
+	pending, err := s.repo.BillingOrder(order.ID)
+	if err != nil || pending.Status != model.BillingStatusRunning || pending.ReservedAmountMicrocredits != 60 {
+		t.Fatalf("rejected supplement changed the reservation: %+v, %v", pending, err)
+	}
+}
+
+func TestDramaLogicalAudioOmitsDisabledInstructionsFromCanvasTask(t *testing.T) {
+	s, db, _ := shotAudioFixture(t)
+	choice := dramaPerSecondAudioChoice(t, s, db, "mixed", "shot-audio-cm", 25)
+	spec := `{"version":1,"capability":"audio","audioOptionsExplicit":true,"options":{"audioVoice":{"values":["*"]},"audioFormat":{"values":["*"]}}}`
+	if err := db.Model(&model.LogicalModelRevision{}).Where("id = ?", "logical-tts-revision").Update("capability_spec_json", spec).Error; err != nil {
+		t.Fatal(err)
+	}
+	s.invalidateRouteCatalog()
+	task, err := s.CreateTask("user", CreateTaskRequest{Type: "canvas_audio", Operation: "audio", Prompt: "你好", LogicalModelID: choice.LogicalModelID, Input: map[string]any{
+		"mode": "audio", "prompt": "你好", "config": map[string]any{"audioVoice": "alloy", "audioFormat": "mp3", "audioInstructions": "轻声朗读"},
+		"capabilityOptions": map[string]any{"audioVoice": "alloy", "audioFormat": "mp3"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = s.repo.Task(task.ID)
+	if err != nil || strings.Contains(task.InputJSON, "轻声朗读") || !strings.Contains(task.InputJSON, "alloy") {
+		t.Fatalf("stored audio parameters = %s, %v", task.InputJSON, err)
 	}
 }
 

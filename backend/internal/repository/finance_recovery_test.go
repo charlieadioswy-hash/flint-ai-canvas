@@ -16,7 +16,7 @@ func newRefundedBillingRecoveryRepository(t *testing.T) (*Repository, *gorm.DB) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}); err != nil {
+	if err := db.AutoMigrate(&model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}
 	return &Repository{db: db}, db

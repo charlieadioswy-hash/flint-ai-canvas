@@ -119,6 +119,21 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
+		if task.ProjectID != "" && order.AmountMicrocredits > 0 {
+			if repo.Dialect() == "sqlite" {
+				// Acquire the SQLite write lock before reading the task's project association.
+				if err := tx.Model(&model.Task{}).Where("id = ?", task.ID).UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+					return err
+				}
+			}
+			production, err := repo.lockTaskDramaProduction(task.UserID, task.ProjectID)
+			if err != nil {
+				return err
+			}
+			if err := repo.CheckDramaBudget(production, order.AmountMicrocredits); err != nil {
+				return err
+			}
+		}
 		if err := repo.requireCurrentCloudAgentParent(task); err != nil {
 			return err
 		}
@@ -173,6 +188,20 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 	var task model.Task
 	taskID := prepared.ID
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		var production *model.DramaProduction
+		if order != nil && order.AmountMicrocredits > 0 {
+			if repo.Dialect() == "sqlite" {
+				if err := tx.Model(&model.Task{}).Where("id = ?", taskID).UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+					return err
+				}
+			}
+			var err error
+			production, err = repo.lockDramaProductionForTaskID(userID, taskID)
+			if err != nil {
+				return err
+			}
+		}
 		// 与自动退款保持任务先于账户的锁顺序；重试资格也必须在预扣前确认。
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
 			return err
@@ -206,6 +235,9 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 			return err
 		}
 		if order != nil {
+			if err := repo.CheckDramaBudget(production, order.AmountMicrocredits); err != nil {
+				return err
+			}
 			if err := reserveBillingOrder(tx, order); err != nil {
 				return err
 			}

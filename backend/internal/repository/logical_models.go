@@ -280,6 +280,22 @@ func (r *Repository) RouteAttempts(taskID string, routeRun int) ([]model.RouteAt
 // 保证明确未创建上游任务后的故障切线不会沿用上一条线路的价格快照。
 func (r *Repository) SwitchTaskLogicalRoute(taskID string, expectedRouteID string, routeID string, inputJSON string, billingOrderID string, channelID string, channelModelID string, replacement *model.BillingOrder, cost model.BillingCostSnapshot) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		var production *model.DramaProduction
+		if replacement != nil {
+			// SQLite needs a write as the first statement to avoid upgrading a stale read snapshot.
+			if repo.Dialect() == "sqlite" {
+				if err := tx.Model(&model.Task{}).Where("id = ?", taskID).UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+					return err
+				}
+			}
+			// PostgreSQL acquires the production lock before the task and billing locks.
+			var err error
+			production, err = repo.lockDramaProductionForTaskID(replacement.UserID, taskID)
+			if err != nil {
+				return err
+			}
+		}
 		updated := tx.Model(&model.Task{}).
 			Where("id = ? AND status = ? AND route_id = ?", taskID, model.TaskStatusRunning, expectedRouteID).
 			Updates(map[string]any{"route_id": routeID, "channel_model_id": channelModelID, "input_json": inputJSON, "provider_progress": nil, "updated_at": time.Now()})
@@ -323,6 +339,11 @@ func (r *Repository) SwitchTaskLogicalRoute(taskID string, expectedRouteID strin
 				reserved = order.AmountMicrocredits
 			}
 			delta := replacement.AmountMicrocredits - reserved
+			if production != nil {
+				if err := repo.CheckDramaBudget(production, delta); err != nil {
+					return err
+				}
+			}
 			accountUpdates := map[string]any{"version": gorm.Expr("version + 1"), "updated_at": now}
 			accountQuery := tx.Model(&model.CreditAccount{}).Where("user_id = ?", order.UserID)
 			if delta > 0 {

@@ -178,6 +178,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (result *mode
 		if err != nil {
 			return nil, err
 		}
+		if req.expectedRouteID != "" && (routed == nil || routed.Route.ID != req.expectedRouteID) {
+			return nil, creationConflict("音频线路已变化，请重新预检")
+		}
 	}
 
 	if strings.HasPrefix(taskType, "video_") && !hasExecutableProviderVideoConfig(normalizedInput) {
@@ -305,6 +308,9 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (result *mode
 		task.BillingOrderID = billingOrder.ID
 	}
 	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy)
+	if errors.Is(err, repository.ErrDramaBudgetInsufficient) {
+		return nil, dramaTaskBudgetError()
+	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 	}
@@ -423,6 +429,9 @@ func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map
 	config, _ := input["config"].(map[string]any)
 	nextConfig := make(map[string]any, len(config)+2)
 	for key, value := range config {
+		if routed.Intent.Capability == "audio" && isCapabilityOptionFor("audio", canonicalModelOptionName("audio", key)) {
+			continue
+		}
 		switch key {
 		case "channelId", "channelModelKey", "priceTierId", "providerModelKey", "apiFormat", "interfaceType", "baseUrl", "apiKey", "secretKey", "headers", "model", "capabilityConfig":
 			continue
@@ -440,7 +449,13 @@ func applyRoutedProviderSelection(input map[string]any, routed *RoutedModel) map
 		}
 	}
 	// 路由匹配和真实请求必须使用同一组参数；逻辑能力参数覆盖空的页面配置，但不携带供应链字段。
-	if options, ok := input["capabilityOptions"].(map[string]any); ok {
+	if routed.Intent.Capability == "audio" {
+		for key, value := range routed.Intent.Options {
+			if isCapabilityOptionFor("audio", key) {
+				nextConfig[key] = providerConfigOptionValue(value)
+			}
+		}
+	} else if options, ok := input["capabilityOptions"].(map[string]any); ok {
 		for key, value := range options {
 			canonical := canonicalModelOptionName(routed.Intent.Capability, key)
 			if isProviderCapabilityOption(canonical) {

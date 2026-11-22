@@ -431,9 +431,9 @@ func applyModelSpecificVideoCapability(profile *VideoCapabilityConfig, protocol 
 // 渠道模型能力参数是唯一事实来源，前台模型供应线路直接引用该规格。
 func CapabilitySpecFromModelCapabilityConfig(config *ModelCapabilityConfig, capability string) (CapabilitySpec, error) {
 	spec := CapabilitySpec{Version: 1, Capability: capability, Inputs: map[string]InputConstraint{}, Options: map[string]OptionConstraint{}}
-	// 音频模型当前没有可编辑的渠道能力 JSON，使用空能力规格表示“无额外路由约束”。
+	// 音频模型没有可编辑的渠道能力 JSON，路由采用通用 TTS 选项。
 	if capability == "audio" {
-		return spec, nil
+		return NormalizeCapabilitySpec(spec)
 	}
 	if config == nil {
 		switch capability {

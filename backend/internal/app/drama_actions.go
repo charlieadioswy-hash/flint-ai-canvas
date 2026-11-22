@@ -121,6 +121,11 @@ func (s *Service) UpdateDramaSettings(userID string, projectID string, req Updat
 			if req.Settings != nil && req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision {
 				return repository.ErrDramaGuideChanged
 			}
+			if req.BudgetMicrocredits != nil && *req.BudgetMicrocredits != current.BudgetMicrocredits {
+				if err := tx.ClearDramaAssetExtractionWait(projectID, dramaBudgetPauseReason); err != nil {
+					return err
+				}
+			}
 			if dramaGuideActive(current) {
 				if req.ExpectedRevision != nil && *req.ExpectedRevision != current.Revision || req.Settings != nil && req.ExpectedRevision == nil {
 					return repository.ErrDramaGuideChanged

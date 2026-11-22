@@ -75,7 +75,7 @@ import { uploadResourceFile } from "@/services/api/resources";
 import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
 import { CastVoiceField, CastVoicePreview } from "./cast-voice";
-import { CastImageOptions, castImageOptionsDraft } from "./cast-image-options";
+import { CastImageOptions, castImageOptionsDraft, castImageReferenceError, mergeCastImageOptions } from "./cast-image-options";
 import { CastViews, CastViewWorkspace, type SelectedCastView } from "./cast-views";
 import { CastHistoryDragProvider, useCastHistoryDrag, type CastHistoryImage } from "./cast-history-drag";
 import { CastLooks } from "./cast-looks";
@@ -574,11 +574,12 @@ function CastEditorForm({
     const saveAttempt = useRef("");
     const saveInFlight = useRef(false);
     const [saveError, setSaveError] = useState("");
-    const validDraft = Boolean(name.trim() && appearance.trim()) && !imageOptions.corrupt && (!isLook || !from || !to || from <= to);
+    const referenceError = castImageReferenceError(imageOptions.options);
+    const validDraft = Boolean(name.trim() && appearance.trim()) && !imageOptions.corrupt && !referenceError && (!isLook || !from || !to || from <= to);
     const versionReady = Boolean(summary.data) && typeof baselineCast.revision === "number";
     const currentSaveError = saveAttempt.current === snapshot ? saveError : "";
     const versionError = dirty && ((!summary.data && summary.isError) || typeof baselineCast.revision !== "number") ? "当前版本读取失败，修改已保留" : "";
-    const persistenceError = currentSaveError || versionError;
+    const persistenceError = referenceError || currentSaveError || versionError;
     const imageQuote = useCastImageQuote({
         projectId,
         episodeId,
@@ -597,7 +598,7 @@ function CastEditorForm({
         }
     }, []);
     const autoSave = useMutation({
-        mutationFn: async (input: { draft: typeof draft; snapshot: string; restyle: boolean; ticket: ReturnType<typeof operation.capture> }) => {
+        mutationFn: async (input: { draft: typeof draft; restyle: boolean; ticket: ReturnType<typeof operation.capture> }) => {
             const { draft: value, ticket } = input;
             const previous = JSON.parse(savedSnapshotRef.current) as typeof draft;
             const baseline = baselineRef.current;
@@ -613,13 +614,13 @@ function CastEditorForm({
                 imageStyleName: value.imageStyleName,
                 imageStylePrompt: value.imageStylePrompt,
             };
-            const changed: DramaCastPatch = { imageOptions: value.imageOptions.options, ...(episodeId ? { episodeId } : {}) };
+            const changed: DramaCastPatch = episodeId ? { episodeId } : {};
             for (const key of Object.keys(fields) as Array<keyof typeof fields>) {
                 if (JSON.stringify(fields[key]) !== JSON.stringify(previous[key])) Object.assign(changed, { [key]: fields[key] });
             }
             const write = async (revision: number, current: DramaCast) => {
                 const revisions = { expectedRevision: revision, expectedCastRevision: current.revision };
-                const merged: typeof draft = {
+                const merged: Omit<typeof draft, "imageOptions"> = {
                     name: current.lookName || current.name,
                     aliases: parseList(current.aliasesJson),
                     appearance: current.appearance,
@@ -630,35 +631,37 @@ function CastEditorForm({
                     imageStylePrompt: current.imageStylePrompt || "",
                     from: isLook ? current.lookFromChapter || 0 : 0,
                     to: isLook ? current.lookToChapter || 0 : 0,
-                    imageOptions: castImageOptionsDraft(current.imageOptionsJson),
                 };
                 // 重试只让页面实际编辑过的字段优先，其余字段沿用最新服务端设定。
-                for (const key of Object.keys(value) as Array<keyof typeof draft>) {
+                for (const key of Object.keys(merged) as Array<keyof typeof merged>) {
                     if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) Object.assign(merged, { [key]: value[key] });
                 }
-                if (merged.imageOptions.corrupt) throw new Error("最新图片设置无法读取，修改已保留，请重新配置后重试");
-                if (isLook)
-                    return (
-                        await updateDramaCastLook(projectId, cast.id, {
-                            lookName: merged.name,
-                            appearance: merged.appearance,
-                            imagePrompt: merged.imagePrompt,
-                            imageStyleId: merged.imageStyleId,
-                            imageStyleName: merged.imageStyleName,
-                            imageStylePrompt: merged.imageStylePrompt,
-                            fromChapter: merged.from,
-                            toChapter: merged.to,
-                            restyleSegments: input.restyle,
-                            imageOptions: merged.imageOptions.options,
-                            ...(episodeId ? { episodeId } : {}),
-                            ...revisions,
-                        })
-                    ).look;
-                return (await updateDramaCast(projectId, cast.id, { ...changed, imageOptions: merged.imageOptions.options, ...revisions })).cast;
+                const currentOptions = castImageOptionsDraft(current.imageOptionsJson);
+                if (currentOptions.corrupt && !previous.imageOptions.corrupt) throw new Error("最新图片设置无法读取，修改已保留，请重新配置后重试");
+                const imageOptions = mergeCastImageOptions(previous.imageOptions.options, value.imageOptions.options, currentOptions.options);
+                if (isLook) {
+                    const { look } = await updateDramaCastLook(projectId, cast.id, {
+                        lookName: merged.name,
+                        appearance: merged.appearance,
+                        imagePrompt: merged.imagePrompt,
+                        imageStyleId: merged.imageStyleId,
+                        imageStyleName: merged.imageStyleName,
+                        imageStylePrompt: merged.imageStylePrompt,
+                        fromChapter: merged.from,
+                        toChapter: merged.to,
+                        restyleSegments: input.restyle,
+                        imageOptions,
+                        ...(episodeId ? { episodeId } : {}),
+                        ...revisions,
+                    });
+                    return { cast: look, imageOptions };
+                }
+                const result = await updateDramaCast(projectId, cast.id, { ...changed, imageOptions, ...revisions });
+                return { cast: result.cast, imageOptions };
             };
-            let updated: DramaCast;
+            let written: Awaited<ReturnType<typeof write>>;
             try {
-                updated = await write(revisionRef.current, baseline);
+                written = await write(revisionRef.current, baseline);
             } catch (error) {
                 if (!operation.isCurrent(ticket)) return;
                 if (!(error instanceof ApiError) || ![error.status, error.code].includes(409) || (error.reason && error.reason !== "conflict")) throw error;
@@ -678,13 +681,47 @@ function CastEditorForm({
                 )
                     throw error;
                 revisionRef.current = latestSummary.production.revision;
-                updated = await write(latestSummary.production.revision, current);
+                const currentImageOptions = castImageOptionsDraft(current.imageOptionsJson);
+                const mergedImageOptions = mergeCastImageOptions(previous.imageOptions.options, value.imageOptions.options, currentImageOptions.options);
+                const referenceConflict = castImageReferenceError(mergedImageOptions);
+                try {
+                    if (referenceConflict) throw new Error(referenceConflict);
+                    written = await write(latestSummary.production.revision, current);
+                } catch (retryError) {
+                    const rejected = retryError instanceof ApiError && [retryError.status, retryError.code].some((status) => status === 400 || status === 422);
+                    if (!referenceConflict && !rejected) throw retryError;
+                    if (!operation.isCurrent(ticket) || currentImageOptions.corrupt || JSON.stringify(currentImageOptions) === JSON.stringify(previous.imageOptions)) throw retryError;
+                    // Show the merged options so a user can resolve a reference or model conflict on the current revision.
+                    const mergedDraft = { ...currentImageOptions, options: mergedImageOptions, corrupt: false };
+                    saveAttempt.current = JSON.stringify({ ...value, imageOptions: mergedDraft });
+                    const baselineSnapshot = JSON.stringify({ ...previous, imageOptions: currentImageOptions });
+                    baselineRef.current = current;
+                    savedSnapshotRef.current = baselineSnapshot;
+                    setBaselineCast(current);
+                    setSavedSnapshot(baselineSnapshot);
+                    setImageOptions((currentDraft) => ({
+                        ...mergedDraft,
+                        options: mergeCastImageOptions(value.imageOptions.options, currentDraft.options, mergedDraft.options),
+                        corrupt: currentDraft.corrupt,
+                    }));
+                    throw retryError;
+                }
             }
             if (!operation.isCurrent(ticket)) return;
+            const updated = written.cast;
+            const savedImageOptions = updated.imageOptionsJson === undefined ? { options: written.imageOptions, corrupt: false } : castImageOptionsDraft(updated.imageOptionsJson);
+            const committedSnapshot = JSON.stringify({ ...value, imageOptions: savedImageOptions });
+            // Rebase options changed while this request was in flight onto the saved configuration.
+            setImageOptions((current) => ({
+                ...savedImageOptions,
+                options: mergeCastImageOptions(value.imageOptions.options, current.options, savedImageOptions.options),
+                corrupt: savedImageOptions.corrupt || current.corrupt,
+            }));
+            saveAttempt.current = "";
             baselineRef.current = updated;
-            savedSnapshotRef.current = input.snapshot;
+            savedSnapshotRef.current = committedSnapshot;
             setBaselineCast(updated);
-            setSavedSnapshot(input.snapshot);
+            setSavedSnapshot(committedSnapshot);
             const latest = await summary.refetch();
             if (!operation.isCurrent(ticket)) return;
             if (latest.data) revisionRef.current = Math.max(revisionRef.current || 0, latest.data.production.revision);
@@ -794,7 +831,7 @@ function CastEditorForm({
         saveInFlight.current = true;
         saveAttempt.current = snapshot;
         setSaveError("");
-        autoSave.mutate({ draft, snapshot, restyle, ticket: operation.capture() });
+        autoSave.mutate({ draft, restyle, ticket: operation.capture() });
     };
     useEffect(() => {
         if (!dirty || editBlocked || autoSave.isPending || !validDraft || !summary.data || typeof baselineCast.revision !== "number" || saveAttempt.current === snapshot) return;

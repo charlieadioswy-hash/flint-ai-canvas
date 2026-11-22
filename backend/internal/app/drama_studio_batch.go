@@ -241,7 +241,7 @@ func (s *Service) prepareDramaStudioBatch(repo *repository.Repository, userID, p
 		if account.AvailableMicrocredits < plan.view.AmountMicrocredits {
 			plan.blockReady("本批次积分不足，请充值后重新预检")
 		} else if p.BudgetMicrocredits > 0 {
-			totals, err := s.dramaBillingTotals(p)
+			totals, err := dramaBillingTotals(repo, p)
 			if err != nil {
 				return plan, err
 			}
